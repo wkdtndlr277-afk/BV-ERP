@@ -348,7 +348,7 @@ async function renderDashboard() {
   }
 }
 
-// Inbound Registration - with search and manual input
+// Inbound Registration - with search, new item registration, and DB upload
 async function renderInbound() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
@@ -358,10 +358,15 @@ async function renderInbound() {
   
   content.innerHTML = `
     <div class="max-w-2xl mx-auto space-y-6">
-      <h2 class="text-2xl font-bold text-gray-800">
-        <i class="fas fa-truck-loading mr-2 text-haccp-primary"></i>
-        입고 등록
-      </h2>
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-truck-loading mr-2 text-haccp-primary"></i>
+          입고 등록
+        </h2>
+        <button onclick="showInboundUploadModal()" class="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700">
+          <i class="fas fa-upload mr-1"></i> 원료 일괄등록
+        </button>
+      </div>
       
       <div class="bg-white rounded-xl shadow p-6">
         <form id="inbound-form" class="space-y-4">
@@ -372,7 +377,7 @@ async function renderInbound() {
               <input type="text" 
                      id="inbound-item-search" 
                      class="w-full border rounded-lg pl-10 pr-4 py-2" 
-                     placeholder="품목명 또는 품목코드 검색..."
+                     placeholder="품목명 또는 품목코드 검색... (없으면 신규 등록)"
                      autocomplete="off">
               <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
               <!-- 검색 결과 드롭다운 -->
@@ -385,6 +390,7 @@ async function renderInbound() {
                 <div>
                   <span class="font-medium text-blue-800" id="selected-item-name"></span>
                   <span class="text-blue-600 text-sm ml-2" id="selected-item-code"></span>
+                  <span id="selected-item-new-badge" class="ml-2 px-2 py-0.5 bg-green-500 text-white text-xs rounded hidden">신규</span>
                 </div>
                 <button type="button" onclick="clearSelectedItem()" class="text-blue-500 hover:text-blue-700">
                   <i class="fas fa-times"></i>
@@ -447,6 +453,7 @@ async function renderInbound() {
           <li>• LOT 번호는 자동 생성됩니다 (입고일-품목코드-순번)</li>
           <li>• <strong>합격</strong> 시 재고에 자동 반영됩니다</li>
           <li>• <strong>불합격</strong> 시 이력만 저장되고 재고는 반영되지 않습니다</li>
+          <li>• 검색 결과가 없으면 <strong class="text-green-600">신규 원료 등록</strong> 버튼이 표시됩니다</li>
         </ul>
       </div>
     </div>
@@ -470,7 +477,16 @@ async function renderInbound() {
     );
     
     if (filtered.length === 0) {
-      searchResults.innerHTML = '<div class="p-3 text-gray-500 text-center">검색 결과가 없습니다.</div>';
+      // 검색 결과 없음 - 신규 등록 옵션 표시
+      searchResults.innerHTML = `
+        <div class="p-3 text-gray-500 text-center border-b">
+          <i class="fas fa-search mr-1"></i> "${e.target.value}" 검색 결과가 없습니다
+        </div>
+        <div class="p-3 hover:bg-green-50 cursor-pointer text-center" onclick="showNewItemModal('${e.target.value}')">
+          <i class="fas fa-plus-circle text-green-600 mr-1"></i>
+          <span class="text-green-600 font-medium">"${e.target.value}" 신규 원료 등록</span>
+        </div>
+      `;
     } else {
       searchResults.innerHTML = filtered.map(item => `
         <div class="p-3 hover:bg-blue-50 cursor-pointer border-b last:border-0 inbound-search-item" 
@@ -579,6 +595,7 @@ async function renderInbound() {
       document.getElementById('inbound-expiry').value = '';
       document.getElementById('inbound-selected-item').classList.add('hidden');
       document.getElementById('inbound-item-search').value = '';
+      document.getElementById('selected-item-new-badge').classList.add('hidden');
       
       loadAlertCount();
     } catch (e) {
@@ -587,8 +604,178 @@ async function renderInbound() {
   });
 }
 
+// 신규 원료 등록 모달
+function showNewItemModal(searchTerm = '') {
+  document.getElementById('inbound-search-results').classList.add('hidden');
+  
+  // 품목코드 자동 생성 (RM + 3자리 숫자)
+  const existingCodes = state.masterItems
+    .filter(i => i.item_code.startsWith('RM'))
+    .map(i => parseInt(i.item_code.replace('RM', '')) || 0);
+  const nextNum = Math.max(0, ...existingCodes) + 1;
+  const suggestedCode = `RM${String(nextNum).padStart(3, '0')}`;
+  
+  showModal('신규 원료 등록', `
+    <form id="new-item-form" class="space-y-4">
+      <div class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
+        <p class="text-sm text-green-700"><i class="fas fa-info-circle mr-1"></i> 새 원료를 등록하면 바로 입고에 사용할 수 있습니다.</p>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">품목코드 <span class="text-red-500">*</span></label>
+          <input type="text" id="new-item-code" value="${suggestedCode}" required
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="RM001">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">품목명 <span class="text-red-500">*</span></label>
+          <input type="text" id="new-item-name" value="${searchTerm}" required
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="원료명">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+          <select id="new-item-unit" class="w-full px-3 py-2 border rounded-lg">
+            <option value="kg">kg</option>
+            <option value="g">g</option>
+            <option value="L">L</option>
+            <option value="ml">ml</option>
+            <option value="ea">ea (개)</option>
+            <option value="box">box</option>
+            <option value="pack">pack</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">안전재고</label>
+          <input type="number" id="new-item-safety" value="0" min="0" step="0.01"
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">유통기한(일)</label>
+          <input type="number" id="new-item-expiry" value="365" min="1"
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+      </div>
+    </form>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveNewItemAndSelect()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">등록 후 선택</button>
+  `);
+}
+
+// 신규 원료 저장 후 선택
+async function saveNewItemAndSelect() {
+  const data = {
+    item_code: document.getElementById('new-item-code').value.trim(),
+    item_name: document.getElementById('new-item-name').value.trim(),
+    category: '원료',
+    unit: document.getElementById('new-item-unit').value,
+    safety_stock: parseFloat(document.getElementById('new-item-safety').value) || 0,
+    expiry_days: parseInt(document.getElementById('new-item-expiry').value) || 365
+  };
+  
+  if (!data.item_code || !data.item_name) {
+    showToast('품목코드와 품목명을 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/master', 'POST', data);
+    showToast(`"${data.item_name}" 원료가 등록되었습니다`, 'success');
+    
+    // 마스터 데이터 갱신
+    await loadMasterData();
+    window.inboundMasterItems = state.masterItems;
+    
+    closeModal();
+    
+    // 새로 등록한 품목 선택
+    selectInboundItem(data.item_code, data.item_name, data.unit, data.expiry_days, true);
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 원료 일괄 업로드 모달
+function showInboundUploadModal() {
+  showModal('원료 일괄 등록', `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 업로드 형식</h4>
+        <p class="text-sm text-blue-700 mb-2">CSV 또는 엑셀 데이터를 붙여넣기 하세요.</p>
+        <p class="text-xs text-blue-600">형식: 품목코드, 품목명, 단위, 안전재고, 유통기한(일)</p>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">데이터 입력</label>
+        <textarea id="inbound-upload-data" rows="10" 
+                  class="w-full border-2 border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:border-blue-500"
+                  placeholder="RM011, 호밀가루, kg, 50, 180
+RM012, 옥수수전분, kg, 30, 365
+RM013, 코코아파우더, kg, 20, 365"></textarea>
+      </div>
+      
+      <div class="text-sm text-gray-500">
+        <p><strong>예시:</strong></p>
+        <pre class="bg-gray-100 p-2 rounded mt-1 text-xs">RM011, 호밀가루, kg, 50, 180
+RM012, 옥수수전분, kg, 30, 365
+RM013, 코코아파우더, kg, 20, 365</pre>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="processInboundUpload()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">업로드</button>
+  `);
+}
+
+// 원료 업로드 처리
+async function processInboundUpload() {
+  const data = document.getElementById('inbound-upload-data').value.trim();
+  if (!data) {
+    showToast('데이터를 입력해주세요', 'warning');
+    return;
+  }
+  
+  const lines = data.split('\\n').filter(line => line.trim());
+  const items = [];
+  
+  for (const line of lines) {
+    const parts = line.split(',').map(p => p.trim());
+    if (parts.length >= 2) {
+      items.push({
+        item_code: parts[0],
+        item_name: parts[1],
+        category: '원료',  // 원료로 고정
+        unit: parts[2] || 'kg',
+        safety_stock: parseFloat(parts[3]) || 0,
+        expiry_days: parseInt(parts[4]) || 365
+      });
+    }
+  }
+  
+  if (items.length === 0) {
+    showToast('유효한 데이터가 없습니다', 'error');
+    return;
+  }
+  
+  try {
+    const result = await api('/master/upload', 'POST', { items });
+    showToast(result.message, result.results.failed > 0 ? 'warning' : 'success');
+    
+    closeModal();
+    await loadMasterData();
+    window.inboundMasterItems = state.masterItems;
+    
+    showToast(`원료 ${result.results.success}건 등록 완료`, 'success');
+  } catch (e) {
+    // Error handled
+  }
+}
+
 // 품목 선택
-function selectInboundItem(code, name, unit, expiryDays) {
+function selectInboundItem(code, name, unit, expiryDays, isNew = false) {
   document.getElementById('inbound-item').value = code;
   document.getElementById('inbound-item-search').value = '';
   document.getElementById('inbound-search-results').classList.add('hidden');
@@ -597,6 +784,16 @@ function selectInboundItem(code, name, unit, expiryDays) {
   document.getElementById('selected-item-name').textContent = name;
   document.getElementById('selected-item-code').textContent = `(${code})`;
   document.getElementById('inbound-selected-item').classList.remove('hidden');
+  
+  // 신규 등록 배지 표시
+  const newBadge = document.getElementById('selected-item-new-badge');
+  if (newBadge) {
+    if (isNew) {
+      newBadge.classList.remove('hidden');
+    } else {
+      newBadge.classList.add('hidden');
+    }
+  }
   
   // 단위 업데이트
   document.getElementById('inbound-unit').textContent = unit || '-';
@@ -2241,7 +2438,7 @@ async function deleteMaster(itemCode) {
   }
 }
 
-// Supplier Management
+// Supplier Management - with search
 async function renderSuppliers() {
   const content = document.getElementById('page-content');
   
@@ -2249,9 +2446,12 @@ async function renderSuppliers() {
     const result = await api('/suppliers');
     const suppliers = result.data || [];
     
+    // 전역 저장
+    window.allSuppliers = suppliers;
+    
     content.innerHTML = `
       <div class="space-y-6">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between flex-wrap gap-4">
           <h2 class="text-2xl font-bold text-gray-800">
             <i class="fas fa-building mr-2 text-haccp-primary"></i>
             거래처 관리
@@ -2261,52 +2461,141 @@ async function renderSuppliers() {
           </button>
         </div>
         
-        <div class="bg-white rounded-xl shadow overflow-hidden">
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm data-table">
-              <thead>
-                <tr class="text-gray-500 border-b bg-gray-50">
-                  <th class="text-left p-3">거래처코드</th>
-                  <th class="text-left p-3">거래처명</th>
-                  <th class="text-center p-3">유형</th>
-                  <th class="text-left p-3">연락처</th>
-                  <th class="text-left p-3">주소</th>
-                  <th class="text-center p-3">관리</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${suppliers.map(s => `
-                  <tr class="border-b hover:bg-gray-50">
-                    <td class="p-3 font-mono">${s.supplier_code}</td>
-                    <td class="p-3 font-medium">${s.supplier_name}</td>
-                    <td class="p-3 text-center">
-                      <span class="px-2 py-1 rounded text-xs ${
-                        s.supplier_type === '입고' ? 'bg-blue-100 text-blue-700' :
-                        s.supplier_type === '출고' ? 'bg-green-100 text-green-700' :
-                        'bg-purple-100 text-purple-700'
-                      }">${s.supplier_type}</span>
-                    </td>
-                    <td class="p-3">${s.contact || '-'}</td>
-                    <td class="p-3">${s.address || '-'}</td>
-                    <td class="p-3 text-center">
-                      <button onclick="editSupplier('${s.supplier_code}')" class="text-blue-500 hover:text-blue-700 mr-2">
-                        <i class="fas fa-edit"></i>
-                      </button>
-                      <button onclick="deleteSupplier('${s.supplier_code}')" class="text-red-500 hover:text-red-700">
-                        <i class="fas fa-trash"></i>
-                      </button>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
+        <!-- 검색 및 필터 -->
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex flex-wrap gap-4 items-center">
+            <div class="flex-1 min-w-[200px]">
+              <div class="relative">
+                <input type="text" id="supplier-search" 
+                       class="w-full border rounded-lg pl-10 pr-4 py-2" 
+                       placeholder="거래처명 또는 코드 검색..."
+                       oninput="filterSuppliers()">
+                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button onclick="filterSuppliersByType('')" class="supplier-type-filter px-4 py-2 rounded-lg bg-haccp-primary text-white" data-type="">전체</button>
+              <button onclick="filterSuppliersByType('입고')" class="supplier-type-filter px-4 py-2 rounded-lg bg-gray-200" data-type="입고">입고</button>
+              <button onclick="filterSuppliersByType('출고')" class="supplier-type-filter px-4 py-2 rounded-lg bg-gray-200" data-type="출고">출고</button>
+              <button onclick="filterSuppliersByType('양방향')" class="supplier-type-filter px-4 py-2 rounded-lg bg-gray-200" data-type="양방향">양방향</button>
+            </div>
           </div>
+        </div>
+        
+        <div id="suppliers-table-container" class="bg-white rounded-xl shadow overflow-hidden">
+          <!-- 테이블이 여기에 렌더링됨 -->
         </div>
       </div>
     `;
+    
+    // 전역 필터 상태
+    window.supplierFilterType = '';
+    
+    // 초기 렌더링
+    renderSuppliersTable(suppliers);
   } catch (e) {
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
   }
+}
+
+// 거래처 테이블 렌더링
+function renderSuppliersTable(suppliers) {
+  const container = document.getElementById('suppliers-table-container');
+  
+  if (suppliers.length === 0) {
+    container.innerHTML = `
+      <div class="p-8 text-center text-gray-400">
+        <i class="fas fa-building text-4xl mb-2"></i>
+        <p>검색 결과가 없습니다</p>
+      </div>
+    `;
+    return;
+  }
+  
+  container.innerHTML = `
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm data-table">
+        <thead>
+          <tr class="text-gray-500 border-b bg-gray-50">
+            <th class="text-left p-3">거래처코드</th>
+            <th class="text-left p-3">거래처명</th>
+            <th class="text-center p-3">유형</th>
+            <th class="text-left p-3">연락처</th>
+            <th class="text-left p-3">주소</th>
+            <th class="text-center p-3">관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${suppliers.map(s => `
+            <tr class="border-b hover:bg-gray-50">
+              <td class="p-3 font-mono">${s.supplier_code}</td>
+              <td class="p-3 font-medium">${s.supplier_name}</td>
+              <td class="p-3 text-center">
+                <span class="px-2 py-1 rounded text-xs ${
+                  s.supplier_type === '입고' ? 'bg-blue-100 text-blue-700' :
+                  s.supplier_type === '출고' ? 'bg-green-100 text-green-700' :
+                  'bg-purple-100 text-purple-700'
+                }">${s.supplier_type}</span>
+              </td>
+              <td class="p-3">${s.contact || '-'}</td>
+              <td class="p-3">${s.address || '-'}</td>
+              <td class="p-3 text-center">
+                <button onclick="editSupplier('${s.supplier_code}')" class="text-blue-500 hover:text-blue-700 mr-2">
+                  <i class="fas fa-edit"></i>
+                </button>
+                <button onclick="deleteSupplier('${s.supplier_code}')" class="text-red-500 hover:text-red-700">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="p-3 bg-gray-50 border-t text-sm text-gray-500">
+      총 ${suppliers.length}개 거래처
+    </div>
+  `;
+}
+
+// 거래처 검색 필터
+function filterSuppliers() {
+  const searchTerm = document.getElementById('supplier-search').value.toLowerCase().trim();
+  const typeFilter = window.supplierFilterType || '';
+  
+  let filtered = window.allSuppliers || [];
+  
+  // 검색어 필터
+  if (searchTerm) {
+    filtered = filtered.filter(s => 
+      s.supplier_name.toLowerCase().includes(searchTerm) ||
+      s.supplier_code.toLowerCase().includes(searchTerm)
+    );
+  }
+  
+  // 유형 필터
+  if (typeFilter) {
+    filtered = filtered.filter(s => s.supplier_type === typeFilter);
+  }
+  
+  renderSuppliersTable(filtered);
+}
+
+// 유형별 필터
+function filterSuppliersByType(type) {
+  window.supplierFilterType = type;
+  
+  // 버튼 스타일 업데이트
+  document.querySelectorAll('.supplier-type-filter').forEach(btn => {
+    btn.classList.remove('bg-haccp-primary', 'text-white');
+    btn.classList.add('bg-gray-200');
+    if (btn.dataset.type === type) {
+      btn.classList.add('bg-haccp-primary', 'text-white');
+      btn.classList.remove('bg-gray-200');
+    }
+  });
+  
+  filterSuppliers();
 }
 
 function showSupplierModal(supplier = null) {
@@ -3934,3 +4223,14 @@ window.showDoughMasterModal = showDoughMasterModal;
 window.showAddDoughModal = showAddDoughModal;
 window.saveDoughMaster = saveDoughMaster;
 window.deleteDoughMaster = deleteDoughMaster;
+
+// 입고 등록 - 신규 원료 등록 함수들
+window.showNewItemModal = showNewItemModal;
+window.saveNewItemAndSelect = saveNewItemAndSelect;
+window.showInboundUploadModal = showInboundUploadModal;
+window.processInboundUpload = processInboundUpload;
+
+// 거래처 검색 함수들
+window.filterSuppliers = filterSuppliers;
+window.filterSuppliersByType = filterSuppliersByType;
+window.renderSuppliersTable = renderSuppliersTable;

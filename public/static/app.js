@@ -401,15 +401,15 @@ async function renderInbound() {
             </div>
             
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">입고일</label>
-              <input type="date" id="inbound-date" class="w-full border rounded-lg px-4 py-2" value="${today}">
+              <label class="block text-sm font-medium text-gray-700 mb-1">입고일 <span class="text-red-500">*</span></label>
+              <input type="text" id="inbound-date" class="w-full border rounded-lg px-4 py-2" value="${today}" placeholder="YYYY-MM-DD" maxlength="10" required>
             </div>
           </div>
           
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">유통기한 <span class="text-red-500">*</span></label>
-              <input type="date" id="inbound-expiry" class="w-full border rounded-lg px-4 py-2" required>
+              <input type="text" id="inbound-expiry" class="w-full border rounded-lg px-4 py-2" placeholder="YYYY-MM-DD" maxlength="10" required>
             </div>
             
             <div>
@@ -512,6 +512,26 @@ async function renderInbound() {
     }
   });
   
+  // 날짜 입력 자동 포맷팅 (YYYY-MM-DD)
+  const dateInputs = [document.getElementById('inbound-date'), document.getElementById('inbound-expiry')];
+  dateInputs.forEach(input => {
+    input.addEventListener('input', function(e) {
+      let value = e.target.value.replace(/[^0-9]/g, ''); // 숫자만 추출
+      
+      if (value.length >= 4) {
+        value = value.slice(0, 4) + '-' + value.slice(4);
+      }
+      if (value.length >= 7) {
+        value = value.slice(0, 7) + '-' + value.slice(7);
+      }
+      if (value.length > 10) {
+        value = value.slice(0, 10);
+      }
+      
+      e.target.value = value;
+    });
+  });
+  
   // Form submit
   document.getElementById('inbound-form').addEventListener('submit', async function(e) {
     e.preventDefault();
@@ -522,11 +542,25 @@ async function renderInbound() {
       return;
     }
     
+    const inboundDate = document.getElementById('inbound-date').value;
+    const expiryDate = document.getElementById('inbound-expiry').value;
+    
+    // 날짜 형식 검증 (YYYY-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(inboundDate)) {
+      showToast('입고일 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
+      return;
+    }
+    if (!dateRegex.test(expiryDate)) {
+      showToast('유통기한 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
+      return;
+    }
+    
     const data = {
       item_code: itemCode,
       quantity: parseFloat(document.getElementById('inbound-qty').value),
-      inbound_date: document.getElementById('inbound-date').value,
-      expiry_date: document.getElementById('inbound-expiry').value,
+      inbound_date: inboundDate,
+      expiry_date: expiryDate,
       supplier: document.getElementById('inbound-supplier').value,
       quality_status: document.querySelector('input[name="quality"]:checked').value
     };
@@ -540,6 +574,7 @@ async function renderInbound() {
       document.getElementById('inbound-item').value = '';
       document.getElementById('inbound-unit').textContent = '-';
       document.getElementById('inbound-date').value = today;
+      document.getElementById('inbound-expiry').value = '';
       document.getElementById('inbound-selected-item').classList.add('hidden');
       document.getElementById('inbound-item-search').value = '';
       

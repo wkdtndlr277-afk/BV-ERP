@@ -66,16 +66,17 @@ async function deductFromLots(
   return { success: true, deductions };
 }
 
-// 오늘 사용 가능한 원료 목록 (잔량 있는 것)
+// 오늘 사용 가능한 원료 목록 (입고되어 잔량이 있는 것만)
 usageRoutes.get('/available', async (c) => {
   const result = await c.env.DB.prepare(`
     SELECT m.*, 
-           COALESCE(SUM(i.remain_qty), 0) as available_qty,
+           SUM(i.remain_qty) as available_qty,
            COUNT(DISTINCT i.lot_number) as lot_count
     FROM master m
-    LEFT JOIN inbound i ON m.item_code = i.item_code AND i.remain_qty > 0 AND i.quality_status = '합격'
+    INNER JOIN inbound i ON m.item_code = i.item_code AND i.remain_qty > 0 AND i.quality_status = '합격'
     WHERE m.category = '원료'
     GROUP BY m.item_code
+    HAVING available_qty > 0
     ORDER BY m.item_name
   `).all();
   

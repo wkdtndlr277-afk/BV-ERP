@@ -332,15 +332,150 @@ function closeModal() {
 
 // ========== 엑셀 다운로드 / 출력 유틸리티 ==========
 
-// 엑셀 다운로드 (CSV 형식)
-function downloadExcel(data, columns, filename) {
-  // BOM for UTF-8 Excel compatibility
+// 엑셀 다운로드 (실제 Excel XML 형식 - A4 용지 설정 포함)
+function downloadExcel(data, columns, filename, options = {}) {
+  const { title = filename, company = '(주)본비반트', summary = null } = options;
+  
+  // Excel XML 형식 (A4 용지, 세로 방향 기본)
+  const excelXML = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:x="urn:schemas-microsoft-com:office:excel">
+ <DocumentProperties xmlns="urn:schemas-microsoft-com:office:office">
+  <Title>${title}</Title>
+  <Author>${company}</Author>
+  <Created>${new Date().toISOString()}</Created>
+ </DocumentProperties>
+ <Styles>
+  <Style ss:ID="header">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+   </Borders>
+   <Font ss:Bold="1" ss:Size="10"/>
+   <Interior ss:Color="#E0E0E0" ss:Pattern="Solid"/>
+  </Style>
+  <Style ss:ID="cell">
+   <Alignment ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+   </Borders>
+   <Font ss:Size="9"/>
+  </Style>
+  <Style ss:ID="number">
+   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+   </Borders>
+   <Font ss:Size="9"/>
+   <NumberFormat ss:Format="#,##0.##"/>
+  </Style>
+  <Style ss:ID="center">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/>
+   </Borders>
+   <Font ss:Size="9"/>
+  </Style>
+  <Style ss:ID="title">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Font ss:Bold="1" ss:Size="14"/>
+  </Style>
+  <Style ss:ID="subtitle">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center"/>
+   <Font ss:Size="10"/>
+  </Style>
+  <Style ss:ID="summary">
+   <Alignment ss:Horizontal="Right" ss:Vertical="Center"/>
+   <Font ss:Bold="1" ss:Size="10"/>
+   <Interior ss:Color="#F5F5F5" ss:Pattern="Solid"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="${title.substring(0, 31)}">
+  <Table>
+   <!-- Title Row -->
+   <Row ss:Height="25">
+    <Cell ss:MergeAcross="${columns.length - 1}" ss:StyleID="title"><Data ss:Type="String">${title}</Data></Cell>
+   </Row>
+   <!-- Company & Date Row -->
+   <Row ss:Height="18">
+    <Cell ss:MergeAcross="${columns.length - 1}" ss:StyleID="subtitle"><Data ss:Type="String">${company} | 출력일: ${new Date().toLocaleString('ko-KR')}</Data></Cell>
+   </Row>
+   <!-- Empty Row -->
+   <Row ss:Height="10"></Row>
+   ${summary ? `
+   <!-- Summary Row -->
+   <Row ss:Height="20">
+    <Cell ss:MergeAcross="${columns.length - 1}" ss:StyleID="summary"><Data ss:Type="String">${summary}</Data></Cell>
+   </Row>
+   ` : ''}
+   <!-- Header Row -->
+   <Row ss:Height="22">
+    ${columns.map(col => `<Cell ss:StyleID="header"><Data ss:Type="String">${col.label}</Data></Cell>`).join('\n    ')}
+   </Row>
+   <!-- Data Rows -->
+   ${data.map(row => `
+   <Row ss:Height="18">
+    ${columns.map(col => {
+      let value = row[col.key];
+      if (value === null || value === undefined) value = '';
+      const isNumber = col.type === 'number' || typeof value === 'number';
+      const style = col.type === 'center' ? 'center' : (isNumber ? 'number' : 'cell');
+      const dataType = isNumber ? 'Number' : 'String';
+      // XML 특수문자 이스케이프
+      if (typeof value === 'string') {
+        value = value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+      return `<Cell ss:StyleID="${style}"><Data ss:Type="${dataType}">${value}</Data></Cell>`;
+    }).join('\n    ')}
+   </Row>`).join('')}
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+   <PageSetup>
+    <Layout x:Orientation="Portrait"/>
+    <PageMargins x:Bottom="0.75" x:Left="0.7" x:Right="0.7" x:Top="0.75"/>
+    <Header x:Margin="0.3"/>
+    <Footer x:Margin="0.3"/>
+   </PageSetup>
+   <FitToPage/>
+   <Print>
+    <FitWidth>1</FitWidth>
+    <FitHeight>0</FitHeight>
+    <ValidPrinterInfo/>
+    <PaperSizeIndex>9</PaperSizeIndex>
+   </Print>
+  </WorksheetOptions>
+ </Worksheet>
+</Workbook>`;
+  
+  // Download as .xls (Excel will open XML format)
+  const blob = new Blob([excelXML], { type: 'application/vnd.ms-excel' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${filename}_${formatDate(new Date())}.xls`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+  
+  showToast(`${filename} 다운로드 완료`, 'success');
+}
+
+// CSV 다운로드 (백업용)
+function downloadCSV(data, columns, filename) {
   const BOM = '\uFEFF';
-  
-  // Header row
   const header = columns.map(col => `"${col.label}"`).join(',');
-  
-  // Data rows
   const rows = data.map(row => {
     return columns.map(col => {
       let value = row[col.key];
@@ -354,16 +489,12 @@ function downloadExcel(data, columns, filename) {
   });
   
   const csv = BOM + header + '\n' + rows.join('\n');
-  
-  // Download
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = `${filename}_${formatDate(new Date())}.csv`;
   link.click();
   URL.revokeObjectURL(link.href);
-  
-  showToast(`${filename} 다운로드 완료`, 'success');
 }
 
 // 출력 기능
@@ -447,8 +578,14 @@ function printData(title, tableHtml, additionalInfo = '') {
         .badge-fail { background: #f8d7da; color: #721c24; }
         .badge-blue { background: #cce5ff; color: #004085; }
         .badge-green { background: #d4edda; color: #155724; }
+        .badge-orange { background: #ffe5cc; color: #995200; }
+        .badge-yellow { background: #fff3cd; color: #856404; }
         .text-red { color: #dc3545; }
         .text-green { color: #28a745; }
+        .text-blue { color: #007bff; }
+        .text-orange { color: #fd7e14; }
+        .text-purple { color: #6f42c1; }
+        .text-yellow { color: #ffc107; }
         .summary-box {
           display: inline-block;
           margin: 5px 10px;
@@ -6619,85 +6756,140 @@ window.printProductCatalog = printProductCatalog;
 
 // ========== 엑셀 다운로드 / 출력 함수들 ==========
 
-// 일별 수불부 다운로드
+// 일별 수불부 다운로드 (LOT 기반)
 function downloadDailyReport() {
   const data = window.dailyReportData || [];
   const date = window.dailyReportDate || formatDate(new Date());
   
+  // LOT 기반 컬럼
   const columns = [
-    { key: 'item_code', label: '품목코드' },
+    { key: 'lot_number', label: 'LOT번호' },
     { key: 'item_name', label: '품목명' },
-    { key: 'category', label: '구분' },
-    { key: 'inbound', label: '입고' },
-    { key: 'usage', label: '사용' },
-    { key: 'outbound', label: '출고' },
-    { key: 'adjustment', label: '조정' },
-    { key: 'current_stock', label: '현재고' }
+    { key: 'item_code', label: '품목코드' },
+    { key: 'inbound_date', label: '입고일' },
+    { key: 'expiry_date', label: '유통기한' },
+    { key: 'trans_type', label: '구분', type: 'center' },
+    { key: 'inbound_qty', label: '입고량', type: 'number' },
+    { key: 'usage_qty', label: '사용량', type: 'number' },
+    { key: 'lot_remain_qty', label: '재고량', type: 'number' }
   ];
   
-  downloadExcel(data, columns, `일별수불부_${date}`);
+  // 데이터 가공 (사용량 계산)
+  const exportData = data.map(row => ({
+    ...row,
+    usage_qty: row.trans_type === '사용' ? Math.abs(row.quantity) : ''
+  }));
+  
+  // 요약 정보 계산
+  const totalInbound = data.filter(d => d.trans_type === '입고').reduce((sum, d) => sum + (d.quantity || 0), 0);
+  const totalUsage = data.filter(d => d.trans_type === '사용').reduce((sum, d) => sum + Math.abs(d.quantity || 0), 0);
+  const summary = `입고: +${formatNumber(totalInbound)} | 사용: -${formatNumber(totalUsage)} | 총 ${data.length}건`;
+  
+  downloadExcel(exportData, columns, `일별수불부_${date}`, {
+    title: `일별 수불부 (${date})`,
+    summary: summary
+  });
 }
 
-// 일별 수불부 출력
+// 일별 수불부 출력 (LOT 기반)
 function printDailyReport() {
   const data = window.dailyReportData || [];
   const date = window.dailyReportDate || formatDate(new Date());
   
   const columns = [
-    { key: 'item_code', label: '품목코드' },
+    { key: 'lot_number', label: 'LOT번호' },
     { key: 'item_name', label: '품목명' },
-    { key: 'category', label: '구분', type: 'center' },
-    { key: 'inbound', label: '입고', type: 'number', format: (v) => v > 0 ? '+' + formatNumber(v) : '-' },
-    { key: 'usage', label: '사용', type: 'number', format: (v) => v > 0 ? '-' + formatNumber(v) : '-' },
-    { key: 'outbound', label: '출고', type: 'number', format: (v) => v > 0 ? '-' + formatNumber(v) : '-' },
-    { key: 'adjustment', label: '조정', type: 'number', format: (v) => v !== 0 ? (v > 0 ? '+' : '') + formatNumber(v) : '-' },
-    { key: 'current_stock', label: '현재고', type: 'number' }
+    { key: 'inbound_date', label: '입고일', type: 'center' },
+    { key: 'expiry_date', label: '유통기한', type: 'center' },
+    { key: 'trans_type', label: '구분', type: 'center', format: (v) => {
+      const colors = { '입고': 'badge-blue', '사용': 'badge-orange', '재고조정': 'badge-yellow' };
+      return `<span class="badge ${colors[v] || ''}">${v}</span>`;
+    }},
+    { key: 'inbound_qty', label: '입고량', type: 'number', format: (v) => v ? formatNumber(v) : '-' },
+    { key: 'usage_qty', label: '사용량', type: 'number', format: (v, row) => row.trans_type === '사용' ? formatNumber(Math.abs(row.quantity)) : '-' },
+    { key: 'lot_remain_qty', label: '재고량', type: 'number', format: (v, row) => v !== null && v !== undefined ? formatNumber(v) : (row.remain_qty !== null ? formatNumber(row.remain_qty) : '-') }
   ];
   
+  const totalInbound = data.filter(d => d.trans_type === '입고').reduce((sum, d) => sum + (d.quantity || 0), 0);
+  const totalUsage = data.filter(d => d.trans_type === '사용').reduce((sum, d) => sum + Math.abs(d.quantity || 0), 0);
+  
   const tableHtml = tableToHtml(data, columns);
-  printData(`일별 수불부 (${date})`, tableHtml, `<strong>기준일:</strong> ${date} | <strong>조회 품목:</strong> ${data.length}개`);
+  printData(`일별 수불부 (${date})`, tableHtml, 
+    `<div class="summary-box">입고 <strong class="text-blue">+${formatNumber(totalInbound)}</strong></div>
+     <div class="summary-box">사용 <strong class="text-orange">-${formatNumber(totalUsage)}</strong></div>
+     <div class="summary-box">총 <strong>${data.length}건</strong></div>`);
 }
 
-// 월별 수불부 다운로드
+// 월별 수불부 다운로드 (LOT 기반, 이월량 포함)
 function downloadMonthlyReport() {
   const data = window.monthlyReportData || [];
   const period = window.monthlyReportPeriod || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
   
+  // LOT 기반 컬럼 (이월량 포함)
   const columns = [
-    { key: 'item_code', label: '품목코드' },
+    { key: 'lot_number', label: 'LOT번호' },
     { key: 'item_name', label: '품목명' },
-    { key: 'category', label: '구분' },
-    { key: 'opening_stock', label: '월초재고' },
-    { key: 'total_inbound', label: '입고' },
-    { key: 'total_usage', label: '사용' },
-    { key: 'total_outbound', label: '출고' },
-    { key: 'total_adjustment', label: '조정' },
-    { key: 'closing_stock', label: '월말재고' }
+    { key: 'item_code', label: '품목코드' },
+    { key: 'inbound_date', label: '입고일' },
+    { key: 'expiry_date', label: '유통기한' },
+    { key: 'carry_over', label: '이월', type: 'number' },
+    { key: 'month_inbound', label: '입고', type: 'number' },
+    { key: 'month_usage', label: '사용', type: 'number' },
+    { key: 'month_adjustment', label: '조정', type: 'number' },
+    { key: 'closing_qty', label: '월말잔량', type: 'number' }
   ];
   
-  downloadExcel(data, columns, `월별수불부_${period.year}년${period.month}월`);
+  // 요약 계산
+  const totals = data.reduce((acc, row) => ({
+    carry_over: acc.carry_over + (row.carry_over || 0),
+    inbound: acc.inbound + (row.month_inbound || 0),
+    usage: acc.usage + (row.month_usage || 0),
+    adjustment: acc.adjustment + (row.month_adjustment || 0),
+    closing: acc.closing + (row.closing_qty || 0)
+  }), { carry_over: 0, inbound: 0, usage: 0, adjustment: 0, closing: 0 });
+  
+  const summary = `이월: ${formatNumber(totals.carry_over)} | 입고: +${formatNumber(totals.inbound)} | 사용: -${formatNumber(totals.usage)} | 조정: ${formatNumber(totals.adjustment)} | 월말: ${formatNumber(totals.closing)} | LOT ${data.length}건`;
+  
+  downloadExcel(data, columns, `월별수불부_${period.year}년${String(period.month).padStart(2,'0')}월`, {
+    title: `월별 수불부 (${period.year}년 ${parseInt(period.month)}월)`,
+    summary: summary
+  });
 }
 
-// 월별 수불부 출력
+// 월별 수불부 출력 (LOT 기반, 이월량 포함)
 function printMonthlyReport() {
   const data = window.monthlyReportData || [];
   const period = window.monthlyReportPeriod || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
   
   const columns = [
-    { key: 'item_code', label: '품목코드' },
+    { key: 'lot_number', label: 'LOT번호' },
     { key: 'item_name', label: '품목명' },
-    { key: 'category', label: '구분', type: 'center' },
-    { key: 'opening_stock', label: '월초재고', type: 'number' },
-    { key: 'total_inbound', label: '입고', type: 'number' },
-    { key: 'total_usage', label: '사용', type: 'number' },
-    { key: 'total_outbound', label: '출고', type: 'number' },
-    { key: 'total_adjustment', label: '조정', type: 'number' },
-    { key: 'closing_stock', label: '월말재고', type: 'number' }
+    { key: 'inbound_date', label: '입고일', type: 'center' },
+    { key: 'expiry_date', label: '유통기한', type: 'center' },
+    { key: 'carry_over', label: '이월', type: 'number', format: (v) => v > 0 ? formatNumber(v) : '-' },
+    { key: 'month_inbound', label: '입고', type: 'number', format: (v) => v > 0 ? '+' + formatNumber(v) : '-' },
+    { key: 'month_usage', label: '사용', type: 'number', format: (v) => v > 0 ? '-' + formatNumber(v) : '-' },
+    { key: 'month_adjustment', label: '조정', type: 'number', format: (v) => v !== 0 ? formatNumber(v) : '-' },
+    { key: 'closing_qty', label: '월말잔량', type: 'number' }
   ];
+  
+  // 요약 계산
+  const totals = data.reduce((acc, row) => ({
+    carry_over: acc.carry_over + (row.carry_over || 0),
+    inbound: acc.inbound + (row.month_inbound || 0),
+    usage: acc.usage + (row.month_usage || 0),
+    adjustment: acc.adjustment + (row.month_adjustment || 0),
+    closing: acc.closing + (row.closing_qty || 0)
+  }), { carry_over: 0, inbound: 0, usage: 0, adjustment: 0, closing: 0 });
   
   const tableHtml = tableToHtml(data, columns);
   printData(`월별 수불부 (${period.year}년 ${parseInt(period.month)}월)`, tableHtml, 
-    `<strong>기간:</strong> ${period.year}년 ${parseInt(period.month)}월 | <strong>조회 품목:</strong> ${data.length}개`);
+    `<div class="summary-box">이월 <strong class="text-purple">${formatNumber(totals.carry_over)}</strong></div>
+     <div class="summary-box">입고 <strong class="text-blue">+${formatNumber(totals.inbound)}</strong></div>
+     <div class="summary-box">사용 <strong class="text-orange">-${formatNumber(totals.usage)}</strong></div>
+     <div class="summary-box">조정 <strong class="text-yellow">${formatNumber(totals.adjustment)}</strong></div>
+     <div class="summary-box">월말 <strong>${formatNumber(totals.closing)}</strong></div>
+     <div class="summary-box">LOT <strong>${data.length}건</strong></div>`);
 }
 
 // 재고 현황 다운로드
@@ -6853,40 +7045,70 @@ function printMasterList() {
     `<strong>조회 구분:</strong> ${category || '전체'} | <strong>총 품목:</strong> ${data.length}개`);
 }
 
-// 수불 통합검색 다운로드
+// 수불 통합검색 다운로드 (LOT 기반)
 function downloadTransactionSearch() {
   const data = window.transactionSearchData || [];
   const params = window.transactionSearchParams || {};
   
   const columns = [
     { key: 'trans_date', label: '일자' },
+    { key: 'lot_number', label: 'LOT번호' },
     { key: 'item_name', label: '품목명' },
-    { key: 'trans_type', label: '구분' },
-    { key: 'quantity', label: '수량' },
-    { key: 'lot_number', label: 'LOT' },
-    { key: 'remain_qty', label: '잔량' }
+    { key: 'item_code', label: '품목코드' },
+    { key: 'inbound_date', label: '입고일' },
+    { key: 'expiry_date', label: '유통기한' },
+    { key: 'trans_type', label: '구분', type: 'center' },
+    { key: 'inbound_qty', label: '입고량', type: 'number' },
+    { key: 'usage_qty', label: '사용량', type: 'number' },
+    { key: 'lot_remain_qty', label: '재고량', type: 'number' }
   ];
   
-  downloadExcel(data, columns, `수불검색_${params.startDate}_${params.endDate}`);
+  // 데이터 가공
+  const exportData = data.map(row => ({
+    ...row,
+    usage_qty: row.trans_type === '사용' ? Math.abs(row.quantity) : ''
+  }));
+  
+  // 요약 계산
+  const totalInbound = data.filter(d => d.trans_type === '입고').reduce((sum, d) => sum + (d.quantity || 0), 0);
+  const totalUsage = data.filter(d => d.trans_type === '사용').reduce((sum, d) => sum + Math.abs(d.quantity || 0), 0);
+  const summary = `기간: ${params.startDate || '-'} ~ ${params.endDate || '-'} | 입고: +${formatNumber(totalInbound)} | 사용: -${formatNumber(totalUsage)} | 총 ${data.length}건`;
+  
+  downloadExcel(exportData, columns, `수불검색_${params.startDate || ''}_${params.endDate || ''}`, {
+    title: '수불 통합검색',
+    summary: summary
+  });
 }
 
-// 수불 통합검색 출력
+// 수불 통합검색 출력 (LOT 기반)
 function printTransactionSearch() {
   const data = window.transactionSearchData || [];
   const params = window.transactionSearchParams || {};
   
   const columns = [
-    { key: 'trans_date', label: '일자' },
+    { key: 'trans_date', label: '일자', type: 'center' },
+    { key: 'lot_number', label: 'LOT번호' },
     { key: 'item_name', label: '품목명' },
-    { key: 'trans_type', label: '구분', type: 'center', format: (v) => `<span class="badge badge-blue">${v}</span>` },
-    { key: 'quantity', label: '수량', type: 'number', format: (v) => (v > 0 ? '+' : '') + formatNumber(v) },
-    { key: 'lot_number', label: 'LOT' },
-    { key: 'remain_qty', label: '잔량', type: 'number', format: (v) => v !== null ? formatNumber(v) : '-' }
+    { key: 'inbound_date', label: '입고일', type: 'center' },
+    { key: 'expiry_date', label: '유통기한', type: 'center' },
+    { key: 'trans_type', label: '구분', type: 'center', format: (v) => {
+      const colors = { '입고': 'badge-blue', '사용': 'badge-orange', '재고조정': 'badge-yellow' };
+      return `<span class="badge ${colors[v] || ''}">${v}</span>`;
+    }},
+    { key: 'inbound_qty', label: '입고량', type: 'number', format: (v) => v ? formatNumber(v) : '-' },
+    { key: 'usage_qty', label: '사용량', type: 'number', format: (v, row) => row.trans_type === '사용' ? formatNumber(Math.abs(row.quantity)) : '-' },
+    { key: 'lot_remain_qty', label: '재고량', type: 'number', format: (v, row) => v !== null && v !== undefined ? formatNumber(v) : (row.remain_qty !== null ? formatNumber(row.remain_qty) : '-') }
   ];
+  
+  const totalInbound = data.filter(d => d.trans_type === '입고').reduce((sum, d) => sum + (d.quantity || 0), 0);
+  const totalUsage = data.filter(d => d.trans_type === '사용').reduce((sum, d) => sum + Math.abs(d.quantity || 0), 0);
   
   const tableHtml = tableToHtml(data, columns);
   printData('수불 통합검색', tableHtml, 
-    `<strong>조회 기간:</strong> ${params.startDate} ~ ${params.endDate} | <strong>검색 결과:</strong> ${data.length}건`);
+    `<div class="summary-box">기간 <strong>${params.startDate || '-'} ~ ${params.endDate || '-'}</strong></div>
+     <div class="summary-box">입고 <strong class="text-blue">+${formatNumber(totalInbound)}</strong></div>
+     <div class="summary-box">사용 <strong class="text-orange">-${formatNumber(totalUsage)}</strong></div>
+     <div class="summary-box">총 <strong>${data.length}건</strong></div>`);
 }
 
 // 엑셀/출력 함수들 전역 노출

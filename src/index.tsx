@@ -17,6 +17,7 @@ import adminRoutes from './routes/admin';
 import processRoutes from './routes/process';
 import productCatalogRoutes from './routes/product-catalog';
 import authRoutes from './routes/auth';
+import microbialRoutes from './routes/microbial';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -38,6 +39,7 @@ app.route('/api/admin', adminRoutes);
 app.route('/api/process', processRoutes);
 app.route('/api/product-catalog', productCatalogRoutes);
 app.route('/api/auth', authRoutes);
+app.route('/api/microbial', microbialRoutes);
 
 // 시스템 버전
 const SYSTEM_VERSION = '1.1.0';
@@ -217,6 +219,11 @@ app.get('/*', (c) => {
                 <a href="#process-quality" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="process-quality">
                     <i class="fas fa-flask w-5"></i>
                     <span>반제품 공정품질</span>
+                </a>
+                
+                <a href="#microbial-test" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="microbial-test">
+                    <i class="fas fa-microscope w-5"></i>
+                    <span>미생물 검사</span>
                 </a>
                 
                 <div class="pt-4 pb-2">

@@ -574,9 +574,22 @@ async function loadAlertCount() {
   }
 }
 
+// 페이지 히스토리 관리 (뒤로가기용)
+const pageHistory = [];
+
 // Navigation
 function navigateTo(page) {
+  // 현재 페이지를 히스토리에 추가 (같은 페이지가 아닐 때만)
+  if (state.currentPage && state.currentPage !== page) {
+    pageHistory.push(state.currentPage);
+    // 히스토리 최대 20개 유지
+    if (pageHistory.length > 20) pageHistory.shift();
+  }
+  
   state.currentPage = page;
+  
+  // URL 해시 업데이트
+  window.history.pushState({ page }, '', `#${page}`);
   
   // Update sidebar active state
   document.querySelectorAll('.sidebar-link').forEach(link => {
@@ -589,6 +602,41 @@ function navigateTo(page) {
   // Load page content
   renderPage(page);
 }
+
+// 뒤로가기 함수
+function goBack() {
+  if (pageHistory.length > 0) {
+    const prevPage = pageHistory.pop();
+    state.currentPage = prevPage;
+    window.history.pushState({ page: prevPage }, '', `#${prevPage}`);
+    
+    document.querySelectorAll('.sidebar-link').forEach(link => {
+      link.classList.remove('active');
+      if (link.dataset.page === prevPage) {
+        link.classList.add('active');
+      }
+    });
+    
+    renderPage(prevPage);
+  } else {
+    navigateTo('dashboard');
+  }
+}
+
+// 브라우저 뒤로가기/앞으로가기 버튼 처리
+window.addEventListener('popstate', function(event) {
+  const hash = window.location.hash.slice(1) || 'dashboard';
+  state.currentPage = hash;
+  
+  document.querySelectorAll('.sidebar-link').forEach(link => {
+    link.classList.remove('active');
+    if (link.dataset.page === hash) {
+      link.classList.add('active');
+    }
+  });
+  
+  renderPage(hash);
+});
 
 // Page Renderers
 function renderPage(page) {
@@ -612,6 +660,7 @@ function renderPage(page) {
     case 'admin': renderAdmin(); break;
     case 'process-quality': renderProcessQuality(); break;
     case 'product-catalog': renderProductCatalog(); break;
+    case 'microbial-test': renderMicrobialTest(); break;
     default: renderDashboard();
   }
 }
@@ -5049,6 +5098,592 @@ window.processInboundUpload = processInboundUpload;
 window.filterSuppliers = filterSuppliers;
 window.filterSuppliersByType = filterSuppliersByType;
 window.renderSuppliersTable = renderSuppliersTable;
+window.goBack = goBack;
+
+// ========== 미생물 검사 ==========
+
+let microbialTestData = [];
+
+async function renderMicrobialTest() {
+  const content = document.getElementById('page-content');
+  const today = formatDate(new Date());
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-4">
+          <button onclick="goBack()" class="text-gray-500 hover:text-gray-700">
+            <i class="fas fa-arrow-left text-xl"></i>
+          </button>
+          <h2 class="text-2xl font-bold text-gray-800">
+            <i class="fas fa-microscope mr-2 text-green-600"></i>
+            미생물 검사
+          </h2>
+        </div>
+        <button onclick="showMicrobialModal()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg">
+          <i class="fas fa-plus mr-2"></i> 검사 등록
+        </button>
+      </div>
+      
+      <!-- 탭 -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="border-b">
+          <nav class="flex">
+            <button onclick="switchMicrobialTab('daily')" class="microbial-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-blue-500 text-blue-600" data-tab="daily">
+              <i class="fas fa-calendar-day mr-2"></i> 일별 기록
+            </button>
+            <button onclick="switchMicrobialTab('monthly')" class="microbial-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="monthly">
+              <i class="fas fa-calendar-alt mr-2"></i> 월별 리포트
+            </button>
+          </nav>
+        </div>
+        
+        <div id="microbial-tab-content" class="p-6">
+          <!-- 탭 내용 -->
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadMicrobialDaily(today);
+}
+
+function switchMicrobialTab(tab) {
+  document.querySelectorAll('.microbial-tab').forEach(t => {
+    t.classList.remove('border-blue-500', 'text-blue-600');
+    t.classList.add('border-transparent');
+  });
+  document.querySelector(`.microbial-tab[data-tab="${tab}"]`).classList.add('border-blue-500', 'text-blue-600');
+  document.querySelector(`.microbial-tab[data-tab="${tab}"]`).classList.remove('border-transparent');
+  
+  if (tab === 'daily') {
+    loadMicrobialDaily(formatDate(new Date()));
+  } else {
+    loadMicrobialMonthly();
+  }
+}
+
+async function loadMicrobialDaily(date) {
+  const container = document.getElementById('microbial-tab-content');
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex items-center gap-4">
+        <input type="text" id="microbial-date" value="${date}" 
+               class="border rounded-lg px-4 py-2" placeholder="YYYY-MM-DD"
+               onchange="loadMicrobialDaily(this.value)">
+        <button onclick="loadMicrobialDaily(document.getElementById('microbial-date').value)" 
+                class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg">
+          <i class="fas fa-search mr-1"></i> 조회
+        </button>
+        <button onclick="downloadMicrobialExcel('daily')" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg">
+          <i class="fas fa-file-excel mr-1"></i> 엑셀
+        </button>
+        <button onclick="printMicrobialReport('daily')" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg">
+          <i class="fas fa-print mr-1"></i> 출력
+        </button>
+      </div>
+      <div id="microbial-daily-content">
+        <div class="flex justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>
+      </div>
+    </div>
+  `;
+  
+  try {
+    const result = await api(`/microbial/daily/${date}`);
+    microbialTestData = result.data || [];
+    const summary = result.summary || { total: 0, pass: 0, fail: 0 };
+    
+    document.getElementById('microbial-daily-content').innerHTML = `
+      <!-- 요약 -->
+      <div class="grid grid-cols-3 gap-4 mb-6">
+        <div class="bg-blue-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-blue-600">${summary.total}</p>
+          <p class="text-sm text-gray-600">총 검사</p>
+        </div>
+        <div class="bg-green-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-green-600">${summary.pass}</p>
+          <p class="text-sm text-gray-600">적합</p>
+        </div>
+        <div class="bg-red-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-red-600">${summary.fail}</p>
+          <p class="text-sm text-gray-600">부적합</p>
+        </div>
+      </div>
+      
+      <!-- 테이블 -->
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100">
+            <tr>
+              <th class="px-3 py-2 text-left">제품명</th>
+              <th class="px-3 py-2 text-left">품목코드</th>
+              <th class="px-3 py-2 text-center">일반세균</th>
+              <th class="px-3 py-2 text-center">대장균</th>
+              <th class="px-3 py-2 text-center">중량(평균)</th>
+              <th class="px-3 py-2 text-center">종합판정</th>
+              <th class="px-3 py-2 text-center">검사자</th>
+              <th class="px-3 py-2 text-center">관리</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${microbialTestData.length === 0 ? `
+              <tr><td colspan="8" class="text-center py-8 text-gray-500">검사 기록이 없습니다</td></tr>
+            ` : microbialTestData.map(item => `
+              <tr class="hover:bg-gray-50">
+                <td class="px-3 py-2 font-medium">${item.product_name}</td>
+                <td class="px-3 py-2 text-gray-500">${item.product_code}</td>
+                <td class="px-3 py-2 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${item.total_bacteria_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                    ${item.total_bacteria || '-'}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${item.coliform_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                    ${item.coliform || '-'}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-center">${item.weight_avg ? item.weight_avg.toFixed(1) + 'g' : '-'}</td>
+                <td class="px-3 py-2 text-center">
+                  <span class="px-2 py-1 rounded text-xs font-bold ${item.overall_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                    ${item.overall_judgment}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-center text-gray-500">${item.inspector || '-'}</td>
+                <td class="px-3 py-2 text-center">
+                  <button onclick="editMicrobial(${item.id})" class="text-blue-600 hover:text-blue-800 mr-2">
+                    <i class="fas fa-edit"></i>
+                  </button>
+                  <button onclick="deleteMicrobial(${item.id})" class="text-red-600 hover:text-red-800">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('microbial-daily-content').innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+async function loadMicrobialMonthly() {
+  const container = document.getElementById('microbial-tab-content');
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex items-center gap-4">
+        <select id="microbial-year" class="border rounded-lg px-4 py-2">
+          ${[2024, 2025, 2026, 2027].map(y => `<option value="${y}" ${y === year ? 'selected' : ''}>${y}년</option>`).join('')}
+        </select>
+        <select id="microbial-month" class="border rounded-lg px-4 py-2">
+          ${[1,2,3,4,5,6,7,8,9,10,11,12].map(m => `<option value="${String(m).padStart(2,'0')}" ${m === now.getMonth()+1 ? 'selected' : ''}>${m}월</option>`).join('')}
+        </select>
+        <button onclick="loadMicrobialMonthlyData()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg">
+          <i class="fas fa-search mr-1"></i> 조회
+        </button>
+        <button onclick="downloadMicrobialExcel('monthly')" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg">
+          <i class="fas fa-file-excel mr-1"></i> 엑셀
+        </button>
+        <button onclick="printMicrobialReport('monthly')" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg">
+          <i class="fas fa-print mr-1"></i> 출력
+        </button>
+      </div>
+      <div id="microbial-monthly-content">
+        <div class="flex justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>
+      </div>
+    </div>
+  `;
+  
+  loadMicrobialMonthlyData();
+}
+
+async function loadMicrobialMonthlyData() {
+  const year = document.getElementById('microbial-year').value;
+  const month = document.getElementById('microbial-month').value;
+  
+  try {
+    const result = await api(`/microbial/monthly/${year}/${month}`);
+    microbialTestData = result.data || [];
+    const summary = result.summary || { total: 0, pass: 0, fail: 0 };
+    const dailySummary = result.dailySummary || [];
+    
+    document.getElementById('microbial-monthly-content').innerHTML = `
+      <!-- 월간 요약 -->
+      <div class="grid grid-cols-3 gap-4 mb-6">
+        <div class="bg-blue-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-blue-600">${summary.total}</p>
+          <p class="text-sm text-gray-600">총 검사</p>
+        </div>
+        <div class="bg-green-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-green-600">${summary.pass}</p>
+          <p class="text-sm text-gray-600">적합</p>
+        </div>
+        <div class="bg-red-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-red-600">${summary.fail}</p>
+          <p class="text-sm text-gray-600">부적합</p>
+        </div>
+      </div>
+      
+      <!-- 일별 요약 -->
+      <h3 class="font-bold text-gray-800 mb-2">일별 현황</h3>
+      <div class="overflow-x-auto mb-6">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100">
+            <tr>
+              <th class="px-3 py-2 text-left">날짜</th>
+              <th class="px-3 py-2 text-center">총 검사</th>
+              <th class="px-3 py-2 text-center">적합</th>
+              <th class="px-3 py-2 text-center">부적합</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${dailySummary.map(d => `
+              <tr class="hover:bg-gray-50 cursor-pointer" onclick="loadMicrobialDaily('${d.test_date}'); switchMicrobialTab('daily');">
+                <td class="px-3 py-2">${d.test_date}</td>
+                <td class="px-3 py-2 text-center">${d.total}</td>
+                <td class="px-3 py-2 text-center text-green-600">${d.pass}</td>
+                <td class="px-3 py-2 text-center text-red-600">${d.fail}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      
+      <!-- 전체 상세 -->
+      <h3 class="font-bold text-gray-800 mb-2">상세 기록</h3>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100">
+            <tr>
+              <th class="px-3 py-2 text-left">날짜</th>
+              <th class="px-3 py-2 text-left">제품명</th>
+              <th class="px-3 py-2 text-center">일반세균</th>
+              <th class="px-3 py-2 text-center">대장균</th>
+              <th class="px-3 py-2 text-center">중량(평균)</th>
+              <th class="px-3 py-2 text-center">종합판정</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${microbialTestData.map(item => `
+              <tr class="hover:bg-gray-50">
+                <td class="px-3 py-2">${item.test_date}</td>
+                <td class="px-3 py-2 font-medium">${item.product_name}</td>
+                <td class="px-3 py-2 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${item.total_bacteria_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                    ${item.total_bacteria || '-'}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${item.coliform_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                    ${item.coliform || '-'}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-center">${item.weight_avg ? item.weight_avg.toFixed(1) + 'g' : '-'}</td>
+                <td class="px-3 py-2 text-center">
+                  <span class="px-2 py-1 rounded text-xs font-bold ${item.overall_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                    ${item.overall_judgment}
+                  </span>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('microbial-monthly-content').innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+async function showMicrobialModal(item = null) {
+  const today = formatDate(new Date());
+  
+  // 제품 목록 가져오기
+  let products = [];
+  try {
+    const result = await api('/microbial/products');
+    products = result.data || [];
+  } catch (e) {}
+  
+  showModal(item ? '미생물 검사 수정' : '미생물 검사 등록', `
+    <form id="microbial-form" class="space-y-4">
+      <input type="hidden" id="microbial-id" value="${item?.id || ''}">
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">검사일 <span class="text-red-500">*</span></label>
+          <input type="text" id="microbial-test-date" value="${item?.test_date || today}" required
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="YYYY-MM-DD">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">검사자</label>
+          <input type="text" id="microbial-inspector" value="${item?.inspector || ''}"
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택 <span class="text-red-500">*</span></label>
+          <select id="microbial-product" required class="w-full px-3 py-2 border rounded-lg" onchange="selectMicrobialProduct()">
+            <option value="">-- 제품 선택 --</option>
+            ${products.map(p => `<option value="${p.item_code}" data-name="${p.item_name}" ${item?.product_code === p.item_code ? 'selected' : ''}>${p.item_name} (${p.item_code})</option>`).join('')}
+            <option value="direct">직접입력</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">품목코드</label>
+          <input type="text" id="microbial-product-code" value="${item?.product_code || ''}" 
+                 class="w-full px-3 py-2 border rounded-lg" readonly>
+        </div>
+      </div>
+      
+      <div id="direct-product-input" class="${item ? '' : 'hidden'}">
+        <label class="block text-sm font-medium text-gray-700 mb-1">제품명 (직접입력)</label>
+        <input type="text" id="microbial-product-name" value="${item?.product_name || ''}"
+               class="w-full px-3 py-2 border rounded-lg">
+      </div>
+      
+      <div class="border-t pt-4">
+        <h4 class="font-medium text-gray-800 mb-3"><i class="fas fa-bacteria mr-2"></i>일반세균</h4>
+        <div class="grid grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">측정값 (CFU/g)</label>
+            <input type="text" id="microbial-bacteria" value="${item?.total_bacteria || ''}"
+                   class="w-full px-3 py-2 border rounded-lg" placeholder="예: 50,000">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">기준</label>
+            <input type="text" id="microbial-bacteria-std" value="${item?.total_bacteria_standard || '100,000 이하'}"
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">판정</label>
+            <select id="microbial-bacteria-judgment" class="w-full px-3 py-2 border rounded-lg">
+              <option value="적합" ${item?.total_bacteria_judgment !== '부적합' ? 'selected' : ''}>적합</option>
+              <option value="부적합" ${item?.total_bacteria_judgment === '부적합' ? 'selected' : ''}>부적합</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      
+      <div class="border-t pt-4">
+        <h4 class="font-medium text-gray-800 mb-3"><i class="fas fa-vial mr-2"></i>대장균</h4>
+        <div class="grid grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">측정값</label>
+            <input type="text" id="microbial-coliform" value="${item?.coliform || ''}"
+                   class="w-full px-3 py-2 border rounded-lg" placeholder="예: 음성">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">기준</label>
+            <input type="text" id="microbial-coliform-std" value="${item?.coliform_standard || '음성'}"
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">판정</label>
+            <select id="microbial-coliform-judgment" class="w-full px-3 py-2 border rounded-lg">
+              <option value="적합" ${item?.coliform_judgment !== '부적합' ? 'selected' : ''}>적합</option>
+              <option value="부적합" ${item?.coliform_judgment === '부적합' ? 'selected' : ''}>부적합</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      
+      <div class="border-t pt-4">
+        <h4 class="font-medium text-gray-800 mb-3"><i class="fas fa-weight mr-2"></i>중량 (최대 5개)</h4>
+        <div class="grid grid-cols-5 gap-2 mb-2">
+          <input type="number" id="microbial-weight1" value="${item?.weight_1 || ''}" step="0.1"
+                 class="w-full px-3 py-2 border rounded-lg text-center" placeholder="1">
+          <input type="number" id="microbial-weight2" value="${item?.weight_2 || ''}" step="0.1"
+                 class="w-full px-3 py-2 border rounded-lg text-center" placeholder="2">
+          <input type="number" id="microbial-weight3" value="${item?.weight_3 || ''}" step="0.1"
+                 class="w-full px-3 py-2 border rounded-lg text-center" placeholder="3">
+          <input type="number" id="microbial-weight4" value="${item?.weight_4 || ''}" step="0.1"
+                 class="w-full px-3 py-2 border rounded-lg text-center" placeholder="4">
+          <input type="number" id="microbial-weight5" value="${item?.weight_5 || ''}" step="0.1"
+                 class="w-full px-3 py-2 border rounded-lg text-center" placeholder="5">
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">기준 중량</label>
+            <input type="text" id="microbial-weight-std" value="${item?.weight_standard || ''}"
+                   class="w-full px-3 py-2 border rounded-lg" placeholder="예: 100g ± 5%">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">판정</label>
+            <select id="microbial-weight-judgment" class="w-full px-3 py-2 border rounded-lg">
+              <option value="적합" ${item?.weight_judgment !== '부적합' ? 'selected' : ''}>적합</option>
+              <option value="부적합" ${item?.weight_judgment === '부적합' ? 'selected' : ''}>부적합</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+        <textarea id="microbial-memo" rows="2" class="w-full px-3 py-2 border rounded-lg">${item?.memo || ''}</textarea>
+      </div>
+    </form>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveMicrobial()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">저장</button>
+  `);
+}
+
+function selectMicrobialProduct() {
+  const select = document.getElementById('microbial-product');
+  const codeInput = document.getElementById('microbial-product-code');
+  const nameInput = document.getElementById('microbial-product-name');
+  const directDiv = document.getElementById('direct-product-input');
+  
+  if (select.value === 'direct') {
+    directDiv.classList.remove('hidden');
+    codeInput.readOnly = false;
+    codeInput.value = '';
+    nameInput.value = '';
+  } else if (select.value) {
+    directDiv.classList.add('hidden');
+    codeInput.readOnly = true;
+    codeInput.value = select.value;
+    nameInput.value = select.options[select.selectedIndex].dataset.name;
+  } else {
+    directDiv.classList.add('hidden');
+    codeInput.value = '';
+    nameInput.value = '';
+  }
+}
+
+async function saveMicrobial() {
+  const id = document.getElementById('microbial-id').value;
+  const select = document.getElementById('microbial-product');
+  
+  let product_code, product_name;
+  if (select.value === 'direct') {
+    product_code = document.getElementById('microbial-product-code').value;
+    product_name = document.getElementById('microbial-product-name').value;
+  } else {
+    product_code = select.value;
+    product_name = select.options[select.selectedIndex]?.dataset.name || '';
+  }
+  
+  const data = {
+    test_date: document.getElementById('microbial-test-date').value,
+    product_code,
+    product_name,
+    total_bacteria: document.getElementById('microbial-bacteria').value,
+    total_bacteria_standard: document.getElementById('microbial-bacteria-std').value,
+    total_bacteria_judgment: document.getElementById('microbial-bacteria-judgment').value,
+    coliform: document.getElementById('microbial-coliform').value,
+    coliform_standard: document.getElementById('microbial-coliform-std').value,
+    coliform_judgment: document.getElementById('microbial-coliform-judgment').value,
+    weight_1: document.getElementById('microbial-weight1').value || null,
+    weight_2: document.getElementById('microbial-weight2').value || null,
+    weight_3: document.getElementById('microbial-weight3').value || null,
+    weight_4: document.getElementById('microbial-weight4').value || null,
+    weight_5: document.getElementById('microbial-weight5').value || null,
+    weight_standard: document.getElementById('microbial-weight-std').value,
+    weight_judgment: document.getElementById('microbial-weight-judgment').value,
+    inspector: document.getElementById('microbial-inspector').value,
+    memo: document.getElementById('microbial-memo').value
+  };
+  
+  if (!data.test_date || !data.product_code || !data.product_name) {
+    showToast('필수 항목을 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    if (id) {
+      await api(`/microbial/${id}`, 'PUT', data);
+      showToast('수정되었습니다', 'success');
+    } else {
+      await api('/microbial', 'POST', data);
+      showToast('등록되었습니다', 'success');
+    }
+    closeModal();
+    loadMicrobialDaily(data.test_date);
+  } catch (e) {
+    showToast('저장에 실패했습니다', 'error');
+  }
+}
+
+async function editMicrobial(id) {
+  const item = microbialTestData.find(i => i.id === id);
+  if (item) {
+    showMicrobialModal(item);
+  }
+}
+
+async function deleteMicrobial(id) {
+  if (!confirm('정말 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/microbial/${id}`, 'DELETE');
+    showToast('삭제되었습니다', 'success');
+    loadMicrobialDaily(document.getElementById('microbial-date')?.value || formatDate(new Date()));
+  } catch (e) {
+    showToast('삭제에 실패했습니다', 'error');
+  }
+}
+
+function downloadMicrobialExcel(type) {
+  const columns = [
+    { key: 'test_date', label: '검사일' },
+    { key: 'product_name', label: '제품명' },
+    { key: 'product_code', label: '품목코드' },
+    { key: 'total_bacteria', label: '일반세균' },
+    { key: 'total_bacteria_judgment', label: '일반세균판정' },
+    { key: 'coliform', label: '대장균' },
+    { key: 'coliform_judgment', label: '대장균판정' },
+    { key: 'weight_avg', label: '중량평균' },
+    { key: 'weight_judgment', label: '중량판정' },
+    { key: 'overall_judgment', label: '종합판정' },
+    { key: 'inspector', label: '검사자' }
+  ];
+  
+  const filename = type === 'daily' 
+    ? `미생물검사_${document.getElementById('microbial-date')?.value || formatDate(new Date())}`
+    : `미생물검사_${document.getElementById('microbial-year')?.value || ''}${document.getElementById('microbial-month')?.value || ''}`;
+  
+  downloadExcel(microbialTestData, columns, filename);
+}
+
+function printMicrobialReport(type) {
+  const title = type === 'daily' 
+    ? `미생물 검사 결과 - ${document.getElementById('microbial-date')?.value || formatDate(new Date())}`
+    : `미생물 검사 월별 리포트 - ${document.getElementById('microbial-year')?.value || ''}년 ${parseInt(document.getElementById('microbial-month')?.value || '1')}월`;
+  
+  const columns = [
+    { key: 'test_date', label: '검사일' },
+    { key: 'product_name', label: '제품명' },
+    { key: 'total_bacteria', label: '일반세균' },
+    { key: 'coliform', label: '대장균' },
+    { key: 'weight_avg', label: '중량평균', format: v => v ? v.toFixed(1) + 'g' : '-' },
+    { key: 'overall_judgment', label: '종합판정' }
+  ];
+  
+  const tableHtml = tableToHtml(microbialTestData, columns);
+  printData(title, tableHtml);
+}
+
+window.renderMicrobialTest = renderMicrobialTest;
+window.switchMicrobialTab = switchMicrobialTab;
+window.loadMicrobialDaily = loadMicrobialDaily;
+window.loadMicrobialMonthlyData = loadMicrobialMonthlyData;
+window.showMicrobialModal = showMicrobialModal;
+window.selectMicrobialProduct = selectMicrobialProduct;
+window.saveMicrobial = saveMicrobial;
+window.editMicrobial = editMicrobial;
+window.deleteMicrobial = deleteMicrobial;
+window.downloadMicrobialExcel = downloadMicrobialExcel;
+window.printMicrobialReport = printMicrobialReport;
 
 // ========== 제품 현황 관리 ==========
 

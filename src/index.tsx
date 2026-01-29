@@ -18,6 +18,7 @@ import processRoutes from './routes/process';
 import productCatalogRoutes from './routes/product-catalog';
 import authRoutes from './routes/auth';
 import microbialRoutes from './routes/microbial';
+import processKpiRoutes from './routes/process-kpi';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -40,6 +41,7 @@ app.route('/api/process', processRoutes);
 app.route('/api/product-catalog', productCatalogRoutes);
 app.route('/api/auth', authRoutes);
 app.route('/api/microbial', microbialRoutes);
+app.route('/api/process-kpi', processKpiRoutes);
 
 // 시스템 버전
 const SYSTEM_VERSION = '1.1.0';

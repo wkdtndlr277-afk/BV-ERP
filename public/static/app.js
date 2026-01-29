@@ -339,6 +339,7 @@ function renderPage(page) {
     case 'suppliers': renderSuppliers(); break;
     case 'admin': renderAdmin(); break;
     case 'process-quality': renderProcessQuality(); break;
+    case 'product-catalog': renderProductCatalog(); break;
     default: renderDashboard();
   }
 }
@@ -4505,6 +4506,494 @@ window.processInboundUpload = processInboundUpload;
 window.filterSuppliers = filterSuppliers;
 window.filterSuppliersByType = filterSuppliersByType;
 window.renderSuppliersTable = renderSuppliersTable;
+
+// ========== 제품 현황 관리 ==========
+
+// 제품 현황 관리 메인
+async function renderProductCatalog() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-box-open mr-2 text-haccp-primary"></i>
+          제품 현황 관리
+        </h2>
+        <button onclick="showProductModal()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
+          <i class="fas fa-plus mr-1"></i> 제품 등록
+        </button>
+      </div>
+      
+      <!-- 검색 -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="flex flex-wrap gap-4 items-center">
+          <div class="flex-1 min-w-[250px]">
+            <div class="relative">
+              <input type="text" id="product-search" 
+                     class="w-full border rounded-lg pl-10 pr-4 py-2" 
+                     placeholder="제품명, 바코드, 제조공정번호, 판매처 검색..."
+                     onkeyup="if(event.key==='Enter') searchProducts()">
+              <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+            </div>
+          </div>
+          <button onclick="searchProducts()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+            <i class="fas fa-search mr-1"></i> 검색
+          </button>
+          <button onclick="loadProductCatalog()" class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
+            <i class="fas fa-sync-alt mr-1"></i> 새로고침
+          </button>
+        </div>
+      </div>
+      
+      <!-- 제품 목록 -->
+      <div id="product-catalog-content" class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="p-8 text-center text-gray-500">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadProductCatalog();
+}
+
+// 제품 목록 로드
+async function loadProductCatalog(search = '') {
+  const container = document.getElementById('product-catalog-content');
+  
+  try {
+    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+    const result = await api(`/product-catalog${params}`);
+    const products = result.data || [];
+    
+    // 전역 저장 (엑셀/출력용)
+    window.productCatalogData = products;
+    
+    if (products.length === 0) {
+      container.innerHTML = `
+        <div class="p-12 text-center text-gray-400">
+          <i class="fas fa-box-open text-5xl mb-4"></i>
+          <p class="text-lg">${search ? '검색 결과가 없습니다' : '등록된 제품이 없습니다'}</p>
+          <button onclick="showProductModal()" class="mt-4 text-haccp-primary hover:underline">
+            <i class="fas fa-plus mr-1"></i> 첫 제품 등록하기
+          </button>
+        </div>
+      `;
+      return;
+    }
+    
+    container.innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-between items-center flex-wrap gap-2">
+        <span class="text-sm text-gray-600">총 ${products.length}개 제품</span>
+        <div class="flex gap-2">
+          <button onclick="downloadProductCatalog()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀
+          </button>
+          <button onclick="printProductCatalog()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+            <i class="fas fa-print mr-1"></i> 출력
+          </button>
+        </div>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4">
+        ${products.map(p => `
+          <div class="border rounded-lg overflow-hidden hover:shadow-lg transition ${p.is_active ? '' : 'opacity-60'}">
+            <div class="h-48 bg-gray-100 flex items-center justify-center overflow-hidden">
+              ${p.product_image 
+                ? `<img src="${p.product_image}" alt="${p.product_name}" class="w-full h-full object-cover cursor-pointer" onclick="showImagePreview('${p.product_image}', '${p.product_name}')">`
+                : `<i class="fas fa-image text-gray-300 text-5xl"></i>`
+              }
+            </div>
+            <div class="p-4">
+              <div class="flex items-start justify-between mb-2">
+                <div>
+                  <span class="text-xs text-gray-400 font-mono">${p.product_code}</span>
+                  <h3 class="font-bold text-gray-800">${p.product_name}</h3>
+                </div>
+                ${!p.is_active ? '<span class="px-2 py-1 bg-red-100 text-red-600 text-xs rounded">비활성</span>' : ''}
+              </div>
+              
+              <div class="space-y-1 text-sm text-gray-600 mb-3">
+                ${p.barcode ? `<div><i class="fas fa-barcode w-5 text-gray-400"></i> ${p.barcode}</div>` : ''}
+                ${p.process_number ? `<div><i class="fas fa-cogs w-5 text-gray-400"></i> ${p.process_number}</div>` : ''}
+                ${p.expiry_info ? `<div><i class="fas fa-clock w-5 text-gray-400"></i> ${p.expiry_info}</div>` : ''}
+                ${p.storage_method ? `<div><i class="fas fa-thermometer-half w-5 text-gray-400"></i> ${p.storage_method}</div>` : ''}
+                ${p.sales_channel ? `<div><i class="fas fa-store w-5 text-gray-400"></i> ${p.sales_channel}</div>` : ''}
+              </div>
+              
+              <div class="flex gap-2 pt-2 border-t">
+                <button onclick="viewProduct(${p.id})" class="flex-1 text-sm text-blue-600 hover:bg-blue-50 py-1 rounded">
+                  <i class="fas fa-eye mr-1"></i> 상세
+                </button>
+                <button onclick="editProduct(${p.id})" class="flex-1 text-sm text-green-600 hover:bg-green-50 py-1 rounded">
+                  <i class="fas fa-edit mr-1"></i> 수정
+                </button>
+                <button onclick="deleteProduct(${p.id}, '${p.product_name}')" class="flex-1 text-sm text-red-600 hover:bg-red-50 py-1 rounded">
+                  <i class="fas fa-trash mr-1"></i> 삭제
+                </button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 제품 검색
+function searchProducts() {
+  const search = document.getElementById('product-search').value.trim();
+  loadProductCatalog(search);
+}
+
+// 이미지 미리보기
+function showImagePreview(imageUrl, productName) {
+  showModal(productName, `
+    <div class="flex items-center justify-center">
+      <img src="${imageUrl}" alt="${productName}" class="max-w-full max-h-[70vh] object-contain rounded-lg">
+    </div>
+  `, '<button onclick="closeModal()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">닫기</button>');
+}
+
+// 제품 등록/수정 모달
+function showProductModal(product = null) {
+  const isEdit = !!product;
+  
+  showModal(isEdit ? '제품 수정' : '제품 등록', `
+    <form id="product-form" class="space-y-4">
+      <input type="hidden" id="product-id" value="${product?.id || ''}">
+      
+      <!-- 이미지 업로드 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">제품 사진</label>
+        <div class="flex items-start gap-4">
+          <div id="product-image-preview" class="w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center overflow-hidden bg-gray-50">
+            ${product?.product_image 
+              ? `<img src="${product.product_image}" class="w-full h-full object-cover">`
+              : `<i class="fas fa-image text-gray-300 text-3xl"></i>`
+            }
+          </div>
+          <div class="flex-1">
+            <input type="file" id="product-image-input" accept="image/*" class="hidden" onchange="handleProductImageUpload(event)">
+            <button type="button" onclick="document.getElementById('product-image-input').click()" 
+                    class="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 text-sm">
+              <i class="fas fa-upload mr-1"></i> 사진 선택
+            </button>
+            <p class="text-xs text-gray-500 mt-2">JPG, PNG 형식 (최대 5MB)</p>
+            <input type="hidden" id="product-image-data" value="${product?.product_image || ''}">
+          </div>
+        </div>
+      </div>
+      
+      <!-- 제품명 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제품명 <span class="text-red-500">*</span></label>
+        <input type="text" id="product-name" value="${product?.product_name || ''}" required
+               class="w-full border rounded-lg px-4 py-2" placeholder="제품명 입력">
+      </div>
+      
+      <!-- 품목제조보고서 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">품목제조보고서</label>
+        <input type="text" id="product-manufacture-report" value="${product?.manufacture_report || ''}"
+               class="w-full border rounded-lg px-4 py-2" placeholder="품목제조보고서 번호">
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <!-- 제조공정번호 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">제조공정번호</label>
+          <input type="text" id="product-process-number" value="${product?.process_number || ''}"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="공정번호">
+        </div>
+        
+        <!-- 상품바코드 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">상품바코드</label>
+          <input type="text" id="product-barcode" value="${product?.barcode || ''}"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="바코드">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <!-- 소비기한 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">소비기한</label>
+          <input type="text" id="product-expiry-info" value="${product?.expiry_info || ''}"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="예: 제조일로부터 7일">
+        </div>
+        
+        <!-- 보관방법 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">보관방법</label>
+          <input type="text" id="product-storage-method" value="${product?.storage_method || ''}"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="예: 냉장 0~10℃">
+        </div>
+      </div>
+      
+      <!-- 판매처 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">판매처</label>
+        <input type="text" id="product-sales-channel" value="${product?.sales_channel || ''}"
+               class="w-full border rounded-lg px-4 py-2" placeholder="판매처 (예: 온라인, 마트, 백화점)">
+      </div>
+      
+      <!-- 메모 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+        <textarea id="product-memo" rows="2" class="w-full border rounded-lg px-4 py-2" 
+                  placeholder="추가 정보">${product?.memo || ''}</textarea>
+      </div>
+      
+      ${isEdit ? `
+      <!-- 활성 상태 -->
+      <div class="flex items-center gap-2">
+        <input type="checkbox" id="product-active" ${product?.is_active ? 'checked' : ''} class="w-4 h-4">
+        <label for="product-active" class="text-sm text-gray-700">활성 상태</label>
+      </div>
+      ` : ''}
+    </form>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveProduct(${isEdit})" class="px-4 py-2 bg-haccp-primary text-white rounded-lg hover:bg-blue-700">
+      ${isEdit ? '수정' : '등록'}
+    </button>
+  `);
+}
+
+// 이미지 업로드 처리
+function handleProductImageUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  // 파일 크기 체크 (5MB)
+  if (file.size > 5 * 1024 * 1024) {
+    showToast('이미지 크기는 5MB 이하여야 합니다.', 'error');
+    return;
+  }
+  
+  // 파일 타입 체크
+  if (!file.type.startsWith('image/')) {
+    showToast('이미지 파일만 업로드 가능합니다.', 'error');
+    return;
+  }
+  
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const base64 = e.target.result;
+    document.getElementById('product-image-data').value = base64;
+    document.getElementById('product-image-preview').innerHTML = `
+      <img src="${base64}" class="w-full h-full object-cover">
+    `;
+    showToast('이미지가 업로드되었습니다.', 'success');
+  };
+  reader.readAsDataURL(file);
+}
+
+// 제품 저장
+async function saveProduct(isEdit) {
+  const data = {
+    product_name: document.getElementById('product-name').value.trim(),
+    manufacture_report: document.getElementById('product-manufacture-report').value.trim(),
+    product_image: document.getElementById('product-image-data').value,
+    process_number: document.getElementById('product-process-number').value.trim(),
+    barcode: document.getElementById('product-barcode').value.trim(),
+    expiry_info: document.getElementById('product-expiry-info').value.trim(),
+    storage_method: document.getElementById('product-storage-method').value.trim(),
+    sales_channel: document.getElementById('product-sales-channel').value.trim(),
+    memo: document.getElementById('product-memo').value.trim()
+  };
+  
+  if (!data.product_name) {
+    showToast('제품명을 입력해주세요.', 'warning');
+    return;
+  }
+  
+  if (isEdit) {
+    const activeCheckbox = document.getElementById('product-active');
+    data.is_active = activeCheckbox ? activeCheckbox.checked : true;
+  }
+  
+  try {
+    if (isEdit) {
+      const id = document.getElementById('product-id').value;
+      await api(`/product-catalog/${id}`, 'PUT', data);
+      showToast('제품 정보가 수정되었습니다.', 'success');
+    } else {
+      const result = await api('/product-catalog', 'POST', data);
+      showToast(`제품이 등록되었습니다. (${result.data.product_code})`, 'success');
+    }
+    
+    closeModal();
+    loadProductCatalog();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 제품 상세 보기
+async function viewProduct(id) {
+  try {
+    const result = await api(`/product-catalog/${id}`);
+    const p = result.data;
+    
+    showModal('제품 상세 정보', `
+      <div class="space-y-4">
+        <!-- 이미지 -->
+        <div class="flex justify-center">
+          ${p.product_image 
+            ? `<img src="${p.product_image}" alt="${p.product_name}" class="max-h-64 object-contain rounded-lg border">`
+            : `<div class="w-full h-48 bg-gray-100 rounded-lg flex items-center justify-center">
+                <i class="fas fa-image text-gray-300 text-5xl"></i>
+               </div>`
+          }
+        </div>
+        
+        <!-- 기본 정보 -->
+        <div class="bg-gray-50 rounded-lg p-4">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm text-gray-500">${p.product_code}</span>
+            <span class="px-2 py-1 rounded text-xs ${p.is_active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+              ${p.is_active ? '활성' : '비활성'}
+            </span>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800">${p.product_name}</h3>
+        </div>
+        
+        <!-- 상세 정보 -->
+        <div class="grid grid-cols-2 gap-3 text-sm">
+          <div class="bg-white border rounded-lg p-3">
+            <p class="text-gray-500 text-xs mb-1">품목제조보고서</p>
+            <p class="font-medium">${p.manufacture_report || '-'}</p>
+          </div>
+          <div class="bg-white border rounded-lg p-3">
+            <p class="text-gray-500 text-xs mb-1">제조공정번호</p>
+            <p class="font-medium">${p.process_number || '-'}</p>
+          </div>
+          <div class="bg-white border rounded-lg p-3">
+            <p class="text-gray-500 text-xs mb-1">상품바코드</p>
+            <p class="font-medium font-mono">${p.barcode || '-'}</p>
+          </div>
+          <div class="bg-white border rounded-lg p-3">
+            <p class="text-gray-500 text-xs mb-1">소비기한</p>
+            <p class="font-medium">${p.expiry_info || '-'}</p>
+          </div>
+          <div class="bg-white border rounded-lg p-3">
+            <p class="text-gray-500 text-xs mb-1">보관방법</p>
+            <p class="font-medium">${p.storage_method || '-'}</p>
+          </div>
+          <div class="bg-white border rounded-lg p-3">
+            <p class="text-gray-500 text-xs mb-1">판매처</p>
+            <p class="font-medium">${p.sales_channel || '-'}</p>
+          </div>
+        </div>
+        
+        ${p.memo ? `
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+          <p class="text-gray-500 text-xs mb-1">메모</p>
+          <p class="text-sm">${p.memo}</p>
+        </div>
+        ` : ''}
+        
+        <div class="text-xs text-gray-400 text-center">
+          등록: ${p.created_at} | 수정: ${p.updated_at}
+        </div>
+      </div>
+    `, `
+      <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+      <button onclick="closeModal(); editProduct(${p.id})" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+        <i class="fas fa-edit mr-1"></i> 수정
+      </button>
+    `);
+  } catch (e) {
+    showToast('제품 정보를 불러오는데 실패했습니다.', 'error');
+  }
+}
+
+// 제품 수정
+async function editProduct(id) {
+  try {
+    const result = await api(`/product-catalog/${id}`);
+    showProductModal(result.data);
+  } catch (e) {
+    showToast('제품 정보를 불러오는데 실패했습니다.', 'error');
+  }
+}
+
+// 제품 삭제
+async function deleteProduct(id, productName) {
+  if (!confirm(`"${productName}" 제품을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.`)) {
+    return;
+  }
+  
+  try {
+    await api(`/product-catalog/${id}`, 'DELETE');
+    showToast('제품이 삭제되었습니다.', 'success');
+    loadProductCatalog();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 제품 현황 엑셀 다운로드
+function downloadProductCatalog() {
+  const data = window.productCatalogData || [];
+  
+  const columns = [
+    { key: 'product_code', label: '제품코드' },
+    { key: 'product_name', label: '제품명' },
+    { key: 'manufacture_report', label: '품목제조보고서' },
+    { key: 'process_number', label: '제조공정번호' },
+    { key: 'barcode', label: '상품바코드' },
+    { key: 'expiry_info', label: '소비기한' },
+    { key: 'storage_method', label: '보관방법' },
+    { key: 'sales_channel', label: '판매처' },
+    { key: 'is_active', label: '상태' }
+  ];
+  
+  const exportData = data.map(d => ({
+    ...d,
+    is_active: d.is_active ? '활성' : '비활성'
+  }));
+  
+  downloadExcel(exportData, columns, '제품현황관리');
+}
+
+// 제품 현황 출력
+function printProductCatalog() {
+  const data = window.productCatalogData || [];
+  
+  const columns = [
+    { key: 'product_code', label: '제품코드' },
+    { key: 'product_name', label: '제품명' },
+    { key: 'manufacture_report', label: '품목제조보고서' },
+    { key: 'process_number', label: '제조공정번호' },
+    { key: 'barcode', label: '바코드' },
+    { key: 'expiry_info', label: '소비기한' },
+    { key: 'storage_method', label: '보관방법' },
+    { key: 'sales_channel', label: '판매처' },
+    { key: 'is_active', label: '상태', type: 'center', format: (v) => `<span class="badge ${v ? 'badge-pass' : 'badge-fail'}">${v ? '활성' : '비활성'}</span>` }
+  ];
+  
+  const tableHtml = tableToHtml(data, columns);
+  printData('제품 현황 관리', tableHtml, `<strong>총 제품:</strong> ${data.length}개`);
+}
+
+// 제품 현황 관리 함수들 전역 노출
+window.renderProductCatalog = renderProductCatalog;
+window.loadProductCatalog = loadProductCatalog;
+window.searchProducts = searchProducts;
+window.showProductModal = showProductModal;
+window.handleProductImageUpload = handleProductImageUpload;
+window.saveProduct = saveProduct;
+window.viewProduct = viewProduct;
+window.editProduct = editProduct;
+window.deleteProduct = deleteProduct;
+window.showImagePreview = showImagePreview;
+window.downloadProductCatalog = downloadProductCatalog;
+window.printProductCatalog = printProductCatalog;
 
 // ========== 엑셀 다운로드 / 출력 함수들 ==========
 

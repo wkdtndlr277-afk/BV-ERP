@@ -15,6 +15,7 @@ import dashboardRoutes from './routes/dashboard';
 import supplierRoutes from './routes/supplier';
 import adminRoutes from './routes/admin';
 import processRoutes from './routes/process';
+import productCatalogRoutes from './routes/product-catalog';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -34,6 +35,7 @@ app.route('/api/dashboard', dashboardRoutes);
 app.route('/api/suppliers', supplierRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/process', processRoutes);
+app.route('/api/product-catalog', productCatalogRoutes);
 
 // Health check
 app.get('/api/health', (c) => {
@@ -214,6 +216,11 @@ app.get('/*', (c) => {
                 <a href="#suppliers" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="suppliers">
                     <i class="fas fa-building w-5"></i>
                     <span>거래처 관리</span>
+                </a>
+                
+                <a href="#product-catalog" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="product-catalog">
+                    <i class="fas fa-box-open w-5"></i>
+                    <span>제품 현황 관리</span>
                 </a>
                 
                 <div class="pt-4 pb-2">

@@ -6,8 +6,280 @@ const state = {
   currentPage: 'dashboard',
   masterItems: [],
   suppliers: [],
-  alerts: { total: 0 }
+  alerts: { total: 0 },
+  user: null,  // 로그인한 사용자 정보
+  isLoggedIn: false
 };
+
+// ========== 인증 관련 함수 ==========
+
+// 세션 토큰 가져오기
+function getAuthToken() {
+  return localStorage.getItem('auth_token');
+}
+
+// 세션 토큰 저장
+function setAuthToken(token) {
+  localStorage.setItem('auth_token', token);
+}
+
+// 세션 토큰 삭제
+function clearAuthToken() {
+  localStorage.removeItem('auth_token');
+  localStorage.removeItem('user_info');
+}
+
+// 사용자 정보 저장
+function setUserInfo(user) {
+  localStorage.setItem('user_info', JSON.stringify(user));
+  state.user = user;
+  state.isLoggedIn = true;
+}
+
+// 사용자 정보 가져오기
+function getUserInfo() {
+  const info = localStorage.getItem('user_info');
+  return info ? JSON.parse(info) : null;
+}
+
+// 로그인 상태 확인
+async function checkAuth() {
+  const token = getAuthToken();
+  if (!token) {
+    showLoginScreen();
+    return false;
+  }
+  
+  try {
+    const response = await axios.get(`${API_BASE}/auth/me`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    if (response.data.success) {
+      setUserInfo(response.data.data);
+      return true;
+    }
+  } catch (e) {
+    clearAuthToken();
+  }
+  
+  showLoginScreen();
+  return false;
+}
+
+// 로그인 화면 표시
+function showLoginScreen() {
+  state.isLoggedIn = false;
+  state.user = null;
+  
+  const mainContent = document.getElementById('main-app');
+  if (mainContent) {
+    mainContent.style.display = 'none';
+  }
+  
+  let loginScreen = document.getElementById('login-screen');
+  if (!loginScreen) {
+    loginScreen = document.createElement('div');
+    loginScreen.id = 'login-screen';
+    document.body.appendChild(loginScreen);
+  }
+  
+  loginScreen.innerHTML = `
+    <div class="min-h-screen bg-gradient-to-br from-blue-600 to-blue-800 flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+        <!-- 헤더 -->
+        <div class="bg-blue-600 text-white p-6 text-center">
+          <i class="fas fa-clipboard-check text-5xl mb-3"></i>
+          <h1 class="text-2xl font-bold">(주)본비반트</h1>
+          <p class="text-blue-200 text-sm">HACCP 통합관리시스템</p>
+        </div>
+        
+        <!-- 로그인 폼 -->
+        <div id="login-form-container" class="p-6">
+          <form id="login-form" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">아이디</label>
+              <div class="relative">
+                <input type="text" id="login-user-id" required
+                       class="w-full border rounded-lg pl-10 pr-4 py-3" placeholder="아이디 입력">
+                <i class="fas fa-user absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+              </div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">비밀번호</label>
+              <div class="relative">
+                <input type="password" id="login-password" required
+                       class="w-full border rounded-lg pl-10 pr-4 py-3" placeholder="비밀번호 입력">
+                <i class="fas fa-lock absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+              </div>
+            </div>
+            <button type="submit" class="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition">
+              <i class="fas fa-sign-in-alt mr-2"></i> 로그인
+            </button>
+          </form>
+          
+          <div class="mt-4 text-center">
+            <button onclick="showRegisterForm()" class="text-blue-600 hover:underline text-sm">
+              <i class="fas fa-user-plus mr-1"></i> 회원가입
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loginScreen.style.display = 'block';
+  
+  // 로그인 폼 이벤트
+  document.getElementById('login-form').addEventListener('submit', handleLogin);
+}
+
+// 회원가입 폼 표시
+function showRegisterForm() {
+  const container = document.getElementById('login-form-container');
+  container.innerHTML = `
+    <form id="register-form" class="space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div class="col-span-2">
+          <label class="block text-sm font-medium text-gray-700 mb-1">아이디 <span class="text-red-500">*</span></label>
+          <input type="text" id="reg-user-id" required minlength="4"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="4자 이상">
+        </div>
+        <div class="col-span-2">
+          <label class="block text-sm font-medium text-gray-700 mb-1">비밀번호 <span class="text-red-500">*</span></label>
+          <input type="password" id="reg-password" required minlength="4"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="4자 이상">
+        </div>
+        <div class="col-span-2">
+          <label class="block text-sm font-medium text-gray-700 mb-1">이름 <span class="text-red-500">*</span></label>
+          <input type="text" id="reg-user-name" required
+                 class="w-full border rounded-lg px-4 py-2" placeholder="이름">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">부서</label>
+          <input type="text" id="reg-department"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="부서명">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">연락처</label>
+          <input type="text" id="reg-phone"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="010-0000-0000">
+        </div>
+      </div>
+      
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
+        <i class="fas fa-info-circle mr-1"></i>
+        회원가입 후 관리자 승인이 필요합니다.
+      </div>
+      
+      <button type="submit" class="w-full bg-green-600 text-white py-3 rounded-lg font-bold hover:bg-green-700 transition">
+        <i class="fas fa-user-plus mr-2"></i> 회원가입
+      </button>
+    </form>
+    
+    <div class="mt-4 text-center">
+      <button onclick="showLoginScreen()" class="text-blue-600 hover:underline text-sm">
+        <i class="fas fa-arrow-left mr-1"></i> 로그인으로 돌아가기
+      </button>
+    </div>
+  `;
+  
+  document.getElementById('register-form').addEventListener('submit', handleRegister);
+}
+
+// 로그인 처리
+async function handleLogin(e) {
+  e.preventDefault();
+  
+  const user_id = document.getElementById('login-user-id').value.trim();
+  const password = document.getElementById('login-password').value;
+  
+  try {
+    const response = await axios.post(`${API_BASE}/auth/login`, { user_id, password });
+    
+    if (response.data.success) {
+      setAuthToken(response.data.data.token);
+      setUserInfo(response.data.data.user);
+      
+      // 로그인 화면 숨기고 메인 앱 표시
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('main-app').style.display = 'block';
+      
+      // 사용자 정보 표시 업데이트
+      updateUserDisplay();
+      
+      showToast(`${response.data.data.user.user_name}님, 환영합니다!`, 'success');
+      
+      // 초기 데이터 로드
+      await loadMasterData();
+      await loadAlertCount();
+      renderDashboard();
+    }
+  } catch (error) {
+    const message = error.response?.data?.error || '로그인에 실패했습니다.';
+    showToast(message, 'error');
+  }
+}
+
+// 회원가입 처리
+async function handleRegister(e) {
+  e.preventDefault();
+  
+  const data = {
+    user_id: document.getElementById('reg-user-id').value.trim(),
+    password: document.getElementById('reg-password').value,
+    user_name: document.getElementById('reg-user-name').value.trim(),
+    department: document.getElementById('reg-department').value.trim(),
+    phone: document.getElementById('reg-phone').value.trim()
+  };
+  
+  try {
+    const response = await axios.post(`${API_BASE}/auth/register`, data);
+    
+    if (response.data.success) {
+      showToast(response.data.message, 'success');
+      showLoginScreen();
+    }
+  } catch (error) {
+    const message = error.response?.data?.error || '회원가입에 실패했습니다.';
+    showToast(message, 'error');
+  }
+}
+
+// 로그아웃
+async function handleLogout() {
+  if (!confirm('로그아웃 하시겠습니까?')) return;
+  
+  try {
+    const token = getAuthToken();
+    await axios.post(`${API_BASE}/auth/logout`, {}, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+  } catch (e) {
+    // 무시
+  }
+  
+  clearAuthToken();
+  state.user = null;
+  state.isLoggedIn = false;
+  showLoginScreen();
+  showToast('로그아웃 되었습니다.', 'info');
+}
+
+// 사용자 표시 업데이트
+function updateUserDisplay() {
+  const user = getUserInfo();
+  const userNameEl = document.getElementById('user-display-name');
+  const userRoleEl = document.getElementById('user-display-role');
+  
+  if (userNameEl && user) {
+    userNameEl.textContent = user.user_name;
+  }
+  if (userRoleEl && user) {
+    const roleNames = { admin: '관리자', manager: '매니저', user: '사용자' };
+    userRoleEl.textContent = roleNames[user.role] || user.role;
+  }
+}
 
 // Utility Functions
 function formatDate(date) {
@@ -3051,6 +3323,10 @@ async function renderAdminDashboard() {
             <button onclick="switchAdminTab('logs')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="logs">
               <i class="fas fa-history mr-2"></i> 활동 로그
             </button>
+            <button onclick="switchAdminTab('users')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="users">
+              <i class="fas fa-users mr-2"></i> 사용자 관리
+              <span id="pending-users-badge" class="ml-1 px-2 py-0.5 bg-red-500 text-white text-xs rounded-full hidden">0</span>
+            </button>
           </nav>
         </div>
         
@@ -3082,6 +3358,260 @@ function switchAdminTab(tab) {
     case 'transactions': loadAdminTransactions(); break;
     case 'stock': loadAdminStock(); break;
     case 'logs': loadAdminLogs(); break;
+    case 'users': loadAdminUsers(); break;
+  }
+}
+
+// ========== 사용자 관리 ==========
+
+// 사용자 관리 로드
+async function loadAdminUsers() {
+  const container = document.getElementById('admin-tab-content');
+  const token = getAuthToken();
+  
+  try {
+    const response = await axios.get(`${API_BASE}/auth/users`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    const users = response.data.data || [];
+    
+    // 상태별 분류
+    const pending = users.filter(u => u.status === 'pending');
+    const approved = users.filter(u => u.status === 'approved');
+    const others = users.filter(u => !['pending', 'approved'].includes(u.status));
+    
+    // 대기 배지 업데이트
+    const badge = document.getElementById('pending-users-badge');
+    if (badge) {
+      if (pending.length > 0) {
+        badge.textContent = pending.length;
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+    
+    container.innerHTML = `
+      <div class="space-y-6">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-bold text-gray-800">
+            <i class="fas fa-users mr-2"></i> 사용자 관리
+          </h3>
+          <div class="flex gap-2">
+            <select id="user-filter" onchange="filterAdminUsers()" class="border rounded-lg px-3 py-2 text-sm">
+              <option value="">전체 (${users.length})</option>
+              <option value="pending">승인대기 (${pending.length})</option>
+              <option value="approved">승인됨 (${approved.length})</option>
+              <option value="suspended">정지됨</option>
+              <option value="rejected">거부됨</option>
+            </select>
+          </div>
+        </div>
+        
+        ${pending.length > 0 ? `
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <h4 class="font-bold text-yellow-800 mb-3">
+            <i class="fas fa-clock mr-1"></i> 승인 대기 중 (${pending.length}명)
+          </h4>
+          <div class="space-y-2">
+            ${pending.map(u => `
+              <div class="flex items-center justify-between bg-white rounded-lg p-3 border">
+                <div>
+                  <span class="font-medium">${u.user_name}</span>
+                  <span class="text-gray-500 text-sm ml-2">(${u.user_id})</span>
+                  ${u.department ? `<span class="text-gray-400 text-sm ml-2">${u.department}</span>` : ''}
+                </div>
+                <div class="flex gap-2">
+                  <button onclick="approveUser(${u.id}, '${u.user_name}')" class="px-3 py-1 bg-green-500 text-white text-sm rounded hover:bg-green-600">
+                    <i class="fas fa-check mr-1"></i> 승인
+                  </button>
+                  <button onclick="rejectUser(${u.id}, '${u.user_name}')" class="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600">
+                    <i class="fas fa-times mr-1"></i> 거부
+                  </button>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        ` : ''}
+        
+        <div id="users-list-container">
+          ${renderUsersList(users)}
+        </div>
+      </div>
+    `;
+    
+    // 전역 저장
+    window.allAdminUsers = users;
+    
+  } catch (e) {
+    container.innerHTML = `<div class="text-center text-red-500 py-8">
+      ${e.response?.data?.error || '사용자 목록을 불러오는데 실패했습니다.'}
+    </div>`;
+  }
+}
+
+// 사용자 목록 렌더링
+function renderUsersList(users) {
+  if (users.length === 0) {
+    return `<div class="text-center text-gray-400 py-8">등록된 사용자가 없습니다.</div>`;
+  }
+  
+  const roleNames = { admin: '관리자', manager: '매니저', user: '사용자' };
+  const statusNames = { pending: '대기', approved: '승인', rejected: '거부', suspended: '정지' };
+  const statusColors = {
+    pending: 'bg-yellow-100 text-yellow-700',
+    approved: 'bg-green-100 text-green-700',
+    rejected: 'bg-red-100 text-red-700',
+    suspended: 'bg-gray-100 text-gray-700'
+  };
+  
+  return `
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="px-4 py-3 text-left">아이디</th>
+            <th class="px-4 py-3 text-left">이름</th>
+            <th class="px-4 py-3 text-center">권한</th>
+            <th class="px-4 py-3 text-center">상태</th>
+            <th class="px-4 py-3 text-left">부서</th>
+            <th class="px-4 py-3 text-center">최근로그인</th>
+            <th class="px-4 py-3 text-center">관리</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          ${users.map(u => `
+            <tr class="hover:bg-gray-50">
+              <td class="px-4 py-3 font-mono">${u.user_id}</td>
+              <td class="px-4 py-3 font-medium">${u.user_name}</td>
+              <td class="px-4 py-3 text-center">
+                <select onchange="changeUserRole(${u.id}, this.value)" class="text-xs border rounded px-2 py-1" ${u.user_id === 'admin' ? 'disabled' : ''}>
+                  <option value="user" ${u.role === 'user' ? 'selected' : ''}>사용자</option>
+                  <option value="manager" ${u.role === 'manager' ? 'selected' : ''}>매니저</option>
+                  <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>관리자</option>
+                </select>
+              </td>
+              <td class="px-4 py-3 text-center">
+                <span class="px-2 py-1 rounded text-xs ${statusColors[u.status]}">${statusNames[u.status]}</span>
+              </td>
+              <td class="px-4 py-3 text-gray-500">${u.department || '-'}</td>
+              <td class="px-4 py-3 text-center text-gray-500 text-xs">${u.last_login ? u.last_login.slice(0, 16).replace('T', ' ') : '-'}</td>
+              <td class="px-4 py-3 text-center">
+                ${u.user_id !== 'admin' ? `
+                  ${u.status === 'approved' ? `
+                    <button onclick="suspendUser(${u.id}, '${u.user_name}')" class="text-yellow-600 hover:text-yellow-800 mr-2" title="정지">
+                      <i class="fas fa-ban"></i>
+                    </button>
+                  ` : u.status === 'suspended' ? `
+                    <button onclick="approveUser(${u.id}, '${u.user_name}')" class="text-green-600 hover:text-green-800 mr-2" title="활성화">
+                      <i class="fas fa-check"></i>
+                    </button>
+                  ` : ''}
+                  <button onclick="deleteUser(${u.id}, '${u.user_name}')" class="text-red-600 hover:text-red-800" title="삭제">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                ` : '<span class="text-gray-400 text-xs">시스템</span>'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="mt-4 p-3 bg-gray-50 rounded-lg text-sm text-gray-500">
+      총 ${users.length}명 | 승인: ${users.filter(u => u.status === 'approved').length}명 | 대기: ${users.filter(u => u.status === 'pending').length}명
+    </div>
+  `;
+}
+
+// 사용자 필터링
+function filterAdminUsers() {
+  const filter = document.getElementById('user-filter').value;
+  let filtered = window.allAdminUsers || [];
+  
+  if (filter) {
+    filtered = filtered.filter(u => u.status === filter);
+  }
+  
+  document.getElementById('users-list-container').innerHTML = renderUsersList(filtered);
+}
+
+// 사용자 승인
+async function approveUser(id, name) {
+  if (!confirm(`"${name}" 사용자를 승인하시겠습니까?`)) return;
+  
+  try {
+    const token = getAuthToken();
+    await axios.post(`${API_BASE}/auth/users/${id}/approve`, {}, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    showToast(`${name} 사용자가 승인되었습니다.`, 'success');
+    loadAdminUsers();
+  } catch (e) {
+    showToast(e.response?.data?.error || '승인에 실패했습니다.', 'error');
+  }
+}
+
+// 사용자 거부
+async function rejectUser(id, name) {
+  if (!confirm(`"${name}" 사용자의 가입을 거부하시겠습니까?`)) return;
+  
+  try {
+    const token = getAuthToken();
+    await axios.post(`${API_BASE}/auth/users/${id}/reject`, {}, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    showToast(`${name} 사용자가 거부되었습니다.`, 'success');
+    loadAdminUsers();
+  } catch (e) {
+    showToast(e.response?.data?.error || '거부에 실패했습니다.', 'error');
+  }
+}
+
+// 사용자 정지
+async function suspendUser(id, name) {
+  if (!confirm(`"${name}" 사용자를 정지하시겠습니까?\n해당 사용자는 로그인할 수 없습니다.`)) return;
+  
+  try {
+    const token = getAuthToken();
+    await axios.post(`${API_BASE}/auth/users/${id}/suspend`, {}, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    showToast(`${name} 사용자가 정지되었습니다.`, 'success');
+    loadAdminUsers();
+  } catch (e) {
+    showToast(e.response?.data?.error || '정지에 실패했습니다.', 'error');
+  }
+}
+
+// 사용자 권한 변경
+async function changeUserRole(id, role) {
+  try {
+    const token = getAuthToken();
+    await axios.post(`${API_BASE}/auth/users/${id}/role`, { role }, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    showToast('권한이 변경되었습니다.', 'success');
+  } catch (e) {
+    showToast(e.response?.data?.error || '권한 변경에 실패했습니다.', 'error');
+    loadAdminUsers(); // 롤백
+  }
+}
+
+// 사용자 삭제
+async function deleteUser(id, name) {
+  if (!confirm(`"${name}" 사용자를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+  
+  try {
+    const token = getAuthToken();
+    await axios.delete(`${API_BASE}/auth/users/${id}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    showToast(`${name} 사용자가 삭제되었습니다.`, 'success');
+    loadAdminUsers();
+  } catch (e) {
+    showToast(e.response?.data?.error || '삭제에 실패했습니다.', 'error');
   }
 }
 
@@ -4393,8 +4923,21 @@ async function deleteDoughMaster(id) {
 
 // Initialize
 document.addEventListener('DOMContentLoaded', async function() {
+  // 로그인 상태 확인
+  const isLoggedIn = await checkAuth();
+  
+  if (!isLoggedIn) {
+    return; // 로그인 화면 표시됨
+  }
+  
+  // 로그인 성공 - 메인 앱 표시
+  document.getElementById('main-app').style.display = 'flex';
+  
   // Set current date
   document.getElementById('current-date').textContent = formatDate(new Date());
+  
+  // 사용자 정보 표시
+  updateUserDisplay();
   
   // Sidebar toggle for mobile
   document.getElementById('sidebar-toggle').addEventListener('click', function() {

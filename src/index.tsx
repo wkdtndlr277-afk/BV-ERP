@@ -16,6 +16,7 @@ import supplierRoutes from './routes/supplier';
 import adminRoutes from './routes/admin';
 import processRoutes from './routes/process';
 import productCatalogRoutes from './routes/product-catalog';
+import authRoutes from './routes/auth';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -36,6 +37,7 @@ app.route('/api/suppliers', supplierRoutes);
 app.route('/api/admin', adminRoutes);
 app.route('/api/process', processRoutes);
 app.route('/api/product-catalog', productCatalogRoutes);
+app.route('/api/auth', authRoutes);
 
 // 시스템 버전
 const SYSTEM_VERSION = '1.0.0';
@@ -131,8 +133,8 @@ app.get('/*', (c) => {
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
-    <!-- App Container -->
-    <div id="app" class="flex min-h-screen">
+    <!-- Main App Container (로그인 후 표시) -->
+    <div id="main-app" class="flex min-h-screen" style="display: none;">
         <!-- Sidebar -->
         <aside id="sidebar" class="w-64 bg-white shadow-lg fixed h-full z-20 transition-transform duration-300 lg:translate-x-0 -translate-x-full">
             <div class="p-4 border-b bg-gradient-to-r from-haccp-primary to-haccp-secondary">
@@ -268,6 +270,15 @@ app.get('/*', (c) => {
                         <button onclick="location.reload()" class="text-gray-500 hover:text-gray-700">
                             <i class="fas fa-sync-alt"></i>
                         </button>
+                        <div class="border-l pl-4 flex items-center gap-3">
+                            <div class="text-right">
+                                <p class="text-sm font-medium text-gray-800" id="user-display-name">-</p>
+                                <p class="text-xs text-gray-500" id="user-display-role">-</p>
+                            </div>
+                            <button onclick="handleLogout()" class="text-gray-500 hover:text-red-600" title="로그아웃">
+                                <i class="fas fa-sign-out-alt text-lg"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </header>
@@ -277,6 +288,8 @@ app.get('/*', (c) => {
                 <!-- Dynamic content loaded here -->
             </div>
         </main>
+    </div>
+    
     </div>
     
     <!-- Toast Container -->

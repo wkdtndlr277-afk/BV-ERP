@@ -58,6 +58,198 @@ function closeModal() {
   document.getElementById('modal-container').innerHTML = '';
 }
 
+// ========== 엑셀 다운로드 / 출력 유틸리티 ==========
+
+// 엑셀 다운로드 (CSV 형식)
+function downloadExcel(data, columns, filename) {
+  // BOM for UTF-8 Excel compatibility
+  const BOM = '\uFEFF';
+  
+  // Header row
+  const header = columns.map(col => `"${col.label}"`).join(',');
+  
+  // Data rows
+  const rows = data.map(row => {
+    return columns.map(col => {
+      let value = row[col.key];
+      if (value === null || value === undefined) value = '';
+      if (typeof value === 'string') {
+        value = value.replace(/"/g, '""');
+        return `"${value}"`;
+      }
+      return value;
+    }).join(',');
+  });
+  
+  const csv = BOM + header + '\n' + rows.join('\n');
+  
+  // Download
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${filename}_${formatDate(new Date())}.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+  
+  showToast(`${filename} 다운로드 완료`, 'success');
+}
+
+// 출력 기능
+function printData(title, tableHtml, additionalInfo = '') {
+  const printWindow = window.open('', '_blank', 'width=1000,height=800');
+  
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>${title}</title>
+      <style>
+        @page { margin: 15mm; }
+        body {
+          font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;
+          font-size: 11px;
+          line-height: 1.4;
+          color: #333;
+        }
+        .header {
+          text-align: center;
+          margin-bottom: 20px;
+          border-bottom: 2px solid #333;
+          padding-bottom: 10px;
+        }
+        .header h1 {
+          font-size: 18px;
+          margin: 0 0 5px 0;
+        }
+        .header .company {
+          font-size: 14px;
+          color: #555;
+        }
+        .header .date {
+          font-size: 11px;
+          color: #777;
+          margin-top: 5px;
+        }
+        .info {
+          margin-bottom: 15px;
+          padding: 10px;
+          background: #f5f5f5;
+          border-radius: 4px;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 20px;
+        }
+        th, td {
+          border: 1px solid #ddd;
+          padding: 6px 8px;
+          text-align: left;
+        }
+        th {
+          background: #f0f0f0;
+          font-weight: bold;
+          text-align: center;
+        }
+        td.number {
+          text-align: right;
+        }
+        td.center {
+          text-align: center;
+        }
+        .footer {
+          margin-top: 30px;
+          text-align: center;
+          font-size: 10px;
+          color: #777;
+          border-top: 1px solid #ddd;
+          padding-top: 10px;
+        }
+        .badge {
+          display: inline-block;
+          padding: 2px 6px;
+          border-radius: 3px;
+          font-size: 10px;
+        }
+        .badge-pass { background: #d4edda; color: #155724; }
+        .badge-fail { background: #f8d7da; color: #721c24; }
+        .badge-blue { background: #cce5ff; color: #004085; }
+        .badge-green { background: #d4edda; color: #155724; }
+        .text-red { color: #dc3545; }
+        .text-green { color: #28a745; }
+        .summary-box {
+          display: inline-block;
+          margin: 5px 10px;
+          padding: 8px 15px;
+          background: #e9ecef;
+          border-radius: 4px;
+        }
+        @media print {
+          body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+        }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div class="company">(주)본비반트</div>
+        <h1>${title}</h1>
+        <div class="date">출력일시: ${new Date().toLocaleString('ko-KR')}</div>
+      </div>
+      ${additionalInfo ? `<div class="info">${additionalInfo}</div>` : ''}
+      ${tableHtml}
+      <div class="footer">
+        본 문서는 HACCP 통합관리시스템에서 출력되었습니다.
+      </div>
+    </body>
+    </html>
+  `);
+  
+  printWindow.document.close();
+  printWindow.focus();
+  
+  setTimeout(() => {
+    printWindow.print();
+  }, 500);
+}
+
+// 테이블을 출력용 HTML로 변환
+function tableToHtml(data, columns) {
+  if (data.length === 0) {
+    return '<p style="text-align:center; color:#888; padding:20px;">데이터가 없습니다.</p>';
+  }
+  
+  let html = '<table><thead><tr>';
+  columns.forEach(col => {
+    html += `<th>${col.label}</th>`;
+  });
+  html += '</tr></thead><tbody>';
+  
+  data.forEach(row => {
+    html += '<tr>';
+    columns.forEach(col => {
+      let value = row[col.key];
+      if (value === null || value === undefined) value = '-';
+      
+      let className = '';
+      if (col.type === 'number') className = 'number';
+      else if (col.type === 'center') className = 'center';
+      
+      // 특수 포맷팅
+      if (col.format) {
+        value = col.format(value, row);
+      } else if (col.type === 'number' && typeof value === 'number') {
+        value = formatNumber(value);
+      }
+      
+      html += `<td class="${className}">${value}</td>`;
+    });
+    html += '</tr>';
+  });
+  
+  html += '</tbody></table>';
+  return html;
+}
+
 // API Helper
 async function api(endpoint, method = 'GET', data = null) {
   try {
@@ -1354,7 +1546,19 @@ async function loadInventoryData(category) {
     const result = await api(`/stock/current${category ? `?category=${category}` : ''}`);
     const items = result.data || [];
     
+    // 전역에 저장 (엑셀/출력용)
+    window.inventoryData = items;
+    window.inventoryCategory = category;
+    
     document.getElementById('inventory-content').innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-end gap-2">
+        <button onclick="downloadInventory()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+          <i class="fas fa-file-excel mr-1"></i> 엑셀
+        </button>
+        <button onclick="printInventory()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+          <i class="fas fa-print mr-1"></i> 출력
+        </button>
+      </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
           <thead>
@@ -1511,8 +1715,23 @@ async function renderTransactionSearch() {
         </div>
       `;
       
+      // 전역에 저장 (엑셀/출력용)
+      window.transactionSearchData = data;
+      window.transactionSearchParams = {
+        startDate: document.getElementById('search-start').value,
+        endDate: document.getElementById('search-end').value
+      };
+      
       // Show results
       document.getElementById('search-results').innerHTML = data.length > 0 ? `
+        <div class="p-3 bg-gray-50 border-b flex justify-end gap-2">
+          <button onclick="downloadTransactionSearch()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀
+          </button>
+          <button onclick="printTransactionSearch()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+            <i class="fas fa-print mr-1"></i> 출력
+          </button>
+        </div>
         <div class="overflow-x-auto max-h-96">
           <table class="w-full text-sm data-table">
             <thead>
@@ -1725,12 +1944,21 @@ async function loadDailyReport() {
     const result = await api(`/transactions/daily-report?${params.toString()}`);
     const data = result.data || [];
     
+    // 전역에 저장 (엑셀/출력용)
+    window.dailyReportData = data;
+    window.dailyReportDate = date;
+    
     document.getElementById('daily-content').innerHTML = `
-      <div class="p-4 border-b bg-gray-50 flex justify-between items-center">
+      <div class="p-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-2">
         <span class="font-bold text-gray-700">${date} 수불부</span>
-        <button onclick="printReport()" class="text-sm text-haccp-primary hover:underline">
-          <i class="fas fa-print mr-1"></i> 인쇄
-        </button>
+        <div class="flex gap-2">
+          <button onclick="downloadDailyReport()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀
+          </button>
+          <button onclick="printDailyReport()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+            <i class="fas fa-print mr-1"></i> 출력
+          </button>
+        </div>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
@@ -1828,12 +2056,21 @@ async function loadMonthlyReport() {
     const data = result.data || [];
     const period = result.period;
     
+    // 전역에 저장 (엑셀/출력용)
+    window.monthlyReportData = data;
+    window.monthlyReportPeriod = period;
+    
     document.getElementById('monthly-content').innerHTML = `
-      <div class="p-4 border-b bg-gray-50 flex justify-between items-center">
+      <div class="p-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-2">
         <span class="font-bold text-gray-700">${period.year}년 ${parseInt(period.month)}월 수불부</span>
-        <button onclick="printReport()" class="text-sm text-haccp-primary hover:underline">
-          <i class="fas fa-print mr-1"></i> 인쇄
-        </button>
+        <div class="flex gap-2">
+          <button onclick="downloadMonthlyReport()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀
+          </button>
+          <button onclick="printMonthlyReport()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+            <i class="fas fa-print mr-1"></i> 출력
+          </button>
+        </div>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
@@ -1933,8 +2170,16 @@ async function renderQualityKPI() {
         
         <!-- Today KPI List -->
         <div class="bg-white rounded-xl shadow overflow-hidden">
-          <div class="p-4 border-b bg-gray-50">
+          <div class="p-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-2">
             <span class="font-bold text-gray-700">오늘 품질 KPI (${today})</span>
+            <div class="flex gap-2">
+              <button onclick="downloadQualityKpi()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+                <i class="fas fa-file-excel mr-1"></i> 엑셀
+              </button>
+              <button onclick="printQualityKpi()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+                <i class="fas fa-print mr-1"></i> 출력
+              </button>
+            </div>
           </div>
           <div class="overflow-x-auto">
             <table class="w-full text-sm data-table">
@@ -1985,8 +2230,10 @@ async function renderQualityKPI() {
       </div>
     `;
     
-    // Store KPI items for modal
+    // Store KPI items for modal and export
     window.kpiItems = kpiItems;
+    window.qualityKpiData = todayData;
+    window.qualityKpiDate = today;
     
   } catch (e) {
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
@@ -2288,7 +2535,19 @@ async function loadMasterList(category) {
     const result = await api(`/master${category ? `?category=${category}` : ''}`);
     const items = result.data || [];
     
+    // 전역에 저장 (엑셀/출력용)
+    window.masterListData = items;
+    window.masterListCategory = category;
+    
     document.getElementById('master-content').innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-end gap-2">
+        <button onclick="downloadMasterList()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+          <i class="fas fa-file-excel mr-1"></i> 엑셀
+        </button>
+        <button onclick="printMasterList()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+          <i class="fas fa-print mr-1"></i> 출력
+        </button>
+      </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
           <thead>
@@ -3672,11 +3931,23 @@ async function loadProcessQualityData() {
       return;
     }
     
+    // 전역에 저장 (엑셀/출력용)
+    window.processQualityData = records;
+    window.processQualityDate = date;
+    
     contentEl.innerHTML = `
       <div class="space-y-4">
-        <div class="flex justify-between items-center">
+        <div class="flex justify-between items-center flex-wrap gap-2">
           <h3 class="text-lg font-bold text-gray-800">${date} 공정 품질 기록</h3>
-          <span class="text-sm text-gray-500">총 ${records.length}건</span>
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-gray-500">총 ${records.length}건</span>
+            <button onclick="downloadProcessQuality()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+              <i class="fas fa-file-excel mr-1"></i> 엑셀
+            </button>
+            <button onclick="printProcessQuality()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+              <i class="fas fa-print mr-1"></i> 출력
+            </button>
+          </div>
         </div>
         
         <div class="overflow-x-auto">
@@ -4234,3 +4505,294 @@ window.processInboundUpload = processInboundUpload;
 window.filterSuppliers = filterSuppliers;
 window.filterSuppliersByType = filterSuppliersByType;
 window.renderSuppliersTable = renderSuppliersTable;
+
+// ========== 엑셀 다운로드 / 출력 함수들 ==========
+
+// 일별 수불부 다운로드
+function downloadDailyReport() {
+  const data = window.dailyReportData || [];
+  const date = window.dailyReportDate || formatDate(new Date());
+  
+  const columns = [
+    { key: 'item_code', label: '품목코드' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'category', label: '구분' },
+    { key: 'inbound', label: '입고' },
+    { key: 'usage', label: '사용' },
+    { key: 'outbound', label: '출고' },
+    { key: 'adjustment', label: '조정' },
+    { key: 'current_stock', label: '현재고' }
+  ];
+  
+  downloadExcel(data, columns, `일별수불부_${date}`);
+}
+
+// 일별 수불부 출력
+function printDailyReport() {
+  const data = window.dailyReportData || [];
+  const date = window.dailyReportDate || formatDate(new Date());
+  
+  const columns = [
+    { key: 'item_code', label: '품목코드' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'category', label: '구분', type: 'center' },
+    { key: 'inbound', label: '입고', type: 'number', format: (v) => v > 0 ? '+' + formatNumber(v) : '-' },
+    { key: 'usage', label: '사용', type: 'number', format: (v) => v > 0 ? '-' + formatNumber(v) : '-' },
+    { key: 'outbound', label: '출고', type: 'number', format: (v) => v > 0 ? '-' + formatNumber(v) : '-' },
+    { key: 'adjustment', label: '조정', type: 'number', format: (v) => v !== 0 ? (v > 0 ? '+' : '') + formatNumber(v) : '-' },
+    { key: 'current_stock', label: '현재고', type: 'number' }
+  ];
+  
+  const tableHtml = tableToHtml(data, columns);
+  printData(`일별 수불부 (${date})`, tableHtml, `<strong>기준일:</strong> ${date} | <strong>조회 품목:</strong> ${data.length}개`);
+}
+
+// 월별 수불부 다운로드
+function downloadMonthlyReport() {
+  const data = window.monthlyReportData || [];
+  const period = window.monthlyReportPeriod || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
+  
+  const columns = [
+    { key: 'item_code', label: '품목코드' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'category', label: '구분' },
+    { key: 'opening_stock', label: '월초재고' },
+    { key: 'total_inbound', label: '입고' },
+    { key: 'total_usage', label: '사용' },
+    { key: 'total_outbound', label: '출고' },
+    { key: 'total_adjustment', label: '조정' },
+    { key: 'closing_stock', label: '월말재고' }
+  ];
+  
+  downloadExcel(data, columns, `월별수불부_${period.year}년${period.month}월`);
+}
+
+// 월별 수불부 출력
+function printMonthlyReport() {
+  const data = window.monthlyReportData || [];
+  const period = window.monthlyReportPeriod || { year: new Date().getFullYear(), month: new Date().getMonth() + 1 };
+  
+  const columns = [
+    { key: 'item_code', label: '품목코드' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'category', label: '구분', type: 'center' },
+    { key: 'opening_stock', label: '월초재고', type: 'number' },
+    { key: 'total_inbound', label: '입고', type: 'number' },
+    { key: 'total_usage', label: '사용', type: 'number' },
+    { key: 'total_outbound', label: '출고', type: 'number' },
+    { key: 'total_adjustment', label: '조정', type: 'number' },
+    { key: 'closing_stock', label: '월말재고', type: 'number' }
+  ];
+  
+  const tableHtml = tableToHtml(data, columns);
+  printData(`월별 수불부 (${period.year}년 ${parseInt(period.month)}월)`, tableHtml, 
+    `<strong>기간:</strong> ${period.year}년 ${parseInt(period.month)}월 | <strong>조회 품목:</strong> ${data.length}개`);
+}
+
+// 재고 현황 다운로드
+function downloadInventory() {
+  const data = window.inventoryData || [];
+  
+  const columns = [
+    { key: 'item_code', label: '품목코드' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'category', label: '구분' },
+    { key: 'current_stock', label: '현재고' },
+    { key: 'unit', label: '단위' },
+    { key: 'safety_stock', label: '안전재고' },
+    { key: 'is_low_stock', label: '재고상태', format: (v) => v ? '부족' : '정상' }
+  ];
+  
+  downloadExcel(data.map(d => ({...d, is_low_stock: d.is_low_stock ? '부족' : '정상'})), 
+    columns.map(c => c.key === 'is_low_stock' ? {...c, format: undefined} : c), 
+    '재고현황');
+}
+
+// 재고 현황 출력
+function printInventory() {
+  const data = window.inventoryData || [];
+  const category = window.inventoryCategory || '전체';
+  
+  const columns = [
+    { key: 'item_code', label: '품목코드' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'category', label: '구분', type: 'center' },
+    { key: 'current_stock', label: '현재고', type: 'number' },
+    { key: 'unit', label: '단위', type: 'center' },
+    { key: 'safety_stock', label: '안전재고', type: 'number' },
+    { key: 'is_low_stock', label: '상태', type: 'center', format: (v) => v ? '<span class="badge badge-fail">부족</span>' : '<span class="badge badge-pass">정상</span>' }
+  ];
+  
+  const tableHtml = tableToHtml(data, columns);
+  const lowCount = data.filter(d => d.is_low_stock).length;
+  printData('재고 현황', tableHtml, 
+    `<strong>조회 구분:</strong> ${category || '전체'} | <strong>총 품목:</strong> ${data.length}개 | <strong class="text-red">재고 부족:</strong> ${lowCount}개`);
+}
+
+// 품질 KPI 다운로드
+function downloadQualityKpi() {
+  const data = window.qualityKpiData || [];
+  const date = window.qualityKpiDate || formatDate(new Date());
+  
+  const columns = [
+    { key: 'kpi_name', label: '항목' },
+    { key: 'standard_value', label: '기준값' },
+    { key: 'measured_value', label: '측정값' },
+    { key: 'judgment', label: '판정' },
+    { key: 'registration_status', label: '등록상태' }
+  ];
+  
+  downloadExcel(data, columns, `품질KPI_${date}`);
+}
+
+// 품질 KPI 출력
+function printQualityKpi() {
+  const data = window.qualityKpiData || [];
+  const date = window.qualityKpiDate || formatDate(new Date());
+  
+  const columns = [
+    { key: 'kpi_name', label: '항목' },
+    { key: 'standard_value', label: '기준값', type: 'center' },
+    { key: 'measured_value', label: '측정값', type: 'center' },
+    { key: 'judgment', label: '판정', type: 'center', format: (v) => `<span class="badge ${v === '적합' ? 'badge-pass' : 'badge-fail'}">${v}</span>` },
+    { key: 'registration_status', label: '등록상태', type: 'center' }
+  ];
+  
+  const tableHtml = tableToHtml(data, columns);
+  const passCount = data.filter(d => d.judgment === '적합').length;
+  printData(`품질 KPI (${date})`, tableHtml, 
+    `<strong>기준일:</strong> ${date} | <strong>등록:</strong> ${data.length}건 | <strong class="text-green">적합:</strong> ${passCount}건 | <strong class="text-red">부적합:</strong> ${data.length - passCount}건`);
+}
+
+// 반제품 공정품질 다운로드
+function downloadProcessQuality() {
+  const data = window.processQualityData || [];
+  const date = window.processQualityDate || formatDate(new Date());
+  
+  const columns = [
+    { key: 'record_time', label: '시간' },
+    { key: 'dough_name', label: '반죽명' },
+    { key: 'dough_temp', label: '반죽온도(°C)' },
+    { key: 'ph_value', label: 'pH' },
+    { key: 'humidity', label: '습도(%)' },
+    { key: 'fermentation_time', label: '발효시간(분)' },
+    { key: 'overall_judgment', label: '종합판정' },
+    { key: 'worker_name', label: '작업자' }
+  ];
+  
+  downloadExcel(data, columns, `반제품공정품질_${date}`);
+}
+
+// 반제품 공정품질 출력
+function printProcessQuality() {
+  const data = window.processQualityData || [];
+  const date = window.processQualityDate || formatDate(new Date());
+  
+  const columns = [
+    { key: 'record_time', label: '시간', type: 'center' },
+    { key: 'dough_name', label: '반죽명' },
+    { key: 'dough_temp', label: '반죽온도', type: 'center', format: (v) => v !== null ? v + '°C' : '-' },
+    { key: 'ph_value', label: 'pH', type: 'center', format: (v) => v !== null ? v : '-' },
+    { key: 'humidity', label: '습도', type: 'center', format: (v) => v !== null ? v + '%' : '-' },
+    { key: 'fermentation_time', label: '발효시간', type: 'center', format: (v) => v !== null ? v + '분' : '-' },
+    { key: 'overall_judgment', label: '종합판정', type: 'center', format: (v) => `<span class="badge ${v === '적합' ? 'badge-pass' : 'badge-fail'}">${v}</span>` },
+    { key: 'worker_name', label: '작업자' }
+  ];
+  
+  const tableHtml = tableToHtml(data, columns);
+  const passCount = data.filter(d => d.overall_judgment === '적합').length;
+  printData(`반제품 공정품질 (${date})`, tableHtml, 
+    `<strong>기준일:</strong> ${date} | <strong>기록:</strong> ${data.length}건 | <strong class="text-green">적합:</strong> ${passCount}건 | <strong class="text-red">부적합:</strong> ${data.length - passCount}건`);
+}
+
+// 품목 관리 다운로드
+function downloadMasterList() {
+  const data = window.masterListData || [];
+  
+  const columns = [
+    { key: 'item_code', label: '품목코드' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'category', label: '구분' },
+    { key: 'unit', label: '단위' },
+    { key: 'current_stock', label: '현재고' },
+    { key: 'safety_stock', label: '안전재고' },
+    { key: 'expiry_days', label: '유통기한(일)' }
+  ];
+  
+  downloadExcel(data, columns, '품목마스터');
+}
+
+// 품목 관리 출력
+function printMasterList() {
+  const data = window.masterListData || [];
+  const category = window.masterListCategory || '전체';
+  
+  const columns = [
+    { key: 'item_code', label: '품목코드' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'category', label: '구분', type: 'center' },
+    { key: 'unit', label: '단위', type: 'center' },
+    { key: 'current_stock', label: '현재고', type: 'number' },
+    { key: 'safety_stock', label: '안전재고', type: 'number' },
+    { key: 'expiry_days', label: '유통기한(일)', type: 'center' }
+  ];
+  
+  const tableHtml = tableToHtml(data, columns);
+  printData('품목 마스터', tableHtml, 
+    `<strong>조회 구분:</strong> ${category || '전체'} | <strong>총 품목:</strong> ${data.length}개`);
+}
+
+// 수불 통합검색 다운로드
+function downloadTransactionSearch() {
+  const data = window.transactionSearchData || [];
+  const params = window.transactionSearchParams || {};
+  
+  const columns = [
+    { key: 'trans_date', label: '일자' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'trans_type', label: '구분' },
+    { key: 'quantity', label: '수량' },
+    { key: 'lot_number', label: 'LOT' },
+    { key: 'remain_qty', label: '잔량' }
+  ];
+  
+  downloadExcel(data, columns, `수불검색_${params.startDate}_${params.endDate}`);
+}
+
+// 수불 통합검색 출력
+function printTransactionSearch() {
+  const data = window.transactionSearchData || [];
+  const params = window.transactionSearchParams || {};
+  
+  const columns = [
+    { key: 'trans_date', label: '일자' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'trans_type', label: '구분', type: 'center', format: (v) => `<span class="badge badge-blue">${v}</span>` },
+    { key: 'quantity', label: '수량', type: 'number', format: (v) => (v > 0 ? '+' : '') + formatNumber(v) },
+    { key: 'lot_number', label: 'LOT' },
+    { key: 'remain_qty', label: '잔량', type: 'number', format: (v) => v !== null ? formatNumber(v) : '-' }
+  ];
+  
+  const tableHtml = tableToHtml(data, columns);
+  printData('수불 통합검색', tableHtml, 
+    `<strong>조회 기간:</strong> ${params.startDate} ~ ${params.endDate} | <strong>검색 결과:</strong> ${data.length}건`);
+}
+
+// 엑셀/출력 함수들 전역 노출
+window.downloadExcel = downloadExcel;
+window.printData = printData;
+window.tableToHtml = tableToHtml;
+window.downloadDailyReport = downloadDailyReport;
+window.printDailyReport = printDailyReport;
+window.downloadMonthlyReport = downloadMonthlyReport;
+window.printMonthlyReport = printMonthlyReport;
+window.downloadInventory = downloadInventory;
+window.printInventory = printInventory;
+window.downloadQualityKpi = downloadQualityKpi;
+window.printQualityKpi = printQualityKpi;
+window.downloadProcessQuality = downloadProcessQuality;
+window.printProcessQuality = printProcessQuality;
+window.downloadMasterList = downloadMasterList;
+window.printMasterList = printMasterList;
+window.downloadTransactionSearch = downloadTransactionSearch;
+window.printTransactionSearch = printTransactionSearch;

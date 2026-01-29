@@ -3358,6 +3358,9 @@ async function renderAdminDashboard() {
               <i class="fas fa-users mr-2"></i> 사용자 관리
               <span id="pending-users-badge" class="ml-1 px-2 py-0.5 bg-red-500 text-white text-xs rounded-full hidden">0</span>
             </button>
+            <button onclick="switchAdminTab('master')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="master">
+              <i class="fas fa-database mr-2"></i> 품목 관리
+            </button>
           </nav>
         </div>
         
@@ -3390,6 +3393,7 @@ function switchAdminTab(tab) {
     case 'stock': loadAdminStock(); break;
     case 'logs': loadAdminLogs(); break;
     case 'users': loadAdminUsers(); break;
+    case 'master': loadAdminMaster(); break;
   }
 }
 
@@ -4054,6 +4058,231 @@ async function confirmDeleteTransaction(id) {
     loadAlertCount();
   } catch (e) {
     // Error handled
+  }
+}
+
+// ========== 품목(마스터) 관리 ==========
+
+// 품목 관리 탭
+async function loadAdminMaster() {
+  const tabContent = document.getElementById('admin-tab-content');
+  tabContent.innerHTML = '<div class="flex justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const result = await api('/master');
+    const items = result.data || [];
+    
+    tabContent.innerHTML = `
+      <div class="space-y-6">
+        <div class="flex justify-between items-center">
+          <h3 class="text-lg font-bold text-gray-800">품목 마스터 관리</h3>
+          <span class="text-sm text-gray-500">총 ${items.length}건</span>
+        </div>
+        
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm">
+          <i class="fas fa-exclamation-triangle text-yellow-600 mr-1"></i>
+          <strong>주의:</strong> 입고 기록이 있는 품목은 삭제할 수 없습니다. 입고 데이터를 먼저 삭제해주세요.
+        </div>
+        
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-3 py-2 text-left">ID</th>
+                <th class="px-3 py-2 text-left">품목코드</th>
+                <th class="px-3 py-2 text-left">품목명</th>
+                <th class="px-3 py-2 text-center">구분</th>
+                <th class="px-3 py-2 text-right">현재고</th>
+                <th class="px-3 py-2 text-right">안전재고</th>
+                <th class="px-3 py-2 text-center">단위</th>
+                <th class="px-3 py-2 text-center">입고수</th>
+                <th class="px-3 py-2 text-center">작업</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${items.length === 0 ? `
+                <tr><td colspan="9" class="px-3 py-8 text-center text-gray-500">등록된 품목이 없습니다.</td></tr>
+              ` : items.map(item => `
+                <tr class="hover:bg-gray-50" id="master-row-${item.id}">
+                  <td class="px-3 py-2 text-gray-500">${item.id}</td>
+                  <td class="px-3 py-2 font-mono">${item.item_code}</td>
+                  <td class="px-3 py-2 font-medium">${item.item_name}</td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${item.category === '원료' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}">${item.category}</span>
+                  </td>
+                  <td class="px-3 py-2 text-right font-medium ${item.current_stock < item.safety_stock ? 'text-red-600' : ''}">${formatNumber(item.current_stock)}</td>
+                  <td class="px-3 py-2 text-right text-gray-500">${formatNumber(item.safety_stock)}</td>
+                  <td class="px-3 py-2 text-center">${item.unit}</td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="master-inbound-count" data-item-code="${item.item_code}">-</span>
+                  </td>
+                  <td class="px-3 py-2 text-center">
+                    <button onclick="editAdminMaster('${item.item_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="수정">
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="deleteAdminMaster('${item.item_code}', '${item.item_name}')" class="text-red-600 hover:text-red-800" title="삭제">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+    
+    // 각 품목별 입고 수 조회
+    loadMasterInboundCounts(items);
+    
+  } catch (e) {
+    tabContent.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 품목별 입고 건수 조회
+async function loadMasterInboundCounts(items) {
+  try {
+    const result = await api('/admin/inbound?limit=1000');
+    const inbounds = result.data || [];
+    
+    // 품목코드별 입고 건수 계산
+    const counts = {};
+    inbounds.forEach(ib => {
+      counts[ib.item_code] = (counts[ib.item_code] || 0) + 1;
+    });
+    
+    // UI 업데이트
+    document.querySelectorAll('.master-inbound-count').forEach(span => {
+      const itemCode = span.dataset.itemCode;
+      const count = counts[itemCode] || 0;
+      span.textContent = count;
+      if (count > 0) {
+        span.classList.add('text-blue-600', 'font-medium');
+      }
+    });
+  } catch (e) {
+    console.error('입고 건수 조회 실패:', e);
+  }
+}
+
+// 품목 수정 모달
+async function editAdminMaster(itemCode) {
+  try {
+    const result = await api('/master');
+    const item = result.data.find(i => i.item_code === itemCode);
+    if (!item) {
+      showToast('품목을 찾을 수 없습니다', 'error');
+      return;
+    }
+    
+    showModal('품목 정보 수정', `
+      <form id="edit-master-form" class="space-y-4">
+        <input type="hidden" id="edit-master-code-original" value="${item.item_code}">
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">품목코드</label>
+            <input type="text" value="${item.item_code}" disabled
+                   class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">품목명 <span class="text-red-500">*</span></label>
+            <input type="text" id="edit-master-name" value="${item.item_name}" required
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">구분</label>
+            <select id="edit-master-category" class="w-full px-3 py-2 border rounded-lg">
+              <option value="원료" ${item.category === '원료' ? 'selected' : ''}>원료</option>
+              <option value="제품" ${item.category === '제품' ? 'selected' : ''}>제품</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+            <input type="text" id="edit-master-unit" value="${item.unit}"
+                   class="w-full px-3 py-2 border rounded-lg" placeholder="kg, ea, L">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">안전재고</label>
+            <input type="number" id="edit-master-safety" value="${item.safety_stock}" step="0.01"
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">유통기한(일)</label>
+          <input type="number" id="edit-master-expiry" value="${item.expiry_days || 365}"
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+        
+        <div class="flex justify-end space-x-3 pt-4 border-t">
+          <button type="button" onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+            취소
+          </button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            저장
+          </button>
+        </div>
+      </form>
+    `);
+    
+    document.getElementById('edit-master-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await saveAdminMaster();
+    });
+  } catch (e) {
+    showToast('품목 정보를 불러오는데 실패했습니다', 'error');
+  }
+}
+
+// 품목 저장
+async function saveAdminMaster() {
+  const itemCode = document.getElementById('edit-master-code-original').value;
+  const data = {
+    item_name: document.getElementById('edit-master-name').value,
+    category: document.getElementById('edit-master-category').value,
+    unit: document.getElementById('edit-master-unit').value,
+    safety_stock: parseFloat(document.getElementById('edit-master-safety').value) || 0,
+    expiry_days: parseInt(document.getElementById('edit-master-expiry').value) || 365
+  };
+  
+  try {
+    await api(`/master/${itemCode}`, 'PUT', data);
+    showToast('품목 정보가 수정되었습니다', 'success');
+    closeModal();
+    loadAdminMaster();
+  } catch (e) {
+    showToast(e.response?.data?.error || '수정에 실패했습니다', 'error');
+  }
+}
+
+// 품목 삭제
+async function deleteAdminMaster(itemCode, itemName) {
+  // 먼저 입고 건수 확인
+  try {
+    const result = await api('/admin/inbound?limit=1000');
+    const inbounds = result.data || [];
+    const relatedInbounds = inbounds.filter(ib => ib.item_code === itemCode);
+    
+    if (relatedInbounds.length > 0) {
+      showToast(`이 품목에 ${relatedInbounds.length}건의 입고 기록이 있습니다.\n입고 데이터를 먼저 삭제해주세요.`, 'error');
+      return;
+    }
+    
+    if (!confirm(`"${itemName}" (${itemCode}) 품목을 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.`)) {
+      return;
+    }
+    
+    await api(`/master/${itemCode}`, 'DELETE');
+    showToast(`"${itemName}" 품목이 삭제되었습니다`, 'success');
+    loadAdminMaster();
+    
+  } catch (e) {
+    showToast(e.response?.data?.error || '삭제에 실패했습니다', 'error');
   }
 }
 
@@ -5062,6 +5291,10 @@ window.saveAdminStock = saveAdminStock;
 window.recalculateAllStock = recalculateAllStock;
 window.confirmRecalculate = confirmRecalculate;
 window.showLogDetail = showLogDetail;
+window.loadAdminMaster = loadAdminMaster;
+window.editAdminMaster = editAdminMaster;
+window.saveAdminMaster = saveAdminMaster;
+window.deleteAdminMaster = deleteAdminMaster;
 
 // 제품 재고 등록 함수들
 window.addQuickStockItem = addQuickStockItem;

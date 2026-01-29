@@ -44,7 +44,7 @@ app.get('/*', (c) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HACCP ERP - 원료·제품 수불/재고 관리</title>
+    <title>(주)본비반트 통합관리시스템</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
@@ -118,10 +118,10 @@ app.get('/*', (c) => {
         <aside id="sidebar" class="w-64 bg-white shadow-lg fixed h-full z-20 transition-transform duration-300 lg:translate-x-0 -translate-x-full">
             <div class="p-4 border-b bg-gradient-to-r from-haccp-primary to-haccp-secondary">
                 <h1 class="text-xl font-bold text-white flex items-center gap-2">
-                    <i class="fas fa-shield-alt"></i>
-                    HACCP ERP
+                    <i class="fas fa-building"></i>
+                    본비반트
                 </h1>
-                <p class="text-blue-100 text-sm mt-1">원료·제품 수불/재고 관리</p>
+                <p class="text-blue-100 text-sm mt-1">통합관리시스템</p>
             </div>
             
             <nav class="p-4 space-y-1 overflow-y-auto" style="height: calc(100% - 100px);">

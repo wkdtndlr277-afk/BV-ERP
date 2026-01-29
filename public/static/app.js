@@ -477,7 +477,7 @@ async function renderInbound() {
   });
 }
 
-// Usage Input (Raw Materials)
+// Usage Input (Raw Materials) - with search functionality
 async function renderUsage() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
@@ -486,9 +486,12 @@ async function renderUsage() {
     const result = await api('/usage/available');
     const materials = result.data || [];
     
+    // Store materials globally for filtering
+    window.usageMaterials = materials;
+    
     content.innerHTML = `
       <div class="max-w-3xl mx-auto space-y-6">
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between flex-wrap gap-4">
           <h2 class="text-2xl font-bold text-gray-800">
             <i class="fas fa-mortar-pestle mr-2 text-haccp-primary"></i>
             오늘 사용량 입력
@@ -498,40 +501,27 @@ async function renderUsage() {
         
         <div class="bg-white rounded-xl shadow">
           <div class="p-4 border-b bg-gray-50">
-            <div class="flex items-center justify-between">
+            <div class="flex items-center justify-between flex-wrap gap-4">
               <span class="font-medium text-gray-700">원료 사용량 입력</span>
-              <span class="text-sm text-gray-500">* 사용한 원료만 수량을 입력하세요</span>
+              <div class="relative">
+                <input type="text" 
+                       id="usage-search" 
+                       class="border rounded-lg pl-10 pr-4 py-2 w-64" 
+                       placeholder="원료명 검색...">
+                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+              </div>
             </div>
           </div>
           
           <form id="usage-form">
-            <div class="divide-y">
-              ${materials.map(item => `
-                <div class="flex items-center justify-between p-4 hover:bg-gray-50">
-                  <div class="flex-1">
-                    <span class="font-medium">${item.item_name}</span>
-                    <span class="text-gray-500 text-sm ml-2">(${item.item_code})</span>
-                    <div class="text-sm text-gray-400 mt-1">
-                      가용재고: <span class="${item.available_qty <= item.safety_stock ? 'text-red-500 font-bold' : 'text-green-600'}">${formatNumber(item.available_qty)}</span> ${item.unit}
-                      ${item.lot_count > 0 ? `<span class="ml-2">(${item.lot_count}개 LOT)</span>` : ''}
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input type="number" 
-                           name="usage_${item.item_code}" 
-                           data-item-code="${item.item_code}"
-                           class="w-24 border rounded-lg px-3 py-2 text-right usage-input" 
-                           min="0" 
-                           max="${item.available_qty}"
-                           step="0.01"
-                           placeholder="0">
-                    <span class="text-gray-500 w-10">${item.unit}</span>
-                  </div>
-                </div>
-              `).join('')}
+            <div id="usage-list" class="divide-y max-h-96 overflow-y-auto">
+              ${renderUsageItems(materials)}
             </div>
             
-            <div class="p-4 border-t bg-gray-50">
+            <div class="p-4 border-t bg-gray-50 space-y-3">
+              <div id="usage-summary" class="text-sm text-gray-600 hidden">
+                <span class="font-medium">선택된 원료:</span> <span id="selected-count">0</span>개
+              </div>
               <button type="submit" class="w-full bg-haccp-primary text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition flex items-center justify-center gap-2">
                 <i class="fas fa-save"></i>
                 사용량 저장
@@ -546,6 +536,19 @@ async function renderUsage() {
         </div>
       </div>
     `;
+    
+    // Search functionality
+    document.getElementById('usage-search').addEventListener('input', function(e) {
+      const searchTerm = e.target.value.toLowerCase().trim();
+      filterUsageItems(searchTerm);
+    });
+    
+    // Track input changes to show selected count
+    document.getElementById('usage-list').addEventListener('input', function(e) {
+      if (e.target.classList.contains('usage-input')) {
+        updateUsageSummary();
+      }
+    });
     
     // Form submit
     document.getElementById('usage-form').addEventListener('submit', async function(e) {
@@ -583,6 +586,85 @@ async function renderUsage() {
     });
   } catch (e) {
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// Render usage items list
+function renderUsageItems(materials) {
+  if (materials.length === 0) {
+    return '<div class="p-8 text-center text-gray-400">검색 결과가 없습니다.</div>';
+  }
+  
+  return materials.map(item => `
+    <div class="flex items-center justify-between p-4 hover:bg-gray-50 usage-item" data-name="${item.item_name.toLowerCase()}" data-code="${item.item_code.toLowerCase()}">
+      <div class="flex-1">
+        <span class="font-medium">${item.item_name}</span>
+        <span class="text-gray-500 text-sm ml-2">(${item.item_code})</span>
+        <div class="text-sm text-gray-400 mt-1">
+          가용재고: <span class="${item.available_qty <= item.safety_stock ? 'text-red-500 font-bold' : 'text-green-600'}">${formatNumber(item.available_qty)}</span> ${item.unit}
+          ${item.lot_count > 0 ? `<span class="ml-2">(${item.lot_count}개 LOT)</span>` : ''}
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="number" 
+               name="usage_${item.item_code}" 
+               data-item-code="${item.item_code}"
+               class="w-24 border rounded-lg px-3 py-2 text-right usage-input" 
+               min="0" 
+               max="${item.available_qty}"
+               step="0.01"
+               placeholder="0">
+        <span class="text-gray-500 w-10">${item.unit}</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+// Filter usage items by search term
+function filterUsageItems(searchTerm) {
+  const items = document.querySelectorAll('.usage-item');
+  let visibleCount = 0;
+  
+  items.forEach(item => {
+    const name = item.dataset.name;
+    const code = item.dataset.code;
+    const matches = !searchTerm || name.includes(searchTerm) || code.includes(searchTerm);
+    
+    item.style.display = matches ? 'flex' : 'none';
+    if (matches) visibleCount++;
+  });
+  
+  // Show "no results" message if nothing matches
+  const list = document.getElementById('usage-list');
+  const noResultsMsg = list.querySelector('.no-results');
+  
+  if (visibleCount === 0 && !noResultsMsg) {
+    const msg = document.createElement('div');
+    msg.className = 'p-8 text-center text-gray-400 no-results';
+    msg.textContent = `"${searchTerm}" 검색 결과가 없습니다.`;
+    list.appendChild(msg);
+  } else if (visibleCount > 0 && noResultsMsg) {
+    noResultsMsg.remove();
+  }
+}
+
+// Update usage summary (selected count)
+function updateUsageSummary() {
+  const inputs = document.querySelectorAll('.usage-input');
+  let count = 0;
+  
+  inputs.forEach(input => {
+    if (parseFloat(input.value) > 0) count++;
+  });
+  
+  const summary = document.getElementById('usage-summary');
+  const countSpan = document.getElementById('selected-count');
+  
+  if (count > 0) {
+    summary.classList.remove('hidden');
+    countSpan.textContent = count;
+  } else {
+    summary.classList.add('hidden');
   }
 }
 

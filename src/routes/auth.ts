@@ -219,7 +219,7 @@ app.get('/users', async (c) => {
     WHERE s.session_token = ? AND s.expires_at > datetime('now')
   `).bind(token || '').first()
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !['super_admin', 'admin'].includes(admin.role as string)) {
     return c.json({ success: false, error: '관리자 권한이 필요합니다.' }, 403)
   }
   
@@ -254,7 +254,7 @@ app.post('/users/:id/approve', async (c) => {
     WHERE s.session_token = ? AND s.expires_at > datetime('now')
   `).bind(token || '').first()
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !['super_admin', 'admin'].includes(admin.role as string)) {
     return c.json({ success: false, error: '관리자 권한이 필요합니다.' }, 403)
   }
   
@@ -278,7 +278,7 @@ app.post('/users/:id/reject', async (c) => {
     WHERE s.session_token = ? AND s.expires_at > datetime('now')
   `).bind(token || '').first()
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !['super_admin', 'admin'].includes(admin.role as string)) {
     return c.json({ success: false, error: '관리자 권한이 필요합니다.' }, 403)
   }
   
@@ -301,7 +301,7 @@ app.post('/users/:id/suspend', async (c) => {
     WHERE s.session_token = ? AND s.expires_at > datetime('now')
   `).bind(token || '').first()
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !['super_admin', 'admin'].includes(admin.role as string)) {
     return c.json({ success: false, error: '관리자 권한이 필요합니다.' }, 403)
   }
   
@@ -321,7 +321,7 @@ app.post('/users/:id/role', async (c) => {
   const userId = c.req.param('id')
   const { role } = await c.req.json()
   
-  if (!['admin', 'manager', 'user'].includes(role)) {
+  if (!['super_admin', 'admin', 'manager', 'user'].includes(role)) {
     return c.json({ success: false, error: '유효하지 않은 권한입니다.' }, 400)
   }
   
@@ -332,7 +332,7 @@ app.post('/users/:id/role', async (c) => {
     WHERE s.session_token = ? AND s.expires_at > datetime('now')
   `).bind(token || '').first()
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !['super_admin', 'admin'].includes(admin.role as string)) {
     return c.json({ success: false, error: '관리자 권한이 필요합니다.' }, 403)
   }
   
@@ -355,7 +355,7 @@ app.delete('/users/:id', async (c) => {
     WHERE s.session_token = ? AND s.expires_at > datetime('now')
   `).bind(token || '').first()
   
-  if (!admin || admin.role !== 'admin') {
+  if (!admin || !['super_admin', 'admin'].includes(admin.role as string)) {
     return c.json({ success: false, error: '관리자 권한이 필요합니다.' }, 403)
   }
   

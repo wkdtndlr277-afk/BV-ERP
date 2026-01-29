@@ -3491,6 +3491,7 @@ function renderUsersList(users) {
                   <option value="user" ${u.role === 'user' ? 'selected' : ''}>사용자</option>
                   <option value="manager" ${u.role === 'manager' ? 'selected' : ''}>매니저</option>
                   <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>관리자</option>
+                  <option value="super_admin" ${u.role === 'super_admin' ? 'selected' : ''}>최고관리자</option>
                 </select>
               </td>
               <td class="px-4 py-3 text-center">

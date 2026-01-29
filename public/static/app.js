@@ -346,19 +346,13 @@ async function renderDashboard() {
   }
 }
 
-// Inbound Registration
+// Inbound Registration - with search and manual input
 async function renderInbound() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
   
-  const itemOptions = state.masterItems.map(item => 
-    `<option value="${item.item_code}" data-unit="${item.unit}" data-expiry-days="${item.expiry_days}">${item.item_name} (${item.item_code})</option>`
-  ).join('');
-  
-  const supplierOptions = state.suppliers
-    .filter(s => s.supplier_type === '입고' || s.supplier_type === '양방향')
-    .map(s => `<option value="${s.supplier_name}">${s.supplier_name}</option>`)
-    .join('');
+  // Store master items for search
+  window.inboundMasterItems = state.masterItems;
   
   content.innerHTML = `
     <div class="max-w-2xl mx-auto space-y-6">
@@ -369,12 +363,32 @@ async function renderInbound() {
       
       <div class="bg-white rounded-xl shadow p-6">
         <form id="inbound-form" class="space-y-4">
+          <!-- 품목 검색 -->
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">품목 <span class="text-red-500">*</span></label>
-            <select id="inbound-item" class="w-full border rounded-lg px-4 py-2" required>
-              <option value="">선택하세요</option>
-              ${itemOptions}
-            </select>
+            <div class="relative">
+              <input type="text" 
+                     id="inbound-item-search" 
+                     class="w-full border rounded-lg pl-10 pr-4 py-2" 
+                     placeholder="품목명 또는 품목코드 검색..."
+                     autocomplete="off">
+              <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+              <!-- 검색 결과 드롭다운 -->
+              <div id="inbound-search-results" class="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-60 overflow-y-auto hidden">
+              </div>
+            </div>
+            <input type="hidden" id="inbound-item" required>
+            <div id="inbound-selected-item" class="mt-2 p-3 bg-blue-50 rounded-lg hidden">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="font-medium text-blue-800" id="selected-item-name"></span>
+                  <span class="text-blue-600 text-sm ml-2" id="selected-item-code"></span>
+                </div>
+                <button type="button" onclick="clearSelectedItem()" class="text-blue-500 hover:text-blue-700">
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
+            </div>
           </div>
           
           <div class="grid grid-cols-2 gap-4">
@@ -382,7 +396,7 @@ async function renderInbound() {
               <label class="block text-sm font-medium text-gray-700 mb-1">수량 <span class="text-red-500">*</span></label>
               <div class="flex">
                 <input type="number" id="inbound-qty" class="flex-1 border rounded-l-lg px-4 py-2" min="0.01" step="0.01" required>
-                <span id="inbound-unit" class="bg-gray-100 border border-l-0 rounded-r-lg px-4 py-2 text-gray-600">-</span>
+                <span id="inbound-unit" class="bg-gray-100 border border-l-0 rounded-r-lg px-4 py-2 text-gray-600 min-w-[60px] text-center">-</span>
               </div>
             </div>
             
@@ -400,10 +414,7 @@ async function renderInbound() {
             
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">거래처</label>
-              <select id="inbound-supplier" class="w-full border rounded-lg px-4 py-2">
-                <option value="">선택하세요</option>
-                ${supplierOptions}
-              </select>
+              <input type="text" id="inbound-supplier" class="w-full border rounded-lg px-4 py-2" placeholder="거래처명 입력">
             </div>
           </div>
           
@@ -439,24 +450,80 @@ async function renderInbound() {
     </div>
   `;
   
-  // Event: Update unit and expiry date when item changes
-  document.getElementById('inbound-item').addEventListener('change', function() {
-    const option = this.options[this.selectedIndex];
-    document.getElementById('inbound-unit').textContent = option.dataset.unit || '-';
+  // 품목 검색 기능
+  const searchInput = document.getElementById('inbound-item-search');
+  const searchResults = document.getElementById('inbound-search-results');
+  
+  searchInput.addEventListener('input', function(e) {
+    const term = e.target.value.toLowerCase().trim();
     
-    // Auto-calculate expiry date
-    const expiryDays = parseInt(option.dataset.expiryDays) || 365;
-    const inboundDate = new Date(document.getElementById('inbound-date').value);
-    inboundDate.setDate(inboundDate.getDate() + expiryDays);
-    document.getElementById('inbound-expiry').value = formatDate(inboundDate);
+    if (term.length < 1) {
+      searchResults.classList.add('hidden');
+      return;
+    }
+    
+    const filtered = window.inboundMasterItems.filter(item => 
+      item.item_name.toLowerCase().includes(term) || 
+      item.item_code.toLowerCase().includes(term)
+    );
+    
+    if (filtered.length === 0) {
+      searchResults.innerHTML = '<div class="p-3 text-gray-500 text-center">검색 결과가 없습니다.</div>';
+    } else {
+      searchResults.innerHTML = filtered.map(item => `
+        <div class="p-3 hover:bg-blue-50 cursor-pointer border-b last:border-0 inbound-search-item" 
+             data-code="${item.item_code}" 
+             data-name="${item.item_name}" 
+             data-unit="${item.unit}"
+             data-expiry-days="${item.expiry_days}">
+          <div class="font-medium">${item.item_name}</div>
+          <div class="text-sm text-gray-500">${item.item_code} · ${item.category} · ${item.unit}</div>
+        </div>
+      `).join('');
+    }
+    
+    searchResults.classList.remove('hidden');
   });
   
-  // Event: Form submit
+  // 검색 결과 클릭
+  searchResults.addEventListener('click', function(e) {
+    const item = e.target.closest('.inbound-search-item');
+    if (item) {
+      selectInboundItem(
+        item.dataset.code, 
+        item.dataset.name, 
+        item.dataset.unit,
+        item.dataset.expiryDays
+      );
+    }
+  });
+  
+  // 검색창 외부 클릭 시 드롭다운 닫기
+  document.addEventListener('click', function(e) {
+    if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+      searchResults.classList.add('hidden');
+    }
+  });
+  
+  // 검색창 포커스 시 결과 보이기
+  searchInput.addEventListener('focus', function() {
+    if (this.value.trim().length > 0) {
+      searchResults.classList.remove('hidden');
+    }
+  });
+  
+  // Form submit
   document.getElementById('inbound-form').addEventListener('submit', async function(e) {
     e.preventDefault();
     
+    const itemCode = document.getElementById('inbound-item').value;
+    if (!itemCode) {
+      showToast('품목을 선택해주세요.', 'warning');
+      return;
+    }
+    
     const data = {
-      item_code: document.getElementById('inbound-item').value,
+      item_code: itemCode,
       quantity: parseFloat(document.getElementById('inbound-qty').value),
       inbound_date: document.getElementById('inbound-date').value,
       expiry_date: document.getElementById('inbound-expiry').value,
@@ -467,14 +534,50 @@ async function renderInbound() {
     try {
       const result = await api('/inbound', 'POST', data);
       showToast(`입고 등록 완료 (LOT: ${result.data.lot_number})`, 'success');
+      
+      // 폼 초기화
       this.reset();
+      document.getElementById('inbound-item').value = '';
       document.getElementById('inbound-unit').textContent = '-';
       document.getElementById('inbound-date').value = today;
+      document.getElementById('inbound-selected-item').classList.add('hidden');
+      document.getElementById('inbound-item-search').value = '';
+      
       loadAlertCount();
     } catch (e) {
       // Error already handled in api function
     }
   });
+}
+
+// 품목 선택
+function selectInboundItem(code, name, unit, expiryDays) {
+  document.getElementById('inbound-item').value = code;
+  document.getElementById('inbound-item-search').value = '';
+  document.getElementById('inbound-search-results').classList.add('hidden');
+  
+  // 선택된 품목 표시
+  document.getElementById('selected-item-name').textContent = name;
+  document.getElementById('selected-item-code').textContent = `(${code})`;
+  document.getElementById('inbound-selected-item').classList.remove('hidden');
+  
+  // 단위 업데이트
+  document.getElementById('inbound-unit').textContent = unit || '-';
+  
+  // 유통기한 자동 계산
+  const days = parseInt(expiryDays) || 365;
+  const inboundDate = new Date(document.getElementById('inbound-date').value);
+  inboundDate.setDate(inboundDate.getDate() + days);
+  document.getElementById('inbound-expiry').value = formatDate(inboundDate);
+}
+
+// 선택 품목 해제
+function clearSelectedItem() {
+  document.getElementById('inbound-item').value = '';
+  document.getElementById('inbound-selected-item').classList.add('hidden');
+  document.getElementById('inbound-unit').textContent = '-';
+  document.getElementById('inbound-expiry').value = '';
+  document.getElementById('inbound-item-search').focus();
 }
 
 // Usage Input (Raw Materials) - with search functionality
@@ -2126,3 +2229,5 @@ window.deleteKpi = deleteKpi;
 window.showMonthlySummary = showMonthlySummary;
 window.closeModal = closeModal;
 window.printReport = printReport;
+window.selectInboundItem = selectInboundItem;
+window.clearSelectedItem = clearSelectedItem;

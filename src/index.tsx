@@ -37,9 +37,22 @@ app.route('/api/admin', adminRoutes);
 app.route('/api/process', processRoutes);
 app.route('/api/product-catalog', productCatalogRoutes);
 
+// 시스템 버전
+const SYSTEM_VERSION = '1.0.0';
+const SYSTEM_BUILD_DATE = '2026-01-29';
+
 // Health check
 app.get('/api/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Version info
+app.get('/api/version', (c) => {
+  return c.json({
+    version: SYSTEM_VERSION,
+    buildDate: SYSTEM_BUILD_DATE,
+    system: '(주)본비반트 HACCP 통합관리시스템'
+  });
 });
 
 // Main HTML page
@@ -231,6 +244,14 @@ app.get('/*', (c) => {
                     <i class="fas fa-user-shield w-5"></i>
                     <span>관리자 모드</span>
                 </a>
+                
+                <!-- 버전 정보 -->
+                <div class="mt-auto pt-6 px-4 pb-4 border-t border-gray-200">
+                    <div class="text-xs text-gray-400 text-center">
+                        <p class="font-medium">HACCP ERP System</p>
+                        <p id="system-version">v${SYSTEM_VERSION}</p>
+                    </div>
+                </div>
             </nav>
         </aside>
         

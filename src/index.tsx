@@ -40,7 +40,7 @@ app.route('/api/product-catalog', productCatalogRoutes);
 app.route('/api/auth', authRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '1.0.0';
+const SYSTEM_VERSION = '1.1.0';
 const SYSTEM_BUILD_DATE = '2026-01-29';
 
 // Health check

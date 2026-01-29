@@ -4,7 +4,7 @@ import type { Bindings, TransactionSearchParams } from '../types';
 
 const transactionRoutes = new Hono<{ Bindings: Bindings }>();
 
-// 통합 검색
+// 통합 검색 - 입고 정보 포함
 transactionRoutes.get('/search', async (c) => {
   const start_date = c.req.query('start_date');
   const end_date = c.req.query('end_date');
@@ -13,10 +13,20 @@ transactionRoutes.get('/search', async (c) => {
   const lot_number = c.req.query('lot_number');
   const category = c.req.query('category');
   
+  // 입고 테이블을 LEFT JOIN하여 입고일자, 유통기한, 입고량, 잔량 포함
   let query = `
-    SELECT t.*, m.item_name, m.category, m.unit
+    SELECT 
+      t.*,
+      m.item_name,
+      m.category,
+      m.unit,
+      i.inbound_date,
+      i.expiry_date,
+      i.origin_qty as inbound_qty,
+      i.remain_qty as lot_remain_qty
     FROM transactions t
     JOIN master m ON t.item_code = m.item_code
+    LEFT JOIN inbound i ON t.lot_number = i.lot_number
     WHERE 1=1
   `;
   const params: any[] = [];

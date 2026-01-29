@@ -2090,7 +2090,7 @@ async function renderTransactionSearch() {
         endDate: document.getElementById('search-end').value
       };
       
-      // Show results
+      // Show results with LOT 정보 (입고일, 유통기한, 입고량, 사용량, 재고량)
       document.getElementById('search-results').innerHTML = data.length > 0 ? `
         <div class="p-3 bg-gray-50 border-b flex justify-end gap-2">
           <button onclick="downloadTransactionSearch()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
@@ -2105,19 +2105,25 @@ async function renderTransactionSearch() {
             <thead>
               <tr class="text-gray-500 border-b bg-gray-50">
                 <th class="text-left p-3">일자</th>
+                <th class="text-left p-3">LOT 번호</th>
                 <th class="text-left p-3">품목</th>
-                <th class="text-left p-3">구분</th>
-                <th class="text-right p-3">수량</th>
-                <th class="text-left p-3">LOT</th>
-                <th class="text-right p-3">잔량</th>
+                <th class="text-center p-3">입고일</th>
+                <th class="text-center p-3">유통기한</th>
+                <th class="text-center p-3">구분</th>
+                <th class="text-right p-3">입고량</th>
+                <th class="text-right p-3">사용량</th>
+                <th class="text-right p-3">재고량</th>
               </tr>
             </thead>
             <tbody>
               ${data.map(t => `
                 <tr class="border-b hover:bg-gray-50">
-                  <td class="p-3">${t.trans_date}</td>
-                  <td class="p-3">${t.item_name}</td>
-                  <td class="p-3">
+                  <td class="p-3 text-xs">${t.trans_date}</td>
+                  <td class="p-3 font-mono text-xs">${t.lot_number || '-'}</td>
+                  <td class="p-3">${t.item_name} <span class="text-gray-400 text-xs">(${t.item_code})</span></td>
+                  <td class="p-3 text-center text-xs">${t.inbound_date || '-'}</td>
+                  <td class="p-3 text-center text-xs">${t.expiry_date || '-'}</td>
+                  <td class="p-3 text-center">
                     <span class="px-2 py-1 rounded text-xs ${
                       t.trans_type === '입고' ? 'bg-blue-100 text-blue-700' :
                       t.trans_type === '사용' ? 'bg-orange-100 text-orange-700' :
@@ -2125,9 +2131,9 @@ async function renderTransactionSearch() {
                       'bg-yellow-100 text-yellow-700'
                     }">${t.trans_type}</span>
                   </td>
-                  <td class="p-3 text-right font-medium ${t.quantity < 0 ? 'text-red-600' : 'text-blue-600'}">${t.quantity > 0 ? '+' : ''}${formatNumber(t.quantity)}</td>
-                  <td class="p-3 font-mono text-xs">${t.lot_number || '-'}</td>
-                  <td class="p-3 text-right">${t.remain_qty !== null ? formatNumber(t.remain_qty) : '-'}</td>
+                  <td class="p-3 text-right text-blue-600">${t.inbound_qty ? formatNumber(t.inbound_qty) : '-'}</td>
+                  <td class="p-3 text-right text-orange-600">${t.trans_type === '사용' ? formatNumber(Math.abs(t.quantity)) : '-'}</td>
+                  <td class="p-3 text-right font-bold">${t.lot_remain_qty !== null && t.lot_remain_qty !== undefined ? formatNumber(t.lot_remain_qty) : (t.remain_qty !== null ? formatNumber(t.remain_qty) : '-')}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2385,25 +2391,30 @@ async function loadDailyReport() {
         <div><span class="text-yellow-600 font-bold">조정</span> <span class="text-yellow-800">${formatNumber(summary.total_adjustment || 0)}</span></div>
       </div>
       
-      <!-- 통합 테이블 -->
+      <!-- 통합 테이블 (LOT별 입고일자, 입고량, 사용량, 재고량 포함) -->
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
           <thead>
             <tr class="text-gray-500 border-b bg-gray-50">
               <th class="text-left p-3">LOT 번호</th>
               <th class="text-left p-3">품목</th>
+              <th class="text-center p-3">입고일</th>
+              <th class="text-center p-3">유통기한</th>
               <th class="text-center p-3">구분</th>
-              <th class="text-right p-3">수량</th>
-              <th class="text-right p-3">LOT 잔량</th>
+              <th class="text-right p-3">입고량</th>
+              <th class="text-right p-3">사용량</th>
+              <th class="text-right p-3">재고량</th>
             </tr>
           </thead>
           <tbody>
             ${data.length === 0 ? `
-              <tr><td colspan="5" class="p-8 text-center text-gray-400">데이터가 없습니다.</td></tr>
+              <tr><td colspan="8" class="p-8 text-center text-gray-400">데이터가 없습니다.</td></tr>
             ` : data.map(t => `
               <tr class="border-b hover:bg-gray-50">
                 <td class="p-3 font-mono text-xs">${t.lot_number || '-'}</td>
                 <td class="p-3">${t.item_name} <span class="text-gray-400 text-xs">(${t.item_code})</span></td>
+                <td class="p-3 text-center text-xs">${t.inbound_date || '-'}</td>
+                <td class="p-3 text-center text-xs">${t.expiry_date || '-'}</td>
                 <td class="p-3 text-center">
                   <span class="px-2 py-1 rounded text-xs ${
                     t.trans_type === '입고' ? 'bg-blue-100 text-blue-700' :
@@ -2412,8 +2423,9 @@ async function loadDailyReport() {
                     'bg-yellow-100 text-yellow-700'
                   }">${t.trans_type}</span>
                 </td>
-                <td class="p-3 text-right font-medium ${t.quantity < 0 ? 'text-red-600' : 'text-blue-600'}">${t.quantity > 0 ? '+' : ''}${formatNumber(t.quantity)}</td>
-                <td class="p-3 text-right">${t.remain_qty !== null ? formatNumber(t.remain_qty) : '-'}</td>
+                <td class="p-3 text-right text-blue-600">${t.inbound_qty ? formatNumber(t.inbound_qty) : '-'}</td>
+                <td class="p-3 text-right text-orange-600">${t.trans_type === '사용' ? formatNumber(Math.abs(t.quantity)) : '-'}</td>
+                <td class="p-3 text-right font-bold">${t.lot_remain_qty !== null && t.lot_remain_qty !== undefined ? formatNumber(t.lot_remain_qty) : (t.remain_qty !== null ? formatNumber(t.remain_qty) : '-')}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -2550,7 +2562,7 @@ async function loadMonthlyReport() {
         <div><span class="text-yellow-600 font-bold">조정</span> <span class="text-yellow-800">${formatNumber(summary.total_adjustment || 0)}</span></div>
       </div>
       
-      <!-- 통합 테이블 -->
+      <!-- 통합 테이블 (LOT별 입고일자, 입고량, 사용량, 재고량 포함) -->
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
           <thead>
@@ -2558,19 +2570,24 @@ async function loadMonthlyReport() {
               <th class="text-left p-3">일자</th>
               <th class="text-left p-3">LOT 번호</th>
               <th class="text-left p-3">품목</th>
+              <th class="text-center p-3">입고일</th>
+              <th class="text-center p-3">유통기한</th>
               <th class="text-center p-3">구분</th>
-              <th class="text-right p-3">수량</th>
-              <th class="text-right p-3">LOT 잔량</th>
+              <th class="text-right p-3">입고량</th>
+              <th class="text-right p-3">사용량</th>
+              <th class="text-right p-3">재고량</th>
             </tr>
           </thead>
           <tbody>
             ${data.length === 0 ? `
-              <tr><td colspan="6" class="p-8 text-center text-gray-400">데이터가 없습니다.</td></tr>
+              <tr><td colspan="9" class="p-8 text-center text-gray-400">데이터가 없습니다.</td></tr>
             ` : data.map(t => `
               <tr class="border-b hover:bg-gray-50">
                 <td class="p-3 text-xs">${t.trans_date}</td>
                 <td class="p-3 font-mono text-xs">${t.lot_number || '-'}</td>
                 <td class="p-3">${t.item_name} <span class="text-gray-400 text-xs">(${t.item_code})</span></td>
+                <td class="p-3 text-center text-xs">${t.inbound_date || '-'}</td>
+                <td class="p-3 text-center text-xs">${t.expiry_date || '-'}</td>
                 <td class="p-3 text-center">
                   <span class="px-2 py-1 rounded text-xs ${
                     t.trans_type === '입고' ? 'bg-blue-100 text-blue-700' :
@@ -2579,8 +2596,9 @@ async function loadMonthlyReport() {
                     'bg-yellow-100 text-yellow-700'
                   }">${t.trans_type}</span>
                 </td>
-                <td class="p-3 text-right font-medium ${t.quantity < 0 ? 'text-red-600' : 'text-blue-600'}">${t.quantity > 0 ? '+' : ''}${formatNumber(t.quantity)}</td>
-                <td class="p-3 text-right">${t.remain_qty !== null ? formatNumber(t.remain_qty) : '-'}</td>
+                <td class="p-3 text-right text-blue-600">${t.inbound_qty ? formatNumber(t.inbound_qty) : '-'}</td>
+                <td class="p-3 text-right text-orange-600">${t.trans_type === '사용' ? formatNumber(Math.abs(t.quantity)) : '-'}</td>
+                <td class="p-3 text-right font-bold">${t.lot_remain_qty !== null && t.lot_remain_qty !== undefined ? formatNumber(t.lot_remain_qty) : (t.remain_qty !== null ? formatNumber(t.remain_qty) : '-')}</td>
               </tr>
             `).join('')}
           </tbody>

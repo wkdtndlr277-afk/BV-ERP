@@ -2732,101 +2732,365 @@ let currentProcessType = '숙성';
 async function renderQualityKPI() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
   
-  try {
-    const todayResult = await api('/process-kpi/today');
-    const summary = todayResult.summary;
-    const data = todayResult.data;
-    
-    content.innerHTML = `
-      <div class="space-y-6">
-        <div class="flex items-center justify-between flex-wrap gap-4">
-          <h2 class="text-2xl font-bold text-gray-800">
-            <i class="fas fa-chart-line mr-2 text-haccp-primary"></i>
-            공정별 품질 KPI
-          </h2>
+  // 연도 옵션 생성
+  const yearOptions = [currentYear - 1, currentYear, currentYear + 1]
+    .map(y => `<option value="${y}" ${y === currentYear ? 'selected' : ''}>${y}년</option>`)
+    .join('');
+  
+  // 월 옵션 생성
+  const monthOptions = Array.from({length: 12}, (_, i) => i + 1)
+    .map(m => `<option value="${m}" ${m === currentMonth ? 'selected' : ''}>${m}월</option>`)
+    .join('');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-chart-line mr-2 text-haccp-primary"></i>
+          공정별 품질 KPI
+        </h2>
+        <button onclick="showProcessKpiModal()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
+          <i class="fas fa-plus mr-1"></i> KPI 등록
+        </button>
+      </div>
+      
+      <!-- 검색 필터 -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">연도</label>
+            <select id="kpi-year" class="w-full border rounded-lg px-3 py-2 text-sm">
+              ${yearOptions}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">월</label>
+            <select id="kpi-month" class="w-full border rounded-lg px-3 py-2 text-sm">
+              <option value="">전체</option>
+              ${monthOptions}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">공정</label>
+            <select id="kpi-process" class="w-full border rounded-lg px-3 py-2 text-sm">
+              <option value="">전체</option>
+              <option value="숙성">숙성</option>
+              <option value="성형1">성형1</option>
+              <option value="성형2">성형2</option>
+              <option value="오븐">오븐</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">제품명</label>
+            <input type="text" id="kpi-product" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="제품명 검색">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">판정</label>
+            <select id="kpi-judgment" class="w-full border rounded-lg px-3 py-2 text-sm">
+              <option value="">전체</option>
+              <option value="적합">적합</option>
+              <option value="부적합">부적합</option>
+            </select>
+          </div>
+          <div class="flex items-end">
+            <button onclick="searchProcessKpi()" class="w-full bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
+              <i class="fas fa-search mr-1"></i> 조회
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 요약 카드 -->
+      <div id="kpi-summary" class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div class="bg-white rounded-xl shadow p-4 border-l-4 border-blue-500">
+          <p class="text-sm text-gray-500">총 등록</p>
+          <p class="text-2xl font-bold text-blue-600" id="summary-total">-</p>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 border-l-4 border-green-500">
+          <p class="text-sm text-gray-500">적합</p>
+          <p class="text-2xl font-bold text-green-600" id="summary-compliant">-</p>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 border-l-4 border-red-500">
+          <p class="text-sm text-gray-500">부적합</p>
+          <p class="text-2xl font-bold text-red-600" id="summary-noncompliant">-</p>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <p class="text-sm text-gray-500">적합률</p>
+          <p class="text-2xl font-bold text-blue-600" id="summary-rate">-</p>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <p class="text-sm text-gray-500">공정별</p>
+          <div class="text-xs mt-1 space-y-1" id="summary-by-process">-</div>
+        </div>
+      </div>
+      
+      <!-- 결과 테이블 -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="p-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-2">
+          <span class="font-bold text-gray-700" id="kpi-result-title">검색 결과</span>
           <div class="flex gap-2">
-            <button onclick="downloadProcessKpi()" class="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700">
+            <button onclick="downloadProcessKpi()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
               <i class="fas fa-file-excel mr-1"></i> 엑셀
             </button>
-            <button onclick="printProcessKpi()" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
+            <button onclick="printProcessKpi()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
               <i class="fas fa-print mr-1"></i> 출력
             </button>
           </div>
         </div>
-        
-        <!-- Today Status Summary -->
-        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <div class="bg-white rounded-xl shadow p-4 border-l-4 border-blue-500">
-            <p class="text-sm text-gray-500">오늘 총 등록</p>
-            <p class="text-2xl font-bold ${summary.total > 0 ? 'text-blue-600' : 'text-gray-400'}">${summary.total}건</p>
-          </div>
-          <div class="bg-white rounded-xl shadow p-4 border-l-4 border-green-500">
-            <p class="text-sm text-gray-500">적합</p>
-            <p class="text-2xl font-bold text-green-600">${summary.compliant}건</p>
-          </div>
-          <div class="bg-white rounded-xl shadow p-4 border-l-4 border-red-500">
-            <p class="text-sm text-gray-500">부적합</p>
-            <p class="text-2xl font-bold ${summary.nonCompliant > 0 ? 'text-red-600' : 'text-gray-400'}">${summary.nonCompliant}건</p>
-          </div>
-          <div class="bg-white rounded-xl shadow p-4">
-            <p class="text-sm text-gray-500">공정별 현황</p>
-            <div class="text-xs mt-1 space-y-1">
-              <div class="flex justify-between"><span>숙성</span><span class="font-bold">${summary.byProcess?.aging || 0}건</span></div>
-              <div class="flex justify-between"><span>성형1</span><span class="font-bold">${summary.byProcess?.forming1 || 0}건</span></div>
-              <div class="flex justify-between"><span>성형2</span><span class="font-bold">${summary.byProcess?.forming2 || 0}건</span></div>
-              <div class="flex justify-between"><span>오븐</span><span class="font-bold">${summary.byProcess?.oven || 0}건</span></div>
-            </div>
-          </div>
-          <div class="bg-white rounded-xl shadow p-4">
-            <button onclick="showProcessKpiMonthlySummary()" class="w-full h-full flex flex-col items-center justify-center text-haccp-primary hover:bg-blue-50 rounded-lg">
-              <i class="fas fa-chart-bar text-2xl mb-1"></i>
-              <span class="text-sm font-medium">월별 요약</span>
-            </button>
-          </div>
-        </div>
-        
-        <!-- Process Type Tabs -->
-        <div class="bg-white rounded-xl shadow">
-          <div class="flex border-b overflow-x-auto">
-            <button onclick="switchProcessTab('숙성')" class="process-tab px-6 py-3 font-medium border-b-2 whitespace-nowrap ${currentProcessType === '숙성' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700'}" data-process="숙성">
-              <i class="fas fa-temperature-low mr-1"></i> 숙성 공정
-            </button>
-            <button onclick="switchProcessTab('성형1')" class="process-tab px-6 py-3 font-medium border-b-2 whitespace-nowrap ${currentProcessType === '성형1' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700'}" data-process="성형1">
-              <i class="fas fa-shapes mr-1"></i> 성형1 공정
-            </button>
-            <button onclick="switchProcessTab('성형2')" class="process-tab px-6 py-3 font-medium border-b-2 whitespace-nowrap ${currentProcessType === '성형2' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700'}" data-process="성형2">
-              <i class="fas fa-shapes mr-1"></i> 성형2 공정
-            </button>
-            <button onclick="switchProcessTab('오븐')" class="process-tab px-6 py-3 font-medium border-b-2 whitespace-nowrap ${currentProcessType === '오븐' ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-transparent text-gray-500 hover:text-gray-700'}" data-process="오븐">
-              <i class="fas fa-fire mr-1"></i> 오븐 공정
-            </button>
-          </div>
-          
-          <div class="p-4">
-            <div class="flex justify-between items-center mb-4">
-              <span class="text-sm text-gray-500">오늘 (${today})</span>
-              <button onclick="showProcessKpiModal()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
-                <i class="fas fa-plus mr-1"></i> KPI 등록
-              </button>
-            </div>
-            
-            <div id="process-kpi-content">
-              ${renderProcessKpiTable(data)}
-            </div>
+        <div id="process-kpi-content" class="p-4">
+          <div class="text-center py-8 text-gray-400">
+            <i class="fas fa-search text-4xl mb-2"></i>
+            <p>조회 버튼을 클릭하여 검색하세요.</p>
           </div>
         </div>
       </div>
+    </div>
+  `;
+  
+  // 초기 데이터 로드 (오늘 데이터)
+  searchProcessKpi();
+}
+
+// KPI 검색 함수
+async function searchProcessKpi() {
+  const year = document.getElementById('kpi-year').value;
+  const month = document.getElementById('kpi-month').value;
+  const process = document.getElementById('kpi-process').value;
+  const product = document.getElementById('kpi-product').value;
+  const judgment = document.getElementById('kpi-judgment').value;
+  
+  // 날짜 범위 계산
+  let startDate, endDate;
+  if (month) {
+    startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month, 0).getDate();
+    endDate = `${year}-${String(month).padStart(2, '0')}-${lastDay}`;
+  } else {
+    startDate = `${year}-01-01`;
+    endDate = `${year}-12-31`;
+  }
+  
+  const contentDiv = document.getElementById('process-kpi-content');
+  contentDiv.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i></div>';
+  
+  try {
+    // 모든 공정 데이터 조회
+    const processes = process ? [process] : ['숙성', '성형1', '성형2', '오븐'];
+    const processMap = { '숙성': 'aging', '성형1': 'forming1', '성형2': 'forming2', '오븐': 'oven' };
+    
+    let allData = [];
+    let summaryByProcess = { aging: 0, forming1: 0, forming2: 0, oven: 0 };
+    
+    for (const p of processes) {
+      const endpoint = processMap[p];
+      const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
+      if (judgment) params.append('judgment', judgment);
+      
+      const result = await api(`/process-kpi/${endpoint}?${params}`);
+      let records = result.data || [];
+      
+      // 제품명 필터
+      if (product) {
+        records = records.filter(r => r.product_name && r.product_name.includes(product));
+      }
+      
+      // 공정 정보 추가
+      records = records.map(r => ({ ...r, process_type: p }));
+      allData = allData.concat(records);
+      summaryByProcess[endpoint] = records.length;
+    }
+    
+    // 날짜순 정렬
+    allData.sort((a, b) => {
+      const dateCompare = b.record_date.localeCompare(a.record_date);
+      if (dateCompare !== 0) return dateCompare;
+      return (b.record_time || '').localeCompare(a.record_time || '');
+    });
+    
+    // 요약 계산
+    const total = allData.length;
+    const compliant = allData.filter(r => r.overall_judgment === '적합').length;
+    const nonCompliant = total - compliant;
+    const rate = total > 0 ? ((compliant / total) * 100).toFixed(1) : 0;
+    
+    // 요약 업데이트
+    document.getElementById('summary-total').textContent = `${total}건`;
+    document.getElementById('summary-compliant').textContent = `${compliant}건`;
+    document.getElementById('summary-noncompliant').textContent = `${nonCompliant}건`;
+    document.getElementById('summary-noncompliant').className = `text-2xl font-bold ${nonCompliant > 0 ? 'text-red-600' : 'text-gray-400'}`;
+    document.getElementById('summary-rate').textContent = `${rate}%`;
+    document.getElementById('summary-by-process').innerHTML = `
+      <div class="flex justify-between"><span>숙성</span><span class="font-bold">${summaryByProcess.aging}건</span></div>
+      <div class="flex justify-between"><span>성형1</span><span class="font-bold">${summaryByProcess.forming1}건</span></div>
+      <div class="flex justify-between"><span>성형2</span><span class="font-bold">${summaryByProcess.forming2}건</span></div>
+      <div class="flex justify-between"><span>오븐</span><span class="font-bold">${summaryByProcess.oven}건</span></div>
     `;
     
+    // 결과 제목 업데이트
+    const titleText = month ? `${year}년 ${month}월` : `${year}년`;
+    document.getElementById('kpi-result-title').textContent = `${titleText} 검색 결과 (${total}건)`;
+    
     // 데이터 저장
-    window.processKpiData = data;
-    window.processKpiDate = today;
+    window.processKpiData = allData;
+    window.processKpiSearchParams = { year, month, process, product, judgment };
+    
+    // 테이블 렌더링
+    contentDiv.innerHTML = renderProcessKpiSearchTable(allData);
     
   } catch (e) {
-    console.error('Error loading process KPI:', e);
-    content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+    console.error('Error searching KPI:', e);
+    contentDiv.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
   }
+}
+
+// 검색 결과 테이블 (모든 공정 통합)
+function renderProcessKpiSearchTable(records) {
+  if (!records || records.length === 0) {
+    return `
+      <div class="text-center py-8 text-gray-400">
+        <i class="fas fa-clipboard-list text-4xl mb-2"></i>
+        <p>검색 결과가 없습니다.</p>
+      </div>
+    `;
+  }
+  
+  return `
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm data-table">
+        <thead>
+          <tr class="text-gray-500 border-b bg-gray-50">
+            <th class="text-left p-3">날짜</th>
+            <th class="text-left p-3">시간</th>
+            <th class="text-center p-3">공정</th>
+            <th class="text-left p-3">제품명</th>
+            <th class="text-left p-3">주요 측정값</th>
+            <th class="text-center p-3">판정</th>
+            <th class="text-center p-3">작업자</th>
+            <th class="text-center p-3">관리</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${records.map(r => {
+            const processColors = {
+              '숙성': 'bg-blue-100 text-blue-700',
+              '성형1': 'bg-purple-100 text-purple-700',
+              '성형2': 'bg-indigo-100 text-indigo-700',
+              '오븐': 'bg-orange-100 text-orange-700'
+            };
+            
+            // 주요 측정값 표시
+            let mainValues = '';
+            if (r.process_type === '숙성') {
+              mainValues = `숙성: ${r.cold_aging_time || '-'}분, 발효: ${r.ferment_temp || '-'}℃`;
+            } else if (r.process_type === '성형1' || r.process_type === '성형2') {
+              mainValues = `반죽: ${r.dough_temp || '-'}℃, 발효: ${r.ferment_temp || '-'}℃`;
+            } else if (r.process_type === '오븐') {
+              mainValues = `오븐: ${r.oven_temp || '-'}℃, 중심: ${r.core_temp || '-'}℃`;
+            }
+            
+            const processEndpoint = { '숙성': 'aging', '성형1': 'forming1', '성형2': 'forming2', '오븐': 'oven' }[r.process_type];
+            
+            return `
+              <tr class="border-b hover:bg-gray-50">
+                <td class="p-3">${r.record_date}</td>
+                <td class="p-3">${r.record_time || '-'}</td>
+                <td class="p-3 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${processColors[r.process_type]}">${r.process_type}</span>
+                </td>
+                <td class="p-3 font-medium">${r.product_name || '-'}</td>
+                <td class="p-3 text-xs text-gray-600">${mainValues}</td>
+                <td class="p-3 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${r.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${r.overall_judgment}</span>
+                </td>
+                <td class="p-3 text-center">${r.worker_name || '-'}</td>
+                <td class="p-3 text-center">
+                  <button onclick="viewProcessKpiDetail('${r.process_type}', ${r.id})" class="text-blue-500 hover:text-blue-700 mr-2" title="상세보기">
+                    <i class="fas fa-eye"></i>
+                  </button>
+                  <button onclick="deleteProcessKpi('${processEndpoint}', ${r.id})" class="text-red-500 hover:text-red-700" title="삭제">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// KPI 상세 보기
+function viewProcessKpiDetail(processType, id) {
+  const data = window.processKpiData?.find(r => r.process_type === processType && r.id === id);
+  if (!data) return;
+  
+  let detailHtml = '';
+  
+  if (processType === '숙성') {
+    detailHtml = `
+      <table class="w-full text-sm">
+        <tr class="border-b"><td class="py-2 text-gray-500">저온숙성시간</td><td class="py-2 text-right font-medium">${data.cold_aging_time || '-'} 분</td><td class="py-2 text-right text-xs ${data.cold_aging_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.cold_aging_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">발효온도</td><td class="py-2 text-right font-medium">${data.ferment_temp || '-'} ℃</td><td class="py-2 text-right text-xs ${data.ferment_temp_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.ferment_temp_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">최고온도</td><td class="py-2 text-right font-medium">${data.max_temp || '-'} ℃</td><td class="py-2 text-right text-xs ${data.max_temp_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.max_temp_judgment}</td></tr>
+      </table>
+    `;
+  } else if (processType === '성형1') {
+    detailHtml = `
+      <table class="w-full text-sm">
+        <tr class="border-b"><td class="py-2 text-gray-500">반죽온도</td><td class="py-2 text-right font-medium">${data.dough_temp || '-'} ℃</td><td class="py-2 text-right text-xs ${data.dough_temp_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.dough_temp_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">1차발효시간</td><td class="py-2 text-right font-medium">${data.first_ferment_time || '-'} 분</td><td class="py-2 text-right text-xs ${data.first_ferment_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.first_ferment_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">발효온도</td><td class="py-2 text-right font-medium">${data.ferment_temp || '-'} ℃</td><td class="py-2 text-right text-xs ${data.ferment_temp_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.ferment_temp_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">벤치타임</td><td class="py-2 text-right font-medium">${data.bench_time || '-'} 분</td><td class="py-2 text-right text-xs ${data.bench_time_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.bench_time_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">2차발효시간</td><td class="py-2 text-right font-medium">${data.second_ferment_time || '-'} 분</td><td class="py-2 text-right text-xs ${data.second_ferment_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.second_ferment_judgment}</td></tr>
+      </table>
+    `;
+  } else if (processType === '성형2') {
+    detailHtml = `
+      <table class="w-full text-sm">
+        <tr class="border-b"><td class="py-2 text-gray-500">반죽온도</td><td class="py-2 text-right font-medium">${data.dough_temp || '-'} ℃</td><td class="py-2 text-right text-xs ${data.dough_temp_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.dough_temp_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">1차발효시간</td><td class="py-2 text-right font-medium">${data.first_ferment_time || '-'} 분</td><td class="py-2 text-right text-xs ${data.first_ferment_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.first_ferment_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">발효온도</td><td class="py-2 text-right font-medium">${data.ferment_temp || '-'} ℃</td><td class="py-2 text-right text-xs ${data.ferment_temp_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.ferment_temp_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">벤치타임</td><td class="py-2 text-right font-medium">${data.bench_time || '-'} 분</td><td class="py-2 text-right text-xs ${data.bench_time_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.bench_time_judgment}</td></tr>
+      </table>
+    `;
+  } else if (processType === '오븐') {
+    detailHtml = `
+      <table class="w-full text-sm">
+        <tr class="border-b"><td class="py-2 text-gray-500">실온발효시간</td><td class="py-2 text-right font-medium">${data.room_ferment_time || '-'} 분</td><td class="py-2 text-right text-xs">${data.room_ferment_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">쿠프시간</td><td class="py-2 text-right font-medium">${data.coupe_time || '-'} 분</td><td class="py-2 text-right text-xs">${data.coupe_time_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">오븐온도</td><td class="py-2 text-right font-medium">${data.oven_temp || '-'} ℃</td><td class="py-2 text-right text-xs ${data.oven_temp_judgment === '부적합' ? 'text-red-600' : 'text-green-600'}">${data.oven_temp_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500">굽기시간</td><td class="py-2 text-right font-medium">${data.baking_time || '-'} 분</td><td class="py-2 text-right text-xs">${data.baking_time_judgment}</td></tr>
+        <tr class="border-b"><td class="py-2 text-gray-500 font-bold">중심온도(CCP)</td><td class="py-2 text-right font-bold">${data.core_temp || '-'} ℃</td><td class="py-2 text-right text-xs ${data.core_temp_judgment === '부적합' ? 'text-red-600 font-bold' : 'text-green-600'}">${data.core_temp_judgment}</td></tr>
+      </table>
+    `;
+  }
+  
+  const content = `
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-4 text-sm">
+        <div><span class="text-gray-500">날짜:</span> <span class="font-medium">${data.record_date}</span></div>
+        <div><span class="text-gray-500">시간:</span> <span class="font-medium">${data.record_time || '-'}</span></div>
+        <div><span class="text-gray-500">제품명:</span> <span class="font-medium">${data.product_name || '-'}</span></div>
+        <div><span class="text-gray-500">배치번호:</span> <span class="font-medium">${data.batch_no || '-'}</span></div>
+        <div><span class="text-gray-500">작업자:</span> <span class="font-medium">${data.worker_name || '-'}</span></div>
+        <div><span class="text-gray-500">종합판정:</span> <span class="px-2 py-1 rounded text-xs ${data.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${data.overall_judgment}</span></div>
+      </div>
+      
+      <hr>
+      
+      <h4 class="font-bold text-gray-700">${processType} 공정 측정값</h4>
+      ${detailHtml}
+      
+      ${data.memo ? `<div class="bg-gray-50 p-3 rounded-lg text-sm"><span class="text-gray-500">비고:</span> ${data.memo}</div>` : ''}
+    </div>
+  `;
+  
+  showModal(`${processType} 공정 KPI 상세`, content, '<button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">닫기</button>');
 }
 
 function renderProcessKpiTable(data) {
@@ -3046,123 +3310,17 @@ function showProcessKpiModal() {
   const now = new Date();
   const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   
-  let formFields = '';
-  
-  if (currentProcessType === '숙성') {
-    formFields = `
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">저온숙성시간 (분)</label>
-          <input type="number" id="cold_aging_time" class="w-full border rounded-lg px-4 py-2" placeholder="60-120">
-          <p class="text-xs text-gray-400 mt-1">기준: 60-120분</p>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
-          <input type="number" step="0.1" id="ferment_temp" class="w-full border rounded-lg px-4 py-2" placeholder="27">
-          <p class="text-xs text-gray-400 mt-1">기준: 27±2℃</p>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">최고온도 (℃)</label>
-          <input type="number" step="0.1" id="max_temp" class="w-full border rounded-lg px-4 py-2" placeholder="30 이하">
-          <p class="text-xs text-gray-400 mt-1">기준: 30℃ 이하</p>
-        </div>
-      </div>
-    `;
-  } else if (currentProcessType === '성형1') {
-    formFields = `
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">반죽온도 (℃)</label>
-          <input type="number" step="0.1" id="dough_temp" class="w-full border rounded-lg px-4 py-2" placeholder="24-26">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">분할중량 (g)</label>
-          <input type="number" id="divide_weight" class="w-full border rounded-lg px-4 py-2">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">1차발효시간 (분)</label>
-          <input type="number" id="first_ferment_time" class="w-full border rounded-lg px-4 py-2" placeholder="30-60">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
-          <input type="number" step="0.1" id="ferment_temp" class="w-full border rounded-lg px-4 py-2" placeholder="27">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">벤치타임 (분)</label>
-          <input type="number" id="bench_time" class="w-full border rounded-lg px-4 py-2" placeholder="15-20">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">성형시간 (분)</label>
-          <input type="number" id="forming_time" class="w-full border rounded-lg px-4 py-2">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">2차발효시간 (분)</label>
-          <input type="number" id="second_ferment_time" class="w-full border rounded-lg px-4 py-2" placeholder="40-60">
-        </div>
-      </div>
-    `;
-  } else if (currentProcessType === '성형2') {
-    formFields = `
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">반죽온도 (℃)</label>
-          <input type="number" step="0.1" id="dough_temp" class="w-full border rounded-lg px-4 py-2" placeholder="24-26">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">분할중량 (g)</label>
-          <input type="number" id="divide_weight" class="w-full border rounded-lg px-4 py-2">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">1차발효시간 (분)</label>
-          <input type="number" id="first_ferment_time" class="w-full border rounded-lg px-4 py-2" placeholder="30-60">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
-          <input type="number" step="0.1" id="ferment_temp" class="w-full border rounded-lg px-4 py-2" placeholder="27">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">벤치타임 (분)</label>
-          <input type="number" id="bench_time" class="w-full border rounded-lg px-4 py-2" placeholder="15-20">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">성형시간 (분)</label>
-          <input type="number" id="forming_time" class="w-full border rounded-lg px-4 py-2">
-        </div>
-      </div>
-    `;
-  } else if (currentProcessType === '오븐') {
-    formFields = `
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">실온발효시간 (분)</label>
-          <input type="number" id="room_ferment_time" class="w-full border rounded-lg px-4 py-2">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">쿠프시간 (분)</label>
-          <input type="number" id="coupe_time" class="w-full border rounded-lg px-4 py-2">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">오븐온도 (℃)</label>
-          <input type="number" step="0.1" id="oven_temp" class="w-full border rounded-lg px-4 py-2" placeholder="180">
-          <p class="text-xs text-gray-400 mt-1">기준: 180±10℃</p>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">굽기시간 (분)</label>
-          <input type="number" id="baking_time" class="w-full border rounded-lg px-4 py-2">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">중심온도 (℃) - CCP</label>
-          <input type="number" step="0.1" id="core_temp" class="w-full border rounded-lg px-4 py-2" placeholder="74 이상">
-          <p class="text-xs text-red-400 mt-1">⚠️ 필수 기준: 74℃ 이상</p>
-        </div>
-      </div>
-    `;
-  }
-  
   const content = `
     <form id="process-kpi-form" class="space-y-4">
-      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-        <p class="text-sm text-blue-700"><i class="fas fa-info-circle mr-1"></i> <strong>${currentProcessType} 공정</strong> KPI 등록</p>
+      <!-- 공정 선택 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">공정 선택 <span class="text-red-500">*</span></label>
+        <select id="modal_process_type" class="w-full border rounded-lg px-4 py-2 bg-white" onchange="updateKpiFormFields()">
+          <option value="숙성">숙성 공정</option>
+          <option value="성형1">성형1 공정</option>
+          <option value="성형2">성형2 공정</option>
+          <option value="오븐">오븐 공정</option>
+        </select>
       </div>
       
       <div class="grid grid-cols-2 gap-4">
@@ -3189,7 +3347,10 @@ function showProcessKpiModal() {
       
       <hr class="my-4">
       
-      ${formFields}
+      <!-- 동적 KPI 필드 영역 -->
+      <div id="kpi-fields-container">
+        ${getKpiFieldsHtml('숙성')}
+      </div>
       
       <hr class="my-4">
       
@@ -3211,7 +3372,152 @@ function showProcessKpiModal() {
     <button onclick="saveProcessKpi()" class="px-4 py-2 bg-haccp-primary text-white rounded-lg hover:bg-blue-700">저장</button>
   `;
   
-  showModal(`${currentProcessType} 공정 KPI 등록`, content, actions);
+  showModal('공정 KPI 등록', content, actions);
+}
+
+// 공정별 KPI 입력 필드 HTML 반환
+function getKpiFieldsHtml(processType) {
+  if (processType === '숙성') {
+    return `
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+        <p class="text-sm text-blue-700"><i class="fas fa-temperature-low mr-1"></i> <strong>숙성 공정</strong> - 저온숙성 → 발효</p>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">저온숙성시간 (분)</label>
+          <input type="number" id="cold_aging_time" class="w-full border rounded-lg px-4 py-2" placeholder="60-120">
+          <p class="text-xs text-gray-400 mt-1">기준: 60-120분</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
+          <input type="number" step="0.1" id="ferment_temp" class="w-full border rounded-lg px-4 py-2" placeholder="27">
+          <p class="text-xs text-gray-400 mt-1">기준: 27±2℃</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">최고온도 (℃)</label>
+          <input type="number" step="0.1" id="max_temp" class="w-full border rounded-lg px-4 py-2" placeholder="30 이하">
+          <p class="text-xs text-gray-400 mt-1">기준: 30℃ 이하</p>
+        </div>
+      </div>
+    `;
+  } else if (processType === '성형1') {
+    return `
+      <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
+        <p class="text-sm text-purple-700"><i class="fas fa-shapes mr-1"></i> <strong>성형1 공정</strong> - 반죽→분할→1차발효→벤치→성형→2차발효</p>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">반죽온도 (℃)</label>
+          <input type="number" step="0.1" id="dough_temp" class="w-full border rounded-lg px-4 py-2" placeholder="24-26">
+          <p class="text-xs text-gray-400 mt-1">기준: 24-26℃</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">분할중량 (g)</label>
+          <input type="number" id="divide_weight" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">1차발효시간 (분)</label>
+          <input type="number" id="first_ferment_time" class="w-full border rounded-lg px-4 py-2" placeholder="30-60">
+          <p class="text-xs text-gray-400 mt-1">기준: 30-60분</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
+          <input type="number" step="0.1" id="ferment_temp" class="w-full border rounded-lg px-4 py-2" placeholder="27">
+          <p class="text-xs text-gray-400 mt-1">기준: 27±2℃</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">벤치타임 (분)</label>
+          <input type="number" id="bench_time" class="w-full border rounded-lg px-4 py-2" placeholder="15-20">
+          <p class="text-xs text-gray-400 mt-1">기준: 15-20분</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">성형시간 (분)</label>
+          <input type="number" id="forming_time" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">2차발효시간 (분)</label>
+          <input type="number" id="second_ferment_time" class="w-full border rounded-lg px-4 py-2" placeholder="40-60">
+          <p class="text-xs text-gray-400 mt-1">기준: 40-60분</p>
+        </div>
+      </div>
+    `;
+  } else if (processType === '성형2') {
+    return `
+      <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-4">
+        <p class="text-sm text-indigo-700"><i class="fas fa-shapes mr-1"></i> <strong>성형2 공정</strong> - 반죽→분할→1차발효→발효→벤치→성형</p>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">반죽온도 (℃)</label>
+          <input type="number" step="0.1" id="dough_temp" class="w-full border rounded-lg px-4 py-2" placeholder="24-26">
+          <p class="text-xs text-gray-400 mt-1">기준: 24-26℃</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">분할중량 (g)</label>
+          <input type="number" id="divide_weight" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">1차발효시간 (분)</label>
+          <input type="number" id="first_ferment_time" class="w-full border rounded-lg px-4 py-2" placeholder="30-60">
+          <p class="text-xs text-gray-400 mt-1">기준: 30-60분</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
+          <input type="number" step="0.1" id="ferment_temp" class="w-full border rounded-lg px-4 py-2" placeholder="27">
+          <p class="text-xs text-gray-400 mt-1">기준: 27±2℃</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">벤치타임 (분)</label>
+          <input type="number" id="bench_time" class="w-full border rounded-lg px-4 py-2" placeholder="15-20">
+          <p class="text-xs text-gray-400 mt-1">기준: 15-20분</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">성형시간 (분)</label>
+          <input type="number" id="forming_time" class="w-full border rounded-lg px-4 py-2">
+        </div>
+      </div>
+    `;
+  } else if (processType === '오븐') {
+    return `
+      <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4">
+        <p class="text-sm text-orange-700"><i class="fas fa-fire mr-1"></i> <strong>오븐 공정</strong> - 실온발효 → 쿠프 → 굽기</p>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">실온발효시간 (분)</label>
+          <input type="number" id="room_ferment_time" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">쿠프시간 (분)</label>
+          <input type="number" id="coupe_time" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">오븐온도 (℃)</label>
+          <input type="number" step="0.1" id="oven_temp" class="w-full border rounded-lg px-4 py-2" placeholder="180">
+          <p class="text-xs text-gray-400 mt-1">기준: 180±10℃</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">굽기시간 (분)</label>
+          <input type="number" id="baking_time" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        <div class="col-span-2">
+          <label class="block text-sm font-medium text-gray-700 mb-1">중심온도 (℃) - CCP <span class="text-red-500">*</span></label>
+          <input type="number" step="0.1" id="core_temp" class="w-full border rounded-lg px-4 py-2 border-red-300" placeholder="74 이상">
+          <p class="text-xs text-red-500 mt-1">⚠️ 필수 CCP 기준: 74℃ 이상</p>
+        </div>
+      </div>
+    `;
+  }
+  return '';
+}
+
+// 공정 선택 시 KPI 필드 업데이트
+function updateKpiFormFields() {
+  const processType = document.getElementById('modal_process_type').value;
+  const container = document.getElementById('kpi-fields-container');
+  if (container) {
+    container.innerHTML = getKpiFieldsHtml(processType);
+  }
 }
 
 async function saveProcessKpi() {
@@ -3222,7 +3528,9 @@ async function saveProcessKpi() {
     '오븐': 'oven'
   };
   
-  const endpoint = processMap[currentProcessType];
+  // 모달에서 선택된 공정 사용
+  const selectedProcess = document.getElementById('modal_process_type')?.value || currentProcessType;
+  const endpoint = processMap[selectedProcess];
   
   const data = {
     record_date: document.getElementById('record_date').value,
@@ -3234,11 +3542,11 @@ async function saveProcessKpi() {
   };
   
   // 공정별 추가 필드
-  if (currentProcessType === '숙성') {
+  if (selectedProcess === '숙성') {
     data.cold_aging_time = parseFloat(document.getElementById('cold_aging_time')?.value) || null;
     data.ferment_temp = parseFloat(document.getElementById('ferment_temp')?.value) || null;
     data.max_temp = parseFloat(document.getElementById('max_temp')?.value) || null;
-  } else if (currentProcessType === '성형1') {
+  } else if (selectedProcess === '성형1') {
     data.dough_temp = parseFloat(document.getElementById('dough_temp')?.value) || null;
     data.divide_weight = parseFloat(document.getElementById('divide_weight')?.value) || null;
     data.first_ferment_time = parseFloat(document.getElementById('first_ferment_time')?.value) || null;
@@ -3246,14 +3554,14 @@ async function saveProcessKpi() {
     data.bench_time = parseFloat(document.getElementById('bench_time')?.value) || null;
     data.forming_time = parseFloat(document.getElementById('forming_time')?.value) || null;
     data.second_ferment_time = parseFloat(document.getElementById('second_ferment_time')?.value) || null;
-  } else if (currentProcessType === '성형2') {
+  } else if (selectedProcess === '성형2') {
     data.dough_temp = parseFloat(document.getElementById('dough_temp')?.value) || null;
     data.divide_weight = parseFloat(document.getElementById('divide_weight')?.value) || null;
     data.first_ferment_time = parseFloat(document.getElementById('first_ferment_time')?.value) || null;
     data.ferment_temp = parseFloat(document.getElementById('ferment_temp')?.value) || null;
     data.bench_time = parseFloat(document.getElementById('bench_time')?.value) || null;
     data.forming_time = parseFloat(document.getElementById('forming_time')?.value) || null;
-  } else if (currentProcessType === '오븐') {
+  } else if (selectedProcess === '오븐') {
     data.room_ferment_time = parseFloat(document.getElementById('room_ferment_time')?.value) || null;
     data.coupe_time = parseFloat(document.getElementById('coupe_time')?.value) || null;
     data.oven_temp = parseFloat(document.getElementById('oven_temp')?.value) || null;
@@ -3268,9 +3576,9 @@ async function saveProcessKpi() {
   
   try {
     await api(`/process-kpi/${endpoint}`, 'POST', data);
-    showToast(`${currentProcessType} 공정 KPI가 등록되었습니다.`, 'success');
+    showToast(`${selectedProcess} 공정 KPI가 등록되었습니다.`, 'success');
     closeModal();
-    renderQualityKPI();
+    searchProcessKpi(); // 검색 결과 새로고침
   } catch (e) {
     // Error handled
   }
@@ -3282,7 +3590,7 @@ async function deleteProcessKpi(process, id) {
   try {
     await api(`/process-kpi/${process}/${id}`, 'DELETE');
     showToast('KPI가 삭제되었습니다.', 'success');
-    renderQualityKPI();
+    searchProcessKpi(); // 검색 결과 새로고침
   } catch (e) {
     // Error handled
   }
@@ -3368,53 +3676,47 @@ async function showProcessKpiMonthlySummary() {
 // 공정 KPI 엑셀 다운로드
 function downloadProcessKpi() {
   const data = window.processKpiData;
-  if (!data) {
+  if (!data || data.length === 0) {
     showToast('다운로드할 데이터가 없습니다.', 'warning');
     return;
   }
   
-  const allData = [
-    ...(data.aging || []).map(r => ({ ...r, process: '숙성' })),
-    ...(data.forming1 || []).map(r => ({ ...r, process: '성형1' })),
-    ...(data.forming2 || []).map(r => ({ ...r, process: '성형2' })),
-    ...(data.oven || []).map(r => ({ ...r, process: '오븐' }))
-  ];
-  
   const columns = [
-    { key: 'process', label: '공정', type: 'text' },
+    { key: 'record_date', label: '날짜', type: 'text' },
     { key: 'record_time', label: '시간', type: 'text' },
+    { key: 'process_type', label: '공정', type: 'center' },
     { key: 'product_name', label: '제품명', type: 'text' },
     { key: 'overall_judgment', label: '판정', type: 'center' },
     { key: 'worker_name', label: '작업자', type: 'text' }
   ];
   
-  downloadExcel(allData, columns, '공정별_KPI');
+  const params = window.processKpiSearchParams || {};
+  const filename = params.month ? `공정별_KPI_${params.year}년${params.month}월` : `공정별_KPI_${params.year}년`;
+  
+  downloadExcel(data, columns, filename);
 }
 
 // 공정 KPI 출력
 function printProcessKpi() {
   const data = window.processKpiData;
-  if (!data) {
+  if (!data || data.length === 0) {
     showToast('출력할 데이터가 없습니다.', 'warning');
     return;
   }
   
-  const allData = [
-    ...(data.aging || []).map(r => ({ ...r, process: '숙성' })),
-    ...(data.forming1 || []).map(r => ({ ...r, process: '성형1' })),
-    ...(data.forming2 || []).map(r => ({ ...r, process: '성형2' })),
-    ...(data.oven || []).map(r => ({ ...r, process: '오븐' }))
-  ];
-  
   const columns = [
-    { key: 'process', label: '공정', type: 'center' },
+    { key: 'record_date', label: '날짜', type: 'center' },
     { key: 'record_time', label: '시간', type: 'center' },
+    { key: 'process_type', label: '공정', type: 'center' },
     { key: 'product_name', label: '제품명', type: 'text' },
     { key: 'overall_judgment', label: '판정', type: 'center' },
     { key: 'worker_name', label: '작업자', type: 'center' }
   ];
   
-  printData(`공정별 품질 KPI (${window.processKpiDate})`, tableToHtml(allData, columns), `날짜: ${window.processKpiDate}`);
+  const params = window.processKpiSearchParams || {};
+  const titlePeriod = params.month ? `${params.year}년 ${params.month}월` : `${params.year}년`;
+  
+  printData(`공정별 품질 KPI (${titlePeriod})`, tableToHtml(data, columns), `조회기간: ${titlePeriod}`);
 }
 
 // ===========================================

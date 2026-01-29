@@ -2753,9 +2753,14 @@ async function renderQualityKPI() {
           <i class="fas fa-chart-line mr-2 text-haccp-primary"></i>
           공정별 품질 KPI
         </h2>
-        <button onclick="showProcessKpiModal()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
-          <i class="fas fa-plus mr-1"></i> KPI 등록
-        </button>
+        <div class="flex gap-2">
+          <button onclick="showKpiStandardsModal()" class="bg-gray-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-700">
+            <i class="fas fa-cog mr-1"></i> 기준 관리
+          </button>
+          <button onclick="showProcessKpiModal()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
+            <i class="fas fa-plus mr-1"></i> KPI 등록
+          </button>
+        </div>
       </div>
       
       <!-- 검색 필터 -->
@@ -3400,11 +3405,11 @@ function showProcessKpiModal() {
   showModal('공정 KPI 등록', content, actions);
 }
 
-// KPI 기준 범위 정의
-const KPI_STANDARDS = {
+// KPI 기준 범위 정의 (기본값 - 서버에서 동적으로 덮어씀)
+let KPI_STANDARDS = {
   // 숙성 공정
   cold_aging_time: { min: 60, max: 120, unit: '분' },
-  ferment_temp: { min: 25, max: 29, unit: '℃' },  // 27±2
+  ferment_temp: { min: 25, max: 29, unit: '℃' },
   max_temp: { min: null, max: 30, unit: '℃' },
   // 성형 공정
   dough_temp: { min: 24, max: 26, unit: '℃' },
@@ -3412,9 +3417,70 @@ const KPI_STANDARDS = {
   bench_time: { min: 15, max: 20, unit: '분' },
   second_ferment_time: { min: 40, max: 60, unit: '분' },
   // 오븐 공정
-  oven_temp: { min: 170, max: 190, unit: '℃' },  // 180±10
-  core_temp: { min: 74, max: null, unit: '℃' }  // CCP: 74℃ 이상
+  oven_temp: { min: 170, max: 190, unit: '℃' },
+  core_temp: { min: 74, max: null, unit: '℃' }
 };
+
+// 제품별 KPI 기준 로드
+async function loadProductStandards(processType, productName) {
+  try {
+    const res = await api(`/process-kpi/standards/product?process_type=${encodeURIComponent(processType)}&product_name=${encodeURIComponent(productName || '')}`);
+    if (res.success && res.data) {
+      // 서버 기준으로 덮어쓰기
+      for (const [key, value] of Object.entries(res.data)) {
+        KPI_STANDARDS[key] = value;
+      }
+      // 기준 표시 업데이트
+      updateStandardsDisplay();
+    }
+  } catch (e) {
+    console.log('기본 KPI 기준 사용');
+  }
+}
+
+// 기준 표시 업데이트
+function updateStandardsDisplay() {
+  const displays = {
+    'cold_aging_time': 'cold_aging_time_std',
+    'ferment_temp': 'ferment_temp_std',
+    'max_temp': 'max_temp_std',
+    'dough_temp': 'dough_temp_std',
+    'first_ferment_time': 'first_ferment_time_std',
+    'bench_time': 'bench_time_std',
+    'second_ferment_time': 'second_ferment_time_std',
+    'oven_temp': 'oven_temp_std',
+    'core_temp': 'core_temp_std'
+  };
+  
+  for (const [field, elId] of Object.entries(displays)) {
+    const el = document.getElementById(elId);
+    if (el && KPI_STANDARDS[field]) {
+      const std = KPI_STANDARDS[field];
+      let text = '';
+      if (std.min !== null && std.max !== null) {
+        text = `기준: ${std.min}-${std.max}${std.unit || ''}`;
+      } else if (std.min !== null) {
+        text = `기준: ${std.min}${std.unit || ''} 이상`;
+      } else if (std.max !== null) {
+        text = `기준: ${std.max}${std.unit || ''} 이하`;
+      }
+      el.textContent = text;
+    }
+  }
+}
+
+// 제품 선택 시 기준 로드
+async function onProductNameChange() {
+  const processType = document.getElementById('modal_process_type')?.value;
+  const productName = document.getElementById('product_name')?.value;
+  if (processType && productName) {
+    await loadProductStandards(processType, productName);
+    // 이미 입력된 값들 재판정
+    Object.keys(KPI_STANDARDS).forEach(fieldId => {
+      updateKpiJudgmentUI(fieldId);
+    });
+  }
+}
 
 // KPI 값 판정 함수
 function judgeKpiValue(fieldId, value) {
@@ -3770,6 +3836,290 @@ async function saveProcessKpi() {
     searchProcessKpi(); // 검색 결과 새로고침
   } catch (e) {
     // Error handled
+  }
+}
+
+// ===========================================
+// KPI 기준 관리
+// ===========================================
+
+async function showKpiStandardsModal() {
+  // 기준 목록 로드
+  try {
+    const [standardsRes, productsRes] = await Promise.all([
+      api('/process-kpi/standards'),
+      api('/process-kpi/standards/products')
+    ]);
+    
+    const standards = standardsRes.data || [];
+    const products = productsRes.data || [];
+    
+    // 공정별 그룹화
+    const byProcess = {};
+    standards.forEach(s => {
+      const key = s.product_name || '기본';
+      if (!byProcess[key]) byProcess[key] = {};
+      if (!byProcess[key][s.process_type]) byProcess[key][s.process_type] = [];
+      byProcess[key][s.process_type].push(s);
+    });
+    
+    const productOptions = ['기본', ...products].map(p => 
+      `<option value="${p}">${p}</option>`
+    ).join('');
+    
+    const content = `
+      <div class="space-y-4" style="max-height: 70vh; overflow-y: auto;">
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+          <p class="text-sm text-blue-700">
+            <i class="fas fa-info-circle mr-1"></i>
+            제품별로 다른 KPI 기준을 설정할 수 있습니다. '기본' 기준은 제품별 기준이 없을 때 적용됩니다.
+          </p>
+        </div>
+        
+        <div class="flex gap-2 flex-wrap">
+          <select id="std-product-filter" class="border rounded-lg px-3 py-2" onchange="filterKpiStandards()">
+            <option value="">모든 제품</option>
+            ${productOptions}
+          </select>
+          <select id="std-process-filter" class="border rounded-lg px-3 py-2" onchange="filterKpiStandards()">
+            <option value="">모든 공정</option>
+            <option value="숙성">숙성</option>
+            <option value="성형1">성형1</option>
+            <option value="성형2">성형2</option>
+            <option value="오븐">오븐</option>
+          </select>
+          <button onclick="showAddProductStandardsModal()" class="bg-green-600 text-white px-3 py-2 rounded-lg text-sm">
+            <i class="fas fa-plus mr-1"></i> 제품 추가
+          </button>
+        </div>
+        
+        <div id="standards-table-container">
+          ${renderKpiStandardsTable(standards)}
+        </div>
+      </div>
+    `;
+    
+    const actions = `
+      <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+    `;
+    
+    showModal('KPI 기준 관리', content, actions);
+    
+    // 전역 저장
+    window.kpiStandardsData = standards;
+    
+  } catch (e) {
+    showToast('기준 목록을 불러오는데 실패했습니다.', 'error');
+  }
+}
+
+function renderKpiStandardsTable(standards) {
+  if (!standards || standards.length === 0) {
+    return '<p class="text-center text-gray-400 py-4">등록된 기준이 없습니다.</p>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="bg-gray-50 text-gray-600 border-b">
+          <th class="text-left p-2">제품</th>
+          <th class="text-left p-2">공정</th>
+          <th class="text-left p-2">KPI 항목</th>
+          <th class="text-center p-2">최소값</th>
+          <th class="text-center p-2">최대값</th>
+          <th class="text-center p-2">단위</th>
+          <th class="text-center p-2">CCP</th>
+          <th class="text-center p-2">관리</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${standards.map(s => `
+          <tr class="border-b hover:bg-gray-50" data-product="${s.product_name || '기본'}" data-process="${s.process_type}">
+            <td class="p-2">${s.product_name || '<span class="text-gray-400">기본</span>'}</td>
+            <td class="p-2">
+              <span class="px-2 py-1 rounded text-xs ${getProcessColor(s.process_type)}">${s.process_type}</span>
+            </td>
+            <td class="p-2 font-medium">${s.kpi_item_label}</td>
+            <td class="p-2 text-center">
+              <input type="number" step="0.1" value="${s.min_value ?? ''}" 
+                     class="w-16 border rounded px-2 py-1 text-center text-sm"
+                     onchange="updateKpiStandard(${s.id}, 'min_value', this.value)">
+            </td>
+            <td class="p-2 text-center">
+              <input type="number" step="0.1" value="${s.max_value ?? ''}" 
+                     class="w-16 border rounded px-2 py-1 text-center text-sm"
+                     onchange="updateKpiStandard(${s.id}, 'max_value', this.value)">
+            </td>
+            <td class="p-2 text-center">${s.unit || '-'}</td>
+            <td class="p-2 text-center">
+              ${s.is_ccp ? '<span class="text-red-600 font-bold">CCP</span>' : '-'}
+            </td>
+            <td class="p-2 text-center">
+              <button onclick="deleteKpiStandard(${s.id})" class="text-red-500 hover:text-red-700">
+                <i class="fas fa-trash"></i>
+              </button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function getProcessColor(processType) {
+  const colors = {
+    '숙성': 'bg-blue-100 text-blue-700',
+    '성형1': 'bg-purple-100 text-purple-700',
+    '성형2': 'bg-indigo-100 text-indigo-700',
+    '오븐': 'bg-orange-100 text-orange-700'
+  };
+  return colors[processType] || 'bg-gray-100 text-gray-700';
+}
+
+function filterKpiStandards() {
+  const productFilter = document.getElementById('std-product-filter')?.value || '';
+  const processFilter = document.getElementById('std-process-filter')?.value || '';
+  
+  const rows = document.querySelectorAll('#standards-table-container tbody tr');
+  rows.forEach(row => {
+    const product = row.dataset.product;
+    const process = row.dataset.process;
+    
+    const productMatch = !productFilter || product === productFilter;
+    const processMatch = !processFilter || process === processFilter;
+    
+    row.style.display = (productMatch && processMatch) ? '' : 'none';
+  });
+}
+
+async function updateKpiStandard(id, field, value) {
+  try {
+    // 기존 데이터 찾기
+    const standard = window.kpiStandardsData?.find(s => s.id === id);
+    if (!standard) return;
+    
+    const updateData = {
+      process_type: standard.process_type,
+      product_name: standard.product_name,
+      kpi_item: standard.kpi_item,
+      kpi_item_label: standard.kpi_item_label,
+      min_value: standard.min_value,
+      max_value: standard.max_value,
+      unit: standard.unit,
+      is_ccp: standard.is_ccp,
+      is_required: standard.is_required,
+      display_order: standard.display_order
+    };
+    
+    // 변경된 필드 업데이트
+    updateData[field] = value === '' ? null : parseFloat(value);
+    
+    await api('/process-kpi/standards', 'POST', updateData);
+    showToast('기준이 수정되었습니다.', 'success');
+    
+    // 로컬 데이터도 업데이트
+    if (standard) {
+      standard[field] = updateData[field];
+    }
+  } catch (e) {
+    showToast('기준 수정에 실패했습니다.', 'error');
+  }
+}
+
+async function deleteKpiStandard(id) {
+  if (!confirm('이 기준을 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/process-kpi/standards/${id}`, 'DELETE');
+    showToast('기준이 삭제되었습니다.', 'success');
+    showKpiStandardsModal(); // 새로고침
+  } catch (e) {
+    showToast('기준 삭제에 실패했습니다.', 'error');
+  }
+}
+
+// 새 제품 기준 추가 모달
+async function showAddProductStandardsModal() {
+  const content = `
+    <div class="space-y-4">
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+        <p class="text-sm text-yellow-700">
+          <i class="fas fa-lightbulb mr-1"></i>
+          기본 기준을 복사하여 새 제품의 기준을 생성합니다. 생성 후 값을 수정하세요.
+        </p>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">새 제품명 *</label>
+        <input type="text" id="new-product-name" class="w-full border rounded-lg px-4 py-2" placeholder="예: 소보로빵">
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">복사할 기준</label>
+        <select id="copy-from-product" class="w-full border rounded-lg px-4 py-2">
+          <option value="">기본 기준에서 복사</option>
+        </select>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">공정 선택</label>
+        <div class="flex flex-wrap gap-2">
+          <label class="flex items-center">
+            <input type="checkbox" value="숙성" class="process-checkbox mr-1" checked> 숙성
+          </label>
+          <label class="flex items-center">
+            <input type="checkbox" value="성형1" class="process-checkbox mr-1" checked> 성형1
+          </label>
+          <label class="flex items-center">
+            <input type="checkbox" value="성형2" class="process-checkbox mr-1" checked> 성형2
+          </label>
+          <label class="flex items-center">
+            <input type="checkbox" value="오븐" class="process-checkbox mr-1" checked> 오븐
+          </label>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  const actions = `
+    <button onclick="closeModal(); showKpiStandardsModal();" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="createProductStandards()" class="px-4 py-2 bg-haccp-primary text-white rounded-lg hover:bg-blue-700">생성</button>
+  `;
+  
+  showModal('제품별 KPI 기준 추가', content, actions);
+}
+
+async function createProductStandards() {
+  const productName = document.getElementById('new-product-name')?.value?.trim();
+  const copyFrom = document.getElementById('copy-from-product')?.value || null;
+  const processes = Array.from(document.querySelectorAll('.process-checkbox:checked')).map(cb => cb.value);
+  
+  if (!productName) {
+    showToast('제품명을 입력해주세요.', 'warning');
+    return;
+  }
+  
+  if (processes.length === 0) {
+    showToast('최소 하나의 공정을 선택해주세요.', 'warning');
+    return;
+  }
+  
+  try {
+    let totalCount = 0;
+    for (const process of processes) {
+      const res = await api('/process-kpi/standards/copy', 'POST', {
+        from_product: copyFrom,
+        to_product: productName,
+        process_type: process
+      });
+      totalCount += res.count || 0;
+    }
+    
+    showToast(`${productName} 제품의 기준이 생성되었습니다. (${totalCount}개)`, 'success');
+    closeModal();
+    showKpiStandardsModal();
+  } catch (e) {
+    showToast('기준 생성에 실패했습니다.', 'error');
   }
 }
 

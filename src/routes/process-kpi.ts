@@ -5,6 +5,229 @@ import type { Bindings } from '../types';
 const processKpiRoutes = new Hono<{ Bindings: Bindings }>();
 
 // ===========================================
+// KPI 기준 관리 (제품별 기준 설정)
+// ===========================================
+
+// KPI 기준 목록 조회
+processKpiRoutes.get('/standards', async (c) => {
+  const processType = c.req.query('process_type');
+  const productName = c.req.query('product_name');
+  
+  let query = 'SELECT * FROM kpi_standards WHERE is_active = 1';
+  const params: any[] = [];
+  
+  if (processType) {
+    query += ' AND process_type = ?';
+    params.push(processType);
+  }
+  if (productName) {
+    query += ' AND (product_name = ? OR product_name IS NULL)';
+    params.push(productName);
+  }
+  
+  query += ' ORDER BY process_type, product_name NULLS FIRST, display_order';
+  
+  const result = await c.env.DB.prepare(query).bind(...params).all();
+  return c.json({ success: true, data: result.results });
+});
+
+// 특정 제품의 KPI 기준 조회 (제품 기준 없으면 기본값 반환)
+processKpiRoutes.get('/standards/product', async (c) => {
+  const processType = c.req.query('process_type');
+  const productName = c.req.query('product_name');
+  
+  if (!processType) {
+    return c.json({ success: false, error: '공정 유형을 선택해주세요.' }, 400);
+  }
+  
+  // 제품별 기준이 있으면 가져오고, 없으면 기본값(product_name IS NULL) 사용
+  const query = `
+    SELECT * FROM kpi_standards 
+    WHERE is_active = 1 
+      AND process_type = ?
+      AND (product_name = ? OR (product_name IS NULL AND kpi_item NOT IN (
+        SELECT kpi_item FROM kpi_standards WHERE process_type = ? AND product_name = ? AND is_active = 1
+      )))
+    ORDER BY display_order
+  `;
+  
+  const result = await c.env.DB.prepare(query)
+    .bind(processType, productName || null, processType, productName || null)
+    .all();
+  
+  // 기준을 객체로 변환
+  const standards: Record<string, any> = {};
+  for (const row of result.results as any[]) {
+    standards[row.kpi_item] = {
+      min: row.min_value,
+      max: row.max_value,
+      unit: row.unit,
+      label: row.kpi_item_label,
+      isCcp: row.is_ccp === 1,
+      isRequired: row.is_required === 1
+    };
+  }
+  
+  return c.json({ 
+    success: true, 
+    data: standards,
+    productName: productName || '기본',
+    processType 
+  });
+});
+
+// 등록된 제품 목록 조회
+processKpiRoutes.get('/standards/products', async (c) => {
+  const processType = c.req.query('process_type');
+  
+  let query = `
+    SELECT DISTINCT product_name 
+    FROM kpi_standards 
+    WHERE is_active = 1 AND product_name IS NOT NULL
+  `;
+  const params: any[] = [];
+  
+  if (processType) {
+    query += ' AND process_type = ?';
+    params.push(processType);
+  }
+  
+  query += ' ORDER BY product_name';
+  
+  const result = await c.env.DB.prepare(query).bind(...params).all();
+  const products = (result.results as any[]).map(r => r.product_name);
+  
+  return c.json({ success: true, data: products });
+});
+
+// KPI 기준 등록/수정
+processKpiRoutes.post('/standards', async (c) => {
+  const body = await c.req.json();
+  const {
+    process_type, product_name, kpi_item, kpi_item_label,
+    min_value, max_value, unit, is_ccp, is_required, display_order, memo
+  } = body;
+  
+  if (!process_type || !kpi_item || !kpi_item_label) {
+    return c.json({ success: false, error: '필수 항목을 입력해주세요.' }, 400);
+  }
+  
+  // 기존 데이터 확인 (중복 시 업데이트)
+  const existing = await c.env.DB.prepare(`
+    SELECT id FROM kpi_standards 
+    WHERE process_type = ? AND kpi_item = ? AND (product_name = ? OR (product_name IS NULL AND ? IS NULL))
+  `).bind(process_type, kpi_item, product_name || null, product_name || null).first();
+  
+  if (existing) {
+    // 업데이트
+    await c.env.DB.prepare(`
+      UPDATE kpi_standards SET
+        kpi_item_label = ?, min_value = ?, max_value = ?, unit = ?,
+        is_ccp = ?, is_required = ?, display_order = ?, memo = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(
+      kpi_item_label, min_value ?? null, max_value ?? null, unit || null,
+      is_ccp ? 1 : 0, is_required ? 1 : 0, display_order || 0, memo || null,
+      (existing as any).id
+    ).run();
+    
+    return c.json({ success: true, message: 'KPI 기준이 수정되었습니다.' });
+  } else {
+    // 신규 등록
+    await c.env.DB.prepare(`
+      INSERT INTO kpi_standards (
+        process_type, product_name, kpi_item, kpi_item_label,
+        min_value, max_value, unit, is_ccp, is_required, display_order, memo
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      process_type, product_name || null, kpi_item, kpi_item_label,
+      min_value ?? null, max_value ?? null, unit || null,
+      is_ccp ? 1 : 0, is_required ? 1 : 0, display_order || 0, memo || null
+    ).run();
+    
+    return c.json({ success: true, message: 'KPI 기준이 등록되었습니다.' });
+  }
+});
+
+// KPI 기준 일괄 등록 (제품 복사)
+processKpiRoutes.post('/standards/copy', async (c) => {
+  const body = await c.req.json();
+  const { from_product, to_product, process_type } = body;
+  
+  if (!to_product) {
+    return c.json({ success: false, error: '새 제품명을 입력해주세요.' }, 400);
+  }
+  
+  // 기존 기준 조회 (from_product가 null이면 기본값에서 복사)
+  let query = `
+    SELECT process_type, kpi_item, kpi_item_label, min_value, max_value, 
+           unit, is_ccp, is_required, display_order
+    FROM kpi_standards 
+    WHERE is_active = 1
+  `;
+  const params: any[] = [];
+  
+  if (from_product) {
+    query += ' AND product_name = ?';
+    params.push(from_product);
+  } else {
+    query += ' AND product_name IS NULL';
+  }
+  
+  if (process_type) {
+    query += ' AND process_type = ?';
+    params.push(process_type);
+  }
+  
+  const source = await c.env.DB.prepare(query).bind(...params).all();
+  
+  if (source.results.length === 0) {
+    return c.json({ success: false, error: '복사할 기준이 없습니다.' }, 400);
+  }
+  
+  // 새 제품으로 복사
+  let inserted = 0;
+  for (const row of source.results as any[]) {
+    await c.env.DB.prepare(`
+      INSERT OR REPLACE INTO kpi_standards (
+        process_type, product_name, kpi_item, kpi_item_label,
+        min_value, max_value, unit, is_ccp, is_required, display_order
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      row.process_type, to_product, row.kpi_item, row.kpi_item_label,
+      row.min_value, row.max_value, row.unit, row.is_ccp, row.is_required, row.display_order
+    ).run();
+    inserted++;
+  }
+  
+  return c.json({ 
+    success: true, 
+    message: `${to_product} 제품의 KPI 기준이 생성되었습니다.`,
+    count: inserted 
+  });
+});
+
+// KPI 기준 삭제
+processKpiRoutes.delete('/standards/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  await c.env.DB.prepare('UPDATE kpi_standards SET is_active = 0 WHERE id = ?').bind(id).run();
+  
+  return c.json({ success: true, message: 'KPI 기준이 삭제되었습니다.' });
+});
+
+// 제품의 모든 KPI 기준 삭제
+processKpiRoutes.delete('/standards/product/:productName', async (c) => {
+  const productName = c.req.param('productName');
+  
+  await c.env.DB.prepare('UPDATE kpi_standards SET is_active = 0 WHERE product_name = ?')
+    .bind(productName).run();
+  
+  return c.json({ success: true, message: `${productName} 제품의 KPI 기준이 삭제되었습니다.` });
+});
+
+// ===========================================
 // KPI 마스터 관리
 // ===========================================
 
@@ -70,6 +293,34 @@ processKpiRoutes.get('/aging', async (c) => {
   return c.json({ success: true, data: result.results });
 });
 
+// 제품별 KPI 기준 조회 헬퍼 함수
+async function getProductStandards(db: any, processType: string, productName: string | null) {
+  const query = `
+    SELECT kpi_item, min_value, max_value FROM kpi_standards 
+    WHERE is_active = 1 AND process_type = ?
+      AND (product_name = ? OR (product_name IS NULL AND kpi_item NOT IN (
+        SELECT kpi_item FROM kpi_standards WHERE process_type = ? AND product_name = ? AND is_active = 1
+      )))
+  `;
+  const result = await db.prepare(query)
+    .bind(processType, productName || null, processType, productName || null)
+    .all();
+  
+  const standards: Record<string, { min: number | null, max: number | null }> = {};
+  for (const row of result.results as any[]) {
+    standards[row.kpi_item] = { min: row.min_value, max: row.max_value };
+  }
+  return standards;
+}
+
+// 기준에 따른 판정 헬퍼 함수
+function judgeValue(value: number | null, min: number | null, max: number | null): string {
+  if (value === null || value === undefined) return '적합';
+  const minOk = min === null || value >= min;
+  const maxOk = max === null || value <= max;
+  return (minOk && maxOk) ? '적합' : '부적합';
+}
+
 // 숙성 KPI 등록
 processKpiRoutes.post('/aging', async (c) => {
   const body = await c.req.json();
@@ -83,10 +334,18 @@ processKpiRoutes.post('/aging', async (c) => {
     return c.json({ success: false, error: '기록일자를 입력해주세요.' }, 400);
   }
   
-  // 자동 판정
-  const coldAgingJudgment = cold_aging_time >= 60 && cold_aging_time <= 120 ? '적합' : '부적합';
-  const fermentTempJudgment = ferment_temp >= 25 && ferment_temp <= 29 ? '적합' : '부적합';
-  const maxTempJudgment = max_temp <= 30 ? '적합' : '부적합';
+  // 제품별 기준 조회
+  const standards = await getProductStandards(c.env.DB, '숙성', product_name);
+  
+  // 기준이 없으면 기본값 사용
+  const coldAgingStd = standards['cold_aging_time'] || { min: 60, max: 120 };
+  const fermentTempStd = standards['ferment_temp'] || { min: 25, max: 29 };
+  const maxTempStd = standards['max_temp'] || { min: null, max: 30 };
+  
+  // 자동 판정 (제품별 기준 적용)
+  const coldAgingJudgment = judgeValue(cold_aging_time, coldAgingStd.min, coldAgingStd.max);
+  const fermentTempJudgment = judgeValue(ferment_temp, fermentTempStd.min, fermentTempStd.max);
+  const maxTempJudgment = judgeValue(max_temp, maxTempStd.min, maxTempStd.max);
   
   const overallJudgment = (coldAgingJudgment === '적합' && fermentTempJudgment === '적합' && maxTempJudgment === '적합') 
     ? '적합' : '부적합';
@@ -149,12 +408,21 @@ processKpiRoutes.post('/forming1', async (c) => {
     return c.json({ success: false, error: '기록일자를 입력해주세요.' }, 400);
   }
   
-  // 자동 판정
-  const doughTempJudgment = dough_temp >= 24 && dough_temp <= 26 ? '적합' : '부적합';
-  const firstFermentJudgment = first_ferment_time >= 30 && first_ferment_time <= 60 ? '적합' : '부적합';
-  const fermentTempJudgment = ferment_temp >= 25 && ferment_temp <= 29 ? '적합' : '부적합';
-  const benchJudgment = bench_time >= 15 && bench_time <= 20 ? '적합' : '부적합';
-  const secondFermentJudgment = second_ferment_time >= 40 && second_ferment_time <= 60 ? '적합' : '부적합';
+  // 제품별 기준 조회
+  const standards = await getProductStandards(c.env.DB, '성형1', product_name);
+  
+  // 자동 판정 (제품별 기준 적용)
+  const doughTempStd = standards['dough_temp'] || { min: 24, max: 26 };
+  const firstFermentStd = standards['first_ferment_time'] || { min: 30, max: 60 };
+  const fermentTempStd = standards['ferment_temp'] || { min: 25, max: 29 };
+  const benchStd = standards['bench_time'] || { min: 15, max: 20 };
+  const secondFermentStd = standards['second_ferment_time'] || { min: 40, max: 60 };
+  
+  const doughTempJudgment = judgeValue(dough_temp, doughTempStd.min, doughTempStd.max);
+  const firstFermentJudgment = judgeValue(first_ferment_time, firstFermentStd.min, firstFermentStd.max);
+  const fermentTempJudgment = judgeValue(ferment_temp, fermentTempStd.min, fermentTempStd.max);
+  const benchJudgment = judgeValue(bench_time, benchStd.min, benchStd.max);
+  const secondFermentJudgment = judgeValue(second_ferment_time, secondFermentStd.min, secondFermentStd.max);
   
   const checks = [doughTempJudgment, firstFermentJudgment, fermentTempJudgment, benchJudgment, secondFermentJudgment];
   const overallJudgment = checks.every(j => j === '적합') ? '적합' : '부적합';
@@ -225,11 +493,19 @@ processKpiRoutes.post('/forming2', async (c) => {
     return c.json({ success: false, error: '기록일자를 입력해주세요.' }, 400);
   }
   
-  // 자동 판정
-  const doughTempJudgment = dough_temp >= 24 && dough_temp <= 26 ? '적합' : '부적합';
-  const firstFermentJudgment = first_ferment_time >= 30 && first_ferment_time <= 60 ? '적합' : '부적합';
-  const fermentTempJudgment = ferment_temp >= 25 && ferment_temp <= 29 ? '적합' : '부적합';
-  const benchJudgment = bench_time >= 15 && bench_time <= 20 ? '적합' : '부적합';
+  // 제품별 기준 조회
+  const standards = await getProductStandards(c.env.DB, '성형2', product_name);
+  
+  // 자동 판정 (제품별 기준 적용)
+  const doughTempStd = standards['dough_temp'] || { min: 24, max: 26 };
+  const firstFermentStd = standards['first_ferment_time'] || { min: 30, max: 60 };
+  const fermentTempStd = standards['ferment_temp'] || { min: 25, max: 29 };
+  const benchStd = standards['bench_time'] || { min: 15, max: 20 };
+  
+  const doughTempJudgment = judgeValue(dough_temp, doughTempStd.min, doughTempStd.max);
+  const firstFermentJudgment = judgeValue(first_ferment_time, firstFermentStd.min, firstFermentStd.max);
+  const fermentTempJudgment = judgeValue(ferment_temp, fermentTempStd.min, fermentTempStd.max);
+  const benchJudgment = judgeValue(bench_time, benchStd.min, benchStd.max);
   
   const checks = [doughTempJudgment, firstFermentJudgment, fermentTempJudgment, benchJudgment];
   const overallJudgment = checks.every(j => j === '적합') ? '적합' : '부적합';
@@ -297,9 +573,15 @@ processKpiRoutes.post('/oven', async (c) => {
     return c.json({ success: false, error: '기록일자를 입력해주세요.' }, 400);
   }
   
-  // 자동 판정
-  const ovenTempJudgment = oven_temp >= 170 && oven_temp <= 190 ? '적합' : '부적합';
-  const coreTempJudgment = core_temp >= 74 ? '적합' : '부적합';
+  // 제품별 기준 조회
+  const standards = await getProductStandards(c.env.DB, '오븐', product_name);
+  
+  // 자동 판정 (제품별 기준 적용)
+  const ovenTempStd = standards['oven_temp'] || { min: 170, max: 190 };
+  const coreTempStd = standards['core_temp'] || { min: 74, max: null };
+  
+  const ovenTempJudgment = judgeValue(oven_temp, ovenTempStd.min, ovenTempStd.max);
+  const coreTempJudgment = judgeValue(core_temp, coreTempStd.min, coreTempStd.max);
   
   const overallJudgment = (ovenTempJudgment === '적합' && coreTempJudgment === '적합') ? '적합' : '부적합';
   

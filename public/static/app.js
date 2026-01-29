@@ -3231,8 +3231,16 @@ let adminAuthenticated = false;
 function renderAdmin() {
   const content = document.getElementById('page-content');
   
+  // 로그인한 사용자가 super_admin 또는 admin이면 바로 관리자 모드 접근
+  const user = getUserInfo();
+  if (user && (user.role === 'super_admin' || user.role === 'admin')) {
+    adminAuthenticated = true;
+    renderAdminDashboard();
+    return;
+  }
+  
   if (!adminAuthenticated) {
-    // 로그인 화면
+    // 권한 없음 화면
     content.innerHTML = `
       <div class="max-w-md mx-auto mt-20">
         <div class="bg-white rounded-xl shadow-lg p-8">
@@ -3241,46 +3249,20 @@ function renderAdmin() {
               <i class="fas fa-user-shield text-3xl text-red-600"></i>
             </div>
             <h2 class="text-2xl font-bold text-gray-800">관리자 모드</h2>
-            <p class="text-gray-500 mt-2">관리자 비밀번호를 입력하세요</p>
+            <p class="text-gray-500 mt-2">관리자 권한이 필요합니다</p>
           </div>
           
-          <form id="admin-login-form" class="space-y-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">비밀번호</label>
-              <input type="password" id="admin-password" 
-                     class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
-                     placeholder="관리자 비밀번호 입력">
-            </div>
-            <button type="submit" 
-                    class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition">
-              <i class="fas fa-lock mr-2"></i>
-              관리자 로그인
-            </button>
-          </form>
-          
-          <div class="mt-4 p-3 bg-yellow-50 rounded-lg text-sm text-yellow-800">
+          <div class="p-4 bg-yellow-50 rounded-lg text-sm text-yellow-800">
             <i class="fas fa-exclamation-triangle mr-1"></i>
-            관리자 모드에서는 데이터 수정/삭제가 가능합니다. 신중하게 사용하세요.
+            관리자 또는 최고관리자 권한이 있는 계정으로 로그인해주세요.
+          </div>
+          
+          <div class="mt-4 text-center text-gray-500 text-sm">
+            현재 권한: <span class="font-medium">${user?.role || '없음'}</span>
           </div>
         </div>
       </div>
     `;
-    
-    document.getElementById('admin-login-form').addEventListener('submit', async function(e) {
-      e.preventDefault();
-      const password = document.getElementById('admin-password').value;
-      
-      try {
-        const result = await api('/admin/auth', 'POST', { password });
-        if (result.success) {
-          adminAuthenticated = true;
-          showToast('관리자 모드에 로그인되었습니다', 'success');
-          renderAdminDashboard();
-        }
-      } catch (e) {
-        showToast('비밀번호가 올바르지 않습니다', 'error');
-      }
-    });
   } else {
     renderAdminDashboard();
   }

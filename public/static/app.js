@@ -145,6 +145,7 @@ function renderPage(page) {
     case 'quality-kpi': renderQualityKPI(); break;
     case 'master': renderMaster(); break;
     case 'suppliers': renderSuppliers(); break;
+    case 'admin': renderAdmin(); break;
     default: renderDashboard();
   }
 }
@@ -2207,6 +2208,880 @@ function printReport() {
   window.print();
 }
 
+// ========== 관리자 모드 ==========
+
+// 관리자 인증 상태
+let adminAuthenticated = false;
+
+// 관리자 모드 렌더링
+function renderAdmin() {
+  const content = document.getElementById('page-content');
+  
+  if (!adminAuthenticated) {
+    // 로그인 화면
+    content.innerHTML = `
+      <div class="max-w-md mx-auto mt-20">
+        <div class="bg-white rounded-xl shadow-lg p-8">
+          <div class="text-center mb-6">
+            <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <i class="fas fa-user-shield text-3xl text-red-600"></i>
+            </div>
+            <h2 class="text-2xl font-bold text-gray-800">관리자 모드</h2>
+            <p class="text-gray-500 mt-2">관리자 비밀번호를 입력하세요</p>
+          </div>
+          
+          <form id="admin-login-form" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">비밀번호</label>
+              <input type="password" id="admin-password" 
+                     class="w-full px-4 py-3 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                     placeholder="관리자 비밀번호 입력">
+            </div>
+            <button type="submit" 
+                    class="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition">
+              <i class="fas fa-lock mr-2"></i>
+              관리자 로그인
+            </button>
+          </form>
+          
+          <div class="mt-4 p-3 bg-yellow-50 rounded-lg text-sm text-yellow-800">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            관리자 모드에서는 데이터 수정/삭제가 가능합니다. 신중하게 사용하세요.
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.getElementById('admin-login-form').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const password = document.getElementById('admin-password').value;
+      
+      try {
+        const result = await api('/admin/auth', 'POST', { password });
+        if (result.success) {
+          adminAuthenticated = true;
+          showToast('관리자 모드에 로그인되었습니다', 'success');
+          renderAdminDashboard();
+        }
+      } catch (e) {
+        showToast('비밀번호가 올바르지 않습니다', 'error');
+      }
+    });
+  } else {
+    renderAdminDashboard();
+  }
+}
+
+// 관리자 대시보드
+async function renderAdminDashboard() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-user-shield mr-2 text-red-600"></i>
+          관리자 모드
+        </h2>
+        <div class="flex gap-2">
+          <button onclick="showChangePasswordModal()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm">
+            <i class="fas fa-key mr-1"></i> 비밀번호 변경
+          </button>
+          <button onclick="adminLogout()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm">
+            <i class="fas fa-sign-out-alt mr-1"></i> 로그아웃
+          </button>
+        </div>
+      </div>
+      
+      <!-- 관리자 기능 탭 -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="border-b">
+          <nav class="flex flex-wrap">
+            <button onclick="switchAdminTab('inbound')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="inbound">
+              <i class="fas fa-truck-loading mr-2"></i> 입고 관리
+            </button>
+            <button onclick="switchAdminTab('transactions')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="transactions">
+              <i class="fas fa-exchange-alt mr-2"></i> 트랜잭션 관리
+            </button>
+            <button onclick="switchAdminTab('stock')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="stock">
+              <i class="fas fa-boxes mr-2"></i> 재고 조정
+            </button>
+            <button onclick="switchAdminTab('logs')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="logs">
+              <i class="fas fa-history mr-2"></i> 활동 로그
+            </button>
+          </nav>
+        </div>
+        
+        <div id="admin-tab-content" class="p-6">
+          <!-- 탭 내용이 여기에 로드됨 -->
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 기본 탭 로드
+  switchAdminTab('inbound');
+}
+
+// 관리자 탭 전환
+function switchAdminTab(tab) {
+  // 탭 버튼 활성화
+  document.querySelectorAll('.admin-tab').forEach(btn => {
+    btn.classList.remove('border-red-500', 'text-red-600', 'bg-red-50');
+    btn.classList.add('border-transparent');
+    if (btn.dataset.tab === tab) {
+      btn.classList.add('border-red-500', 'text-red-600', 'bg-red-50');
+      btn.classList.remove('border-transparent');
+    }
+  });
+  
+  switch(tab) {
+    case 'inbound': loadAdminInbound(); break;
+    case 'transactions': loadAdminTransactions(); break;
+    case 'stock': loadAdminStock(); break;
+    case 'logs': loadAdminLogs(); break;
+  }
+}
+
+// 입고 관리 탭
+async function loadAdminInbound() {
+  const tabContent = document.getElementById('admin-tab-content');
+  tabContent.innerHTML = '<div class="flex justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const result = await api('/admin/inbound?limit=100');
+    const items = result.data || [];
+    
+    tabContent.innerHTML = `
+      <div class="space-y-4">
+        <div class="flex justify-between items-center">
+          <h3 class="text-lg font-bold text-gray-800">입고 데이터 관리</h3>
+          <span class="text-sm text-gray-500">총 ${items.length}건</span>
+        </div>
+        
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-3 py-2 text-left">ID</th>
+                <th class="px-3 py-2 text-left">LOT 번호</th>
+                <th class="px-3 py-2 text-left">품목</th>
+                <th class="px-3 py-2 text-left">입고일</th>
+                <th class="px-3 py-2 text-left">유통기한</th>
+                <th class="px-3 py-2 text-right">입고량</th>
+                <th class="px-3 py-2 text-right">잔량</th>
+                <th class="px-3 py-2 text-center">품질</th>
+                <th class="px-3 py-2 text-center">작업</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${items.map(item => `
+                <tr class="hover:bg-gray-50">
+                  <td class="px-3 py-2 text-gray-500">${item.id}</td>
+                  <td class="px-3 py-2 font-mono text-xs">${item.lot_number}</td>
+                  <td class="px-3 py-2">
+                    <span class="font-medium">${item.item_name || item.item_code}</span>
+                    <span class="text-gray-400 text-xs ml-1">(${item.item_code})</span>
+                  </td>
+                  <td class="px-3 py-2">${item.inbound_date}</td>
+                  <td class="px-3 py-2">${item.expiry_date}</td>
+                  <td class="px-3 py-2 text-right">${formatNumber(item.origin_qty)} ${item.unit || ''}</td>
+                  <td class="px-3 py-2 text-right font-medium ${item.remain_qty <= 0 ? 'text-red-500' : ''}">${formatNumber(item.remain_qty)} ${item.unit || ''}</td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${item.quality_status === '합격' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">${item.quality_status}</span>
+                  </td>
+                  <td class="px-3 py-2 text-center">
+                    <button onclick="editAdminInbound(${item.id})" class="text-blue-600 hover:text-blue-800 mr-2" title="수정">
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="deleteAdminInbound(${item.id}, '${item.lot_number}')" class="text-red-600 hover:text-red-800" title="삭제">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    tabContent.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 입고 수정 모달
+async function editAdminInbound(id) {
+  try {
+    const result = await api('/admin/inbound?limit=100');
+    const item = result.data.find(i => i.id === id);
+    if (!item) {
+      showToast('데이터를 찾을 수 없습니다', 'error');
+      return;
+    }
+    
+    showModal('입고 데이터 수정', `
+      <form id="edit-inbound-form" class="space-y-4">
+        <input type="hidden" id="edit-inbound-id" value="${id}">
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">LOT 번호</label>
+            <input type="text" value="${item.lot_number}" disabled
+                   class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">품목</label>
+            <input type="text" value="${item.item_name || item.item_code}" disabled
+                   class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500">
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">입고량</label>
+            <input type="number" id="edit-origin-qty" value="${item.origin_qty}" step="0.01"
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">잔량 <span class="text-red-500">*</span></label>
+            <input type="number" id="edit-remain-qty" value="${item.remain_qty}" step="0.01" required
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">유통기한</label>
+            <input type="date" id="edit-expiry-date" value="${item.expiry_date}"
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">품질상태</label>
+            <select id="edit-quality-status" class="w-full px-3 py-2 border rounded-lg">
+              <option value="합격" ${item.quality_status === '합격' ? 'selected' : ''}>합격</option>
+              <option value="불합격" ${item.quality_status === '불합격' ? 'selected' : ''}>불합격</option>
+            </select>
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">거래처</label>
+          <input type="text" id="edit-supplier" value="${item.supplier || ''}"
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">수정 사유 <span class="text-red-500">*</span></label>
+          <input type="text" id="edit-reason" required placeholder="수정 사유를 입력하세요"
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+      </form>
+    `, `
+      <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+      <button onclick="saveAdminInbound()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+    `);
+  } catch (e) {
+    showToast('데이터를 불러오는데 실패했습니다', 'error');
+  }
+}
+
+// 입고 저장
+async function saveAdminInbound() {
+  const id = document.getElementById('edit-inbound-id').value;
+  const data = {
+    origin_qty: parseFloat(document.getElementById('edit-origin-qty').value),
+    remain_qty: parseFloat(document.getElementById('edit-remain-qty').value),
+    expiry_date: document.getElementById('edit-expiry-date').value,
+    quality_status: document.getElementById('edit-quality-status').value,
+    supplier: document.getElementById('edit-supplier').value,
+    reason: document.getElementById('edit-reason').value
+  };
+  
+  if (!data.reason) {
+    showToast('수정 사유를 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/admin/inbound/${id}`, 'PUT', data);
+    showToast('입고 데이터가 수정되었습니다', 'success');
+    closeModal();
+    loadAdminInbound();
+    loadAlertCount();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 입고 삭제
+async function deleteAdminInbound(id, lotNumber) {
+  showModal('입고 데이터 삭제', `
+    <div class="text-center">
+      <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <i class="fas fa-exclamation-triangle text-3xl text-red-600"></i>
+      </div>
+      <p class="text-lg font-medium mb-2">정말 삭제하시겠습니까?</p>
+      <p class="text-gray-500 text-sm mb-4">LOT: ${lotNumber}</p>
+      <p class="text-red-600 text-sm">관련된 모든 트랜잭션도 함께 삭제됩니다.</p>
+      
+      <div class="mt-4">
+        <label class="block text-sm font-medium text-gray-700 mb-1 text-left">삭제 사유 <span class="text-red-500">*</span></label>
+        <input type="text" id="delete-reason" required placeholder="삭제 사유를 입력하세요"
+               class="w-full px-3 py-2 border rounded-lg">
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="confirmDeleteInbound(${id})" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">삭제</button>
+  `);
+}
+
+async function confirmDeleteInbound(id) {
+  const reason = document.getElementById('delete-reason').value;
+  if (!reason) {
+    showToast('삭제 사유를 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/admin/inbound/${id}`, 'DELETE', { reason });
+    showToast('입고 데이터가 삭제되었습니다', 'success');
+    closeModal();
+    loadAdminInbound();
+    loadAlertCount();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 트랜잭션 관리 탭
+async function loadAdminTransactions() {
+  const tabContent = document.getElementById('admin-tab-content');
+  tabContent.innerHTML = '<div class="flex justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const result = await api('/admin/transactions?limit=100');
+    const items = result.data || [];
+    
+    tabContent.innerHTML = `
+      <div class="space-y-4">
+        <div class="flex justify-between items-center">
+          <h3 class="text-lg font-bold text-gray-800">트랜잭션 데이터 관리</h3>
+          <span class="text-sm text-gray-500">총 ${items.length}건</span>
+        </div>
+        
+        <div class="overflow-x-auto max-h-[600px]">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100 sticky top-0">
+              <tr>
+                <th class="px-3 py-2 text-left">ID</th>
+                <th class="px-3 py-2 text-left">일자</th>
+                <th class="px-3 py-2 text-left">품목</th>
+                <th class="px-3 py-2 text-center">구분</th>
+                <th class="px-3 py-2 text-right">수량</th>
+                <th class="px-3 py-2 text-left">LOT 번호</th>
+                <th class="px-3 py-2 text-left">메모</th>
+                <th class="px-3 py-2 text-center">작업</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${items.map(item => {
+                const typeColors = {
+                  '입고': 'bg-blue-100 text-blue-800',
+                  '사용': 'bg-orange-100 text-orange-800',
+                  '출고': 'bg-green-100 text-green-800',
+                  '재고조정': 'bg-purple-100 text-purple-800'
+                };
+                return `
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-3 py-2 text-gray-500">${item.id}</td>
+                    <td class="px-3 py-2">${item.trans_date}</td>
+                    <td class="px-3 py-2">
+                      <span class="font-medium">${item.item_name || item.item_code}</span>
+                    </td>
+                    <td class="px-3 py-2 text-center">
+                      <span class="px-2 py-1 rounded text-xs ${typeColors[item.trans_type] || 'bg-gray-100'}">${item.trans_type}</span>
+                    </td>
+                    <td class="px-3 py-2 text-right font-medium ${item.quantity > 0 ? 'text-blue-600' : 'text-red-600'}">${item.quantity > 0 ? '+' : ''}${formatNumber(item.quantity)} ${item.unit || ''}</td>
+                    <td class="px-3 py-2 font-mono text-xs">${item.lot_number || '-'}</td>
+                    <td class="px-3 py-2 text-gray-500 text-xs max-w-[200px] truncate">${item.memo || '-'}</td>
+                    <td class="px-3 py-2 text-center">
+                      <button onclick="editAdminTransaction(${item.id})" class="text-blue-600 hover:text-blue-800 mr-2" title="수정">
+                        <i class="fas fa-edit"></i>
+                      </button>
+                      <button onclick="deleteAdminTransaction(${item.id})" class="text-red-600 hover:text-red-800" title="삭제">
+                        <i class="fas fa-trash"></i>
+                      </button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    tabContent.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 트랜잭션 수정 모달
+async function editAdminTransaction(id) {
+  try {
+    const result = await api('/admin/transactions?limit=100');
+    const item = result.data.find(i => i.id === id);
+    if (!item) {
+      showToast('데이터를 찾을 수 없습니다', 'error');
+      return;
+    }
+    
+    showModal('트랜잭션 수정', `
+      <form id="edit-transaction-form" class="space-y-4">
+        <input type="hidden" id="edit-trans-id" value="${id}">
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">일자</label>
+            <input type="text" value="${item.trans_date}" disabled
+                   class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">구분</label>
+            <input type="text" value="${item.trans_type}" disabled
+                   class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500">
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">품목</label>
+            <input type="text" value="${item.item_name || item.item_code}" disabled
+                   class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">수량 <span class="text-red-500">*</span></label>
+            <input type="number" id="edit-trans-qty" value="${item.quantity}" step="0.01" required
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+          <input type="text" id="edit-trans-memo" value="${item.memo || ''}"
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">수정 사유 <span class="text-red-500">*</span></label>
+          <input type="text" id="edit-trans-reason" required placeholder="수정 사유를 입력하세요"
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+      </form>
+    `, `
+      <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+      <button onclick="saveAdminTransaction()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+    `);
+  } catch (e) {
+    showToast('데이터를 불러오는데 실패했습니다', 'error');
+  }
+}
+
+// 트랜잭션 저장
+async function saveAdminTransaction() {
+  const id = document.getElementById('edit-trans-id').value;
+  const data = {
+    quantity: parseFloat(document.getElementById('edit-trans-qty').value),
+    memo: document.getElementById('edit-trans-memo').value,
+    reason: document.getElementById('edit-trans-reason').value
+  };
+  
+  if (!data.reason) {
+    showToast('수정 사유를 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/admin/transactions/${id}`, 'PUT', data);
+    showToast('트랜잭션이 수정되었습니다', 'success');
+    closeModal();
+    loadAdminTransactions();
+    loadAlertCount();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 트랜잭션 삭제
+async function deleteAdminTransaction(id) {
+  showModal('트랜잭션 삭제', `
+    <div class="text-center">
+      <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <i class="fas fa-exclamation-triangle text-3xl text-red-600"></i>
+      </div>
+      <p class="text-lg font-medium mb-2">정말 삭제하시겠습니까?</p>
+      <p class="text-red-600 text-sm">트랜잭션 삭제 시 재고가 원복됩니다.</p>
+      
+      <div class="mt-4">
+        <label class="block text-sm font-medium text-gray-700 mb-1 text-left">삭제 사유 <span class="text-red-500">*</span></label>
+        <input type="text" id="delete-trans-reason" required placeholder="삭제 사유를 입력하세요"
+               class="w-full px-3 py-2 border rounded-lg">
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="confirmDeleteTransaction(${id})" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">삭제</button>
+  `);
+}
+
+async function confirmDeleteTransaction(id) {
+  const reason = document.getElementById('delete-trans-reason').value;
+  if (!reason) {
+    showToast('삭제 사유를 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/admin/transactions/${id}`, 'DELETE', { reason });
+    showToast('트랜잭션이 삭제되었습니다', 'success');
+    closeModal();
+    loadAdminTransactions();
+    loadAlertCount();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 재고 조정 탭
+async function loadAdminStock() {
+  const tabContent = document.getElementById('admin-tab-content');
+  tabContent.innerHTML = '<div class="flex justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const result = await api('/master');
+    const items = result.data || [];
+    
+    tabContent.innerHTML = `
+      <div class="space-y-6">
+        <div class="flex justify-between items-center">
+          <h3 class="text-lg font-bold text-gray-800">재고 관리</h3>
+          <button onclick="recalculateAllStock()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm">
+            <i class="fas fa-sync-alt mr-1"></i> 전체 재고 재계산
+          </button>
+        </div>
+        
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm">
+          <i class="fas fa-info-circle text-yellow-600 mr-1"></i>
+          <strong>재고 재계산:</strong> 모든 품목의 현재고를 입고 LOT 잔량 합계로 재계산합니다. 데이터 불일치가 있을 때 사용하세요.
+        </div>
+        
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-3 py-2 text-left">품목코드</th>
+                <th class="px-3 py-2 text-left">품목명</th>
+                <th class="px-3 py-2 text-center">구분</th>
+                <th class="px-3 py-2 text-right">현재고</th>
+                <th class="px-3 py-2 text-right">안전재고</th>
+                <th class="px-3 py-2 text-center">단위</th>
+                <th class="px-3 py-2 text-center">작업</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${items.map(item => `
+                <tr class="hover:bg-gray-50">
+                  <td class="px-3 py-2 font-mono">${item.item_code}</td>
+                  <td class="px-3 py-2 font-medium">${item.item_name}</td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${item.category === '원료' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}">${item.category}</span>
+                  </td>
+                  <td class="px-3 py-2 text-right font-medium ${item.current_stock < item.safety_stock ? 'text-red-600' : ''}">${formatNumber(item.current_stock)}</td>
+                  <td class="px-3 py-2 text-right text-gray-500">${formatNumber(item.safety_stock)}</td>
+                  <td class="px-3 py-2 text-center">${item.unit}</td>
+                  <td class="px-3 py-2 text-center">
+                    <button onclick="editAdminStock('${item.item_code}', '${item.item_name}', ${item.current_stock})" class="text-blue-600 hover:text-blue-800" title="재고 조정">
+                      <i class="fas fa-edit"></i> 조정
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    tabContent.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 재고 조정 모달
+function editAdminStock(itemCode, itemName, currentStock) {
+  showModal('재고 조정', `
+    <form id="edit-stock-form" class="space-y-4">
+      <input type="hidden" id="edit-stock-code" value="${itemCode}">
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">품목</label>
+        <input type="text" value="${itemName} (${itemCode})" disabled
+               class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500">
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">현재 재고</label>
+          <input type="text" value="${formatNumber(currentStock)}" disabled
+                 class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">조정 재고 <span class="text-red-500">*</span></label>
+          <input type="number" id="edit-new-stock" value="${currentStock}" step="0.01" required
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">조정 사유 <span class="text-red-500">*</span></label>
+        <input type="text" id="edit-stock-reason" required placeholder="조정 사유를 입력하세요"
+               class="w-full px-3 py-2 border rounded-lg">
+      </div>
+    </form>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveAdminStock()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+  `);
+}
+
+// 재고 저장
+async function saveAdminStock() {
+  const itemCode = document.getElementById('edit-stock-code').value;
+  const newStock = parseFloat(document.getElementById('edit-new-stock').value);
+  const reason = document.getElementById('edit-stock-reason').value;
+  
+  if (!reason) {
+    showToast('조정 사유를 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/admin/master/${itemCode}/stock`, 'PUT', { new_stock: newStock, reason });
+    showToast('재고가 조정되었습니다', 'success');
+    closeModal();
+    loadAdminStock();
+    loadAlertCount();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 전체 재고 재계산
+async function recalculateAllStock() {
+  showModal('전체 재고 재계산', `
+    <div class="text-center">
+      <div class="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+        <i class="fas fa-sync-alt text-3xl text-purple-600"></i>
+      </div>
+      <p class="text-lg font-medium mb-2">전체 재고를 재계산하시겠습니까?</p>
+      <p class="text-gray-500 text-sm mb-4">모든 품목의 현재고가 입고 LOT 잔량 합계로 재계산됩니다.</p>
+      
+      <div class="mt-4">
+        <label class="block text-sm font-medium text-gray-700 mb-1 text-left">재계산 사유</label>
+        <input type="text" id="recalc-reason" value="정기 재고 점검" placeholder="재계산 사유"
+               class="w-full px-3 py-2 border rounded-lg">
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="confirmRecalculate()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">재계산</button>
+  `);
+}
+
+async function confirmRecalculate() {
+  const reason = document.getElementById('recalc-reason').value;
+  
+  try {
+    const result = await api('/admin/recalculate-stock', 'POST', { reason });
+    showToast(result.message, 'success');
+    closeModal();
+    loadAdminStock();
+    loadAlertCount();
+    
+    // 조정 결과 표시
+    if (result.adjusted && result.adjusted.length > 0) {
+      const adjustList = result.adjusted.map(a => 
+        `${a.item_code}: ${formatNumber(a.before)} → ${formatNumber(a.after)} (${a.diff > 0 ? '+' : ''}${formatNumber(a.diff)})`
+      ).join('<br>');
+      
+      showModal('재계산 결과', `
+        <div class="space-y-4">
+          <p class="font-medium">${result.adjusted.length}개 품목이 조정되었습니다:</p>
+          <div class="bg-gray-100 p-4 rounded-lg text-sm font-mono">${adjustList}</div>
+        </div>
+      `, `<button onclick="closeModal()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">확인</button>`);
+    }
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 활동 로그 탭
+async function loadAdminLogs() {
+  const tabContent = document.getElementById('admin-tab-content');
+  tabContent.innerHTML = '<div class="flex justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const result = await api('/admin/logs?limit=100');
+    const logs = result.data || [];
+    
+    tabContent.innerHTML = `
+      <div class="space-y-4">
+        <div class="flex justify-between items-center">
+          <h3 class="text-lg font-bold text-gray-800">관리자 활동 로그</h3>
+          <span class="text-sm text-gray-500">총 ${logs.length}건</span>
+        </div>
+        
+        <div class="overflow-x-auto max-h-[600px]">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100 sticky top-0">
+              <tr>
+                <th class="px-3 py-2 text-left">일시</th>
+                <th class="px-3 py-2 text-center">작업</th>
+                <th class="px-3 py-2 text-left">대상</th>
+                <th class="px-3 py-2 text-left">사유</th>
+                <th class="px-3 py-2 text-center">상세</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${logs.map(log => {
+                const actionColors = {
+                  '로그인': 'bg-gray-100 text-gray-800',
+                  '수정': 'bg-blue-100 text-blue-800',
+                  '삭제': 'bg-red-100 text-red-800',
+                  '재고조정': 'bg-purple-100 text-purple-800',
+                  '재계산': 'bg-green-100 text-green-800',
+                  '비밀번호변경': 'bg-yellow-100 text-yellow-800'
+                };
+                return `
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-3 py-2 text-gray-500 text-xs">${log.action_date}</td>
+                    <td class="px-3 py-2 text-center">
+                      <span class="px-2 py-1 rounded text-xs ${actionColors[log.action_type] || 'bg-gray-100'}">${log.action_type}</span>
+                    </td>
+                    <td class="px-3 py-2">${log.target_table}${log.target_id ? ` #${log.target_id}` : ''}</td>
+                    <td class="px-3 py-2 text-gray-600 max-w-[300px] truncate">${log.reason || '-'}</td>
+                    <td class="px-3 py-2 text-center">
+                      ${(log.before_data || log.after_data) ? 
+                        `<button onclick="showLogDetail(${log.id})" class="text-blue-600 hover:text-blue-800">
+                          <i class="fas fa-eye"></i>
+                        </button>` : '-'}
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    tabContent.innerHTML = '<div class="text-center text-red-500 py-8">로그를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 로그 상세 보기
+async function showLogDetail(logId) {
+  try {
+    const result = await api('/admin/logs?limit=100');
+    const log = result.data.find(l => l.id === logId);
+    if (!log) return;
+    
+    const beforeData = log.before_data ? JSON.parse(log.before_data) : null;
+    const afterData = log.after_data ? JSON.parse(log.after_data) : null;
+    
+    showModal('로그 상세', `
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-4 text-sm">
+          <div><strong>작업:</strong> ${log.action_type}</div>
+          <div><strong>대상:</strong> ${log.target_table}${log.target_id ? ` #${log.target_id}` : ''}</div>
+          <div><strong>일시:</strong> ${log.action_date}</div>
+          <div><strong>사유:</strong> ${log.reason || '-'}</div>
+        </div>
+        
+        ${beforeData ? `
+          <div>
+            <p class="font-medium text-sm mb-2">변경 전:</p>
+            <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto">${JSON.stringify(beforeData, null, 2)}</pre>
+          </div>
+        ` : ''}
+        
+        ${afterData ? `
+          <div>
+            <p class="font-medium text-sm mb-2">변경 후:</p>
+            <pre class="bg-gray-100 p-3 rounded text-xs overflow-x-auto">${JSON.stringify(afterData, null, 2)}</pre>
+          </div>
+        ` : ''}
+      </div>
+    `, `<button onclick="closeModal()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">확인</button>`);
+  } catch (e) {
+    showToast('로그를 불러오는데 실패했습니다', 'error');
+  }
+}
+
+// 비밀번호 변경 모달
+function showChangePasswordModal() {
+  showModal('비밀번호 변경', `
+    <form id="change-pw-form" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">현재 비밀번호</label>
+        <input type="password" id="current-pw" required
+               class="w-full px-3 py-2 border rounded-lg">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">새 비밀번호</label>
+        <input type="password" id="new-pw" required
+               class="w-full px-3 py-2 border rounded-lg">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">새 비밀번호 확인</label>
+        <input type="password" id="confirm-pw" required
+               class="w-full px-3 py-2 border rounded-lg">
+      </div>
+    </form>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="changePassword()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">변경</button>
+  `);
+}
+
+// 비밀번호 변경
+async function changePassword() {
+  const currentPassword = document.getElementById('current-pw').value;
+  const newPassword = document.getElementById('new-pw').value;
+  const confirmPassword = document.getElementById('confirm-pw').value;
+  
+  if (newPassword !== confirmPassword) {
+    showToast('새 비밀번호가 일치하지 않습니다', 'error');
+    return;
+  }
+  
+  try {
+    await api('/admin/change-password', 'POST', { currentPassword, newPassword });
+    showToast('비밀번호가 변경되었습니다', 'success');
+    closeModal();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 관리자 로그아웃
+function adminLogout() {
+  adminAuthenticated = false;
+  showToast('로그아웃되었습니다', 'info');
+  renderAdmin();
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async function() {
   // Set current date
@@ -2266,3 +3141,23 @@ window.closeModal = closeModal;
 window.printReport = printReport;
 window.selectInboundItem = selectInboundItem;
 window.clearSelectedItem = clearSelectedItem;
+
+// 관리자 모드 함수들
+window.renderAdmin = renderAdmin;
+window.adminLogout = adminLogout;
+window.showChangePasswordModal = showChangePasswordModal;
+window.changePassword = changePassword;
+window.switchAdminTab = switchAdminTab;
+window.editAdminInbound = editAdminInbound;
+window.saveAdminInbound = saveAdminInbound;
+window.deleteAdminInbound = deleteAdminInbound;
+window.confirmDeleteInbound = confirmDeleteInbound;
+window.editAdminTransaction = editAdminTransaction;
+window.saveAdminTransaction = saveAdminTransaction;
+window.deleteAdminTransaction = deleteAdminTransaction;
+window.confirmDeleteTransaction = confirmDeleteTransaction;
+window.editAdminStock = editAdminStock;
+window.saveAdminStock = saveAdminStock;
+window.recalculateAllStock = recalculateAllStock;
+window.confirmRecalculate = confirmRecalculate;
+window.showLogDetail = showLogDetail;

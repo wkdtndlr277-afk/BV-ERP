@@ -13,6 +13,7 @@ import transactionRoutes from './routes/transaction';
 import qualityRoutes from './routes/quality';
 import dashboardRoutes from './routes/dashboard';
 import supplierRoutes from './routes/supplier';
+import adminRoutes from './routes/admin';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -30,6 +31,7 @@ app.route('/api/transactions', transactionRoutes);
 app.route('/api/quality', qualityRoutes);
 app.route('/api/dashboard', dashboardRoutes);
 app.route('/api/suppliers', supplierRoutes);
+app.route('/api/admin', adminRoutes);
 
 // Health check
 app.get('/api/health', (c) => {
@@ -205,6 +207,15 @@ app.get('/*', (c) => {
                 <a href="#suppliers" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="suppliers">
                     <i class="fas fa-building w-5"></i>
                     <span>거래처 관리</span>
+                </a>
+                
+                <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">시스템 관리</p>
+                </div>
+                
+                <a href="#admin" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="admin">
+                    <i class="fas fa-user-shield w-5"></i>
+                    <span>관리자 모드</span>
                 </a>
             </nav>
         </aside>

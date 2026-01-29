@@ -14,6 +14,7 @@ import qualityRoutes from './routes/quality';
 import dashboardRoutes from './routes/dashboard';
 import supplierRoutes from './routes/supplier';
 import adminRoutes from './routes/admin';
+import processRoutes from './routes/process';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -32,6 +33,7 @@ app.route('/api/quality', qualityRoutes);
 app.route('/api/dashboard', dashboardRoutes);
 app.route('/api/suppliers', supplierRoutes);
 app.route('/api/admin', adminRoutes);
+app.route('/api/process', processRoutes);
 
 // Health check
 app.get('/api/health', (c) => {
@@ -193,6 +195,11 @@ app.get('/*', (c) => {
                 <a href="#quality-kpi" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="quality-kpi">
                     <i class="fas fa-chart-line w-5"></i>
                     <span>품질 KPI</span>
+                </a>
+                
+                <a href="#process-quality" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="process-quality">
+                    <i class="fas fa-flask w-5"></i>
+                    <span>반제품 공정품질</span>
                 </a>
                 
                 <div class="pt-4 pb-2">

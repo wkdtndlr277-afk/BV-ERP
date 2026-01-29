@@ -146,6 +146,7 @@ function renderPage(page) {
     case 'master': renderMaster(); break;
     case 'suppliers': renderSuppliers(); break;
     case 'admin': renderAdmin(); break;
+    case 'process-quality': renderProcessQuality(); break;
     default: renderDashboard();
   }
 }
@@ -911,107 +912,215 @@ async function renderOutbound() {
   }
 }
 
-// Quick Stock Registration (Products)
+// Quick Stock Registration (Products) - 검색 기반
 async function renderQuickStock() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
   
   const products = state.masterItems.filter(item => item.category === '제품');
+  window.quickStockProducts = products;
+  window.selectedQuickStockItems = [];
   
   content.innerHTML = `
-    <div class="max-w-3xl mx-auto space-y-6">
+    <div class="max-w-4xl mx-auto space-y-6">
       <div class="flex items-center justify-between">
         <h2 class="text-2xl font-bold text-gray-800">
           <i class="fas fa-clipboard-check mr-2 text-haccp-primary"></i>
-          제품 재고 빠른 등록
+          제품 재고 등록
         </h2>
         <input type="date" id="adjustment-date" class="border rounded-lg px-4 py-2" value="${today}">
       </div>
       
       <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-        <h4 class="font-bold text-yellow-800 mb-1"><i class="fas fa-exclamation-triangle mr-1"></i> 재고 실사/초기등록용</h4>
-        <p class="text-sm text-yellow-700">현재 실제 재고 수량을 입력하면 자동으로 조정됩니다.</p>
+        <h4 class="font-bold text-yellow-800 mb-1"><i class="fas fa-exclamation-triangle mr-1"></i> 재고 실사/수기등록용</h4>
+        <p class="text-sm text-yellow-700">제품을 검색하여 선택 후 실제 재고 수량을 수기로 입력하세요.</p>
       </div>
       
+      <!-- 제품 검색 -->
+      <div class="bg-white rounded-xl shadow p-6">
+        <h3 class="font-bold text-gray-800 mb-4"><i class="fas fa-search mr-2"></i>제품 검색</h3>
+        <div class="relative">
+          <input type="text" id="product-search" 
+                 class="w-full border-2 border-gray-200 rounded-lg px-4 py-3 focus:border-blue-500 transition"
+                 placeholder="제품명 또는 코드로 검색...">
+          <div id="product-search-results" class="absolute z-20 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-60 overflow-y-auto hidden">
+          </div>
+        </div>
+      </div>
+      
+      <!-- 선택된 제품 목록 -->
       <div class="bg-white rounded-xl shadow">
-        <div class="p-4 border-b bg-gray-50">
-          <span class="font-medium text-gray-700">오늘 제품 재고 입력</span>
+        <div class="p-4 border-b bg-gray-50 flex items-center justify-between">
+          <span class="font-medium text-gray-700"><i class="fas fa-list mr-2"></i>재고 입력 목록</span>
+          <span id="selected-count" class="text-sm text-gray-500">0개 선택</span>
         </div>
         
-        <form id="quick-stock-form">
-          <div class="divide-y">
-            ${products.map(item => `
-              <div class="flex items-center justify-between p-4 hover:bg-gray-50">
-                <div class="flex-1">
-                  <span class="font-medium">${item.item_name}</span>
-                  <span class="text-gray-500 text-sm ml-2">(${item.item_code})</span>
-                  <div class="text-sm text-gray-400 mt-1">
-                    현재 시스템 재고: <span class="${item.current_stock <= item.safety_stock ? 'text-red-500' : 'text-gray-600'}">${formatNumber(item.current_stock)}</span> ${item.unit}
-                  </div>
-                </div>
-                <div class="flex items-center gap-2">
-                  <input type="number" 
-                         name="stock_${item.item_code}" 
-                         data-item-code="${item.item_code}"
-                         data-current="${item.current_stock}"
-                         class="w-24 border rounded-lg px-3 py-2 text-right stock-input" 
-                         min="0" 
-                         step="1"
-                         placeholder="${item.current_stock}">
-                  <span class="text-gray-500 w-10">${item.unit}</span>
-                </div>
-              </div>
-            `).join('')}
+        <div id="selected-products-list" class="divide-y">
+          <div class="p-8 text-center text-gray-400">
+            <i class="fas fa-box-open text-4xl mb-2"></i>
+            <p>제품을 검색하여 추가하세요</p>
           </div>
-          
-          <div class="p-4 border-t bg-gray-50">
-            <button type="submit" class="w-full bg-yellow-600 text-white py-3 rounded-lg font-bold hover:bg-yellow-700 transition flex items-center justify-center gap-2">
-              <i class="fas fa-save"></i>
-              재고 조정 저장
-            </button>
-          </div>
-        </form>
+        </div>
+        
+        <div class="p-4 border-t bg-gray-50">
+          <button onclick="saveQuickStock()" class="w-full bg-yellow-600 text-white py-3 rounded-lg font-bold hover:bg-yellow-700 transition flex items-center justify-center gap-2">
+            <i class="fas fa-save"></i>
+            재고 저장
+          </button>
+        </div>
       </div>
     </div>
   `;
   
-  // Form submit
-  document.getElementById('quick-stock-form').addEventListener('submit', async function(e) {
-    e.preventDefault();
-    
-    const inputs = document.querySelectorAll('.stock-input');
-    const items = [];
-    
-    inputs.forEach(input => {
-      const newStock = input.value !== '' ? parseFloat(input.value) : null;
-      const currentStock = parseFloat(input.dataset.current);
-      
-      if (newStock !== null && newStock !== currentStock) {
-        items.push({
-          item_code: input.dataset.itemCode,
-          new_stock: newStock
-        });
-      }
-    });
-    
-    if (items.length === 0) {
-      showToast('변경된 재고가 없습니다.', 'warning');
+  // 검색 기능
+  const searchInput = document.getElementById('product-search');
+  const searchResults = document.getElementById('product-search-results');
+  
+  searchInput.addEventListener('input', function() {
+    const query = this.value.toLowerCase().trim();
+    if (query.length < 1) {
+      searchResults.classList.add('hidden');
       return;
     }
     
-    try {
-      const result = await api('/stock/quick-register', 'POST', {
-        items,
-        adjustment_date: document.getElementById('adjustment-date').value
-      });
-      showToast(result.message, 'success');
-      await loadMasterData();
-      renderQuickStock();
-      loadAlertCount();
-    } catch (e) {
-      // Error handled
+    const filtered = window.quickStockProducts.filter(p => 
+      p.item_name.toLowerCase().includes(query) || 
+      p.item_code.toLowerCase().includes(query)
+    );
+    
+    if (filtered.length === 0) {
+      searchResults.innerHTML = '<div class="p-4 text-gray-500 text-center">검색 결과가 없습니다</div>';
+    } else {
+      searchResults.innerHTML = filtered.map(p => `
+        <div class="p-3 hover:bg-blue-50 cursor-pointer border-b last:border-b-0 flex items-center justify-between"
+             onclick="addQuickStockItem('${p.item_code}', '${p.item_name}', '${p.unit}', ${p.current_stock})">
+          <div>
+            <span class="font-medium">${p.item_name}</span>
+            <span class="text-gray-400 text-sm ml-2">(${p.item_code})</span>
+          </div>
+          <span class="text-sm text-gray-500">현재: ${formatNumber(p.current_stock)} ${p.unit}</span>
+        </div>
+      `).join('');
+    }
+    searchResults.classList.remove('hidden');
+  });
+  
+  searchInput.addEventListener('focus', function() {
+    if (this.value.length >= 1) {
+      searchResults.classList.remove('hidden');
     }
   });
+  
+  document.addEventListener('click', function(e) {
+    if (!searchInput.contains(e.target) && !searchResults.contains(e.target)) {
+      searchResults.classList.add('hidden');
+    }
+  });
+}
+
+// 제품 추가
+function addQuickStockItem(itemCode, itemName, unit, currentStock) {
+  // 이미 추가된 항목인지 확인
+  if (window.selectedQuickStockItems.find(i => i.item_code === itemCode)) {
+    showToast('이미 추가된 제품입니다', 'warning');
+    return;
+  }
+  
+  window.selectedQuickStockItems.push({
+    item_code: itemCode,
+    item_name: itemName,
+    unit: unit,
+    current_stock: currentStock,
+    new_stock: null
+  });
+  
+  document.getElementById('product-search').value = '';
+  document.getElementById('product-search-results').classList.add('hidden');
+  
+  renderQuickStockList();
+}
+
+// 선택된 제품 목록 렌더링
+function renderQuickStockList() {
+  const list = document.getElementById('selected-products-list');
+  const countEl = document.getElementById('selected-count');
+  
+  countEl.textContent = `${window.selectedQuickStockItems.length}개 선택`;
+  
+  if (window.selectedQuickStockItems.length === 0) {
+    list.innerHTML = `
+      <div class="p-8 text-center text-gray-400">
+        <i class="fas fa-box-open text-4xl mb-2"></i>
+        <p>제품을 검색하여 추가하세요</p>
+      </div>
+    `;
+    return;
+  }
+  
+  list.innerHTML = window.selectedQuickStockItems.map((item, idx) => `
+    <div class="flex items-center justify-between p-4 hover:bg-gray-50">
+      <div class="flex-1">
+        <span class="font-medium">${item.item_name}</span>
+        <span class="text-gray-500 text-sm ml-2">(${item.item_code})</span>
+        <div class="text-sm text-gray-400 mt-1">
+          현재 시스템 재고: <span class="text-gray-600">${formatNumber(item.current_stock)}</span> ${item.unit}
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <input type="number" 
+               id="stock-input-${idx}"
+               class="w-28 border-2 border-gray-200 rounded-lg px-3 py-2 text-right focus:border-blue-500" 
+               min="0" 
+               step="1"
+               placeholder="수량 입력"
+               onchange="updateQuickStockQty(${idx}, this.value)">
+        <span class="text-gray-500 w-10">${item.unit}</span>
+        <button onclick="removeQuickStockItem(${idx})" class="text-red-500 hover:text-red-700 ml-2">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    </div>
+  `).join('');
+}
+
+// 수량 업데이트
+function updateQuickStockQty(idx, value) {
+  window.selectedQuickStockItems[idx].new_stock = value !== '' ? parseFloat(value) : null;
+}
+
+// 항목 제거
+function removeQuickStockItem(idx) {
+  window.selectedQuickStockItems.splice(idx, 1);
+  renderQuickStockList();
+}
+
+// 재고 저장
+async function saveQuickStock() {
+  const items = window.selectedQuickStockItems
+    .filter(item => item.new_stock !== null)
+    .map(item => ({
+      item_code: item.item_code,
+      new_stock: item.new_stock
+    }));
+  
+  if (items.length === 0) {
+    showToast('입력된 재고가 없습니다', 'warning');
+    return;
+  }
+  
+  try {
+    const result = await api('/stock/quick-register', 'POST', {
+      items,
+      adjustment_date: document.getElementById('adjustment-date').value
+    });
+    showToast(result.message, 'success');
+    window.selectedQuickStockItems = [];
+    await loadMasterData();
+    renderQuickStock();
+    loadAlertCount();
+  } catch (e) {
+    // Error handled
+  }
 }
 
 // Inventory Status
@@ -1866,14 +1975,19 @@ async function renderMaster() {
   
   content.innerHTML = `
     <div class="space-y-6">
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between flex-wrap gap-4">
         <h2 class="text-2xl font-bold text-gray-800">
           <i class="fas fa-database mr-2 text-haccp-primary"></i>
           품목 관리
         </h2>
-        <button onclick="showMasterModal()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
-          <i class="fas fa-plus mr-1"></i> 품목 등록
-        </button>
+        <div class="flex gap-2">
+          <button onclick="showUploadModal()" class="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700">
+            <i class="fas fa-upload mr-1"></i> 일괄 업로드
+          </button>
+          <button onclick="showMasterModal()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
+            <i class="fas fa-plus mr-1"></i> 품목 등록
+          </button>
+        </div>
       </div>
       
       <div class="flex gap-2 mb-4">
@@ -1891,6 +2005,85 @@ async function renderMaster() {
   `;
   
   loadMasterList('');
+}
+
+// 품목 일괄 업로드 모달
+function showUploadModal() {
+  showModal('품목 일괄 업로드', `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 업로드 형식</h4>
+        <p class="text-sm text-blue-700 mb-2">CSV 또는 엑셀 파일을 텍스트로 변환하여 붙여넣기 하세요.</p>
+        <p class="text-xs text-blue-600">형식: 품목코드, 품목명, 구분(원료/제품), 단위, 안전재고, 유통기한(일)</p>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">데이터 입력</label>
+        <textarea id="upload-data" rows="10" 
+                  class="w-full border-2 border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:border-blue-500"
+                  placeholder="RM001, 강력분, 원료, kg, 100, 180
+RM002, 박력분, 원료, kg, 80, 180
+PD001, 식빵, 제품, ea, 20, 5"></textarea>
+      </div>
+      
+      <div class="text-sm text-gray-500">
+        <p><strong>예시 데이터:</strong></p>
+        <pre class="bg-gray-100 p-2 rounded mt-1 text-xs">RM001, 강력분, 원료, kg, 100, 180
+RM002, 박력분, 원료, kg, 80, 180
+PD001, 식빵, 제품, ea, 20, 5
+PD002, 바게트, 제품, ea, 15, 3</pre>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="processUpload()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">업로드</button>
+  `);
+}
+
+// 업로드 처리
+async function processUpload() {
+  const data = document.getElementById('upload-data').value.trim();
+  if (!data) {
+    showToast('데이터를 입력해주세요', 'warning');
+    return;
+  }
+  
+  const lines = data.split('\\n').filter(line => line.trim());
+  const items = [];
+  
+  for (const line of lines) {
+    const parts = line.split(',').map(p => p.trim());
+    if (parts.length >= 3) {
+      items.push({
+        item_code: parts[0],
+        item_name: parts[1],
+        category: parts[2],
+        unit: parts[3] || 'ea',
+        safety_stock: parseFloat(parts[4]) || 0,
+        expiry_days: parseInt(parts[5]) || 365
+      });
+    }
+  }
+  
+  if (items.length === 0) {
+    showToast('유효한 데이터가 없습니다', 'error');
+    return;
+  }
+  
+  try {
+    const result = await api('/master/upload', 'POST', { items });
+    showToast(result.message, result.results.failed > 0 ? 'warning' : 'success');
+    
+    if (result.results.errors.length > 0) {
+      console.log('업로드 오류:', result.results.errors);
+    }
+    
+    closeModal();
+    await loadMasterData();
+    renderMaster();
+  } catch (e) {
+    // Error handled
+  }
 }
 
 async function loadMasterList(category) {
@@ -3082,6 +3275,561 @@ function adminLogout() {
   renderAdmin();
 }
 
+// ========== 반제품 공정 품질 관리 ==========
+
+// 반죽 마스터 데이터 저장
+let doughMasterData = [];
+
+// 반제품 공정 품질 메인
+async function renderProcessQuality() {
+  const content = document.getElementById('page-content');
+  const today = formatDate(new Date());
+  
+  // 반죽 마스터 로드
+  try {
+    const result = await api('/process/dough-master');
+    doughMasterData = result.data || [];
+  } catch (e) {
+    doughMasterData = [];
+  }
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-flask mr-2 text-purple-600"></i>
+          반제품 공정 품질
+        </h2>
+        <div class="flex gap-2">
+          <button onclick="showDoughMasterModal()" class="bg-gray-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-600">
+            <i class="fas fa-cog mr-1"></i> 반죽 기준 관리
+          </button>
+          <button onclick="showProcessQualityModal()" class="bg-purple-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-purple-700">
+            <i class="fas fa-plus mr-1"></i> 공정 기록
+          </button>
+        </div>
+      </div>
+      
+      <!-- 탭 -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="border-b">
+          <nav class="flex">
+            <button onclick="switchProcessTab('daily')" class="process-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-purple-500 text-purple-600 bg-purple-50" data-tab="daily">
+              <i class="fas fa-calendar-day mr-2"></i> 일별 기록
+            </button>
+            <button onclick="switchProcessTab('monthly')" class="process-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="monthly">
+              <i class="fas fa-calendar-alt mr-2"></i> 월별 요약
+            </button>
+          </nav>
+        </div>
+        
+        <div class="p-4 border-b bg-gray-50">
+          <div class="flex gap-4 items-center">
+            <div>
+              <label class="text-sm text-gray-500 mr-2">조회일자:</label>
+              <input type="date" id="process-date" value="${today}" class="border rounded-lg px-3 py-2"
+                     onchange="loadProcessQualityData()">
+            </div>
+          </div>
+        </div>
+        
+        <div id="process-quality-content" class="p-6">
+          <div class="flex justify-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadProcessQualityData();
+}
+
+// 탭 전환
+function switchProcessTab(tab) {
+  document.querySelectorAll('.process-tab').forEach(btn => {
+    btn.classList.remove('border-purple-500', 'text-purple-600', 'bg-purple-50');
+    btn.classList.add('border-transparent');
+    if (btn.dataset.tab === tab) {
+      btn.classList.add('border-purple-500', 'text-purple-600', 'bg-purple-50');
+      btn.classList.remove('border-transparent');
+    }
+  });
+  
+  if (tab === 'daily') {
+    loadProcessQualityData();
+  } else {
+    loadProcessMonthlySummary();
+  }
+}
+
+// 일별 데이터 로드
+async function loadProcessQualityData() {
+  const contentEl = document.getElementById('process-quality-content');
+  const date = document.getElementById('process-date').value;
+  
+  try {
+    const result = await api(`/process/quality?date=${date}`);
+    const records = result.data || [];
+    
+    if (records.length === 0) {
+      contentEl.innerHTML = `
+        <div class="text-center py-12 text-gray-400">
+          <i class="fas fa-clipboard text-5xl mb-4"></i>
+          <p class="text-lg">${date} 기록이 없습니다</p>
+          <button onclick="showProcessQualityModal()" class="mt-4 text-purple-600 hover:text-purple-800">
+            <i class="fas fa-plus mr-1"></i> 기록 추가하기
+          </button>
+        </div>
+      `;
+      return;
+    }
+    
+    contentEl.innerHTML = `
+      <div class="space-y-4">
+        <div class="flex justify-between items-center">
+          <h3 class="text-lg font-bold text-gray-800">${date} 공정 품질 기록</h3>
+          <span class="text-sm text-gray-500">총 ${records.length}건</span>
+        </div>
+        
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-3 py-2 text-left">시간</th>
+                <th class="px-3 py-2 text-left">반죽명</th>
+                <th class="px-3 py-2 text-center">반죽온도</th>
+                <th class="px-3 py-2 text-center">pH</th>
+                <th class="px-3 py-2 text-center">습도</th>
+                <th class="px-3 py-2 text-center">발효시간</th>
+                <th class="px-3 py-2 text-center">종합판정</th>
+                <th class="px-3 py-2 text-left">작업자</th>
+                <th class="px-3 py-2 text-center">관리</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${records.map(rec => `
+                <tr class="hover:bg-gray-50">
+                  <td class="px-3 py-2">${rec.record_time || '-'}</td>
+                  <td class="px-3 py-2 font-medium">${rec.dough_name}</td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${rec.dough_temp_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                      ${rec.dough_temp !== null ? rec.dough_temp + '°C' : '-'}
+                    </span>
+                    <div class="text-xs text-gray-400 mt-1">(${rec.dough_temp_standard})</div>
+                  </td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${rec.ph_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                      ${rec.ph_value !== null ? rec.ph_value : '-'}
+                    </span>
+                    <div class="text-xs text-gray-400 mt-1">(${rec.ph_standard})</div>
+                  </td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${rec.humidity_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                      ${rec.humidity !== null ? rec.humidity + '%' : '-'}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${rec.fermentation_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                      ${rec.fermentation_time !== null ? rec.fermentation_time + '분' : '-'}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded font-medium ${rec.overall_judgment === '적합' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}">
+                      ${rec.overall_judgment}
+                    </span>
+                  </td>
+                  <td class="px-3 py-2">${rec.worker_name || '-'}</td>
+                  <td class="px-3 py-2 text-center">
+                    <button onclick="editProcessQuality(${rec.id})" class="text-blue-600 hover:text-blue-800 mr-2">
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="deleteProcessQuality(${rec.id})" class="text-red-600 hover:text-red-800">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    contentEl.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 월별 요약 로드
+async function loadProcessMonthlySummary() {
+  const contentEl = document.getElementById('process-quality-content');
+  const date = document.getElementById('process-date').value;
+  const month = date.slice(0, 7);
+  
+  try {
+    const result = await api(`/process/quality/summary/monthly?month=${month}`);
+    const data = result.data;
+    
+    contentEl.innerHTML = `
+      <div class="space-y-6">
+        <h3 class="text-lg font-bold text-gray-800">${month} 공정 품질 월별 요약</h3>
+        
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div class="bg-purple-50 rounded-lg p-4 text-center">
+            <p class="text-sm text-purple-600">총 기록</p>
+            <p class="text-3xl font-bold text-purple-800">${data.summary.total_records || 0}건</p>
+          </div>
+          <div class="bg-green-50 rounded-lg p-4 text-center">
+            <p class="text-sm text-green-600">적합</p>
+            <p class="text-3xl font-bold text-green-800">${data.summary.pass_count || 0}건</p>
+          </div>
+          <div class="bg-red-50 rounded-lg p-4 text-center">
+            <p class="text-sm text-red-600">부적합</p>
+            <p class="text-3xl font-bold text-red-800">${data.summary.fail_count || 0}건</p>
+          </div>
+          <div class="bg-blue-50 rounded-lg p-4 text-center">
+            <p class="text-sm text-blue-600">적합률</p>
+            <p class="text-3xl font-bold text-blue-800">${data.summary.total_records > 0 ? Math.round((data.summary.pass_count / data.summary.total_records) * 100) : 0}%</p>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="bg-gray-50 rounded-lg p-4">
+            <p class="text-sm text-gray-500">평균 반죽온도</p>
+            <p class="text-2xl font-bold">${data.summary.avg_temp ? data.summary.avg_temp + '°C' : '-'}</p>
+          </div>
+          <div class="bg-gray-50 rounded-lg p-4">
+            <p class="text-sm text-gray-500">평균 pH</p>
+            <p class="text-2xl font-bold">${data.summary.avg_ph || '-'}</p>
+          </div>
+          <div class="bg-gray-50 rounded-lg p-4">
+            <p class="text-sm text-gray-500">작업일수</p>
+            <p class="text-2xl font-bold">${data.summary.work_days || 0}일</p>
+          </div>
+        </div>
+        
+        ${data.daily && data.daily.length > 0 ? `
+          <div>
+            <h4 class="font-bold text-gray-700 mb-3">일별 현황</h4>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-100">
+                  <tr>
+                    <th class="px-3 py-2 text-left">날짜</th>
+                    <th class="px-3 py-2 text-center">기록 건수</th>
+                    <th class="px-3 py-2 text-center">부적합</th>
+                    <th class="px-3 py-2 text-center">상태</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y">
+                  ${data.daily.map(d => `
+                    <tr class="hover:bg-gray-50">
+                      <td class="px-3 py-2">${d.record_date}</td>
+                      <td class="px-3 py-2 text-center">${d.total_records}</td>
+                      <td class="px-3 py-2 text-center ${d.fail_count > 0 ? 'text-red-600 font-bold' : ''}">${d.fail_count}</td>
+                      <td class="px-3 py-2 text-center">
+                        <span class="px-2 py-1 rounded text-xs ${d.fail_count === 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                          ${d.fail_count === 0 ? '양호' : '점검필요'}
+                        </span>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  } catch (e) {
+    contentEl.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 공정 품질 기록 모달
+function showProcessQualityModal(record = null) {
+  const isEdit = !!record;
+  const today = formatDate(new Date());
+  const now = new Date().toTimeString().slice(0, 5);
+  
+  const doughOptions = doughMasterData.map(d => 
+    `<option value="${d.dough_name}" ${record?.dough_name === d.dough_name ? 'selected' : ''}>${d.dough_name} (${d.dough_code})</option>`
+  ).join('');
+  
+  showModal(isEdit ? '공정 품질 수정' : '공정 품질 기록', `
+    <form id="process-quality-form" class="space-y-4">
+      <input type="hidden" id="pq-id" value="${record?.id || ''}">
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">기록일자 <span class="text-red-500">*</span></label>
+          <input type="date" id="pq-date" value="${record?.record_date || today}" required
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">기록시간</label>
+          <input type="time" id="pq-time" value="${record?.record_time || now}"
+                 class="w-full px-3 py-2 border rounded-lg">
+        </div>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">반죽명 <span class="text-red-500">*</span></label>
+        <select id="pq-dough" required class="w-full px-3 py-2 border rounded-lg">
+          <option value="">-- 반죽 선택 --</option>
+          ${doughOptions}
+        </select>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">반죽온도 (°C)</label>
+          <input type="number" id="pq-temp" value="${record?.dough_temp || ''}" step="0.1"
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="예: 25.0">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">pH 측정값</label>
+          <input type="number" id="pq-ph" value="${record?.ph_value || ''}" step="0.01"
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="예: 5.8">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">습도 (%)</label>
+          <input type="number" id="pq-humidity" value="${record?.humidity || ''}" step="0.1"
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="예: 65">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">발효시간 (분)</label>
+          <input type="number" id="pq-fermentation" value="${record?.fermentation_time || ''}"
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="예: 60">
+        </div>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">작업자</label>
+        <input type="text" id="pq-worker" value="${record?.worker_name || ''}"
+               class="w-full px-3 py-2 border rounded-lg" placeholder="작업자명">
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+        <textarea id="pq-memo" rows="2" class="w-full px-3 py-2 border rounded-lg"
+                  placeholder="특이사항 기록">${record?.memo || ''}</textarea>
+      </div>
+    </form>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveProcessQuality()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">저장</button>
+  `);
+}
+
+// 공정 품질 저장
+async function saveProcessQuality() {
+  const id = document.getElementById('pq-id').value;
+  const data = {
+    record_date: document.getElementById('pq-date').value,
+    record_time: document.getElementById('pq-time').value,
+    dough_name: document.getElementById('pq-dough').value,
+    dough_temp: document.getElementById('pq-temp').value ? parseFloat(document.getElementById('pq-temp').value) : null,
+    ph_value: document.getElementById('pq-ph').value ? parseFloat(document.getElementById('pq-ph').value) : null,
+    humidity: document.getElementById('pq-humidity').value ? parseFloat(document.getElementById('pq-humidity').value) : null,
+    fermentation_time: document.getElementById('pq-fermentation').value ? parseInt(document.getElementById('pq-fermentation').value) : null,
+    worker_name: document.getElementById('pq-worker').value,
+    memo: document.getElementById('pq-memo').value
+  };
+  
+  if (!data.dough_name) {
+    showToast('반죽을 선택해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    if (id) {
+      await api(`/process/quality/${id}`, 'PUT', data);
+      showToast('공정 품질이 수정되었습니다', 'success');
+    } else {
+      const result = await api('/process/quality', 'POST', data);
+      showToast(`공정 품질이 기록되었습니다 (종합: ${result.judgment?.overall})`, 'success');
+    }
+    closeModal();
+    document.getElementById('process-date').value = data.record_date;
+    loadProcessQualityData();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 공정 품질 수정
+async function editProcessQuality(id) {
+  try {
+    const date = document.getElementById('process-date').value;
+    const result = await api(`/process/quality?date=${date}`);
+    const record = result.data.find(r => r.id === id);
+    if (record) {
+      showProcessQualityModal(record);
+    }
+  } catch (e) {
+    showToast('데이터를 불러오는데 실패했습니다', 'error');
+  }
+}
+
+// 공정 품질 삭제
+async function deleteProcessQuality(id) {
+  if (!confirm('이 기록을 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/process/quality/${id}`, 'DELETE');
+    showToast('공정 품질 기록이 삭제되었습니다', 'success');
+    loadProcessQualityData();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 반죽 마스터 관리 모달
+async function showDoughMasterModal() {
+  try {
+    const result = await api('/process/dough-master');
+    const doughs = result.data || [];
+    
+    showModal('반죽 기준 관리', `
+      <div class="space-y-4">
+        <div class="flex justify-end">
+          <button onclick="showAddDoughModal()" class="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700">
+            <i class="fas fa-plus mr-1"></i> 반죽 추가
+          </button>
+        </div>
+        
+        <div class="overflow-x-auto max-h-96">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100 sticky top-0">
+              <tr>
+                <th class="px-2 py-2 text-left">코드</th>
+                <th class="px-2 py-2 text-left">반죽명</th>
+                <th class="px-2 py-2 text-center">온도범위</th>
+                <th class="px-2 py-2 text-center">pH범위</th>
+                <th class="px-2 py-2 text-center">관리</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${doughs.map(d => `
+                <tr class="hover:bg-gray-50">
+                  <td class="px-2 py-2 font-mono text-xs">${d.dough_code}</td>
+                  <td class="px-2 py-2">${d.dough_name}</td>
+                  <td class="px-2 py-2 text-center text-xs">${d.temp_min}-${d.temp_max}°C</td>
+                  <td class="px-2 py-2 text-center text-xs">${d.ph_min}-${d.ph_max}</td>
+                  <td class="px-2 py-2 text-center">
+                    <button onclick="deleteDoughMaster(${d.id})" class="text-red-500 hover:text-red-700">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `, `<button onclick="closeModal()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">닫기</button>`);
+  } catch (e) {
+    showToast('데이터를 불러오는데 실패했습니다', 'error');
+  }
+}
+
+// 반죽 추가 모달
+function showAddDoughModal() {
+  closeModal();
+  showModal('반죽 기준 추가', `
+    <form id="dough-form" class="space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">반죽코드 <span class="text-red-500">*</span></label>
+          <input type="text" id="dough-code" required class="w-full px-3 py-2 border rounded-lg" placeholder="DG009">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">반죽명 <span class="text-red-500">*</span></label>
+          <input type="text" id="dough-name" required class="w-full px-3 py-2 border rounded-lg" placeholder="모카빵반죽">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">온도 최소 (°C)</label>
+          <input type="number" id="dough-temp-min" step="0.1" value="24" class="w-full px-3 py-2 border rounded-lg">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">온도 최대 (°C)</label>
+          <input type="number" id="dough-temp-max" step="0.1" value="26" class="w-full px-3 py-2 border rounded-lg">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">pH 최소</label>
+          <input type="number" id="dough-ph-min" step="0.1" value="5.5" class="w-full px-3 py-2 border rounded-lg">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">pH 최대</label>
+          <input type="number" id="dough-ph-max" step="0.1" value="6.5" class="w-full px-3 py-2 border rounded-lg">
+        </div>
+      </div>
+    </form>
+  `, `
+    <button onclick="showDoughMasterModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">뒤로</button>
+    <button onclick="saveDoughMaster()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">저장</button>
+  `);
+}
+
+// 반죽 마스터 저장
+async function saveDoughMaster() {
+  const data = {
+    dough_code: document.getElementById('dough-code').value,
+    dough_name: document.getElementById('dough-name').value,
+    temp_min: parseFloat(document.getElementById('dough-temp-min').value) || 24,
+    temp_max: parseFloat(document.getElementById('dough-temp-max').value) || 26,
+    ph_min: parseFloat(document.getElementById('dough-ph-min').value) || 5.5,
+    ph_max: parseFloat(document.getElementById('dough-ph-max').value) || 6.5,
+    humidity_min: 60,
+    humidity_max: 70,
+    fermentation_min: 30,
+    fermentation_max: 90
+  };
+  
+  if (!data.dough_code || !data.dough_name) {
+    showToast('필수 항목을 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/process/dough-master', 'POST', data);
+    showToast('반죽 기준이 등록되었습니다', 'success');
+    
+    // 반죽 마스터 데이터 갱신
+    const result = await api('/process/dough-master');
+    doughMasterData = result.data || [];
+    
+    showDoughMasterModal();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 반죽 마스터 삭제
+async function deleteDoughMaster(id) {
+  if (!confirm('이 반죽 기준을 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/process/dough-master/${id}`, 'DELETE');
+    showToast('반죽 기준이 삭제되었습니다', 'success');
+    
+    const result = await api('/process/dough-master');
+    doughMasterData = result.data || [];
+    
+    showDoughMasterModal();
+  } catch (e) {
+    // Error handled
+  }
+}
+
 // Initialize
 document.addEventListener('DOMContentLoaded', async function() {
   // Set current date
@@ -3161,3 +3909,28 @@ window.saveAdminStock = saveAdminStock;
 window.recalculateAllStock = recalculateAllStock;
 window.confirmRecalculate = confirmRecalculate;
 window.showLogDetail = showLogDetail;
+
+// 제품 재고 등록 함수들
+window.addQuickStockItem = addQuickStockItem;
+window.renderQuickStockList = renderQuickStockList;
+window.updateQuickStockQty = updateQuickStockQty;
+window.removeQuickStockItem = removeQuickStockItem;
+window.saveQuickStock = saveQuickStock;
+
+// 품목 업로드 함수들
+window.showUploadModal = showUploadModal;
+window.processUpload = processUpload;
+
+// 반제품 공정 품질 함수들
+window.renderProcessQuality = renderProcessQuality;
+window.switchProcessTab = switchProcessTab;
+window.loadProcessQualityData = loadProcessQualityData;
+window.loadProcessMonthlySummary = loadProcessMonthlySummary;
+window.showProcessQualityModal = showProcessQualityModal;
+window.saveProcessQuality = saveProcessQuality;
+window.editProcessQuality = editProcessQuality;
+window.deleteProcessQuality = deleteProcessQuality;
+window.showDoughMasterModal = showDoughMasterModal;
+window.showAddDoughModal = showAddDoughModal;
+window.saveDoughMaster = saveDoughMaster;
+window.deleteDoughMaster = deleteDoughMaster;

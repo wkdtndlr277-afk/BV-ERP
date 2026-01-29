@@ -1,0 +1,190 @@
+// 입고 관리 API (FEFO 기반 LOT 관리)
+import { Hono } from 'hono';
+import type { Bindings, Inbound, InboundRequest } from '../types';
+
+const inboundRoutes = new Hono<{ Bindings: Bindings }>();
+
+// LOT 번호 생성 함수 (YYYYMMDD-품목코드-순번)
+function generateLotNumber(itemCode: string, date: string, sequence: number): string {
+  const dateStr = date.replace(/-/g, '');
+  return `${dateStr}-${itemCode}-${String(sequence).padStart(3, '0')}`;
+}
+
+// 입고 목록 조회
+inboundRoutes.get('/', async (c) => {
+  const item_code = c.req.query('item_code');
+  const start_date = c.req.query('start_date');
+  const end_date = c.req.query('end_date');
+  const has_remain = c.req.query('has_remain'); // 잔량 있는 것만
+  
+  let query = `
+    SELECT i.*, m.item_name, m.category, m.unit 
+    FROM inbound i 
+    JOIN master m ON i.item_code = m.item_code
+    WHERE 1=1
+  `;
+  const params: any[] = [];
+  
+  if (item_code) {
+    query += ' AND i.item_code = ?';
+    params.push(item_code);
+  }
+  if (start_date) {
+    query += ' AND i.inbound_date >= ?';
+    params.push(start_date);
+  }
+  if (end_date) {
+    query += ' AND i.inbound_date <= ?';
+    params.push(end_date);
+  }
+  if (has_remain === 'true') {
+    query += ' AND i.remain_qty > 0';
+  }
+  
+  query += ' ORDER BY i.expiry_date ASC, i.inbound_date ASC';
+  
+  const result = await c.env.DB.prepare(query).bind(...params).all();
+  return c.json({ success: true, data: result.results });
+});
+
+// LOT 상세 조회
+inboundRoutes.get('/lot/:lot_number', async (c) => {
+  const lot_number = c.req.param('lot_number');
+  
+  const lot = await c.env.DB.prepare(`
+    SELECT i.*, m.item_name, m.category, m.unit 
+    FROM inbound i 
+    JOIN master m ON i.item_code = m.item_code
+    WHERE i.lot_number = ?
+  `).bind(lot_number).first();
+  
+  if (!lot) {
+    return c.json({ success: false, error: 'LOT을 찾을 수 없습니다.' }, 404);
+  }
+  
+  // 해당 LOT의 거래 이력
+  const history = await c.env.DB.prepare(`
+    SELECT * FROM transactions WHERE lot_number = ? ORDER BY trans_date DESC, id DESC
+  `).bind(lot_number).all();
+  
+  return c.json({ success: true, data: { lot, history: history.results } });
+});
+
+// 입고 등록
+inboundRoutes.post('/', async (c) => {
+  const body = await c.req.json<InboundRequest>();
+  const { item_code, quantity, inbound_date, expiry_date, supplier, quality_status } = body;
+  
+  if (!item_code || !quantity || quantity <= 0) {
+    return c.json({ success: false, error: '품목과 수량을 올바르게 입력해주세요.' }, 400);
+  }
+  
+  // 품목 확인
+  const master = await c.env.DB.prepare(
+    'SELECT * FROM master WHERE item_code = ?'
+  ).bind(item_code).first();
+  
+  if (!master) {
+    return c.json({ success: false, error: '등록되지 않은 품목입니다.' }, 404);
+  }
+  
+  // 오늘 해당 품목의 입고 순번 조회
+  const todayCount = await c.env.DB.prepare(`
+    SELECT COUNT(*) as count FROM inbound 
+    WHERE item_code = ? AND inbound_date = ?
+  `).bind(item_code, inbound_date).first<{ count: number }>();
+  
+  const sequence = (todayCount?.count || 0) + 1;
+  const lot_number = generateLotNumber(item_code, inbound_date, sequence);
+  
+  // 입고 등록
+  await c.env.DB.prepare(`
+    INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(lot_number, item_code, inbound_date, expiry_date, quantity, quantity, quality_status, supplier || null).run();
+  
+  // 합격인 경우에만 재고 반영
+  if (quality_status === '합격') {
+    // Master 재고 증가
+    await c.env.DB.prepare(`
+      UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
+      WHERE item_code = ?
+    `).bind(quantity, item_code).run();
+    
+    // Transaction 기록
+    await c.env.DB.prepare(`
+      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier)
+      VALUES (?, ?, '입고', ?, ?, ?, ?)
+    `).bind(inbound_date, item_code, quantity, lot_number, quantity, supplier || null).run();
+  }
+  
+  return c.json({ 
+    success: true, 
+    message: '입고가 등록되었습니다.',
+    data: { lot_number, quality_status }
+  });
+});
+
+// LOT 수정 (관리자용 - 잔량 조정)
+inboundRoutes.put('/lot/:lot_number', async (c) => {
+  const lot_number = c.req.param('lot_number');
+  const body = await c.req.json<{ remain_qty?: number; quality_status?: string }>();
+  
+  const lot = await c.env.DB.prepare(
+    'SELECT * FROM inbound WHERE lot_number = ?'
+  ).bind(lot_number).first<Inbound>();
+  
+  if (!lot) {
+    return c.json({ success: false, error: 'LOT을 찾을 수 없습니다.' }, 404);
+  }
+  
+  if (body.remain_qty !== undefined) {
+    if (body.remain_qty < 0 || body.remain_qty > lot.origin_qty) {
+      return c.json({ success: false, error: '잔량은 0 이상, 입고량 이하여야 합니다.' }, 400);
+    }
+    
+    const diff = body.remain_qty - lot.remain_qty;
+    
+    // LOT 잔량 수정
+    await c.env.DB.prepare(`
+      UPDATE inbound SET remain_qty = ?, updated_at = CURRENT_TIMESTAMP WHERE lot_number = ?
+    `).bind(body.remain_qty, lot_number).run();
+    
+    // Master 재고 조정
+    await c.env.DB.prepare(`
+      UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+    `).bind(diff, lot.item_code).run();
+    
+    // 조정 기록
+    if (diff !== 0) {
+      const today = new Date().toISOString().split('T')[0];
+      await c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, memo)
+        VALUES (?, ?, '재고조정', ?, ?, ?, 'LOT 잔량 수정')
+      `).bind(today, lot.item_code, diff, lot_number, body.remain_qty).run();
+    }
+  }
+  
+  return c.json({ success: true, message: 'LOT이 수정되었습니다.' });
+});
+
+// 유통기한 임박 LOT 조회
+inboundRoutes.get('/expiring/:days', async (c) => {
+  const days = parseInt(c.req.param('days')) || 30;
+  const today = new Date().toISOString().split('T')[0];
+  
+  const result = await c.env.DB.prepare(`
+    SELECT i.*, m.item_name, m.category, m.unit,
+           CAST(julianday(i.expiry_date) - julianday(?) AS INTEGER) as days_until_expiry
+    FROM inbound i
+    JOIN master m ON i.item_code = m.item_code
+    WHERE i.remain_qty > 0 
+      AND i.quality_status = '합격'
+      AND julianday(i.expiry_date) - julianday(?) <= ?
+    ORDER BY i.expiry_date ASC
+  `).bind(today, today, days).all();
+  
+  return c.json({ success: true, data: result.results });
+});
+
+export default inboundRoutes;

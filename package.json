@@ -1,0 +1,30 @@
+{
+  "name": "haccp-erp",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:sandbox": "wrangler pages dev dist --d1=haccp-erp-production --local --ip 0.0.0.0 --port 3000",
+    "build": "vite build",
+    "preview": "wrangler pages dev dist",
+    "deploy": "npm run build && wrangler pages deploy dist",
+    "deploy:prod": "npm run build && wrangler pages deploy dist --project-name haccp-erp",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "db:migrate:local": "wrangler d1 migrations apply haccp-erp-production --local",
+    "db:migrate:prod": "wrangler d1 migrations apply haccp-erp-production",
+    "db:seed": "wrangler d1 execute haccp-erp-production --local --file=./seed.sql",
+    "db:reset": "rm -rf .wrangler/state/v3/d1 && npm run db:migrate:local && npm run db:seed",
+    "db:console:local": "wrangler d1 execute haccp-erp-production --local"
+  },
+  "dependencies": {
+    "hono": "^4.11.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250129.0",
+    "@hono/vite-build": "^1.2.0",
+    "@hono/vite-cloudflare-pages": "^0.4.2",
+    "@hono/vite-dev-server": "^0.18.2",
+    "typescript": "^5.0.0",
+    "vite": "^6.3.5",
+    "wrangler": "^4.4.0"
+  }
+}

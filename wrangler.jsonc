@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "haccp-erp",
+  "compatibility_date": "2026-01-29",
+  "pages_build_output_dir": "./dist",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "haccp-erp-production",
+      "database_id": "local-dev-db"
+    }
+  ]
+}

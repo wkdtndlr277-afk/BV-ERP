@@ -8,7 +8,7 @@
     {
       "binding": "DB",
       "database_name": "haccp-erp-production",
-      "database_id": "local-dev-db"
+      "database_id": "596dc841-d436-4555-a774-5aa647455162"
     }
   ]
 }

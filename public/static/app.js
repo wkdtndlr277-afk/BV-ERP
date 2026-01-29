@@ -1220,22 +1220,36 @@ function showInboundUploadModal() {
         <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 업로드 형식</h4>
         <p class="text-sm text-blue-700 mb-2">CSV 또는 엑셀 데이터를 붙여넣기 하세요.</p>
         <p class="text-xs text-blue-600">형식: 품목코드, 품목명, 단위, 안전재고, 유통기한(일)</p>
+        <p class="text-xs text-green-600 mt-1"><i class="fas fa-magic mr-1"></i> 품목명만 입력해도 코드가 자동 생성됩니다!</p>
       </div>
       
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-2">데이터 입력</label>
         <textarea id="inbound-upload-data" rows="10" 
                   class="w-full border-2 border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:border-blue-500"
-                  placeholder="RM011, 호밀가루, kg, 50, 180
-RM012, 옥수수전분, kg, 30, 365
-RM013, 코코아파우더, kg, 20, 365"></textarea>
+                  placeholder="간편 입력 (품목명만):
+올리브
+담금질
+강력분
+
+또는 상세 입력:
+RM001, 올리브, kg, 10, 365"></textarea>
       </div>
       
       <div class="text-sm text-gray-500">
-        <p><strong>예시:</strong></p>
-        <pre class="bg-gray-100 p-2 rounded mt-1 text-xs">RM011, 호밀가루, kg, 50, 180
-RM012, 옥수수전분, kg, 30, 365
-RM013, 코코아파우더, kg, 20, 365</pre>
+        <p><strong>입력 예시:</strong></p>
+        <div class="grid grid-cols-2 gap-2 mt-1">
+          <div>
+            <p class="text-xs text-green-600 font-medium">간편 (품목명만)</p>
+            <pre class="bg-gray-100 p-2 rounded text-xs">올리브
+담금질
+강력분</pre>
+          </div>
+          <div>
+            <p class="text-xs text-blue-600 font-medium">상세</p>
+            <pre class="bg-gray-100 p-2 rounded text-xs">RM001, 올리브, kg, 10, 365</pre>
+          </div>
+        </div>
       </div>
     </div>
   `, `
@@ -1252,19 +1266,51 @@ async function processInboundUpload() {
     return;
   }
   
-  const lines = data.split('\\n').filter(line => line.trim());
+  const lines = data.split('\n').filter(line => line.trim());
   const items = [];
   
+  // 기존 품목 코드 목록 가져오기 (자동 코드 생성용)
+  let existingCodes = [];
+  try {
+    const masterResult = await api('/master');
+    existingCodes = (masterResult.data || []).map(m => m.item_code);
+  } catch (e) {}
+  
+  // 자동 품목코드 생성 함수
+  const generateItemCode = () => {
+    let num = 1;
+    while (existingCodes.includes(`RM${String(num).padStart(3, '0')}`)) {
+      num++;
+    }
+    const code = `RM${String(num).padStart(3, '0')}`;
+    existingCodes.push(code);
+    return code;
+  };
+  
   for (const line of lines) {
-    const parts = line.split(',').map(p => p.trim());
+    // 콤마 또는 탭으로 구분
+    const parts = line.split(/[,\t]/).map(p => p.trim()).filter(p => p);
+    
     if (parts.length >= 2) {
+      // 형식: 품목코드, 품목명, 단위, 안전재고, 유통기한
       items.push({
         item_code: parts[0],
         item_name: parts[1],
-        category: '원료',  // 원료로 고정
+        category: '원료',
         unit: parts[2] || 'kg',
         safety_stock: parseFloat(parts[3]) || 0,
         expiry_days: parseInt(parts[4]) || 365
+      });
+    } else if (parts.length === 1 && parts[0]) {
+      // 형식: 품목명만 (자동 코드 생성)
+      const name = parts[0];
+      items.push({
+        item_code: generateItemCode(),
+        item_name: name,
+        category: '원료',
+        unit: 'kg',
+        safety_stock: 0,
+        expiry_days: 365
       });
     }
   }
@@ -2775,29 +2821,44 @@ async function renderMaster() {
 
 // 품목 일괄 업로드 모달
 function showUploadModal() {
-  showModal('품목 일괄 업로드', `
+  showModal('원료 일괄 등록', `
     <div class="space-y-4">
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 업로드 형식</h4>
-        <p class="text-sm text-blue-700 mb-2">CSV 또는 엑셀 파일을 텍스트로 변환하여 붙여넣기 하세요.</p>
-        <p class="text-xs text-blue-600">형식: 품목코드, 품목명, 구분(원료/제품), 단위, 안전재고, 유통기한(일)</p>
+        <p class="text-sm text-blue-700 mb-2">CSV 또는 엑셀 데이터를 붙여넣기 하세요.</p>
+        <p class="text-xs text-blue-600">형식: 품목코드, 품목명, 단위, 안전재고, 유통기한(일)</p>
+        <p class="text-xs text-green-600 mt-1"><i class="fas fa-magic mr-1"></i> 품목명만 입력해도 코드가 자동 생성됩니다!</p>
       </div>
       
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-2">데이터 입력</label>
         <textarea id="upload-data" rows="10" 
                   class="w-full border-2 border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:border-blue-500"
-                  placeholder="RM001, 강력분, 원료, kg, 100, 180
-RM002, 박력분, 원료, kg, 80, 180
-PD001, 식빵, 제품, ea, 20, 5"></textarea>
+                  placeholder="간편 입력 (품목명만):
+올리브
+담금질
+강력분
+
+또는 상세 입력:
+RM001, 올리브, kg, 10, 365
+RM002, 담금질, kg, 20, 365"></textarea>
       </div>
       
       <div class="text-sm text-gray-500">
-        <p><strong>예시 데이터:</strong></p>
-        <pre class="bg-gray-100 p-2 rounded mt-1 text-xs">RM001, 강력분, 원료, kg, 100, 180
-RM002, 박력분, 원료, kg, 80, 180
-PD001, 식빵, 제품, ea, 20, 5
-PD002, 바게트, 제품, ea, 15, 3</pre>
+        <p><strong>입력 예시:</strong></p>
+        <div class="grid grid-cols-2 gap-2 mt-1">
+          <div>
+            <p class="text-xs text-green-600 font-medium">간편 (품목명만)</p>
+            <pre class="bg-gray-100 p-2 rounded text-xs">올리브
+담금질
+강력분</pre>
+          </div>
+          <div>
+            <p class="text-xs text-blue-600 font-medium">상세 (코드,품목,단위,안전재고,유통기한)</p>
+            <pre class="bg-gray-100 p-2 rounded text-xs">RM001, 올리브, kg, 10, 365
+RM002, 담금질, kg, 20, 60</pre>
+          </div>
+        </div>
       </div>
     </div>
   `, `
@@ -2814,19 +2875,64 @@ async function processUpload() {
     return;
   }
   
-  const lines = data.split('\\n').filter(line => line.trim());
+  const lines = data.split('\n').filter(line => line.trim());
   const items = [];
   
+  // 기존 품목 코드 목록 가져오기 (자동 코드 생성용)
+  let existingCodes = [];
+  try {
+    const masterResult = await api('/master');
+    existingCodes = (masterResult.data || []).map(m => m.item_code);
+  } catch (e) {}
+  
+  // 자동 품목코드 생성 함수
+  const generateItemCode = (name, category) => {
+    const prefix = category === '제품' ? 'PR' : 'RM';
+    let num = 1;
+    while (existingCodes.includes(`${prefix}${String(num).padStart(3, '0')}`)) {
+      num++;
+    }
+    const code = `${prefix}${String(num).padStart(3, '0')}`;
+    existingCodes.push(code);
+    return code;
+  };
+  
   for (const line of lines) {
-    const parts = line.split(',').map(p => p.trim());
+    // 콤마 또는 탭으로 구분
+    const parts = line.split(/[,\t]/).map(p => p.trim()).filter(p => p);
+    
     if (parts.length >= 3) {
+      // 형식: 품목코드, 품목명, 단위, 안전재고, 유통기한(일)
       items.push({
         item_code: parts[0],
         item_name: parts[1],
-        category: parts[2],
-        unit: parts[3] || 'ea',
-        safety_stock: parseFloat(parts[4]) || 0,
-        expiry_days: parseInt(parts[5]) || 365
+        category: '원료',
+        unit: parts[2] || 'kg',
+        safety_stock: parseFloat(parts[3]) || 0,
+        expiry_days: parseInt(parts[4]) || 365
+      });
+    } else if (parts.length === 2) {
+      // 형식: 품목명, 단위
+      const name = parts[0];
+      const unit = parts[1];
+      items.push({
+        item_code: generateItemCode(name, '원료'),
+        item_name: name,
+        category: '원료',
+        unit: unit,
+        safety_stock: 0,
+        expiry_days: 365
+      });
+    } else if (parts.length === 1 && parts[0]) {
+      // 형식: 품목명만 (자동 코드 생성)
+      const name = parts[0];
+      items.push({
+        item_code: generateItemCode(name, '원료'),
+        item_name: name,
+        category: '원료',
+        unit: 'kg',
+        safety_stock: 0,
+        expiry_days: 365
       });
     }
   }

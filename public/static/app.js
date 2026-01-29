@@ -3093,6 +3093,21 @@ function viewProcessKpiDetail(processType, id) {
   showModal(`${processType} 공정 KPI 상세`, content, '<button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">닫기</button>');
 }
 
+// 값과 판정 결과를 함께 표시하는 헬퍼 함수
+function renderKpiValueWithJudgment(value, judgment) {
+  if (value === null || value === undefined || value === '') return '-';
+  const isDeviation = judgment === '부적합';
+  const statusText = isDeviation ? '이탈' : '적합';
+  const statusClass = isDeviation ? 'text-red-600' : 'text-green-600';
+  const bgClass = isDeviation ? 'bg-red-50' : '';
+  return `
+    <div class="flex flex-col items-center ${bgClass} rounded px-1">
+      <span class="${isDeviation ? 'text-red-600 font-bold' : ''}">${value}</span>
+      <span class="text-xs ${statusClass}">${statusText}</span>
+    </div>
+  `;
+}
+
 function renderProcessKpiTable(data) {
   const processData = {
     '숙성': data.aging || [],
@@ -3107,7 +3122,7 @@ function renderProcessKpiTable(data) {
     return `
       <div class="text-center py-8 text-gray-400">
         <i class="fas fa-clipboard-list text-4xl mb-2"></i>
-        <p>오늘 등록된 ${currentProcessType} 공정 KPI가 없습니다.</p>
+        <p>등록된 ${currentProcessType} 공정 KPI가 없습니다.</p>
       </div>
     `;
   }
@@ -3119,32 +3134,30 @@ function renderProcessKpiTable(data) {
         <table class="w-full text-sm data-table">
           <thead>
             <tr class="text-gray-500 border-b bg-gray-50">
+              <th class="text-left p-3">날짜</th>
               <th class="text-left p-3">시간</th>
               <th class="text-left p-3">제품명</th>
               <th class="text-center p-3">저온숙성시간<br><span class="text-xs text-gray-400">(60-120분)</span></th>
-              <th class="text-center p-3">발효온도<br><span class="text-xs text-gray-400">(27±2℃)</span></th>
+              <th class="text-center p-3">발효온도<br><span class="text-xs text-gray-400">(25-29℃)</span></th>
               <th class="text-center p-3">최고온도<br><span class="text-xs text-gray-400">(≤30℃)</span></th>
-              <th class="text-center p-3">판정</th>
+              <th class="text-center p-3">종합판정</th>
               <th class="text-center p-3">작업자</th>
               <th class="text-center p-3">관리</th>
             </tr>
           </thead>
           <tbody>
             ${records.map(r => `
-              <tr class="border-b hover:bg-gray-50">
+              <tr class="border-b hover:bg-gray-50 ${r.overall_judgment === '부적합' ? 'bg-red-50' : ''}">
+                <td class="p-3">${r.record_date || '-'}</td>
                 <td class="p-3">${r.record_time || '-'}</td>
                 <td class="p-3 font-medium">${r.product_name || '-'}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.cold_aging_time, r.cold_aging_judgment)}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.ferment_temp, r.ferment_temp_judgment)}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.max_temp, r.max_temp_judgment)}</td>
                 <td class="p-3 text-center">
-                  <span class="${r.cold_aging_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.cold_aging_time || '-'}</span>
-                </td>
-                <td class="p-3 text-center">
-                  <span class="${r.ferment_temp_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.ferment_temp || '-'}</span>
-                </td>
-                <td class="p-3 text-center">
-                  <span class="${r.max_temp_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.max_temp || '-'}</span>
-                </td>
-                <td class="p-3 text-center">
-                  <span class="px-2 py-1 rounded text-xs ${r.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${r.overall_judgment}</span>
+                  <span class="px-2 py-1 rounded text-xs font-bold ${r.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+                    <i class="fas ${r.overall_judgment === '적합' ? 'fa-check-circle' : 'fa-times-circle'} mr-1"></i>${r.overall_judgment}
+                  </span>
                 </td>
                 <td class="p-3 text-center">${r.worker_name || '-'}</td>
                 <td class="p-3 text-center">
@@ -3164,29 +3177,33 @@ function renderProcessKpiTable(data) {
         <table class="w-full text-sm data-table">
           <thead>
             <tr class="text-gray-500 border-b bg-gray-50">
+              <th class="text-left p-3">날짜</th>
               <th class="text-left p-3">시간</th>
               <th class="text-left p-3">제품명</th>
               <th class="text-center p-3">반죽온도<br><span class="text-xs text-gray-400">(24-26℃)</span></th>
               <th class="text-center p-3">1차발효<br><span class="text-xs text-gray-400">(30-60분)</span></th>
-              <th class="text-center p-3">발효온도<br><span class="text-xs text-gray-400">(27±2℃)</span></th>
+              <th class="text-center p-3">발효온도<br><span class="text-xs text-gray-400">(25-29℃)</span></th>
               <th class="text-center p-3">벤치타임<br><span class="text-xs text-gray-400">(15-20분)</span></th>
               <th class="text-center p-3">2차발효<br><span class="text-xs text-gray-400">(40-60분)</span></th>
-              <th class="text-center p-3">판정</th>
+              <th class="text-center p-3">종합판정</th>
               <th class="text-center p-3">관리</th>
             </tr>
           </thead>
           <tbody>
             ${records.map(r => `
-              <tr class="border-b hover:bg-gray-50">
+              <tr class="border-b hover:bg-gray-50 ${r.overall_judgment === '부적합' ? 'bg-red-50' : ''}">
+                <td class="p-3">${r.record_date || '-'}</td>
                 <td class="p-3">${r.record_time || '-'}</td>
                 <td class="p-3 font-medium">${r.product_name || '-'}</td>
-                <td class="p-3 text-center"><span class="${r.dough_temp_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.dough_temp || '-'}</span></td>
-                <td class="p-3 text-center"><span class="${r.first_ferment_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.first_ferment_time || '-'}</span></td>
-                <td class="p-3 text-center"><span class="${r.ferment_temp_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.ferment_temp || '-'}</span></td>
-                <td class="p-3 text-center"><span class="${r.bench_time_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.bench_time || '-'}</span></td>
-                <td class="p-3 text-center"><span class="${r.second_ferment_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.second_ferment_time || '-'}</span></td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.dough_temp, r.dough_temp_judgment)}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.first_ferment_time, r.first_ferment_judgment)}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.ferment_temp, r.ferment_temp_judgment)}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.bench_time, r.bench_time_judgment)}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.second_ferment_time, r.second_ferment_judgment)}</td>
                 <td class="p-3 text-center">
-                  <span class="px-2 py-1 rounded text-xs ${r.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${r.overall_judgment}</span>
+                  <span class="px-2 py-1 rounded text-xs font-bold ${r.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+                    <i class="fas ${r.overall_judgment === '적합' ? 'fa-check-circle' : 'fa-times-circle'} mr-1"></i>${r.overall_judgment}
+                  </span>
                 </td>
                 <td class="p-3 text-center">
                   <button onclick="deleteProcessKpi('forming1', ${r.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
@@ -3205,29 +3222,33 @@ function renderProcessKpiTable(data) {
         <table class="w-full text-sm data-table">
           <thead>
             <tr class="text-gray-500 border-b bg-gray-50">
+              <th class="text-left p-3">날짜</th>
               <th class="text-left p-3">시간</th>
               <th class="text-left p-3">제품명</th>
               <th class="text-center p-3">반죽온도<br><span class="text-xs text-gray-400">(24-26℃)</span></th>
               <th class="text-center p-3">1차발효<br><span class="text-xs text-gray-400">(30-60분)</span></th>
-              <th class="text-center p-3">발효온도<br><span class="text-xs text-gray-400">(27±2℃)</span></th>
+              <th class="text-center p-3">발효온도<br><span class="text-xs text-gray-400">(25-29℃)</span></th>
               <th class="text-center p-3">벤치타임<br><span class="text-xs text-gray-400">(15-20분)</span></th>
               <th class="text-center p-3">성형시간</th>
-              <th class="text-center p-3">판정</th>
+              <th class="text-center p-3">종합판정</th>
               <th class="text-center p-3">관리</th>
             </tr>
           </thead>
           <tbody>
             ${records.map(r => `
-              <tr class="border-b hover:bg-gray-50">
+              <tr class="border-b hover:bg-gray-50 ${r.overall_judgment === '부적합' ? 'bg-red-50' : ''}">
+                <td class="p-3">${r.record_date || '-'}</td>
                 <td class="p-3">${r.record_time || '-'}</td>
                 <td class="p-3 font-medium">${r.product_name || '-'}</td>
-                <td class="p-3 text-center"><span class="${r.dough_temp_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.dough_temp || '-'}</span></td>
-                <td class="p-3 text-center"><span class="${r.first_ferment_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.first_ferment_time || '-'}</span></td>
-                <td class="p-3 text-center"><span class="${r.ferment_temp_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.ferment_temp || '-'}</span></td>
-                <td class="p-3 text-center"><span class="${r.bench_time_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.bench_time || '-'}</span></td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.dough_temp, r.dough_temp_judgment)}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.first_ferment_time, r.first_ferment_judgment)}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.ferment_temp, r.ferment_temp_judgment)}</td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.bench_time, r.bench_time_judgment)}</td>
                 <td class="p-3 text-center">${r.forming_time || '-'}</td>
                 <td class="p-3 text-center">
-                  <span class="px-2 py-1 rounded text-xs ${r.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${r.overall_judgment}</span>
+                  <span class="px-2 py-1 rounded text-xs font-bold ${r.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+                    <i class="fas ${r.overall_judgment === '적합' ? 'fa-check-circle' : 'fa-times-circle'} mr-1"></i>${r.overall_judgment}
+                  </span>
                 </td>
                 <td class="p-3 text-center">
                   <button onclick="deleteProcessKpi('forming2', ${r.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
@@ -3246,29 +3267,33 @@ function renderProcessKpiTable(data) {
         <table class="w-full text-sm data-table">
           <thead>
             <tr class="text-gray-500 border-b bg-gray-50">
+              <th class="text-left p-3">날짜</th>
               <th class="text-left p-3">시간</th>
               <th class="text-left p-3">제품명</th>
               <th class="text-center p-3">실온발효</th>
               <th class="text-center p-3">쿠프시간</th>
-              <th class="text-center p-3">오븐온도<br><span class="text-xs text-gray-400">(180±10℃)</span></th>
+              <th class="text-center p-3">오븐온도<br><span class="text-xs text-gray-400">(170-190℃)</span></th>
               <th class="text-center p-3">굽기시간</th>
-              <th class="text-center p-3">중심온도(CCP)<br><span class="text-xs text-gray-400">(≥74℃)</span></th>
-              <th class="text-center p-3">판정</th>
+              <th class="text-center p-3">중심온도(CCP)<br><span class="text-xs text-red-500">(≥74℃ 필수)</span></th>
+              <th class="text-center p-3">종합판정</th>
               <th class="text-center p-3">관리</th>
             </tr>
           </thead>
           <tbody>
             ${records.map(r => `
-              <tr class="border-b hover:bg-gray-50">
+              <tr class="border-b hover:bg-gray-50 ${r.overall_judgment === '부적합' ? 'bg-red-50' : ''}">
+                <td class="p-3">${r.record_date || '-'}</td>
                 <td class="p-3">${r.record_time || '-'}</td>
                 <td class="p-3 font-medium">${r.product_name || '-'}</td>
                 <td class="p-3 text-center">${r.room_ferment_time || '-'}</td>
                 <td class="p-3 text-center">${r.coupe_time || '-'}</td>
-                <td class="p-3 text-center"><span class="${r.oven_temp_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.oven_temp || '-'}</span></td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.oven_temp, r.oven_temp_judgment)}</td>
                 <td class="p-3 text-center">${r.baking_time || '-'}</td>
-                <td class="p-3 text-center"><span class="${r.core_temp_judgment === '부적합' ? 'text-red-600 font-bold' : ''}">${r.core_temp || '-'}</span></td>
+                <td class="p-3 text-center">${renderKpiValueWithJudgment(r.core_temp, r.core_temp_judgment)}</td>
                 <td class="p-3 text-center">
-                  <span class="px-2 py-1 rounded text-xs ${r.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${r.overall_judgment}</span>
+                  <span class="px-2 py-1 rounded text-xs font-bold ${r.overall_judgment === '적합' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+                    <i class="fas ${r.overall_judgment === '적합' ? 'fa-check-circle' : 'fa-times-circle'} mr-1"></i>${r.overall_judgment}
+                  </span>
                 </td>
                 <td class="p-3 text-center">
                   <button onclick="deleteProcessKpi('oven', ${r.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
@@ -3375,6 +3400,105 @@ function showProcessKpiModal() {
   showModal('공정 KPI 등록', content, actions);
 }
 
+// KPI 기준 범위 정의
+const KPI_STANDARDS = {
+  // 숙성 공정
+  cold_aging_time: { min: 60, max: 120, unit: '분' },
+  ferment_temp: { min: 25, max: 29, unit: '℃' },  // 27±2
+  max_temp: { min: null, max: 30, unit: '℃' },
+  // 성형 공정
+  dough_temp: { min: 24, max: 26, unit: '℃' },
+  first_ferment_time: { min: 30, max: 60, unit: '분' },
+  bench_time: { min: 15, max: 20, unit: '분' },
+  second_ferment_time: { min: 40, max: 60, unit: '분' },
+  // 오븐 공정
+  oven_temp: { min: 170, max: 190, unit: '℃' },  // 180±10
+  core_temp: { min: 74, max: null, unit: '℃' }  // CCP: 74℃ 이상
+};
+
+// KPI 값 판정 함수
+function judgeKpiValue(fieldId, value) {
+  const standard = KPI_STANDARDS[fieldId];
+  if (!standard || value === null || value === undefined || value === '') return null;
+  
+  const numValue = parseFloat(value);
+  if (isNaN(numValue)) return null;
+  
+  const minOk = standard.min === null || numValue >= standard.min;
+  const maxOk = standard.max === null || numValue <= standard.max;
+  
+  return (minOk && maxOk) ? '적합' : '이탈';
+}
+
+// 판정 UI 업데이트
+function updateKpiJudgmentUI(fieldId) {
+  const input = document.getElementById(fieldId);
+  if (!input) return;
+  
+  const value = input.value;
+  const judgment = judgeKpiValue(fieldId, value);
+  const statusEl = document.getElementById(`${fieldId}_status`);
+  
+  if (statusEl) {
+    if (judgment === '적합') {
+      statusEl.innerHTML = '<span class="text-green-600 font-bold"><i class="fas fa-check-circle mr-1"></i>적합</span>';
+      input.classList.remove('border-red-500', 'bg-red-50');
+      input.classList.add('border-green-500', 'bg-green-50');
+    } else if (judgment === '이탈') {
+      statusEl.innerHTML = '<span class="text-red-600 font-bold"><i class="fas fa-exclamation-circle mr-1"></i>이탈</span>';
+      input.classList.remove('border-green-500', 'bg-green-50');
+      input.classList.add('border-red-500', 'bg-red-50');
+    } else {
+      statusEl.innerHTML = '<span class="text-gray-400">-</span>';
+      input.classList.remove('border-green-500', 'bg-green-50', 'border-red-500', 'bg-red-50');
+    }
+  }
+  
+  // 전체 판정 업데이트
+  updateOverallJudgment();
+}
+
+// 전체 판정 업데이트
+function updateOverallJudgment() {
+  const fields = Object.keys(KPI_STANDARDS);
+  let hasInput = false;
+  let hasDeviation = false;
+  
+  fields.forEach(fieldId => {
+    const input = document.getElementById(fieldId);
+    if (input && input.value !== '') {
+      hasInput = true;
+      const judgment = judgeKpiValue(fieldId, input.value);
+      if (judgment === '이탈') {
+        hasDeviation = true;
+      }
+    }
+  });
+  
+  const overallEl = document.getElementById('overall_judgment_display');
+  if (overallEl) {
+    if (!hasInput) {
+      overallEl.innerHTML = '<span class="text-gray-400">입력 대기 중...</span>';
+    } else if (hasDeviation) {
+      overallEl.innerHTML = '<span class="text-red-600 font-bold text-lg"><i class="fas fa-times-circle mr-1"></i>부적합 (이탈 항목 존재)</span>';
+    } else {
+      overallEl.innerHTML = '<span class="text-green-600 font-bold text-lg"><i class="fas fa-check-circle mr-1"></i>적합</span>';
+    }
+  }
+}
+
+// KPI 입력 필드에 이벤트 리스너 바인딩
+function bindKpiInputListeners() {
+  const fields = Object.keys(KPI_STANDARDS);
+  fields.forEach(fieldId => {
+    const input = document.getElementById(fieldId);
+    if (input) {
+      input.addEventListener('input', () => updateKpiJudgmentUI(fieldId));
+      input.addEventListener('change', () => updateKpiJudgmentUI(fieldId));
+    }
+  });
+}
+
 // 공정별 KPI 입력 필드 HTML 반환
 function getKpiFieldsHtml(processType) {
   if (processType === '숙성') {
@@ -3382,21 +3506,34 @@ function getKpiFieldsHtml(processType) {
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
         <p class="text-sm text-blue-700"><i class="fas fa-temperature-low mr-1"></i> <strong>숙성 공정</strong> - 저온숙성 → 발효</p>
       </div>
+      <div class="mb-4 p-3 bg-gray-100 rounded-lg">
+        <label class="block text-sm font-medium text-gray-700 mb-1">종합 판정</label>
+        <div id="overall_judgment_display"><span class="text-gray-400">입력 대기 중...</span></div>
+      </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">저온숙성시간 (분)</label>
-          <input type="number" id="cold_aging_time" class="w-full border rounded-lg px-4 py-2" placeholder="60-120">
-          <p class="text-xs text-gray-400 mt-1">기준: 60-120분</p>
+          <input type="number" id="cold_aging_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="60-120" oninput="updateKpiJudgmentUI('cold_aging_time')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 60-120분</p>
+            <span id="cold_aging_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
-          <input type="number" step="0.1" id="ferment_temp" class="w-full border rounded-lg px-4 py-2" placeholder="27">
-          <p class="text-xs text-gray-400 mt-1">기준: 27±2℃</p>
+          <input type="number" step="0.1" id="ferment_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="27" oninput="updateKpiJudgmentUI('ferment_temp')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 27±2℃ (25-29)</p>
+            <span id="ferment_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">최고온도 (℃)</label>
-          <input type="number" step="0.1" id="max_temp" class="w-full border rounded-lg px-4 py-2" placeholder="30 이하">
-          <p class="text-xs text-gray-400 mt-1">기준: 30℃ 이하</p>
+          <input type="number" step="0.1" id="max_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="30 이하" oninput="updateKpiJudgmentUI('max_temp')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 30℃ 이하</p>
+            <span id="max_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
       </div>
     `;
@@ -3405,39 +3542,60 @@ function getKpiFieldsHtml(processType) {
       <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-4">
         <p class="text-sm text-purple-700"><i class="fas fa-shapes mr-1"></i> <strong>성형1 공정</strong> - 반죽→분할→1차발효→벤치→성형→2차발효</p>
       </div>
+      <div class="mb-4 p-3 bg-gray-100 rounded-lg">
+        <label class="block text-sm font-medium text-gray-700 mb-1">종합 판정</label>
+        <div id="overall_judgment_display"><span class="text-gray-400">입력 대기 중...</span></div>
+      </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">반죽온도 (℃)</label>
-          <input type="number" step="0.1" id="dough_temp" class="w-full border rounded-lg px-4 py-2" placeholder="24-26">
-          <p class="text-xs text-gray-400 mt-1">기준: 24-26℃</p>
+          <input type="number" step="0.1" id="dough_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="24-26" oninput="updateKpiJudgmentUI('dough_temp')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 24-26℃</p>
+            <span id="dough_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">분할중량 (g)</label>
-          <input type="number" id="divide_weight" class="w-full border rounded-lg px-4 py-2">
+          <input type="number" id="divide_weight" class="w-full border-2 rounded-lg px-4 py-2">
+          <p class="text-xs text-gray-400 mt-1">(기준없음)</p>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">1차발효시간 (분)</label>
-          <input type="number" id="first_ferment_time" class="w-full border rounded-lg px-4 py-2" placeholder="30-60">
-          <p class="text-xs text-gray-400 mt-1">기준: 30-60분</p>
+          <input type="number" id="first_ferment_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="30-60" oninput="updateKpiJudgmentUI('first_ferment_time')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 30-60분</p>
+            <span id="first_ferment_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
-          <input type="number" step="0.1" id="ferment_temp" class="w-full border rounded-lg px-4 py-2" placeholder="27">
-          <p class="text-xs text-gray-400 mt-1">기준: 27±2℃</p>
+          <input type="number" step="0.1" id="ferment_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="27" oninput="updateKpiJudgmentUI('ferment_temp')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 27±2℃ (25-29)</p>
+            <span id="ferment_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">벤치타임 (분)</label>
-          <input type="number" id="bench_time" class="w-full border rounded-lg px-4 py-2" placeholder="15-20">
-          <p class="text-xs text-gray-400 mt-1">기준: 15-20분</p>
+          <input type="number" id="bench_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="15-20" oninput="updateKpiJudgmentUI('bench_time')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 15-20분</p>
+            <span id="bench_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">성형시간 (분)</label>
-          <input type="number" id="forming_time" class="w-full border rounded-lg px-4 py-2">
+          <input type="number" id="forming_time" class="w-full border-2 rounded-lg px-4 py-2">
+          <p class="text-xs text-gray-400 mt-1">(기준없음)</p>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">2차발효시간 (분)</label>
-          <input type="number" id="second_ferment_time" class="w-full border rounded-lg px-4 py-2" placeholder="40-60">
-          <p class="text-xs text-gray-400 mt-1">기준: 40-60분</p>
+          <input type="number" id="second_ferment_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="40-60" oninput="updateKpiJudgmentUI('second_ferment_time')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 40-60분</p>
+            <span id="second_ferment_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
       </div>
     `;
@@ -3446,34 +3604,52 @@ function getKpiFieldsHtml(processType) {
       <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3 mb-4">
         <p class="text-sm text-indigo-700"><i class="fas fa-shapes mr-1"></i> <strong>성형2 공정</strong> - 반죽→분할→1차발효→발효→벤치→성형</p>
       </div>
+      <div class="mb-4 p-3 bg-gray-100 rounded-lg">
+        <label class="block text-sm font-medium text-gray-700 mb-1">종합 판정</label>
+        <div id="overall_judgment_display"><span class="text-gray-400">입력 대기 중...</span></div>
+      </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">반죽온도 (℃)</label>
-          <input type="number" step="0.1" id="dough_temp" class="w-full border rounded-lg px-4 py-2" placeholder="24-26">
-          <p class="text-xs text-gray-400 mt-1">기준: 24-26℃</p>
+          <input type="number" step="0.1" id="dough_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="24-26" oninput="updateKpiJudgmentUI('dough_temp')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 24-26℃</p>
+            <span id="dough_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">분할중량 (g)</label>
-          <input type="number" id="divide_weight" class="w-full border rounded-lg px-4 py-2">
+          <input type="number" id="divide_weight" class="w-full border-2 rounded-lg px-4 py-2">
+          <p class="text-xs text-gray-400 mt-1">(기준없음)</p>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">1차발효시간 (분)</label>
-          <input type="number" id="first_ferment_time" class="w-full border rounded-lg px-4 py-2" placeholder="30-60">
-          <p class="text-xs text-gray-400 mt-1">기준: 30-60분</p>
+          <input type="number" id="first_ferment_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="30-60" oninput="updateKpiJudgmentUI('first_ferment_time')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 30-60분</p>
+            <span id="first_ferment_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
-          <input type="number" step="0.1" id="ferment_temp" class="w-full border rounded-lg px-4 py-2" placeholder="27">
-          <p class="text-xs text-gray-400 mt-1">기준: 27±2℃</p>
+          <input type="number" step="0.1" id="ferment_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="27" oninput="updateKpiJudgmentUI('ferment_temp')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 27±2℃ (25-29)</p>
+            <span id="ferment_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">벤치타임 (분)</label>
-          <input type="number" id="bench_time" class="w-full border rounded-lg px-4 py-2" placeholder="15-20">
-          <p class="text-xs text-gray-400 mt-1">기준: 15-20분</p>
+          <input type="number" id="bench_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="15-20" oninput="updateKpiJudgmentUI('bench_time')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 15-20분</p>
+            <span id="bench_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">성형시간 (분)</label>
-          <input type="number" id="forming_time" class="w-full border rounded-lg px-4 py-2">
+          <input type="number" id="forming_time" class="w-full border-2 rounded-lg px-4 py-2">
+          <p class="text-xs text-gray-400 mt-1">(기준없음)</p>
         </div>
       </div>
     `;
@@ -3482,28 +3658,41 @@ function getKpiFieldsHtml(processType) {
       <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 mb-4">
         <p class="text-sm text-orange-700"><i class="fas fa-fire mr-1"></i> <strong>오븐 공정</strong> - 실온발효 → 쿠프 → 굽기</p>
       </div>
+      <div class="mb-4 p-3 bg-gray-100 rounded-lg">
+        <label class="block text-sm font-medium text-gray-700 mb-1">종합 판정</label>
+        <div id="overall_judgment_display"><span class="text-gray-400">입력 대기 중...</span></div>
+      </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">실온발효시간 (분)</label>
-          <input type="number" id="room_ferment_time" class="w-full border rounded-lg px-4 py-2">
+          <input type="number" id="room_ferment_time" class="w-full border-2 rounded-lg px-4 py-2">
+          <p class="text-xs text-gray-400 mt-1">(기준없음)</p>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">쿠프시간 (분)</label>
-          <input type="number" id="coupe_time" class="w-full border rounded-lg px-4 py-2">
+          <input type="number" id="coupe_time" class="w-full border-2 rounded-lg px-4 py-2">
+          <p class="text-xs text-gray-400 mt-1">(기준없음)</p>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">오븐온도 (℃)</label>
-          <input type="number" step="0.1" id="oven_temp" class="w-full border rounded-lg px-4 py-2" placeholder="180">
-          <p class="text-xs text-gray-400 mt-1">기준: 180±10℃</p>
+          <input type="number" step="0.1" id="oven_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="180" oninput="updateKpiJudgmentUI('oven_temp')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-gray-400">기준: 180±10℃ (170-190)</p>
+            <span id="oven_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">굽기시간 (분)</label>
-          <input type="number" id="baking_time" class="w-full border rounded-lg px-4 py-2">
+          <input type="number" id="baking_time" class="w-full border-2 rounded-lg px-4 py-2">
+          <p class="text-xs text-gray-400 mt-1">(기준없음)</p>
         </div>
         <div class="col-span-2">
           <label class="block text-sm font-medium text-gray-700 mb-1">중심온도 (℃) - CCP <span class="text-red-500">*</span></label>
-          <input type="number" step="0.1" id="core_temp" class="w-full border rounded-lg px-4 py-2 border-red-300" placeholder="74 이상">
-          <p class="text-xs text-red-500 mt-1">⚠️ 필수 CCP 기준: 74℃ 이상</p>
+          <input type="number" step="0.1" id="core_temp" class="w-full border-2 rounded-lg px-4 py-2 border-red-300" placeholder="74 이상" oninput="updateKpiJudgmentUI('core_temp')">
+          <div class="flex justify-between items-center mt-1">
+            <p class="text-xs text-red-500">⚠️ CCP: 74℃ 이상 필수</p>
+            <span id="core_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
+          </div>
         </div>
       </div>
     `;

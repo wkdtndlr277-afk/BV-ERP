@@ -2309,12 +2309,19 @@ async function loadDailyReport() {
     const params = new URLSearchParams({ date });
     if (category) params.append('category', category);
     
-    const result = await api(`/transactions/daily-report?${params.toString()}`);
-    const data = result.data || [];
+    // 품목별 요약 + LOT별 상세 트랜잭션 조회
+    const [summaryResult, detailResult] = await Promise.all([
+      api(`/transactions/daily-report?${params.toString()}`),
+      api(`/transactions/search?start_date=${date}&end_date=${date}${category ? `&category=${category}` : ''}`)
+    ]);
+    
+    const data = summaryResult.data || [];
+    const lotDetails = detailResult.data || [];
     
     // 전역에 저장 (엑셀/출력용)
     window.dailyReportData = data;
     window.dailyReportDate = date;
+    window.dailyReportLotDetails = lotDetails;
     
     document.getElementById('daily-content').innerHTML = `
       <div class="p-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-2">
@@ -2327,6 +2334,11 @@ async function loadDailyReport() {
             <i class="fas fa-print mr-1"></i> 출력
           </button>
         </div>
+      </div>
+      
+      <!-- 품목별 요약 -->
+      <div class="p-3 bg-blue-50 border-b">
+        <h4 class="font-bold text-blue-800"><i class="fas fa-list mr-1"></i> 품목별 요약</h4>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
@@ -2360,6 +2372,44 @@ async function loadDailyReport() {
           </tbody>
         </table>
       </div>
+      
+      <!-- LOT별 상세 내역 -->
+      ${lotDetails.length > 0 ? `
+        <div class="p-3 bg-orange-50 border-t border-b mt-4">
+          <h4 class="font-bold text-orange-800"><i class="fas fa-barcode mr-1"></i> LOT별 상세 내역 (선입선출 이력)</h4>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm data-table">
+            <thead>
+              <tr class="text-gray-500 border-b bg-gray-50">
+                <th class="text-left p-3">LOT 번호</th>
+                <th class="text-left p-3">품목</th>
+                <th class="text-center p-3">구분</th>
+                <th class="text-right p-3">수량</th>
+                <th class="text-right p-3">LOT 잔량</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${lotDetails.map(t => `
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="p-3 font-mono text-xs">${t.lot_number || '-'}</td>
+                  <td class="p-3">${t.item_name} <span class="text-gray-400 text-xs">(${t.item_code})</span></td>
+                  <td class="p-3 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${
+                      t.trans_type === '입고' ? 'bg-blue-100 text-blue-700' :
+                      t.trans_type === '사용' ? 'bg-orange-100 text-orange-700' :
+                      t.trans_type === '출고' ? 'bg-green-100 text-green-700' :
+                      'bg-yellow-100 text-yellow-700'
+                    }">${t.trans_type}</span>
+                  </td>
+                  <td class="p-3 text-right font-medium ${t.quantity < 0 ? 'text-red-600' : 'text-blue-600'}">${t.quantity > 0 ? '+' : ''}${formatNumber(t.quantity)}</td>
+                  <td class="p-3 text-right">${t.remain_qty !== null ? formatNumber(t.remain_qty) : '-'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
     `;
   } catch (e) {
     document.getElementById('daily-content').innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
@@ -2424,9 +2474,14 @@ async function loadMonthlyReport() {
     const data = result.data || [];
     const period = result.period;
     
+    // LOT별 상세 트랜잭션 조회
+    const detailResult = await api(`/transactions/search?start_date=${period.startDate}&end_date=${period.endDate}${category ? `&category=${category}` : ''}`);
+    const lotDetails = detailResult.data || [];
+    
     // 전역에 저장 (엑셀/출력용)
     window.monthlyReportData = data;
     window.monthlyReportPeriod = period;
+    window.monthlyReportLotDetails = lotDetails;
     
     document.getElementById('monthly-content').innerHTML = `
       <div class="p-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-2">
@@ -2439,6 +2494,11 @@ async function loadMonthlyReport() {
             <i class="fas fa-print mr-1"></i> 출력
           </button>
         </div>
+      </div>
+      
+      <!-- 품목별 요약 -->
+      <div class="p-3 bg-blue-50 border-b">
+        <h4 class="font-bold text-blue-800"><i class="fas fa-list mr-1"></i> 품목별 월간 요약</h4>
       </div>
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
@@ -2474,6 +2534,46 @@ async function loadMonthlyReport() {
           </tbody>
         </table>
       </div>
+      
+      <!-- LOT별 상세 내역 -->
+      ${lotDetails.length > 0 ? `
+        <div class="p-3 bg-orange-50 border-t border-b mt-4">
+          <h4 class="font-bold text-orange-800"><i class="fas fa-barcode mr-1"></i> LOT별 상세 내역 (선입선출 이력)</h4>
+        </div>
+        <div class="overflow-x-auto max-h-96">
+          <table class="w-full text-sm data-table">
+            <thead>
+              <tr class="text-gray-500 border-b bg-gray-50 sticky top-0">
+                <th class="text-left p-3">일자</th>
+                <th class="text-left p-3">LOT 번호</th>
+                <th class="text-left p-3">품목</th>
+                <th class="text-center p-3">구분</th>
+                <th class="text-right p-3">수량</th>
+                <th class="text-right p-3">LOT 잔량</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${lotDetails.map(t => `
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="p-3 text-xs">${t.trans_date}</td>
+                  <td class="p-3 font-mono text-xs">${t.lot_number || '-'}</td>
+                  <td class="p-3">${t.item_name} <span class="text-gray-400 text-xs">(${t.item_code})</span></td>
+                  <td class="p-3 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${
+                      t.trans_type === '입고' ? 'bg-blue-100 text-blue-700' :
+                      t.trans_type === '사용' ? 'bg-orange-100 text-orange-700' :
+                      t.trans_type === '출고' ? 'bg-green-100 text-green-700' :
+                      'bg-yellow-100 text-yellow-700'
+                    }">${t.trans_type}</span>
+                  </td>
+                  <td class="p-3 text-right font-medium ${t.quantity < 0 ? 'text-red-600' : 'text-blue-600'}">${t.quantity > 0 ? '+' : ''}${formatNumber(t.quantity)}</td>
+                  <td class="p-3 text-right">${t.remain_qty !== null ? formatNumber(t.remain_qty) : '-'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
     `;
   } catch (e) {
     document.getElementById('monthly-content').innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';

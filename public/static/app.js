@@ -4922,8 +4922,8 @@ async function deleteDoughMaster(id) {
   }
 }
 
-// Initialize
-document.addEventListener('DOMContentLoaded', async function() {
+// Initialize app
+async function initializeApp() {
   // 로그인 상태 확인
   const isLoggedIn = await checkAuth();
   
@@ -4932,19 +4932,28 @@ document.addEventListener('DOMContentLoaded', async function() {
   }
   
   // 로그인 성공 - 메인 앱 표시
-  document.getElementById('main-app').style.display = 'flex';
+  const mainApp = document.getElementById('main-app');
+  if (mainApp) {
+    mainApp.style.display = 'flex';
+  }
   
   // Set current date
-  document.getElementById('current-date').textContent = formatDate(new Date());
+  const currentDateEl = document.getElementById('current-date');
+  if (currentDateEl) {
+    currentDateEl.textContent = formatDate(new Date());
+  }
   
   // 사용자 정보 표시
   updateUserDisplay();
   
   // Sidebar toggle for mobile
-  document.getElementById('sidebar-toggle').addEventListener('click', function() {
-    const sidebar = document.getElementById('sidebar');
-    sidebar.classList.toggle('-translate-x-full');
-  });
+  const sidebarToggle = document.getElementById('sidebar-toggle');
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener('click', function() {
+      const sidebar = document.getElementById('sidebar');
+      sidebar.classList.toggle('-translate-x-full');
+    });
+  }
   
   // Navigation links
   document.querySelectorAll('.sidebar-link').forEach(link => {
@@ -4971,7 +4980,15 @@ document.addEventListener('DOMContentLoaded', async function() {
   } else {
     renderDashboard();
   }
-});
+}
+
+// Initialize - 여러 방법으로 시도
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+  // DOMContentLoaded가 이미 발생한 경우
+  initializeApp();
+}
 
 // Make functions globally accessible
 window.filterInventory = filterInventory;

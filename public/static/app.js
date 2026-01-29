@@ -2017,7 +2017,6 @@ async function renderTransactionSearch() {
               <option value="">전체</option>
               <option value="입고">입고</option>
               <option value="사용">사용</option>
-              <option value="출고">출고</option>
               <option value="재고조정">재고조정</option>
             </select>
           </div>
@@ -2029,7 +2028,7 @@ async function renderTransactionSearch() {
         </form>
       </div>
       
-      <div id="search-summary" class="hidden grid grid-cols-2 md:grid-cols-5 gap-4"></div>
+      <div id="search-summary" class="hidden grid grid-cols-2 md:grid-cols-4 gap-4"></div>
       
       <div id="search-results" class="bg-white rounded-xl shadow overflow-hidden">
         <div class="p-8 text-center text-gray-400">
@@ -2058,7 +2057,7 @@ async function renderTransactionSearch() {
       const data = result.data || [];
       const summary = result.summary || {};
       
-      // Show summary
+      // Show summary (입고/사용/조정/건수)
       document.getElementById('search-summary').classList.remove('hidden');
       document.getElementById('search-summary').innerHTML = `
         <div class="bg-blue-50 rounded-lg p-4 text-center">
@@ -2068,10 +2067,6 @@ async function renderTransactionSearch() {
         <div class="bg-orange-50 rounded-lg p-4 text-center">
           <p class="text-sm text-orange-600">총 사용량</p>
           <p class="text-xl font-bold text-orange-800">${formatNumber(summary.total_usage)}</p>
-        </div>
-        <div class="bg-green-50 rounded-lg p-4 text-center">
-          <p class="text-sm text-green-600">총 출고량</p>
-          <p class="text-xl font-bold text-green-800">${formatNumber(summary.total_outbound)}</p>
         </div>
         <div class="bg-yellow-50 rounded-lg p-4 text-center">
           <p class="text-sm text-yellow-600">총 조정량</p>
@@ -2127,7 +2122,6 @@ async function renderTransactionSearch() {
                     <span class="px-2 py-1 rounded text-xs ${
                       t.trans_type === '입고' ? 'bg-blue-100 text-blue-700' :
                       t.trans_type === '사용' ? 'bg-orange-100 text-orange-700' :
-                      t.trans_type === '출고' ? 'bg-green-100 text-green-700' :
                       'bg-yellow-100 text-yellow-700'
                     }">${t.trans_type}</span>
                   </td>
@@ -2313,7 +2307,7 @@ async function renderDailyReport() {
               <option value="">전체</option>
               <option value="입고">입고</option>
               <option value="사용">사용</option>
-              <option value="출고">출고</option>
+              <option value="재고조정">재고조정</option>
             </select>
           </div>
           <div class="flex items-end">
@@ -2374,11 +2368,10 @@ async function loadDailyReport() {
         </div>
       </div>
       
-      <!-- 요약 -->
-      <div class="grid grid-cols-4 gap-2 p-3 bg-gray-50 border-b text-center text-sm">
+      <!-- 요약 (입고/사용/조정) -->
+      <div class="grid grid-cols-3 gap-2 p-3 bg-gray-50 border-b text-center text-sm">
         <div><span class="text-blue-600 font-bold">입고</span> <span class="text-blue-800">+${formatNumber(summary.total_inbound || 0)}</span></div>
         <div><span class="text-orange-600 font-bold">사용</span> <span class="text-orange-800">-${formatNumber(summary.total_usage || 0)}</span></div>
-        <div><span class="text-green-600 font-bold">출고</span> <span class="text-green-800">-${formatNumber(summary.total_outbound || 0)}</span></div>
         <div><span class="text-yellow-600 font-bold">조정</span> <span class="text-yellow-800">${formatNumber(summary.total_adjustment || 0)}</span></div>
       </div>
       
@@ -2410,7 +2403,6 @@ async function loadDailyReport() {
                   <span class="px-2 py-1 rounded text-xs ${
                     t.trans_type === '입고' ? 'bg-blue-100 text-blue-700' :
                     t.trans_type === '사용' ? 'bg-orange-100 text-orange-700' :
-                    t.trans_type === '출고' ? 'bg-green-100 text-green-700' :
                     'bg-yellow-100 text-yellow-700'
                   }">${t.trans_type}</span>
                 </td>
@@ -2533,12 +2525,11 @@ async function loadMonthlyReport() {
         </div>
       </div>
       
-      <!-- 요약 (이월 + 입고 - 사용 - 출고 + 조정 = 월말) -->
-      <div class="grid grid-cols-6 gap-2 p-3 bg-gray-50 border-b text-center text-sm">
+      <!-- 요약 (이월 + 입고 - 사용 + 조정 = 월말) -->
+      <div class="grid grid-cols-5 gap-2 p-3 bg-gray-50 border-b text-center text-sm">
         <div><span class="text-purple-600 font-bold">이월</span> <span class="text-purple-800">${formatNumber(summary.total_carry_over || 0)}</span></div>
         <div><span class="text-blue-600 font-bold">입고</span> <span class="text-blue-800">+${formatNumber(summary.total_inbound || 0)}</span></div>
         <div><span class="text-orange-600 font-bold">사용</span> <span class="text-orange-800">-${formatNumber(summary.total_usage || 0)}</span></div>
-        <div><span class="text-green-600 font-bold">출고</span> <span class="text-green-800">-${formatNumber(summary.total_outbound || 0)}</span></div>
         <div><span class="text-yellow-600 font-bold">조정</span> <span class="text-yellow-800">${formatNumber(summary.total_adjustment || 0)}</span></div>
         <div><span class="text-gray-600 font-bold">월말</span> <span class="text-gray-800 font-bold">${formatNumber(summary.total_closing || 0)}</span></div>
       </div>
@@ -2555,14 +2546,13 @@ async function loadMonthlyReport() {
               <th class="text-right p-3 text-purple-600">이월</th>
               <th class="text-right p-3 text-blue-600">입고</th>
               <th class="text-right p-3 text-orange-600">사용</th>
-              <th class="text-right p-3 text-green-600">출고</th>
               <th class="text-right p-3 text-yellow-600">조정</th>
               <th class="text-right p-3">월말잔량</th>
             </tr>
           </thead>
           <tbody>
             ${data.length === 0 ? `
-              <tr><td colspan="10" class="p-8 text-center text-gray-400">데이터가 없습니다.</td></tr>
+              <tr><td colspan="9" class="p-8 text-center text-gray-400">데이터가 없습니다.</td></tr>
             ` : data.map(lot => `
               <tr class="border-b hover:bg-gray-50 ${lot.closing_qty <= 0 ? 'bg-gray-100 text-gray-400' : ''}">
                 <td class="p-3 font-mono text-xs">${lot.lot_number}</td>
@@ -2572,7 +2562,6 @@ async function loadMonthlyReport() {
                 <td class="p-3 text-right text-purple-600">${lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-'}</td>
                 <td class="p-3 text-right text-blue-600">${lot.month_inbound > 0 ? '+' + formatNumber(lot.month_inbound) : '-'}</td>
                 <td class="p-3 text-right text-orange-600">${lot.month_usage > 0 ? '-' + formatNumber(lot.month_usage) : '-'}</td>
-                <td class="p-3 text-right text-green-600">${lot.month_outbound > 0 ? '-' + formatNumber(lot.month_outbound) : '-'}</td>
                 <td class="p-3 text-right text-yellow-600">${lot.month_adjustment !== 0 ? formatNumber(lot.month_adjustment) : '-'}</td>
                 <td class="p-3 text-right font-bold ${lot.closing_qty <= 0 ? 'text-gray-400' : ''}">${formatNumber(lot.closing_qty)}</td>
               </tr>

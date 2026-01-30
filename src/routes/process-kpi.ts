@@ -665,10 +665,12 @@ processKpiRoutes.get('/today', async (c) => {
 
 processKpiRoutes.get('/monthly-summary', async (c) => {
   const year = c.req.query('year') || new Date().getFullYear().toString();
-  const month = c.req.query('month') || String(new Date().getMonth() + 1).padStart(2, '0');
+  const month = c.req.query('month') || String(new Date().getMonth() + 1);
   const processType = c.req.query('process_type');
   
-  const startDate = `${year}-${month}-01`;
+  // 월을 2자리로 패딩
+  const paddedMonth = month.padStart(2, '0');
+  const startDate = `${year}-${paddedMonth}-01`;
   const endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
   
   // 공정별 통계 조회

@@ -1,4 +1,9 @@
 // HACCP ERP Frontend Application
+// Version: 1.2.0 Build: 20260130-0615
+const APP_VERSION = '1.2.0';
+const APP_BUILD = '20260130-0615';
+console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
+
 const API_BASE = '/api';
 
 // State Management
@@ -4017,16 +4022,20 @@ function filterKpiStandards() {
 }
 
 async function updateKpiStandard(id, field, value) {
+  console.log('updateKpiStandard 호출:', { id, field, value });
+  
   try {
     // ID를 숫자로 변환하여 비교
     const numId = parseInt(id, 10);
+    console.log('window.kpiStandardsData:', window.kpiStandardsData?.length, '개');
     const standard = window.kpiStandardsData?.find(s => parseInt(s.id, 10) === numId);
     
     if (!standard) {
-      console.error('KPI 기준을 찾을 수 없습니다:', id, numId);
+      console.error('KPI 기준을 찾을 수 없습니다:', id, numId, 'kpiStandardsData:', window.kpiStandardsData);
       showToast('기준을 찾을 수 없습니다. 새로고침 후 다시 시도해주세요.', 'error');
       return;
     }
+    console.log('찾은 기준:', standard);
     
     // 현재 값과 비교하여 변경된 경우만 업데이트
     const newValue = value === '' ? null : parseFloat(value);

@@ -2719,41 +2719,67 @@ async function renderLotHistory() {
   });
 }
 
-// Daily Report - 통합 수불부 (품목별 + LOT 상세)
+// Daily Report - LOT 기반 선입선출 수불부
 async function renderDailyReport() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
   
   content.innerHTML = `
-    <div class="space-y-6">
-      <h2 class="text-2xl font-bold text-gray-800">
-        <i class="fas fa-calendar-day mr-2 text-haccp-primary"></i>
-        일별 수불부
-      </h2>
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-calendar-day mr-2 text-haccp-primary"></i>
+          일별 수불부 <span class="text-sm font-normal text-gray-500">(LOT 선입선출)</span>
+        </h2>
+      </div>
       
-      <!-- 검색 조건 -->
-      <div class="bg-white rounded-xl shadow p-4">
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">조회일</label>
-            <input type="date" id="daily-date" class="w-full border rounded-lg px-3 py-2 text-sm" value="${today}">
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">구분</label>
-            <select id="daily-category" class="w-full border rounded-lg px-3 py-2 text-sm">
-              <option value="">전체</option>
-              <option value="원료">원료</option>
-              <option value="제품">제품</option>
-            </select>
-          </div>
-          <div class="md:col-span-2">
-            <label class="block text-xs text-gray-500 mb-1">품목명 검색</label>
-            <input type="text" id="daily-search" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="품목명 또는 품목코드 입력">
-          </div>
-          <div class="flex items-end">
-            <button onclick="loadInventoryLedger('daily')" class="w-full bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm">
-              <i class="fas fa-search mr-1"></i> 조회
-            </button>
+      <!-- 구분 탭 + 검색 조건 -->
+      <div class="bg-white rounded-xl shadow">
+        <!-- 원료/제품 탭 -->
+        <div class="flex border-b">
+          <button onclick="switchDailyTab('전체')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-haccp-primary text-haccp-primary bg-blue-50" data-tab="전체">
+            <i class="fas fa-th-list mr-1"></i> 전체
+          </button>
+          <button onclick="switchDailyTab('원료')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="원료">
+            <i class="fas fa-seedling mr-1"></i> 원료
+          </button>
+          <button onclick="switchDailyTab('제품')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="제품">
+            <i class="fas fa-box mr-1"></i> 제품
+          </button>
+        </div>
+        
+        <!-- 검색 조건 -->
+        <div class="p-4 bg-gray-50">
+          <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">조회일</label>
+              <input type="date" id="daily-date" class="w-full border rounded-lg px-3 py-2 text-sm" value="${today}">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">보기 방식</label>
+              <select id="daily-view-type" class="w-full border rounded-lg px-3 py-2 text-sm">
+                <option value="summary">품목 요약</option>
+                <option value="lot-detail" selected>LOT 상세</option>
+                <option value="fifo">선입선출 현황</option>
+              </select>
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-xs text-gray-500 mb-1">품목/LOT 검색</label>
+              <input type="text" id="daily-search" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="품목명, 품목코드, LOT번호 입력">
+            </div>
+            <div class="flex items-end">
+              <button onclick="loadDailyLedger()" class="w-full bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm hover:bg-haccp-dark">
+                <i class="fas fa-search mr-1"></i> 조회
+              </button>
+            </div>
+            <div class="flex items-end gap-1">
+              <button onclick="downloadDailyLedger()" class="flex-1 bg-green-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-green-700">
+                <i class="fas fa-file-excel"></i>
+              </button>
+              <button onclick="printDailyLedger()" class="flex-1 bg-gray-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-gray-700">
+                <i class="fas fa-print"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -2766,210 +2792,561 @@ async function renderDailyReport() {
     </div>
   `;
   
-  loadInventoryLedger('daily');
+  window.dailyCategory = ''; // 전체
+  loadDailyLedger();
 }
 
-// 통합 수불부 로드 함수 (일별/월별 공통)
-async function loadInventoryLedger(periodType = 'daily') {
-  const contentId = periodType === 'daily' ? 'daily-content' : 'monthly-content';
-  const dateEl = document.getElementById(periodType === 'daily' ? 'daily-date' : null);
-  const yearEl = document.getElementById('monthly-year');
-  const monthEl = document.getElementById('monthly-month');
-  const categoryEl = document.getElementById(periodType === 'daily' ? 'daily-category' : 'monthly-category');
-  const searchEl = document.getElementById(periodType === 'daily' ? 'daily-search' : 'monthly-search');
+// 일별 탭 전환
+function switchDailyTab(tab) {
+  document.querySelectorAll('.daily-tab').forEach(el => {
+    if (el.dataset.tab === tab) {
+      el.classList.add('border-haccp-primary', 'text-haccp-primary', 'bg-blue-50');
+      el.classList.remove('border-transparent', 'text-gray-500');
+    } else {
+      el.classList.remove('border-haccp-primary', 'text-haccp-primary', 'bg-blue-50');
+      el.classList.add('border-transparent', 'text-gray-500');
+    }
+  });
+  window.dailyCategory = tab === '전체' ? '' : tab;
+  loadDailyLedger();
+}
+
+// 일별 수불부 로드
+async function loadDailyLedger() {
+  const contentEl = document.getElementById('daily-content');
+  const date = document.getElementById('daily-date')?.value || formatDate(new Date());
+  const viewType = document.getElementById('daily-view-type')?.value || 'lot-detail';
+  const search = document.getElementById('daily-search')?.value?.trim() || '';
+  const category = window.dailyCategory || '';
+  
+  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
   
   try {
-    const params = new URLSearchParams();
-    params.append('period_type', periodType);
+    const params = new URLSearchParams({ date });
+    if (category) params.append('category', category);
+    if (search) params.append('search', search);
     
-    if (periodType === 'daily') {
-      params.append('date', dateEl?.value || formatDate(new Date()));
+    let result;
+    if (viewType === 'fifo') {
+      result = await api(`/transactions/lot-fifo-status?${params.toString()}`);
+      renderFifoStatus(result, date);
     } else {
-      params.append('year', yearEl?.value || new Date().getFullYear());
-      params.append('month', monthEl?.value || String(new Date().getMonth() + 1).padStart(2, '0'));
+      params.append('period_type', 'daily');
+      result = await api(`/transactions/inventory-ledger?${params.toString()}`);
+      
+      // 전역 저장
+      window.dailyLedgerData = result.data || [];
+      window.dailyLedgerPeriod = result.period || {};
+      window.dailyLedgerSummary = result.summary || {};
+      
+      if (viewType === 'summary') {
+        renderDailySummary(result, date);
+      } else {
+        renderDailyLotDetail(result, date);
+      }
     }
-    
-    if (categoryEl?.value) params.append('category', categoryEl.value);
-    if (searchEl?.value?.trim()) params.append('search', searchEl.value.trim());
-    
-    const result = await api(`/transactions/inventory-ledger?${params.toString()}`);
-    const data = result.data || [];
-    const summary = result.summary || {};
-    const period = result.period || {};
-    
-    // 전역 저장
-    window.inventoryLedgerData = data;
-    window.inventoryLedgerPeriod = period;
-    
-    const periodLabel = periodType === 'daily' 
-      ? period.start_date 
-      : `${period.year}년 ${parseInt(period.month)}월`;
-    
-    document.getElementById(contentId).innerHTML = `
-      <div class="p-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-2">
-        <div>
-          <span class="font-bold text-gray-700">${periodLabel} 수불부</span>
-          <span class="ml-2 text-sm text-gray-500">(품목 ${data.length}건, LOT ${result.total_lot_count || 0}건)</span>
-        </div>
-        <div class="flex gap-2">
-          <button onclick="toggleAllLots()" class="text-sm bg-gray-500 text-white px-3 py-1 rounded hover:bg-gray-600">
-            <i class="fas fa-expand-alt mr-1"></i> 전체 펼침/접기
-          </button>
-          <button onclick="downloadInventoryLedger()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
-            <i class="fas fa-file-excel mr-1"></i> 엑셀
-          </button>
-          <button onclick="printInventoryLedger()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
-            <i class="fas fa-print mr-1"></i> 출력
-          </button>
-        </div>
+  } catch (e) {
+    console.error('Daily ledger error:', e);
+    contentEl.innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 일별 품목 요약 렌더링
+function renderDailySummary(result, date) {
+  const data = result.data || [];
+  const summary = result.summary || {};
+  const contentEl = document.getElementById('daily-content');
+  
+  contentEl.innerHTML = `
+    <div class="p-3 border-b bg-gradient-to-r from-blue-50 to-white flex justify-between items-center flex-wrap gap-2">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-gray-700">${date}</span>
+        <span class="text-sm text-gray-500">품목 ${data.length}건</span>
       </div>
-      
-      <!-- 전체 요약 -->
-      <div class="grid grid-cols-5 gap-2 p-3 bg-gray-50 border-b text-center text-sm">
-        <div><span class="text-purple-600 font-bold">이월</span> <span class="text-purple-800">${formatNumber(summary.carry_over || 0)}</span></div>
-        <div><span class="text-blue-600 font-bold">입고</span> <span class="text-blue-800">+${formatNumber(summary.period_inbound || 0)}</span></div>
-        <div><span class="text-orange-600 font-bold">사용</span> <span class="text-orange-800">-${formatNumber(summary.period_usage || 0)}</span></div>
-        <div><span class="text-yellow-600 font-bold">조정</span> <span class="text-yellow-800">${formatNumber(summary.period_adjustment || 0)}</span></div>
-        <div><span class="text-gray-600 font-bold">현재고</span> <span class="text-gray-800 font-bold">${formatNumber(summary.closing_qty || 0)}</span></div>
+      <div class="flex items-center gap-4 text-sm">
+        <span class="text-purple-600"><b>전일</b> ${formatNumber(summary.carry_over || 0)}</span>
+        <span class="text-blue-600"><b>입고</b> +${formatNumber(summary.period_inbound || 0)}</span>
+        <span class="text-orange-600"><b>사용</b> -${formatNumber(summary.period_usage || 0)}</span>
+        <span class="text-green-600"><b>조정</b> ${formatNumber(summary.period_adjustment || 0)}</span>
+        <span class="text-gray-800 font-bold"><b>현재고</b> ${formatNumber(summary.closing_qty || 0)}</span>
       </div>
-      
-      <!-- 수불부 테이블 (품목별 + LOT 상세 펼침) -->
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-gray-500 border-b bg-gray-100">
-              <th class="text-left p-3 w-8"></th>
-              <th class="text-left p-3">품목코드</th>
-              <th class="text-left p-3">품목명</th>
-              <th class="text-center p-3">구분</th>
-              <th class="text-center p-3">단위</th>
-              <th class="text-right p-3 text-purple-600">이월</th>
-              <th class="text-right p-3 text-blue-600">입고</th>
-              <th class="text-right p-3 text-orange-600">사용</th>
-              <th class="text-right p-3 text-yellow-600">조정</th>
-              <th class="text-right p-3">현재고</th>
-              <th class="text-center p-3">LOT</th>
+    </div>
+    
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-100 text-gray-600">
+            <th class="p-3 text-left">품목코드</th>
+            <th class="p-3 text-left">품목명</th>
+            <th class="p-3 text-center">구분</th>
+            <th class="p-3 text-center">단위</th>
+            <th class="p-3 text-right text-purple-600">전일재고</th>
+            <th class="p-3 text-right text-blue-600">입고</th>
+            <th class="p-3 text-right text-orange-600">사용</th>
+            <th class="p-3 text-right text-green-600">조정</th>
+            <th class="p-3 text-right font-bold">현재고</th>
+            <th class="p-3 text-center">LOT수</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.length === 0 ? `
+            <tr><td colspan="10" class="p-8 text-center text-gray-400">해당일 데이터가 없습니다.</td></tr>
+          ` : data.map(item => `
+            <tr class="border-b hover:bg-blue-50 ${item.summary.closing_qty <= 0 ? 'text-gray-400' : ''}">
+              <td class="p-2 font-mono text-xs">${item.item_code}</td>
+              <td class="p-2 font-medium">${item.item_name}</td>
+              <td class="p-2 text-center">
+                <span class="px-2 py-0.5 text-xs rounded ${item.category === '원료' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}">${item.category}</span>
+              </td>
+              <td class="p-2 text-center text-xs text-gray-500">${item.unit || '-'}</td>
+              <td class="p-2 text-right text-purple-600">${formatNumber(item.summary.carry_over)}</td>
+              <td class="p-2 text-right text-blue-600">${item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-'}</td>
+              <td class="p-2 text-right text-orange-600">${item.summary.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
+              <td class="p-2 text-right text-green-600">${item.summary.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-'}</td>
+              <td class="p-2 text-right font-bold">${formatNumber(item.summary.closing_qty)}</td>
+              <td class="p-2 text-center">
+                <span class="text-xs ${item.lot_count > 0 ? 'text-indigo-600' : 'text-gray-400'}">${item.lot_count}건</span>
+              </td>
             </tr>
-          </thead>
-          <tbody id="ledger-tbody">
-            ${data.length === 0 ? `
-              <tr><td colspan="11" class="p-8 text-center text-gray-400">데이터가 없습니다.</td></tr>
-            ` : data.map((item, idx) => `
-              <!-- 품목 요약 행 -->
-              <tr class="border-b hover:bg-blue-50 cursor-pointer bg-white font-medium" onclick="toggleLotDetail(${idx})">
-                <td class="p-2 text-center">
-                  <i class="fas fa-chevron-right text-gray-400 transition-transform" id="chevron-${idx}"></i>
-                </td>
-                <td class="p-2 font-mono text-xs">${item.item_code}</td>
-                <td class="p-2">${item.item_name}</td>
-                <td class="p-2 text-center">
-                  <span class="px-2 py-0.5 text-xs rounded ${item.category === '원료' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}">${item.category}</span>
-                </td>
-                <td class="p-2 text-center text-xs">${item.unit || '-'}</td>
-                <td class="p-2 text-right text-purple-600">${item.summary.carry_over > 0 ? formatNumber(item.summary.carry_over) : '-'}</td>
-                <td class="p-2 text-right text-blue-600">${item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-'}</td>
-                <td class="p-2 text-right text-orange-600">${item.summary.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
-                <td class="p-2 text-right text-yellow-600">${item.summary.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-'}</td>
-                <td class="p-2 text-right font-bold ${item.summary.closing_qty <= 0 ? 'text-gray-400' : ''}">${formatNumber(item.summary.closing_qty)}</td>
-                <td class="p-2 text-center">
-                  <span class="px-2 py-0.5 text-xs rounded ${item.lot_count > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'}">${item.lot_count}건</span>
-                </td>
-              </tr>
-              <!-- LOT 상세 (숨김) -->
-              <tr id="lot-detail-${idx}" class="hidden">
-                <td colspan="11" class="p-0 bg-gray-50">
-                  ${item.lots.length > 0 ? `
-                    <table class="w-full text-xs">
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// 일별 LOT 상세 렌더링 (선입선출 순서 표시)
+function renderDailyLotDetail(result, date) {
+  const data = result.data || [];
+  const summary = result.summary || {};
+  const contentEl = document.getElementById('daily-content');
+  
+  contentEl.innerHTML = `
+    <div class="p-3 border-b bg-gradient-to-r from-blue-50 to-white flex justify-between items-center flex-wrap gap-2">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-gray-700">${date}</span>
+        <span class="text-sm text-gray-500">품목 ${data.length}건, LOT ${result.total_lot_count || 0}건</span>
+        <button onclick="toggleAllDailyLots()" class="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-300">
+          <i class="fas fa-expand-alt mr-1"></i>전체 펼침/접기
+        </button>
+      </div>
+      <div class="flex items-center gap-4 text-sm">
+        <span class="text-purple-600"><b>전일</b> ${formatNumber(summary.carry_over || 0)}</span>
+        <span class="text-blue-600"><b>입고</b> +${formatNumber(summary.period_inbound || 0)}</span>
+        <span class="text-orange-600"><b>사용</b> -${formatNumber(summary.period_usage || 0)}</span>
+        <span class="text-gray-800 font-bold"><b>현재고</b> ${formatNumber(summary.closing_qty || 0)}</span>
+      </div>
+    </div>
+    
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm" id="daily-lot-table">
+        <thead>
+          <tr class="bg-gray-100 text-gray-600 text-xs">
+            <th class="p-2 w-6"></th>
+            <th class="p-2 text-left">품목명</th>
+            <th class="p-2 text-center">구분</th>
+            <th class="p-2 text-right text-purple-600">전일</th>
+            <th class="p-2 text-right text-blue-600">입고</th>
+            <th class="p-2 text-right text-orange-600">사용</th>
+            <th class="p-2 text-right text-green-600">조정</th>
+            <th class="p-2 text-right font-bold">현재고</th>
+            <th class="p-2 text-center">LOT</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.length === 0 ? `
+            <tr><td colspan="9" class="p-8 text-center text-gray-400">해당일 데이터가 없습니다.</td></tr>
+          ` : data.map((item, idx) => `
+            <!-- 품목 행 -->
+            <tr class="border-b hover:bg-blue-50 cursor-pointer bg-white" onclick="toggleDailyLot(${idx})">
+              <td class="p-2 text-center">
+                <i class="fas fa-chevron-right text-gray-400 text-xs transition-transform" id="daily-chevron-${idx}"></i>
+              </td>
+              <td class="p-2">
+                <div class="font-medium">${item.item_name}</div>
+                <div class="text-xs text-gray-400 font-mono">${item.item_code}</div>
+              </td>
+              <td class="p-2 text-center">
+                <span class="px-2 py-0.5 text-xs rounded ${item.category === '원료' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}">${item.category}</span>
+              </td>
+              <td class="p-2 text-right text-purple-600">${formatNumber(item.summary.carry_over)}</td>
+              <td class="p-2 text-right text-blue-600">${item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-'}</td>
+              <td class="p-2 text-right text-orange-600">${item.summary.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
+              <td class="p-2 text-right text-green-600">${item.summary.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-'}</td>
+              <td class="p-2 text-right font-bold">${formatNumber(item.summary.closing_qty)}</td>
+              <td class="p-2 text-center">
+                <span class="px-2 py-0.5 text-xs rounded ${item.lot_count > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'}">${item.lot_count}</span>
+              </td>
+            </tr>
+            <!-- LOT 상세 (숨김) -->
+            <tr id="daily-lot-${idx}" class="hidden">
+              <td colspan="9" class="p-0 bg-gray-50">
+                ${item.lots && item.lots.length > 0 ? `
+                  <div class="p-2 pl-8">
+                    <div class="text-xs text-gray-500 mb-2 flex items-center gap-2">
+                      <i class="fas fa-layer-group"></i>
+                      <span>LOT 현황 (선입선출 순서)</span>
+                      <span class="text-indigo-600">* 유통기한/입고일 순 자동 정렬</span>
+                    </div>
+                    <table class="w-full text-xs border rounded overflow-hidden">
                       <thead>
-                        <tr class="text-gray-400 bg-gray-100">
-                          <th class="p-2 text-left pl-10">LOT 번호</th>
+                        <tr class="bg-indigo-50 text-indigo-700">
+                          <th class="p-2 text-center w-10">순서</th>
+                          <th class="p-2 text-left">LOT 번호</th>
                           <th class="p-2 text-center">입고일</th>
                           <th class="p-2 text-center">유통기한</th>
-                          <th class="p-2 text-center">공급업체</th>
-                          <th class="p-2 text-right text-purple-500">이월</th>
-                          <th class="p-2 text-right text-blue-500">입고</th>
-                          <th class="p-2 text-right text-orange-500">사용</th>
-                          <th class="p-2 text-right text-yellow-500">조정</th>
-                          <th class="p-2 text-right">잔량</th>
+                          <th class="p-2 text-center">납품처</th>
+                          <th class="p-2 text-right text-purple-600">전일</th>
+                          <th class="p-2 text-right text-blue-600">입고</th>
+                          <th class="p-2 text-right text-orange-600">사용</th>
+                          <th class="p-2 text-right text-green-600">조정</th>
+                          <th class="p-2 text-right font-bold">잔량</th>
                           <th class="p-2 text-center">상태</th>
                         </tr>
                       </thead>
                       <tbody>
-                        ${item.lots.map(lot => `
-                          <tr class="border-b border-gray-200 hover:bg-gray-100 ${lot.closing_qty <= 0 ? 'text-gray-400' : ''}">
-                            <td class="p-2 pl-10 font-mono ${lot.lot_number?.startsWith('ADJ-') ? 'text-yellow-600' : ''}">${lot.lot_number}</td>
-                            <td class="p-2 text-center">${lot.inbound_date || '-'}</td>
-                            <td class="p-2 text-center ${isExpiringSoon(lot.expiry_date) ? 'text-red-600 font-bold' : ''}">${lot.expiry_date || '-'}</td>
-                            <td class="p-2 text-center">${lot.supplier || '-'}</td>
-                            <td class="p-2 text-right text-purple-600">${lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-'}</td>
-                            <td class="p-2 text-right text-blue-600">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
-                            <td class="p-2 text-right text-orange-600">${lot.period_usage > 0 ? '-' + formatNumber(lot.period_usage) : '-'}</td>
-                            <td class="p-2 text-right text-yellow-600">${lot.period_adjustment !== 0 ? formatNumber(lot.period_adjustment) : '-'}</td>
-                            <td class="p-2 text-right font-medium">${formatNumber(lot.closing_qty)}</td>
-                            <td class="p-2 text-center">
-                              ${lot.closing_qty <= 0 ? '<span class="text-gray-400">소진</span>' : 
-                                lot.lot_number?.startsWith('ADJ-') ? '<span class="text-yellow-600">조정</span>' :
-                                '<span class="text-green-600">정상</span>'}
-                            </td>
-                          </tr>
-                        `).join('')}
+                        ${item.lots.map((lot, lotIdx) => {
+                          const daysUntilExpiry = lot.expiry_date ? Math.ceil((new Date(lot.expiry_date) - new Date()) / (1000 * 60 * 60 * 24)) : 999;
+                          const status = lot.closing_qty <= 0 ? 'empty' : 
+                                        daysUntilExpiry < 0 ? 'expired' : 
+                                        daysUntilExpiry <= 7 ? 'urgent' : 
+                                        daysUntilExpiry <= 30 ? 'warning' : 'normal';
+                          const statusBadge = {
+                            empty: '<span class="text-gray-400">소진</span>',
+                            expired: '<span class="px-1.5 py-0.5 bg-red-100 text-red-700 rounded">만료</span>',
+                            urgent: '<span class="px-1.5 py-0.5 bg-red-100 text-red-600 rounded">임박</span>',
+                            warning: '<span class="px-1.5 py-0.5 bg-yellow-100 text-yellow-700 rounded">주의</span>',
+                            normal: '<span class="text-green-600">정상</span>'
+                          }[status];
+                          
+                          return `
+                            <tr class="border-b border-gray-200 hover:bg-indigo-50 ${lot.closing_qty <= 0 ? 'text-gray-400 bg-gray-100' : ''}">
+                              <td class="p-2 text-center">
+                                <span class="inline-flex items-center justify-center w-5 h-5 rounded-full ${lot.closing_qty > 0 ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-gray-500'} text-xs font-bold">${lotIdx + 1}</span>
+                              </td>
+                              <td class="p-2 font-mono ${lot.lot_number?.startsWith('ADJ-') ? 'text-yellow-600' : ''}">${lot.lot_number || '-'}</td>
+                              <td class="p-2 text-center">${lot.inbound_date || '-'}</td>
+                              <td class="p-2 text-center ${status === 'expired' || status === 'urgent' ? 'text-red-600 font-bold' : ''}">${lot.expiry_date || '-'}</td>
+                              <td class="p-2 text-center text-gray-500">${lot.supplier || '-'}</td>
+                              <td class="p-2 text-right text-purple-600">${lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-'}</td>
+                              <td class="p-2 text-right text-blue-600">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
+                              <td class="p-2 text-right text-orange-600">${lot.period_usage > 0 ? '-' + formatNumber(lot.period_usage) : '-'}</td>
+                              <td class="p-2 text-right text-green-600">${lot.period_adjustment !== 0 ? formatNumber(lot.period_adjustment) : '-'}</td>
+                              <td class="p-2 text-right font-bold">${formatNumber(lot.closing_qty)} <span class="text-gray-400 font-normal">${item.unit || ''}</span></td>
+                              <td class="p-2 text-center">${statusBadge}</td>
+                            </tr>
+                          `;
+                        }).join('')}
                       </tbody>
                     </table>
-                  ` : `
-                    <div class="p-4 text-center text-gray-400 pl-10">
-                      <i class="fas fa-info-circle mr-1"></i> LOT 정보 없음 (재고조정으로 등록된 품목)
-                    </div>
-                  `}
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-  } catch (e) {
-    console.error('Inventory ledger error:', e);
-    document.getElementById(contentId).innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
-  }
+                  </div>
+                ` : `
+                  <div class="p-4 pl-8 text-gray-400 text-xs">
+                    <i class="fas fa-info-circle mr-1"></i> LOT 정보 없음 (재고조정으로 등록된 품목)
+                  </div>
+                `}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
-// LOT 상세 펼침/접기
-function toggleLotDetail(idx) {
-  const detailRow = document.getElementById(`lot-detail-${idx}`);
-  const chevron = document.getElementById(`chevron-${idx}`);
+// 선입선출 현황 렌더링
+function renderFifoStatus(result, date) {
+  const data = result.data || [];
+  const contentEl = document.getElementById('daily-content');
   
-  if (detailRow.classList.contains('hidden')) {
-    detailRow.classList.remove('hidden');
+  contentEl.innerHTML = `
+    <div class="p-3 border-b bg-gradient-to-r from-green-50 to-white flex justify-between items-center flex-wrap gap-2">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-gray-700">선입선출(FIFO) 현황</span>
+        <span class="text-sm text-gray-500">${date} 기준 | 품목 ${data.length}건, LOT ${result.total_lot_count || 0}건</span>
+      </div>
+      <div class="flex items-center gap-2 text-xs">
+        <span class="px-2 py-1 bg-red-100 text-red-700 rounded">만료</span>
+        <span class="px-2 py-1 bg-yellow-100 text-yellow-700 rounded">7일 이내</span>
+        <span class="px-2 py-1 bg-orange-100 text-orange-700 rounded">30일 이내</span>
+        <span class="px-2 py-1 bg-green-100 text-green-700 rounded">정상</span>
+      </div>
+    </div>
+    
+    <div class="overflow-x-auto max-h-[70vh]">
+      ${data.length === 0 ? `
+        <div class="p-8 text-center text-gray-400">잔량이 있는 LOT가 없습니다.</div>
+      ` : data.map(item => `
+        <div class="border-b">
+          <div class="p-3 bg-gray-50 flex items-center justify-between">
+            <div>
+              <span class="font-medium">${item.item_name}</span>
+              <span class="text-xs text-gray-400 ml-2 font-mono">${item.item_code}</span>
+              <span class="ml-2 px-2 py-0.5 text-xs rounded ${item.category === '원료' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}">${item.category}</span>
+            </div>
+            <div class="text-sm">
+              <span class="text-gray-500">총 잔량:</span>
+              <span class="font-bold ml-1">${formatNumber(item.total_remain)} ${item.unit || ''}</span>
+              <span class="text-xs text-gray-400 ml-2">(${item.lots.length} LOT)</span>
+            </div>
+          </div>
+          <div class="p-2">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="text-gray-500">
+                  <th class="p-1 text-center w-12">사용순서</th>
+                  <th class="p-1 text-left">LOT 번호</th>
+                  <th class="p-1 text-center">입고일</th>
+                  <th class="p-1 text-center">유통기한</th>
+                  <th class="p-1 text-center">D-Day</th>
+                  <th class="p-1 text-right">입고량</th>
+                  <th class="p-1 text-right font-bold">잔량</th>
+                  <th class="p-1 text-center">납품처</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${item.lots.map((lot, idx) => {
+                  const ddays = Math.round(lot.days_until_expiry);
+                  const bgColor = lot.status === '만료' ? 'bg-red-50' : 
+                                  lot.status === '임박' ? 'bg-yellow-50' : 
+                                  lot.status === '주의' ? 'bg-orange-50' : '';
+                  return `
+                    <tr class="border-b hover:bg-gray-50 ${bgColor}">
+                      <td class="p-2 text-center">
+                        <span class="inline-flex items-center justify-center w-6 h-6 rounded-full ${idx === 0 ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white'} text-xs font-bold">
+                          ${lot.fifo_order}
+                        </span>
+                        ${idx === 0 ? '<div class="text-red-500 text-xs mt-0.5">우선사용</div>' : ''}
+                      </td>
+                      <td class="p-2 font-mono">${lot.lot_number}</td>
+                      <td class="p-2 text-center">${lot.inbound_date || '-'}</td>
+                      <td class="p-2 text-center font-medium ${lot.status === '만료' ? 'text-red-600' : lot.status === '임박' ? 'text-yellow-600' : ''}">${lot.expiry_date || '-'}</td>
+                      <td class="p-2 text-center">
+                        ${ddays < 0 ? `<span class="text-red-600 font-bold">D+${Math.abs(ddays)}</span>` :
+                          ddays <= 7 ? `<span class="text-yellow-600 font-bold">D-${ddays}</span>` :
+                          `<span class="text-gray-600">D-${ddays}</span>`}
+                      </td>
+                      <td class="p-2 text-right text-gray-500">${formatNumber(lot.origin_qty)}</td>
+                      <td class="p-2 text-right font-bold">${formatNumber(lot.remain_qty)} <span class="font-normal text-gray-400">${item.unit || ''}</span></td>
+                      <td class="p-2 text-center text-gray-500">${lot.supplier || '-'}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+// LOT 펼침/접기
+function toggleDailyLot(idx) {
+  const row = document.getElementById(`daily-lot-${idx}`);
+  const chevron = document.getElementById(`daily-chevron-${idx}`);
+  if (row.classList.contains('hidden')) {
+    row.classList.remove('hidden');
     chevron.classList.add('rotate-90');
   } else {
-    detailRow.classList.add('hidden');
+    row.classList.add('hidden');
     chevron.classList.remove('rotate-90');
   }
 }
 
-// 전체 펼침/접기 토글
-function toggleAllLots() {
-  const allDetails = document.querySelectorAll('[id^="lot-detail-"]');
-  const allChevrons = document.querySelectorAll('[id^="chevron-"]');
-  const isAnyHidden = Array.from(allDetails).some(el => el.classList.contains('hidden'));
-  
-  allDetails.forEach((el, idx) => {
-    if (isAnyHidden) {
-      el.classList.remove('hidden');
-      allChevrons[idx]?.classList.add('rotate-90');
+function toggleAllDailyLots() {
+  const rows = document.querySelectorAll('[id^="daily-lot-"]');
+  const chevrons = document.querySelectorAll('[id^="daily-chevron-"]');
+  const anyHidden = Array.from(rows).some(r => r.classList.contains('hidden'));
+  rows.forEach((r, i) => {
+    if (anyHidden) {
+      r.classList.remove('hidden');
+      chevrons[i]?.classList.add('rotate-90');
     } else {
-      el.classList.add('hidden');
-      allChevrons[idx]?.classList.remove('rotate-90');
+      r.classList.add('hidden');
+      chevrons[i]?.classList.remove('rotate-90');
     }
   });
 }
 
-// 기존 함수 호환성 유지
-async function loadDailyReport() {
-  await loadInventoryLedger('daily');
+// 일별 수불부 다운로드 (엑셀)
+function downloadDailyLedger() {
+  const data = window.dailyLedgerData || [];
+  const period = window.dailyLedgerPeriod || {};
+  
+  if (data.length === 0) {
+    showToast('다운로드할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  // LOT 포함 데이터 생성
+  const rows = [];
+  data.forEach(item => {
+    // 품목 요약
+    rows.push({
+      '품목코드': item.item_code,
+      '품목명': item.item_name,
+      '구분': item.category,
+      '단위': item.unit || '',
+      'LOT번호': '',
+      '입고일': '',
+      '유통기한': '',
+      '납품처': '',
+      '전일재고': item.summary.carry_over || 0,
+      '입고': item.summary.period_inbound || 0,
+      '사용': item.summary.period_usage || 0,
+      '조정': item.summary.period_adjustment || 0,
+      '현재고': item.summary.closing_qty || 0,
+      'LOT수': item.lot_count || 0
+    });
+    // LOT 상세
+    if (item.lots && item.lots.length > 0) {
+      item.lots.forEach(lot => {
+        rows.push({
+          '품목코드': '',
+          '품목명': '',
+          '구분': '',
+          '단위': '',
+          'LOT번호': lot.lot_number || '',
+          '입고일': lot.inbound_date || '',
+          '유통기한': lot.expiry_date || '',
+          '납품처': lot.supplier || '',
+          '전일재고': lot.carry_over || 0,
+          '입고': lot.period_inbound || 0,
+          '사용': lot.period_usage || 0,
+          '조정': lot.period_adjustment || 0,
+          '현재고': lot.closing_qty || 0,
+          'LOT수': ''
+        });
+      });
+    }
+  });
+  
+  downloadExcel(rows, `일별수불부_${period.start_date || formatDate(new Date())}`);
+  showToast('엑셀 다운로드 완료', 'success');
 }
 
-// Monthly Report - 통합 수불부 (품목별 + LOT 상세)
+// 일별 수불부 출력
+function printDailyLedger() {
+  const data = window.dailyLedgerData || [];
+  const period = window.dailyLedgerPeriod || {};
+  const summary = window.dailyLedgerSummary || {};
+  
+  const tableData = data.map(item => ({
+    '품목코드': item.item_code,
+    '품목명': item.item_name,
+    '구분': item.category,
+    '전일': formatNumber(item.summary.carry_over),
+    '입고': item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-',
+    '사용': item.summary.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-',
+    '조정': item.summary.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-',
+    '현재고': formatNumber(item.summary.closing_qty),
+    'LOT': item.lot_count + '건'
+  }));
+  
+  const title = `일별 수불부 (${period.start_date || formatDate(new Date())})`;
+  const summaryText = `전일: ${formatNumber(summary.carry_over || 0)} | 입고: +${formatNumber(summary.period_inbound || 0)} | 사용: -${formatNumber(summary.period_usage || 0)} | 현재고: ${formatNumber(summary.closing_qty || 0)}`;
+  
+  printData(tableData, title, summaryText, tableToHtml(tableData));
+}
+
+// 월별 수불부 다운로드 (엑셀)
+function downloadMonthlyLedger() {
+  const data = window.monthlyLedgerData || [];
+  const period = window.monthlyLedgerPeriod || {};
+  
+  if (data.length === 0) {
+    showToast('다운로드할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  // LOT 포함 데이터 생성
+  const rows = [];
+  data.forEach(item => {
+    rows.push({
+      '품목코드': item.item_code,
+      '품목명': item.item_name,
+      '구분': item.category,
+      '단위': item.unit || '',
+      'LOT번호': '',
+      '입고일': '',
+      '유통기한': '',
+      '납품처': '',
+      '월초재고': item.summary?.carry_over || item.opening_stock || 0,
+      '입고': item.summary?.period_inbound || item.monthly_total?.inbound || 0,
+      '사용': item.summary?.period_usage || item.monthly_total?.usage || 0,
+      '출고': item.summary?.period_outbound || item.monthly_total?.outbound || 0,
+      '조정': item.summary?.period_adjustment || item.monthly_total?.adjustment || 0,
+      '월말재고': item.summary?.closing_qty || item.closing_stock || 0,
+      'LOT수': item.lot_count || ''
+    });
+    // LOT 상세
+    if (item.lots && item.lots.length > 0) {
+      item.lots.forEach(lot => {
+        rows.push({
+          '품목코드': '',
+          '품목명': '',
+          '구분': '',
+          '단위': '',
+          'LOT번호': lot.lot_number || '',
+          '입고일': lot.inbound_date || '',
+          '유통기한': lot.expiry_date || '',
+          '납품처': lot.supplier || '',
+          '월초재고': lot.carry_over || 0,
+          '입고': lot.period_inbound || 0,
+          '사용': lot.period_usage || 0,
+          '출고': lot.period_outbound || 0,
+          '조정': lot.period_adjustment || 0,
+          '월말재고': lot.closing_qty || 0,
+          'LOT수': ''
+        });
+      });
+    }
+  });
+  
+  const filename = `월별수불부_${period.year || new Date().getFullYear()}년${period.month || (new Date().getMonth()+1)}월`;
+  downloadExcel(rows, filename);
+  showToast('엑셀 다운로드 완료', 'success');
+}
+
+// 월별 수불부 출력
+function printMonthlyLedger() {
+  const data = window.monthlyLedgerData || [];
+  const period = window.monthlyLedgerPeriod || {};
+  const summary = window.monthlyLedgerSummary || {};
+  
+  const tableData = data.map(item => ({
+    '품목코드': item.item_code,
+    '품목명': item.item_name,
+    '구분': item.category,
+    '월초': formatNumber(item.summary?.carry_over || item.opening_stock || 0),
+    '입고': formatNumber(item.summary?.period_inbound || item.monthly_total?.inbound || 0),
+    '사용': formatNumber(item.summary?.period_usage || item.monthly_total?.usage || 0),
+    '조정': formatNumber(item.summary?.period_adjustment || item.monthly_total?.adjustment || 0),
+    '월말': formatNumber(item.summary?.closing_qty || item.closing_stock || 0)
+  }));
+  
+  const periodLabel = `${period.year || new Date().getFullYear()}년 ${period.month || (new Date().getMonth()+1)}월`;
+  const title = `월별 수불부 (${periodLabel})`;
+  const summaryText = `월초: ${formatNumber(summary.carry_over || 0)} | 입고: +${formatNumber(summary.period_inbound || 0)} | 사용: -${formatNumber(summary.period_usage || 0)} | 월말: ${formatNumber(summary.closing_qty || 0)}`;
+  
+  printData(tableData, title, summaryText, tableToHtml(tableData));
+}
+
+// 기존 함수 호환성 유지 (호출 시 새 함수로 리다이렉트)
+async function loadInventoryLedger(periodType = 'daily') {
+  if (periodType === 'daily') {
+    await loadDailyLedger();
+  } else {
+    await loadMonthlyLedger();
+  }
+}
+
+async function loadDailyReport() {
+  await loadDailyLedger();
+}
+
+// Monthly Report - 엑셀 스타일 월별 수불부
 async function renderMonthlyReport() {
   const content = document.getElementById('page-content');
   const now = new Date();
@@ -2977,52 +3354,71 @@ async function renderMonthlyReport() {
   const month = String(now.getMonth() + 1).padStart(2, '0');
   
   content.innerHTML = `
-    <div class="space-y-6">
-      <h2 class="text-2xl font-bold text-gray-800">
-        <i class="fas fa-calendar-alt mr-2 text-haccp-primary"></i>
-        월별 수불부
-      </h2>
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-calendar-alt mr-2 text-haccp-primary"></i>
+          월별 수불부 <span class="text-sm font-normal text-gray-500">(엑셀 스타일)</span>
+        </h2>
+      </div>
       
-      <!-- 검색 조건 -->
-      <div class="bg-white rounded-xl shadow p-4">
-        <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">년도</label>
-            <select id="monthly-year" class="w-full border rounded-lg px-3 py-2 text-sm">
-              ${[year-1, year, year+1].map(y => `<option value="${y}" ${y === year ? 'selected' : ''}>${y}년</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">월</label>
-            <select id="monthly-month" class="w-full border rounded-lg px-3 py-2 text-sm">
-              ${Array.from({length: 12}, (_, i) => i + 1).map(m => 
-                `<option value="${String(m).padStart(2, '0')}" ${String(m).padStart(2, '0') === month ? 'selected' : ''}>${m}월</option>`
-              ).join('')}
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">보기 방식</label>
-            <select id="monthly-view-type" class="w-full border rounded-lg px-3 py-2 text-sm" onchange="loadMonthlyReport()">
-              <option value="item" selected>품목별</option>
-              <option value="lot">LOT별</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-xs text-gray-500 mb-1">구분</label>
-            <select id="monthly-category" class="w-full border rounded-lg px-3 py-2 text-sm">
-              <option value="">전체</option>
-              <option value="원료">원료</option>
-              <option value="제품">제품</option>
-            </select>
-          </div>
-          <div class="md:col-span-2">
-            <label class="block text-xs text-gray-500 mb-1">품목명 검색</label>
-            <input type="text" id="monthly-search" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="품목명 또는 품목코드 입력">
-          </div>
-          <div class="flex items-end">
-            <button onclick="loadInventoryLedger('monthly')" class="w-full bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm">
-              <i class="fas fa-search mr-1"></i> 조회
-            </button>
+      <!-- 구분 탭 + 검색 조건 -->
+      <div class="bg-white rounded-xl shadow">
+        <!-- 원료/제품 탭 -->
+        <div class="flex border-b">
+          <button onclick="switchMonthlyTab('전체')" class="monthly-tab flex-1 py-3 text-center font-medium border-b-2 border-haccp-primary text-haccp-primary bg-blue-50" data-tab="전체">
+            <i class="fas fa-th-list mr-1"></i> 전체
+          </button>
+          <button onclick="switchMonthlyTab('원료')" class="monthly-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="원료">
+            <i class="fas fa-seedling mr-1"></i> 원료
+          </button>
+          <button onclick="switchMonthlyTab('제품')" class="monthly-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="제품">
+            <i class="fas fa-box mr-1"></i> 제품
+          </button>
+        </div>
+        
+        <!-- 검색 조건 -->
+        <div class="p-4 bg-gray-50">
+          <div class="grid grid-cols-2 md:grid-cols-7 gap-3">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">년도</label>
+              <select id="monthly-year" class="w-full border rounded-lg px-3 py-2 text-sm">
+                ${[year-1, year, year+1].map(y => `<option value="${y}" ${y === year ? 'selected' : ''}>${y}년</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">월</label>
+              <select id="monthly-month" class="w-full border rounded-lg px-3 py-2 text-sm">
+                ${Array.from({length: 12}, (_, i) => i + 1).map(m => 
+                  `<option value="${String(m).padStart(2, '0')}" ${String(m).padStart(2, '0') === month ? 'selected' : ''}>${m}월</option>`
+                ).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">보기 방식</label>
+              <select id="monthly-view-type" class="w-full border rounded-lg px-3 py-2 text-sm">
+                <option value="summary" selected>품목별 요약</option>
+                <option value="lot">LOT별 상세</option>
+                <option value="daily">일별 추이</option>
+              </select>
+            </div>
+            <div class="md:col-span-2">
+              <label class="block text-xs text-gray-500 mb-1">품목/LOT 검색</label>
+              <input type="text" id="monthly-search" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="품목명, 품목코드, LOT번호 입력">
+            </div>
+            <div class="flex items-end">
+              <button onclick="loadMonthlyLedger()" class="w-full bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm hover:bg-haccp-dark">
+                <i class="fas fa-search mr-1"></i> 조회
+              </button>
+            </div>
+            <div class="flex items-end gap-1">
+              <button onclick="downloadMonthlyLedger()" class="flex-1 bg-green-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-green-700">
+                <i class="fas fa-file-excel"></i>
+              </button>
+              <button onclick="printMonthlyLedger()" class="flex-1 bg-gray-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-gray-700">
+                <i class="fas fa-print"></i>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -3035,12 +3431,368 @@ async function renderMonthlyReport() {
     </div>
   `;
   
-  loadInventoryLedger('monthly');
+  window.monthlyCategory = '';
+  loadMonthlyLedger();
+}
+
+// 월별 탭 전환
+function switchMonthlyTab(tab) {
+  document.querySelectorAll('.monthly-tab').forEach(el => {
+    if (el.dataset.tab === tab) {
+      el.classList.add('border-haccp-primary', 'text-haccp-primary', 'bg-blue-50');
+      el.classList.remove('border-transparent', 'text-gray-500');
+    } else {
+      el.classList.remove('border-haccp-primary', 'text-haccp-primary', 'bg-blue-50');
+      el.classList.add('border-transparent', 'text-gray-500');
+    }
+  });
+  window.monthlyCategory = tab === '전체' ? '' : tab;
+  loadMonthlyLedger();
+}
+
+// 월별 수불부 로드
+async function loadMonthlyLedger() {
+  const contentEl = document.getElementById('monthly-content');
+  const year = document.getElementById('monthly-year')?.value || new Date().getFullYear();
+  const month = document.getElementById('monthly-month')?.value || String(new Date().getMonth() + 1).padStart(2, '0');
+  const viewType = document.getElementById('monthly-view-type')?.value || 'summary';
+  const search = document.getElementById('monthly-search')?.value?.trim() || '';
+  const category = window.monthlyCategory || '';
+  
+  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const params = new URLSearchParams({ year, month });
+    if (category) params.append('category', category);
+    if (search) params.append('search', search);
+    
+    if (viewType === 'daily') {
+      // 일별 추이 (엑셀 재고 시트 스타일)
+      const result = await api(`/transactions/monthly-daily-ledger?${params.toString()}`);
+      window.monthlyLedgerData = result.data || [];
+      window.monthlyLedgerPeriod = result.period || {};
+      renderMonthlyDailyView(result);
+    } else if (viewType === 'lot') {
+      // LOT별 상세
+      params.append('period_type', 'monthly');
+      const result = await api(`/transactions/inventory-ledger?${params.toString()}`);
+      window.monthlyLedgerData = result.data || [];
+      window.monthlyLedgerPeriod = result.period || {};
+      window.monthlyLedgerSummary = result.summary || {};
+      renderMonthlyLotView(result);
+    } else {
+      // 품목별 요약
+      params.append('period_type', 'monthly');
+      const result = await api(`/transactions/inventory-ledger?${params.toString()}`);
+      window.monthlyLedgerData = result.data || [];
+      window.monthlyLedgerPeriod = result.period || {};
+      window.monthlyLedgerSummary = result.summary || {};
+      renderMonthlySummaryView(result);
+    }
+  } catch (e) {
+    console.error('Monthly ledger error:', e);
+    contentEl.innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 월별 품목 요약 렌더링
+function renderMonthlySummaryView(result) {
+  const data = result.data || [];
+  const summary = result.summary || {};
+  const period = result.period || {};
+  const contentEl = document.getElementById('monthly-content');
+  
+  const periodLabel = `${period.year}년 ${parseInt(period.month)}월`;
+  
+  contentEl.innerHTML = `
+    <div class="p-3 border-b bg-gradient-to-r from-purple-50 to-white flex justify-between items-center flex-wrap gap-2">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-gray-700">${periodLabel} 수불부</span>
+        <span class="text-sm text-gray-500">품목 ${data.length}건</span>
+      </div>
+      <div class="flex items-center gap-4 text-sm">
+        <span class="text-purple-600"><b>월초</b> ${formatNumber(summary.carry_over || 0)}</span>
+        <span class="text-blue-600"><b>입고</b> +${formatNumber(summary.period_inbound || 0)}</span>
+        <span class="text-orange-600"><b>사용</b> -${formatNumber(summary.period_usage || 0)}</span>
+        <span class="text-green-600"><b>조정</b> ${formatNumber(summary.period_adjustment || 0)}</span>
+        <span class="text-gray-800 font-bold"><b>월말</b> ${formatNumber(summary.closing_qty || 0)}</span>
+      </div>
+    </div>
+    
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="bg-gray-100 text-gray-600 text-xs">
+            <th class="p-2 text-left sticky left-0 bg-gray-100">품목명</th>
+            <th class="p-2 text-center">구분</th>
+            <th class="p-2 text-center">단위</th>
+            <th class="p-2 text-right text-purple-600">월초재고</th>
+            <th class="p-2 text-right text-blue-600">입고</th>
+            <th class="p-2 text-right text-orange-600">사용</th>
+            <th class="p-2 text-right text-red-600">출고</th>
+            <th class="p-2 text-right text-green-600">조정</th>
+            <th class="p-2 text-right font-bold bg-yellow-50">월말재고</th>
+            <th class="p-2 text-center">LOT</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.length === 0 ? `
+            <tr><td colspan="10" class="p-8 text-center text-gray-400">해당월 데이터가 없습니다.</td></tr>
+          ` : data.map(item => `
+            <tr class="border-b hover:bg-purple-50 ${item.summary.closing_qty <= 0 ? 'text-gray-400' : ''}">
+              <td class="p-2 sticky left-0 bg-white">
+                <div class="font-medium">${item.item_name}</div>
+                <div class="text-xs text-gray-400 font-mono">${item.item_code}</div>
+              </td>
+              <td class="p-2 text-center">
+                <span class="px-2 py-0.5 text-xs rounded ${item.category === '원료' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}">${item.category}</span>
+              </td>
+              <td class="p-2 text-center text-xs text-gray-500">${item.unit || '-'}</td>
+              <td class="p-2 text-right text-purple-600">${formatNumber(item.summary.carry_over)}</td>
+              <td class="p-2 text-right text-blue-600">${item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-'}</td>
+              <td class="p-2 text-right text-orange-600">${item.summary.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
+              <td class="p-2 text-right text-red-600">${item.summary.period_outbound > 0 ? '-' + formatNumber(item.summary.period_outbound) : '-'}</td>
+              <td class="p-2 text-right text-green-600">${item.summary.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-'}</td>
+              <td class="p-2 text-right font-bold bg-yellow-50">${formatNumber(item.summary.closing_qty)}</td>
+              <td class="p-2 text-center">
+                <span class="text-xs ${item.lot_count > 0 ? 'text-indigo-600' : 'text-gray-400'}">${item.lot_count}건</span>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+        <tfoot>
+          <tr class="bg-gray-100 font-bold text-sm">
+            <td class="p-2 sticky left-0 bg-gray-100">합계</td>
+            <td class="p-2"></td>
+            <td class="p-2"></td>
+            <td class="p-2 text-right text-purple-600">${formatNumber(summary.carry_over || 0)}</td>
+            <td class="p-2 text-right text-blue-600">+${formatNumber(summary.period_inbound || 0)}</td>
+            <td class="p-2 text-right text-orange-600">-${formatNumber(summary.period_usage || 0)}</td>
+            <td class="p-2 text-right text-red-600">-${formatNumber(summary.period_outbound || 0)}</td>
+            <td class="p-2 text-right text-green-600">${formatNumber(summary.period_adjustment || 0)}</td>
+            <td class="p-2 text-right bg-yellow-100">${formatNumber(summary.closing_qty || 0)}</td>
+            <td class="p-2 text-center">${result.total_lot_count || 0}건</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+}
+
+// 월별 LOT 상세 렌더링
+function renderMonthlyLotView(result) {
+  const data = result.data || [];
+  const summary = result.summary || {};
+  const period = result.period || {};
+  const contentEl = document.getElementById('monthly-content');
+  
+  const periodLabel = `${period.year}년 ${parseInt(period.month)}월`;
+  
+  contentEl.innerHTML = `
+    <div class="p-3 border-b bg-gradient-to-r from-indigo-50 to-white flex justify-between items-center flex-wrap gap-2">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-gray-700">${periodLabel} LOT별 수불부</span>
+        <span class="text-sm text-gray-500">품목 ${data.length}건, LOT ${result.total_lot_count || 0}건</span>
+        <button onclick="toggleAllMonthlyLots()" class="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-300">
+          <i class="fas fa-expand-alt mr-1"></i>전체 펼침/접기
+        </button>
+      </div>
+    </div>
+    
+    <div class="overflow-x-auto max-h-[70vh]">
+      <table class="w-full text-sm">
+        <thead class="sticky top-0 bg-gray-100 z-10">
+          <tr class="text-gray-600 text-xs">
+            <th class="p-2 w-6"></th>
+            <th class="p-2 text-left">품목명</th>
+            <th class="p-2 text-center">구분</th>
+            <th class="p-2 text-right text-purple-600">월초</th>
+            <th class="p-2 text-right text-blue-600">입고</th>
+            <th class="p-2 text-right text-orange-600">사용</th>
+            <th class="p-2 text-right text-green-600">조정</th>
+            <th class="p-2 text-right font-bold">월말</th>
+            <th class="p-2 text-center">LOT</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.length === 0 ? `
+            <tr><td colspan="9" class="p-8 text-center text-gray-400">해당월 데이터가 없습니다.</td></tr>
+          ` : data.map((item, idx) => `
+            <tr class="border-b hover:bg-indigo-50 cursor-pointer" onclick="toggleMonthlyLot(${idx})">
+              <td class="p-2 text-center">
+                <i class="fas fa-chevron-right text-gray-400 text-xs transition-transform" id="monthly-chevron-${idx}"></i>
+              </td>
+              <td class="p-2">
+                <div class="font-medium">${item.item_name}</div>
+                <div class="text-xs text-gray-400 font-mono">${item.item_code}</div>
+              </td>
+              <td class="p-2 text-center">
+                <span class="px-2 py-0.5 text-xs rounded ${item.category === '원료' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}">${item.category}</span>
+              </td>
+              <td class="p-2 text-right text-purple-600">${formatNumber(item.summary.carry_over)}</td>
+              <td class="p-2 text-right text-blue-600">${item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-'}</td>
+              <td class="p-2 text-right text-orange-600">${item.summary.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
+              <td class="p-2 text-right text-green-600">${item.summary.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-'}</td>
+              <td class="p-2 text-right font-bold">${formatNumber(item.summary.closing_qty)}</td>
+              <td class="p-2 text-center">
+                <span class="px-2 py-0.5 text-xs rounded ${item.lot_count > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500'}">${item.lot_count}</span>
+              </td>
+            </tr>
+            <tr id="monthly-lot-${idx}" class="hidden">
+              <td colspan="9" class="p-0 bg-indigo-50">
+                ${item.lots && item.lots.length > 0 ? `
+                  <div class="p-2 pl-8">
+                    <table class="w-full text-xs border rounded bg-white overflow-hidden">
+                      <thead>
+                        <tr class="bg-indigo-100 text-indigo-700">
+                          <th class="p-2 text-center w-10">순서</th>
+                          <th class="p-2 text-left">LOT</th>
+                          <th class="p-2 text-center">입고일</th>
+                          <th class="p-2 text-center">유통기한</th>
+                          <th class="p-2 text-center">납품처</th>
+                          <th class="p-2 text-right text-purple-600">이월</th>
+                          <th class="p-2 text-right text-blue-600">입고</th>
+                          <th class="p-2 text-right text-orange-600">사용</th>
+                          <th class="p-2 text-right text-green-600">조정</th>
+                          <th class="p-2 text-right font-bold">잔량</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        ${item.lots.map((lot, lotIdx) => `
+                          <tr class="border-b hover:bg-indigo-50 ${lot.closing_qty <= 0 ? 'text-gray-400 bg-gray-50' : ''}">
+                            <td class="p-2 text-center">
+                              <span class="inline-flex items-center justify-center w-5 h-5 rounded-full ${lot.closing_qty > 0 ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-gray-500'} text-xs font-bold">${lotIdx + 1}</span>
+                            </td>
+                            <td class="p-2 font-mono">${lot.lot_number || '-'}</td>
+                            <td class="p-2 text-center">${lot.inbound_date || '-'}</td>
+                            <td class="p-2 text-center ${isExpiringSoon(lot.expiry_date) ? 'text-red-600 font-bold' : ''}">${lot.expiry_date || '-'}</td>
+                            <td class="p-2 text-center text-gray-500">${lot.supplier || '-'}</td>
+                            <td class="p-2 text-right text-purple-600">${lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-'}</td>
+                            <td class="p-2 text-right text-blue-600">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
+                            <td class="p-2 text-right text-orange-600">${lot.period_usage > 0 ? '-' + formatNumber(lot.period_usage) : '-'}</td>
+                            <td class="p-2 text-right text-green-600">${lot.period_adjustment !== 0 ? formatNumber(lot.period_adjustment) : '-'}</td>
+                            <td class="p-2 text-right font-bold">${formatNumber(lot.closing_qty)} <span class="font-normal text-gray-400">${item.unit || ''}</span></td>
+                          </tr>
+                        `).join('')}
+                      </tbody>
+                    </table>
+                  </div>
+                ` : `
+                  <div class="p-4 pl-8 text-gray-400 text-xs"><i class="fas fa-info-circle mr-1"></i> LOT 정보 없음</div>
+                `}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// 월별 일별 추이 렌더링 (엑셀 재고 시트 스타일)
+function renderMonthlyDailyView(result) {
+  const data = result.data || [];
+  const period = result.period || {};
+  const contentEl = document.getElementById('monthly-content');
+  
+  const periodLabel = `${period.year}년 ${parseInt(period.month)}월`;
+  const days = period.daysInMonth || 31;
+  
+  contentEl.innerHTML = `
+    <div class="p-3 border-b bg-gradient-to-r from-green-50 to-white flex justify-between items-center flex-wrap gap-2">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-gray-700">${periodLabel} 일별 수불 추이</span>
+        <span class="text-sm text-gray-500">품목 ${data.length}건</span>
+      </div>
+      <div class="text-xs text-gray-500">
+        <i class="fas fa-info-circle mr-1"></i> 가로 스크롤로 일자별 데이터 확인
+      </div>
+    </div>
+    
+    <div class="overflow-x-auto">
+      <table class="text-xs border-collapse">
+        <thead class="sticky top-0 z-10">
+          <tr class="bg-gray-200">
+            <th class="p-2 text-left min-w-[150px] sticky left-0 bg-gray-200 z-20 border-r">품목명</th>
+            <th class="p-2 text-center min-w-[40px] border-r bg-purple-100">월초</th>
+            ${Array.from({length: days}, (_, i) => `
+              <th class="p-2 text-center min-w-[70px] ${(i+1) % 7 === 0 || (i+1) % 7 === 6 ? 'bg-gray-100' : 'bg-gray-50'}">
+                <div class="text-gray-600">${i+1}일</div>
+              </th>
+            `).join('')}
+            <th class="p-2 text-center min-w-[50px] border-l bg-yellow-100 font-bold">월말</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.length === 0 ? `
+            <tr><td colspan="${days + 3}" class="p-8 text-center text-gray-400">해당월 데이터가 없습니다.</td></tr>
+          ` : data.map((item, idx) => `
+            <tr class="border-b hover:bg-green-50 ${item.closing_stock <= 0 ? 'text-gray-400' : ''}">
+              <td class="p-2 sticky left-0 bg-white z-10 border-r">
+                <div class="font-medium text-sm truncate max-w-[140px]" title="${item.item_name}">${item.item_name}</div>
+                <div class="text-gray-400 font-mono">${item.item_code}</div>
+                <span class="text-xs px-1 py-0.5 rounded ${item.category === '원료' ? 'bg-green-100 text-green-600' : 'bg-blue-100 text-blue-600'}">${item.category}</span>
+              </td>
+              <td class="p-2 text-center border-r bg-purple-50 font-medium">${formatNumber(item.opening_stock)}</td>
+              ${item.daily_data.map((d, dayIdx) => {
+                const hasActivity = d.inbound > 0 || d.usage > 0 || d.outbound > 0 || d.adjustment !== 0;
+                const isWeekend = (dayIdx + 1) % 7 === 0 || (dayIdx + 1) % 7 === 6;
+                return `
+                  <td class="p-1 text-center ${isWeekend ? 'bg-gray-50' : ''} ${hasActivity ? 'bg-blue-50' : ''}">
+                    ${hasActivity ? `
+                      <div class="space-y-0.5">
+                        ${d.inbound > 0 ? `<div class="text-blue-600">+${formatNumber(d.inbound)}</div>` : ''}
+                        ${d.usage > 0 ? `<div class="text-orange-600">-${formatNumber(d.usage)}</div>` : ''}
+                        ${d.outbound > 0 ? `<div class="text-red-600">-${formatNumber(d.outbound)}</div>` : ''}
+                        ${d.adjustment !== 0 ? `<div class="text-green-600">${d.adjustment > 0 ? '+' : ''}${formatNumber(d.adjustment)}</div>` : ''}
+                        <div class="font-medium border-t pt-0.5">${formatNumber(d.closing)}</div>
+                      </div>
+                    ` : `
+                      <div class="text-gray-400">${formatNumber(d.closing)}</div>
+                    `}
+                  </td>
+                `;
+              }).join('')}
+              <td class="p-2 text-center border-l bg-yellow-50 font-bold">${formatNumber(item.closing_stock)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// LOT 펼침/접기
+function toggleMonthlyLot(idx) {
+  const row = document.getElementById(`monthly-lot-${idx}`);
+  const chevron = document.getElementById(`monthly-chevron-${idx}`);
+  if (row.classList.contains('hidden')) {
+    row.classList.remove('hidden');
+    chevron.classList.add('rotate-90');
+  } else {
+    row.classList.add('hidden');
+    chevron.classList.remove('rotate-90');
+  }
+}
+
+function toggleAllMonthlyLots() {
+  const rows = document.querySelectorAll('[id^="monthly-lot-"]');
+  const chevrons = document.querySelectorAll('[id^="monthly-chevron-"]');
+  const anyHidden = Array.from(rows).some(r => r.classList.contains('hidden'));
+  rows.forEach((r, i) => {
+    if (anyHidden) {
+      r.classList.remove('hidden');
+      chevrons[i]?.classList.add('rotate-90');
+    } else {
+      r.classList.add('hidden');
+      chevrons[i]?.classList.remove('rotate-90');
+    }
+  });
 }
 
 // 기존 함수 호환성 유지
 async function loadMonthlyReport() {
-  await loadInventoryLedger('monthly');
+  await loadMonthlyLedger();
 }
 
 // 유통기한 임박 체크 (30일 이내)

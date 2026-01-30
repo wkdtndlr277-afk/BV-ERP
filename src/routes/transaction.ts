@@ -696,4 +696,397 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
   });
 });
 
+// 일별 LOT 상세 트랜잭션 - 선입선출(FIFO) 추적용
+transactionRoutes.get('/daily-lot-transactions', async (c) => {
+  const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+  const category = c.req.query('category');
+  const item_code = c.req.query('item_code');
+  const search = c.req.query('search');
+  
+  // 1. 해당일 모든 거래 조회 (LOT 정보 포함)
+  let query = `
+    SELECT 
+      t.id,
+      t.trans_date,
+      t.item_code,
+      t.trans_type,
+      t.quantity,
+      t.lot_number,
+      t.memo,
+      t.created_at,
+      m.item_name,
+      m.category,
+      m.unit,
+      i.inbound_date,
+      i.expiry_date,
+      i.origin_qty,
+      i.remain_qty as lot_remain,
+      i.supplier,
+      i.quality_status
+    FROM transactions t
+    JOIN master m ON t.item_code = m.item_code
+    LEFT JOIN inbound i ON t.lot_number = i.lot_number
+    WHERE t.trans_date = ?
+  `;
+  const params: any[] = [date];
+  
+  if (category) {
+    query += ' AND m.category = ?';
+    params.push(category);
+  }
+  if (item_code) {
+    query += ' AND t.item_code = ?';
+    params.push(item_code);
+  }
+  if (search) {
+    query += ' AND (m.item_name LIKE ? OR t.lot_number LIKE ? OR m.item_code LIKE ?)';
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  
+  query += ' ORDER BY t.item_code, i.expiry_date ASC, i.inbound_date ASC, t.id';
+  
+  const result = await c.env.DB.prepare(query).bind(...params).all();
+  
+  // 2. 전일 재고 계산 (각 품목별, LOT별)
+  const prevDate = new Date(date);
+  prevDate.setDate(prevDate.getDate() - 1);
+  const prevDateStr = prevDate.toISOString().split('T')[0];
+  
+  // 품목별로 그룹핑하고, LOT별 FIFO 순서 포함
+  const transactionsByItem: { [key: string]: any[] } = {};
+  
+  for (const trans of (result.results || []) as any[]) {
+    const key = trans.item_code;
+    if (!transactionsByItem[key]) {
+      transactionsByItem[key] = [];
+    }
+    
+    // 전일 재고 조회 (해당 LOT의 전일까지 누적)
+    if (trans.lot_number) {
+      const prevBalance = await c.env.DB.prepare(`
+        SELECT COALESCE(SUM(quantity), 0) as balance
+        FROM transactions
+        WHERE lot_number = ? AND trans_date <= ?
+      `).bind(trans.lot_number, prevDateStr).first();
+      
+      trans.prev_lot_balance = (prevBalance as any)?.balance || 0;
+    }
+    
+    transactionsByItem[key].push(trans);
+  }
+  
+  // 3. 품목별 요약 정보 생성
+  const itemSummary = [];
+  
+  for (const [itemCode, transactions] of Object.entries(transactionsByItem)) {
+    const firstTrans = transactions[0];
+    
+    // 품목의 전일 재고 (모든 LOT 합산)
+    const prevStock = await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(quantity), 0) as balance
+      FROM transactions
+      WHERE item_code = ? AND trans_date <= ?
+    `).bind(itemCode, prevDateStr).first();
+    
+    // 당일 입고/사용/출고/조정 합계
+    const dayTotals = transactions.reduce((acc: any, t: any) => {
+      if (t.trans_type === '입고') acc.inbound += Math.abs(t.quantity);
+      else if (t.trans_type === '사용') acc.usage += Math.abs(t.quantity);
+      else if (t.trans_type === '출고') acc.outbound += Math.abs(t.quantity);
+      else if (t.trans_type === '재고조정') acc.adjustment += t.quantity;
+      return acc;
+    }, { inbound: 0, usage: 0, outbound: 0, adjustment: 0 });
+    
+    // LOT별 그룹핑 (FIFO 순서)
+    const lotGroups: { [key: string]: any } = {};
+    for (const t of transactions) {
+      const lotKey = t.lot_number || '_NO_LOT';
+      if (!lotGroups[lotKey]) {
+        lotGroups[lotKey] = {
+          lot_number: t.lot_number,
+          inbound_date: t.inbound_date,
+          expiry_date: t.expiry_date,
+          supplier: t.supplier,
+          prev_balance: t.prev_lot_balance || 0,
+          transactions: [],
+          inbound: 0,
+          usage: 0,
+          outbound: 0,
+          adjustment: 0
+        };
+      }
+      lotGroups[lotKey].transactions.push(t);
+      if (t.trans_type === '입고') lotGroups[lotKey].inbound += Math.abs(t.quantity);
+      else if (t.trans_type === '사용') lotGroups[lotKey].usage += Math.abs(t.quantity);
+      else if (t.trans_type === '출고') lotGroups[lotKey].outbound += Math.abs(t.quantity);
+      else if (t.trans_type === '재고조정') lotGroups[lotKey].adjustment += t.quantity;
+    }
+    
+    // LOT별 잔량 계산
+    const lotDetails = Object.values(lotGroups).map((lot: any) => ({
+      ...lot,
+      closing_balance: lot.prev_balance + lot.inbound - lot.usage - lot.outbound + lot.adjustment
+    }));
+    
+    const prevBalance = (prevStock as any)?.balance || 0;
+    
+    itemSummary.push({
+      item_code: itemCode,
+      item_name: firstTrans.item_name,
+      category: firstTrans.category,
+      unit: firstTrans.unit,
+      prev_stock: prevBalance,
+      day_inbound: dayTotals.inbound,
+      day_usage: dayTotals.usage,
+      day_outbound: dayTotals.outbound,
+      day_adjustment: dayTotals.adjustment,
+      closing_stock: prevBalance + dayTotals.inbound - dayTotals.usage - dayTotals.outbound + dayTotals.adjustment,
+      lots: lotDetails.sort((a: any, b: any) => {
+        // FIFO: 유통기한 → 입고일 순
+        if (a.expiry_date && b.expiry_date) return a.expiry_date.localeCompare(b.expiry_date);
+        if (a.inbound_date && b.inbound_date) return a.inbound_date.localeCompare(b.inbound_date);
+        return 0;
+      }),
+      lot_count: lotDetails.length
+    });
+  }
+  
+  // 전체 요약
+  const totalSummary = itemSummary.reduce((acc: any, item: any) => {
+    acc.prev_stock += item.prev_stock;
+    acc.day_inbound += item.day_inbound;
+    acc.day_usage += item.day_usage;
+    acc.day_outbound += item.day_outbound;
+    acc.day_adjustment += item.day_adjustment;
+    acc.closing_stock += item.closing_stock;
+    return acc;
+  }, { prev_stock: 0, day_inbound: 0, day_usage: 0, day_outbound: 0, day_adjustment: 0, closing_stock: 0 });
+  
+  return c.json({
+    success: true,
+    date,
+    data: itemSummary,
+    summary: totalSummary,
+    item_count: itemSummary.length,
+    total_lot_count: itemSummary.reduce((sum: number, item: any) => sum + item.lot_count, 0)
+  });
+});
+
+// 월별 일자별 수불부 - 품목별 일별 추이 (엑셀 재고 시트 스타일)
+transactionRoutes.get('/monthly-daily-ledger', async (c) => {
+  const year = c.req.query('year') || new Date().getFullYear().toString();
+  const month = c.req.query('month') || String(new Date().getMonth() + 1).padStart(2, '0');
+  const category = c.req.query('category');
+  const item_code = c.req.query('item_code');
+  const search = c.req.query('search');
+  
+  const startDate = `${year}-${month.padStart(2, '0')}-01`;
+  const daysInMonth = new Date(parseInt(year), parseInt(month), 0).getDate();
+  const endDate = `${year}-${month.padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+  
+  // 품목 조회
+  let itemQuery = `
+    SELECT 
+      m.item_code,
+      m.item_name,
+      m.category,
+      m.unit,
+      m.current_stock,
+      m.safety_stock
+    FROM master m
+    WHERE (
+      m.current_stock > 0
+      OR EXISTS (
+        SELECT 1 FROM transactions t 
+        WHERE t.item_code = m.item_code 
+        AND t.trans_date >= ? AND t.trans_date <= ?
+      )
+      OR EXISTS (
+        SELECT 1 FROM inbound i 
+        WHERE i.item_code = m.item_code 
+        AND i.inbound_date >= ? AND i.inbound_date <= ?
+      )
+    )
+  `;
+  const itemParams: any[] = [startDate, endDate, startDate, endDate];
+  
+  if (category) {
+    itemQuery += ' AND m.category = ?';
+    itemParams.push(category);
+  }
+  if (item_code) {
+    itemQuery += ' AND m.item_code = ?';
+    itemParams.push(item_code);
+  }
+  if (search) {
+    itemQuery += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
+    itemParams.push(`%${search}%`, `%${search}%`);
+  }
+  
+  itemQuery += ' ORDER BY m.category, m.item_name';
+  
+  const items = await c.env.DB.prepare(itemQuery).bind(...itemParams).all();
+  
+  // 각 품목의 일별 수불 데이터 생성
+  const itemData = await Promise.all((items.results || []).map(async (item: any) => {
+    // 월초 재고 (전월말까지의 거래 합계)
+    const openingResult = await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(quantity), 0) as balance
+      FROM transactions
+      WHERE item_code = ? AND trans_date < ?
+    `).bind(item.item_code, startDate).first();
+    
+    const openingStock = (openingResult as any)?.balance || 0;
+    
+    // 일별 입고/사용/출고/조정 데이터
+    const dailyTrans = await c.env.DB.prepare(`
+      SELECT 
+        trans_date,
+        SUM(CASE WHEN trans_type = '입고' THEN quantity ELSE 0 END) as inbound,
+        SUM(CASE WHEN trans_type = '사용' THEN ABS(quantity) ELSE 0 END) as usage,
+        SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END) as outbound,
+        SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END) as adjustment
+      FROM transactions
+      WHERE item_code = ? AND trans_date >= ? AND trans_date <= ?
+      GROUP BY trans_date
+      ORDER BY trans_date
+    `).bind(item.item_code, startDate, endDate).all();
+    
+    // 일별 데이터 맵 생성
+    const dailyMap: { [key: string]: any } = {};
+    for (const trans of (dailyTrans.results || []) as any[]) {
+      dailyMap[trans.trans_date] = trans;
+    }
+    
+    // 모든 날짜에 대해 데이터 생성 (빈 날짜 포함)
+    const dailyData = [];
+    let runningStock = openingStock;
+    
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${year}-${month.padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const dayTrans = dailyMap[dateStr] || { inbound: 0, usage: 0, outbound: 0, adjustment: 0 };
+      
+      const dayChange = dayTrans.inbound - dayTrans.usage - dayTrans.outbound + dayTrans.adjustment;
+      runningStock += dayChange;
+      
+      dailyData.push({
+        date: dateStr,
+        day,
+        inbound: dayTrans.inbound || 0,
+        usage: dayTrans.usage || 0,
+        outbound: dayTrans.outbound || 0,
+        adjustment: dayTrans.adjustment || 0,
+        closing: runningStock
+      });
+    }
+    
+    // 월 합계
+    const monthTotal = dailyData.reduce((acc: any, d: any) => {
+      acc.inbound += d.inbound;
+      acc.usage += d.usage;
+      acc.outbound += d.outbound;
+      acc.adjustment += d.adjustment;
+      return acc;
+    }, { inbound: 0, usage: 0, outbound: 0, adjustment: 0 });
+    
+    return {
+      ...item,
+      opening_stock: openingStock,
+      closing_stock: runningStock,
+      monthly_total: monthTotal,
+      daily_data: dailyData
+    };
+  }));
+  
+  return c.json({
+    success: true,
+    period: { year, month, startDate, endDate, daysInMonth },
+    data: itemData,
+    item_count: itemData.length
+  });
+});
+
+// LOT별 선입선출 현황 조회
+transactionRoutes.get('/lot-fifo-status', async (c) => {
+  const category = c.req.query('category');
+  const item_code = c.req.query('item_code');
+  const search = c.req.query('search');
+  const show_empty = c.req.query('show_empty') === 'true';
+  
+  let query = `
+    SELECT 
+      i.lot_number,
+      i.item_code,
+      m.item_name,
+      m.category,
+      m.unit,
+      i.inbound_date,
+      i.expiry_date,
+      i.origin_qty,
+      i.remain_qty,
+      i.supplier,
+      i.quality_status,
+      (julianday(i.expiry_date) - julianday('now')) as days_until_expiry
+    FROM inbound i
+    JOIN master m ON i.item_code = m.item_code
+    WHERE 1=1
+  `;
+  const params: any[] = [];
+  
+  if (!show_empty) {
+    query += ' AND i.remain_qty > 0';
+  }
+  if (category) {
+    query += ' AND m.category = ?';
+    params.push(category);
+  }
+  if (item_code) {
+    query += ' AND i.item_code = ?';
+    params.push(item_code);
+  }
+  if (search) {
+    query += ' AND (m.item_name LIKE ? OR i.lot_number LIKE ? OR m.item_code LIKE ?)';
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+  }
+  
+  // FIFO 순서: 유통기한 → 입고일
+  query += ' ORDER BY m.item_name, i.expiry_date ASC, i.inbound_date ASC';
+  
+  const result = await c.env.DB.prepare(query).bind(...params).all();
+  
+  // 품목별 그룹핑
+  const itemGroups: { [key: string]: any } = {};
+  
+  for (const lot of (result.results || []) as any[]) {
+    const key = lot.item_code;
+    if (!itemGroups[key]) {
+      itemGroups[key] = {
+        item_code: lot.item_code,
+        item_name: lot.item_name,
+        category: lot.category,
+        unit: lot.unit,
+        total_remain: 0,
+        lots: []
+      };
+    }
+    itemGroups[key].total_remain += lot.remain_qty;
+    itemGroups[key].lots.push({
+      ...lot,
+      fifo_order: itemGroups[key].lots.length + 1, // FIFO 사용 순서
+      status: lot.days_until_expiry < 0 ? '만료' :
+              lot.days_until_expiry <= 7 ? '임박' :
+              lot.days_until_expiry <= 30 ? '주의' : '정상'
+    });
+  }
+  
+  const data = Object.values(itemGroups);
+  
+  return c.json({
+    success: true,
+    data,
+    item_count: data.length,
+    total_lot_count: data.reduce((sum: any, item: any) => sum + item.lots.length, 0)
+  });
+});
+
 export default transactionRoutes;

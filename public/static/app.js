@@ -1476,6 +1476,273 @@ async function processInboundUpload() {
   }
 }
 
+// ========== 제품 마스터 등록 ==========
+
+// 제품 마스터 등록 모달 표시
+function showProductMasterModal() {
+  // 기존 제품 코드 조회해서 다음 번호 계산
+  const existingCodes = state.masterItems
+    .filter(i => i.item_code.startsWith('PD') || i.category === '제품')
+    .map(i => {
+      const match = i.item_code.match(/PD(\d+)/);
+      return match ? parseInt(match[1]) : 0;
+    });
+  const nextNum = Math.max(0, ...existingCodes) + 1;
+  const suggestedCode = `PD${String(nextNum).padStart(3, '0')}`;
+  
+  showModal('제품 마스터 등록', `
+    <div class="space-y-4">
+      <!-- 탭 버튼 -->
+      <div class="flex border-b">
+        <button id="product-tab-single" onclick="switchProductTab('single')" 
+                class="px-4 py-2 -mb-px border-b-2 border-blue-500 text-blue-600 font-medium">
+          <i class="fas fa-plus mr-1"></i> 개별 등록
+        </button>
+        <button id="product-tab-bulk" onclick="switchProductTab('bulk')" 
+                class="px-4 py-2 -mb-px border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          <i class="fas fa-file-upload mr-1"></i> 일괄 등록
+        </button>
+      </div>
+      
+      <!-- 개별 등록 탭 -->
+      <div id="product-single-form" class="space-y-4">
+        <div class="bg-green-50 border border-green-200 rounded-lg p-3">
+          <p class="text-sm text-green-700"><i class="fas fa-info-circle mr-1"></i> 새 제품을 등록하면 바로 재고 관리에 사용할 수 있습니다.</p>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">제품코드 <span class="text-red-500">*</span></label>
+            <input type="text" id="new-product-code" value="${suggestedCode}" required
+                   class="w-full px-3 py-2 border rounded-lg" placeholder="PD001">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">제품명 <span class="text-red-500">*</span></label>
+            <input type="text" id="new-product-name" required
+                   class="w-full px-3 py-2 border rounded-lg" placeholder="제품명">
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+            <select id="new-product-unit" class="w-full px-3 py-2 border rounded-lg">
+              <option value="ea">ea (개)</option>
+              <option value="box">box</option>
+              <option value="pack">pack</option>
+              <option value="kg">kg</option>
+              <option value="g">g</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">안전재고</label>
+            <input type="number" id="new-product-safety" value="10" min="0" step="1"
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">유통기한(일)</label>
+            <input type="number" id="new-product-expiry" value="30" min="1"
+                   class="w-full px-3 py-2 border rounded-lg">
+          </div>
+        </div>
+        
+        <div class="flex justify-end pt-2">
+          <button onclick="saveNewProduct()" class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+            <i class="fas fa-save mr-1"></i> 등록
+          </button>
+        </div>
+      </div>
+      
+      <!-- 일괄 등록 탭 -->
+      <div id="product-bulk-form" class="hidden space-y-4">
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 업로드 형식</h4>
+          <p class="text-sm text-blue-700 mb-2">CSV 또는 엑셀 데이터를 붙여넣기 하세요.</p>
+          <p class="text-xs text-blue-600">형식: 제품코드, 제품명, 단위, 안전재고, 유통기한(일)</p>
+          <p class="text-xs text-green-600 mt-1"><i class="fas fa-magic mr-1"></i> 제품명만 입력해도 코드가 자동 생성됩니다!</p>
+        </div>
+        
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-sm font-medium text-gray-700">데이터 입력</label>
+            <button onclick="downloadProductTemplate()" class="text-sm text-blue-600 hover:text-blue-800">
+              <i class="fas fa-download mr-1"></i> 템플릿 다운로드
+            </button>
+          </div>
+          <textarea id="product-upload-data" rows="10" 
+                    class="w-full border-2 border-gray-200 rounded-lg px-4 py-3 text-sm font-mono focus:border-blue-500"
+                    placeholder="간편 입력 (제품명만):
+식빵
+바게트
+크루아상
+
+또는 상세 입력:
+PD001, 식빵, ea, 20, 7
+PD002, 바게트, ea, 10, 3"></textarea>
+        </div>
+        
+        <div class="flex justify-end pt-2">
+          <button onclick="processProductUpload()" class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <i class="fas fa-upload mr-1"></i> 업로드
+          </button>
+        </div>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+  `);
+}
+
+// 제품 탭 전환
+function switchProductTab(tab) {
+  const singleTab = document.getElementById('product-tab-single');
+  const bulkTab = document.getElementById('product-tab-bulk');
+  const singleForm = document.getElementById('product-single-form');
+  const bulkForm = document.getElementById('product-bulk-form');
+  
+  if (tab === 'single') {
+    singleTab.classList.add('border-blue-500', 'text-blue-600');
+    singleTab.classList.remove('border-transparent', 'text-gray-500');
+    bulkTab.classList.remove('border-blue-500', 'text-blue-600');
+    bulkTab.classList.add('border-transparent', 'text-gray-500');
+    singleForm.classList.remove('hidden');
+    bulkForm.classList.add('hidden');
+  } else {
+    bulkTab.classList.add('border-blue-500', 'text-blue-600');
+    bulkTab.classList.remove('border-transparent', 'text-gray-500');
+    singleTab.classList.remove('border-blue-500', 'text-blue-600');
+    singleTab.classList.add('border-transparent', 'text-gray-500');
+    bulkForm.classList.remove('hidden');
+    singleForm.classList.add('hidden');
+  }
+}
+
+// 개별 제품 저장
+async function saveNewProduct() {
+  const data = {
+    item_code: document.getElementById('new-product-code').value.trim(),
+    item_name: document.getElementById('new-product-name').value.trim(),
+    category: '제품',
+    unit: document.getElementById('new-product-unit').value,
+    safety_stock: parseFloat(document.getElementById('new-product-safety').value) || 10,
+    expiry_days: parseInt(document.getElementById('new-product-expiry').value) || 30
+  };
+  
+  if (!data.item_code || !data.item_name) {
+    showToast('제품코드와 제품명을 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/master', 'POST', data);
+    showToast(`"${data.item_name}" 제품이 등록되었습니다`, 'success');
+    
+    // 마스터 데이터 갱신
+    await loadMasterData();
+    
+    closeModal();
+    
+    // 재고 등록 페이지라면 다시 렌더링
+    if (window.location.hash === '#quick-stock') {
+      renderQuickStock();
+    }
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 제품 일괄 업로드 처리
+async function processProductUpload() {
+  const data = document.getElementById('product-upload-data').value.trim();
+  if (!data) {
+    showToast('데이터를 입력해주세요', 'warning');
+    return;
+  }
+  
+  const lines = data.split('\n').filter(line => line.trim());
+  const items = [];
+  
+  // 기존 제품 코드 목록 가져오기 (자동 코드 생성용)
+  let existingCodes = state.masterItems.map(m => m.item_code);
+  
+  // 자동 품목코드 생성 함수
+  const generateProductCode = () => {
+    let num = 1;
+    while (existingCodes.includes(`PD${String(num).padStart(3, '0')}`)) {
+      num++;
+    }
+    const code = `PD${String(num).padStart(3, '0')}`;
+    existingCodes.push(code);
+    return code;
+  };
+  
+  for (const line of lines) {
+    // 콤마 또는 탭으로 구분
+    const parts = line.split(/[,\t]/).map(p => p.trim()).filter(p => p);
+    
+    if (parts.length >= 2) {
+      // 형식: 제품코드, 제품명, 단위, 안전재고, 유통기한
+      items.push({
+        item_code: parts[0],
+        item_name: parts[1],
+        category: '제품',
+        unit: parts[2] || 'ea',
+        safety_stock: parseFloat(parts[3]) || 10,
+        expiry_days: parseInt(parts[4]) || 30
+      });
+    } else if (parts.length === 1 && parts[0]) {
+      // 형식: 제품명만 (자동 코드 생성)
+      const name = parts[0];
+      items.push({
+        item_code: generateProductCode(),
+        item_name: name,
+        category: '제품',
+        unit: 'ea',
+        safety_stock: 10,
+        expiry_days: 30
+      });
+    }
+  }
+  
+  if (items.length === 0) {
+    showToast('유효한 데이터가 없습니다', 'error');
+    return;
+  }
+  
+  try {
+    const result = await api('/master/upload', 'POST', { items });
+    showToast(result.message, result.results.failed > 0 ? 'warning' : 'success');
+    
+    closeModal();
+    await loadMasterData();
+    
+    showToast(`제품 ${result.results.success}건 등록 완료`, 'success');
+    
+    // 재고 등록 페이지라면 다시 렌더링
+    if (window.location.hash === '#quick-stock') {
+      renderQuickStock();
+    }
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 제품 템플릿 다운로드
+function downloadProductTemplate() {
+  const template = `제품코드,제품명,단위,안전재고,유통기한(일)
+PD001,식빵,ea,20,7
+PD002,바게트,ea,10,3
+PD003,크루아상,ea,30,5
+PD004,케이크,ea,5,10`;
+  
+  const blob = new Blob(['\uFEFF' + template], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = '제품마스터_템플릿.csv';
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
 // 품목 선택
 function selectInboundItem(code, name, unit, expiryDays, isNew = false) {
   document.getElementById('inbound-item').value = code;
@@ -1819,6 +2086,28 @@ async function renderQuickStock() {
   const products = state.masterItems.filter(item => item.category === '제품');
   window.quickStockProducts = products;
   window.selectedQuickStockItems = [];
+  
+  // 제품 마스터가 없으면 등록 안내 표시
+  if (products.length === 0) {
+    content.innerHTML = `
+      <div class="max-w-4xl mx-auto space-y-6">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-clipboard-check mr-2 text-haccp-primary"></i>
+          제품 재고 등록
+        </h2>
+        
+        <div class="bg-yellow-50 border border-yellow-300 rounded-xl p-8 text-center">
+          <i class="fas fa-exclamation-circle text-yellow-500 text-5xl mb-4"></i>
+          <h3 class="text-xl font-bold text-yellow-800 mb-2">등록된 제품이 없습니다</h3>
+          <p class="text-yellow-700 mb-6">제품 재고를 등록하려면 먼저 제품 마스터를 등록해야 합니다.</p>
+          <button onclick="showProductMasterModal()" class="bg-yellow-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-yellow-700 transition">
+            <i class="fas fa-plus mr-2"></i> 제품 마스터 등록하기
+          </button>
+        </div>
+      </div>
+    `;
+    return;
+  }
   
   content.innerHTML = `
     <div class="max-w-4xl mx-auto space-y-6">
@@ -7198,6 +7487,13 @@ window.showNewItemModal = showNewItemModal;
 window.saveNewItemAndSelect = saveNewItemAndSelect;
 window.showInboundUploadModal = showInboundUploadModal;
 window.processInboundUpload = processInboundUpload;
+
+// 제품 마스터 등록 함수들
+window.showProductMasterModal = showProductMasterModal;
+window.saveNewProduct = saveNewProduct;
+window.processProductUpload = processProductUpload;
+window.downloadProductTemplate = downloadProductTemplate;
+window.switchProductTab = switchProductTab;
 
 // 거래처 검색 함수들
 window.filterSuppliers = filterSuppliers;

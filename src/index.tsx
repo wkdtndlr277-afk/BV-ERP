@@ -19,6 +19,8 @@ import productCatalogRoutes from './routes/product-catalog';
 import authRoutes from './routes/auth';
 import microbialRoutes from './routes/microbial';
 import processKpiRoutes from './routes/process-kpi';
+import bomRoutes from './routes/bom';
+import productionRoutes from './routes/production';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -42,6 +44,8 @@ app.route('/api/product-catalog', productCatalogRoutes);
 app.route('/api/auth', authRoutes);
 app.route('/api/microbial', microbialRoutes);
 app.route('/api/process-kpi', processKpiRoutes);
+app.route('/api/bom', bomRoutes);
+app.route('/api/production', productionRoutes);
 
 // 시스템 버전
 const SYSTEM_VERSION = '1.2.0';
@@ -176,9 +180,23 @@ app.get('/*', (c) => {
                     <span>출고 등록</span>
                 </a>
                 
-                <a href="#quick-stock" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="quick-stock">
-                    <i class="fas fa-clipboard-check w-5"></i>
-                    <span>제품 재고 등록</span>
+                <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">생산 관리</p>
+                </div>
+                
+                <a href="#production" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production">
+                    <i class="fas fa-industry w-5"></i>
+                    <span>생산 등록</span>
+                </a>
+                
+                <a href="#bom" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="bom">
+                    <i class="fas fa-list-alt w-5"></i>
+                    <span>BOM (배합표)</span>
+                </a>
+                
+                <a href="#product-outbound" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="product-outbound">
+                    <i class="fas fa-shipping-fast w-5"></i>
+                    <span>제품 출고</span>
                 </a>
                 
                 <div class="pt-4 pb-2">

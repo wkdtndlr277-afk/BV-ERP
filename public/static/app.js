@@ -791,6 +791,9 @@ function renderPage(page) {
     case 'usage': renderUsage(); break;
     case 'outbound': renderOutbound(); break;
     case 'quick-stock': renderQuickStock(); break;
+    case 'production': renderProduction(); break;
+    case 'bom': renderBOM(); break;
+    case 'product-outbound': renderProductOutbound(); break;
     case 'inventory': renderInventory(); break;
     case 'transaction-search': renderTransactionSearch(); break;
     case 'lot-history': renderLotHistory(); break;
@@ -8949,3 +8952,1136 @@ window.downloadMasterList = downloadMasterList;
 window.printMasterList = printMasterList;
 window.downloadTransactionSearch = downloadTransactionSearch;
 window.printTransactionSearch = printTransactionSearch;
+
+// ========== 생산 관리 ==========
+
+let productionData = [];
+
+// 생산 등록 페이지
+async function renderProduction() {
+  const content = document.getElementById('page-content');
+  const today = formatDate(new Date());
+  
+  // 제품 목록 (BOM 있는 제품 우선)
+  const products = state.masterItems.filter(item => item.category === '제품');
+  const productOptions = products.map(p => 
+    `<option value="${p.item_code}">${p.item_name} (${p.item_code})</option>`
+  ).join('');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-industry mr-2 text-haccp-primary"></i>
+          생산 등록
+        </h2>
+        <button onclick="loadProductionHistory()" class="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200">
+          <i class="fas fa-history mr-1"></i> 생산 이력
+        </button>
+      </div>
+      
+      <!-- 생산 등록 폼 -->
+      <div class="bg-white rounded-xl shadow p-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">생산일 <span class="text-red-500">*</span></label>
+            <input type="date" id="prod-date" value="${today}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택 <span class="text-red-500">*</span></label>
+            <select id="prod-product" class="w-full border rounded-lg px-4 py-2" onchange="loadProductBOM()">
+              <option value="">제품을 선택하세요</option>
+              ${productOptions}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">생산 수량 <span class="text-red-500">*</span></label>
+            <input type="number" id="prod-quantity" min="1" value="1" class="w-full border rounded-lg px-4 py-2" onchange="updateMaterialRequirements()">
+          </div>
+        </div>
+        
+        <!-- BOM 기반 원재료 소요량 -->
+        <div id="bom-requirements" class="hidden">
+          <div class="border-t pt-4 mt-4">
+            <h3 class="font-bold text-gray-800 mb-3">
+              <i class="fas fa-list-alt mr-1 text-blue-500"></i>
+              원재료 소요량 (BOM 기준)
+            </h3>
+            <div id="bom-table" class="overflow-x-auto">
+              <!-- BOM 테이블 로드 -->
+            </div>
+          </div>
+        </div>
+        
+        <!-- BOM 없는 경우 안내 -->
+        <div id="no-bom-warning" class="hidden">
+          <div class="bg-yellow-50 border border-yellow-300 rounded-lg p-4 mt-4">
+            <p class="text-yellow-800">
+              <i class="fas fa-exclamation-triangle mr-1"></i>
+              <strong>BOM(배합표)이 등록되지 않은 제품입니다.</strong>
+            </p>
+            <p class="text-sm text-yellow-700 mt-1">원재료 자동 차감 없이 제품 재고만 증가합니다.</p>
+            <button onclick="navigateTo('bom')" class="mt-2 text-sm text-blue-600 hover:underline">
+              <i class="fas fa-arrow-right mr-1"></i> BOM 등록하러 가기
+            </button>
+          </div>
+        </div>
+        
+        <div class="mt-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">비고</label>
+          <input type="text" id="prod-memo" class="w-full border rounded-lg px-4 py-2" placeholder="생산 관련 메모">
+        </div>
+        
+        <div class="mt-6 flex justify-end">
+          <button onclick="submitProduction()" id="prod-submit-btn" class="bg-green-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            <i class="fas fa-check mr-2"></i>
+            생산 등록
+          </button>
+        </div>
+      </div>
+      
+      <!-- 오늘 생산 현황 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="p-4 border-b bg-gray-50">
+          <h3 class="font-bold text-gray-800">
+            <i class="fas fa-clipboard-list mr-2"></i>
+            오늘 생산 현황
+          </h3>
+        </div>
+        <div id="today-production" class="p-4">
+          <div class="text-center text-gray-400 py-8">
+            <i class="fas fa-spinner fa-spin text-2xl"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadTodayProduction();
+}
+
+// 제품 BOM 로드
+async function loadProductBOM() {
+  const productCode = document.getElementById('prod-product').value;
+  const bomReq = document.getElementById('bom-requirements');
+  const noBomWarn = document.getElementById('no-bom-warning');
+  
+  if (!productCode) {
+    bomReq.classList.add('hidden');
+    noBomWarn.classList.add('hidden');
+    return;
+  }
+  
+  try {
+    const result = await api(`/bom/product/${productCode}`);
+    const materials = result.data?.materials || [];
+    
+    window.currentBOM = materials;
+    
+    if (materials.length === 0) {
+      bomReq.classList.add('hidden');
+      noBomWarn.classList.remove('hidden');
+    } else {
+      noBomWarn.classList.add('hidden');
+      bomReq.classList.remove('hidden');
+      updateMaterialRequirements();
+    }
+  } catch (e) {
+    bomReq.classList.add('hidden');
+    noBomWarn.classList.remove('hidden');
+  }
+}
+
+// 원재료 소요량 업데이트
+function updateMaterialRequirements() {
+  const quantity = parseInt(document.getElementById('prod-quantity').value) || 0;
+  const materials = window.currentBOM || [];
+  const tableDiv = document.getElementById('bom-table');
+  
+  if (materials.length === 0 || quantity <= 0) {
+    tableDiv.innerHTML = '<p class="text-gray-400">제품과 수량을 선택하세요</p>';
+    return;
+  }
+  
+  let hasShortage = false;
+  
+  const rows = materials.map(mat => {
+    const required = mat.quantity * quantity;
+    const requiredKg = mat.unit === 'g' ? required / 1000 : required;
+    const stock = mat.current_stock || 0;
+    const isAvailable = stock >= requiredKg;
+    if (!isAvailable) hasShortage = true;
+    
+    return `
+      <tr class="${isAvailable ? '' : 'bg-red-50'}">
+        <td class="px-4 py-2 border">${mat.item_name || mat.item_code}</td>
+        <td class="px-4 py-2 border text-center">${mat.quantity} ${mat.unit}</td>
+        <td class="px-4 py-2 border text-right font-medium">${formatNumber(required)} ${mat.unit}</td>
+        <td class="px-4 py-2 border text-right">${formatNumber(stock)} kg</td>
+        <td class="px-4 py-2 border text-center">
+          ${isAvailable 
+            ? '<span class="text-green-600"><i class="fas fa-check-circle"></i> 충분</span>' 
+            : '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i> 부족</span>'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+  
+  tableDiv.innerHTML = `
+    <table class="w-full text-sm border-collapse">
+      <thead class="bg-gray-100">
+        <tr>
+          <th class="px-4 py-2 border text-left">원재료</th>
+          <th class="px-4 py-2 border text-center">1개당</th>
+          <th class="px-4 py-2 border text-center">필요량</th>
+          <th class="px-4 py-2 border text-center">현재고</th>
+          <th class="px-4 py-2 border text-center">상태</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${hasShortage ? '<p class="text-red-600 mt-2 text-sm"><i class="fas fa-exclamation-triangle mr-1"></i> 재고가 부족한 원재료가 있습니다.</p>' : ''}
+  `;
+  
+  // 재고 부족 시 버튼 비활성화
+  const submitBtn = document.getElementById('prod-submit-btn');
+  if (hasShortage && materials.length > 0) {
+    submitBtn.disabled = true;
+  } else {
+    submitBtn.disabled = false;
+  }
+}
+
+// 생산 등록 제출
+async function submitProduction() {
+  const data = {
+    prod_date: document.getElementById('prod-date').value,
+    product_code: document.getElementById('prod-product').value,
+    quantity: parseInt(document.getElementById('prod-quantity').value),
+    memo: document.getElementById('prod-memo').value
+  };
+  
+  if (!data.prod_date || !data.product_code || !data.quantity) {
+    showToast('생산일, 제품, 수량을 입력해주세요', 'warning');
+    return;
+  }
+  
+  try {
+    const result = await api('/production', 'POST', data);
+    showToast(`생산 등록 완료! LOT: ${result.data?.lot_number}`, 'success');
+    
+    // 폼 초기화
+    document.getElementById('prod-product').value = '';
+    document.getElementById('prod-quantity').value = '1';
+    document.getElementById('prod-memo').value = '';
+    document.getElementById('bom-requirements').classList.add('hidden');
+    document.getElementById('no-bom-warning').classList.add('hidden');
+    window.currentBOM = [];
+    
+    // 마스터 데이터 갱신 및 오늘 생산 리로드
+    await loadMasterData();
+    loadTodayProduction();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 오늘 생산 현황 로드
+async function loadTodayProduction() {
+  const today = formatDate(new Date());
+  const container = document.getElementById('today-production');
+  
+  try {
+    const result = await api(`/production?start_date=${today}&end_date=${today}`);
+    const data = result.data || [];
+    
+    if (data.length === 0) {
+      container.innerHTML = '<p class="text-center text-gray-400 py-4">오늘 생산 기록이 없습니다</p>';
+      return;
+    }
+    
+    const totalQty = data.filter(d => d.status === '완료').reduce((sum, d) => sum + d.quantity, 0);
+    
+    container.innerHTML = `
+      <div class="mb-4 flex items-center gap-4">
+        <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm">
+          총 ${data.length}건 / ${formatNumber(totalQty)}개 생산
+        </span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-3 py-2 text-left">제품</th>
+              <th class="px-3 py-2 text-center">수량</th>
+              <th class="px-3 py-2 text-center">LOT</th>
+              <th class="px-3 py-2 text-center">상태</th>
+              <th class="px-3 py-2 text-center">작업</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${data.map(p => `
+              <tr class="hover:bg-gray-50">
+                <td class="px-3 py-2">${p.product_name || p.product_code}</td>
+                <td class="px-3 py-2 text-center font-medium">${formatNumber(p.quantity)} ${p.product_unit || 'ea'}</td>
+                <td class="px-3 py-2 text-center text-xs text-gray-500">${p.lot_number || '-'}</td>
+                <td class="px-3 py-2 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${p.status === '완료' ? 'bg-green-100 text-green-700' : p.status === '취소' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}">
+                    ${p.status}
+                  </span>
+                </td>
+                <td class="px-3 py-2 text-center">
+                  ${p.status === '완료' ? `<button onclick="cancelProduction(${p.id})" class="text-red-500 hover:text-red-700 text-xs"><i class="fas fa-undo"></i> 취소</button>` : '-'}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = '<p class="text-center text-red-500 py-4">데이터 로드 실패</p>';
+  }
+}
+
+// 생산 취소
+async function cancelProduction(id) {
+  if (!confirm('이 생산을 취소하시겠습니까?\\n\\n사용된 원재료가 복구되고, 생산된 제품 재고가 차감됩니다.')) {
+    return;
+  }
+  
+  try {
+    await api(`/production/${id}/cancel`, 'POST');
+    showToast('생산이 취소되었습니다', 'success');
+    await loadMasterData();
+    loadTodayProduction();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 생산 이력 보기
+async function loadProductionHistory() {
+  const thirtyDaysAgo = formatDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const today = formatDate(new Date());
+  
+  showModal('생산 이력 (최근 30일)', `
+    <div class="max-h-96 overflow-y-auto">
+      <div id="production-history-content">
+        <div class="text-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i></div>
+      </div>
+    </div>
+  `, '<button onclick="closeModal()" class="px-4 py-2 border rounded-lg">닫기</button>');
+  
+  try {
+    const result = await api(`/production?start_date=${thirtyDaysAgo}&end_date=${today}`);
+    const data = result.data || [];
+    
+    const contentDiv = document.getElementById('production-history-content');
+    
+    if (data.length === 0) {
+      contentDiv.innerHTML = '<p class="text-center text-gray-400 py-4">생산 이력이 없습니다</p>';
+      return;
+    }
+    
+    contentDiv.innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 sticky top-0">
+          <tr>
+            <th class="px-3 py-2 text-left">생산일</th>
+            <th class="px-3 py-2 text-left">제품</th>
+            <th class="px-3 py-2 text-center">수량</th>
+            <th class="px-3 py-2 text-center">상태</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          ${data.map(p => `
+            <tr class="hover:bg-gray-50">
+              <td class="px-3 py-2">${p.prod_date}</td>
+              <td class="px-3 py-2">${p.product_name || p.product_code}</td>
+              <td class="px-3 py-2 text-center">${formatNumber(p.quantity)}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="px-2 py-1 rounded text-xs ${p.status === '완료' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${p.status}</span>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    document.getElementById('production-history-content').innerHTML = '<p class="text-center text-red-500">로드 실패</p>';
+  }
+}
+
+// 생산 관리 함수들 전역 노출
+window.renderProduction = renderProduction;
+window.loadProductBOM = loadProductBOM;
+window.updateMaterialRequirements = updateMaterialRequirements;
+window.submitProduction = submitProduction;
+window.loadTodayProduction = loadTodayProduction;
+window.cancelProduction = cancelProduction;
+window.loadProductionHistory = loadProductionHistory;
+
+// ========== BOM (배합표) 관리 ==========
+
+let bomData = [];
+
+async function renderBOM() {
+  const content = document.getElementById('page-content');
+  
+  // 제품 목록
+  const products = state.masterItems.filter(item => item.category === '제품');
+  const productOptions = products.map(p => 
+    `<option value="${p.item_code}">${p.item_name} (${p.item_code})</option>`
+  ).join('');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-list-alt mr-2 text-haccp-primary"></i>
+          BOM (배합표) 관리
+        </h2>
+        <button onclick="showBOMImportModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+          <i class="fas fa-file-upload mr-1"></i> 엑셀 Import
+        </button>
+      </div>
+      
+      <!-- 제품 선택 -->
+      <div class="bg-white rounded-xl shadow p-6">
+        <div class="flex gap-4 items-end">
+          <div class="flex-1">
+            <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택</label>
+            <select id="bom-product-select" class="w-full border rounded-lg px-4 py-2" onchange="loadBOMForProduct()">
+              <option value="">제품을 선택하세요</option>
+              ${productOptions}
+            </select>
+          </div>
+          <button onclick="showAddBOMModal()" id="add-bom-btn" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50" disabled>
+            <i class="fas fa-plus mr-1"></i> 원재료 추가
+          </button>
+        </div>
+      </div>
+      
+      <!-- BOM 목록 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="p-4 border-b bg-gray-50 flex items-center justify-between">
+          <h3 class="font-bold text-gray-800" id="bom-product-title">
+            <i class="fas fa-clipboard-list mr-2"></i>
+            배합표
+          </h3>
+          <span id="bom-count" class="text-sm text-gray-500"></span>
+        </div>
+        <div id="bom-list" class="p-4">
+          <p class="text-center text-gray-400 py-8">제품을 선택하세요</p>
+        </div>
+      </div>
+      
+      <!-- BOM 있는 제품 / 없는 제품 목록 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-white rounded-xl shadow">
+          <div class="p-4 border-b bg-green-50">
+            <h3 class="font-bold text-green-800"><i class="fas fa-check-circle mr-2"></i>BOM 등록 완료</h3>
+          </div>
+          <div id="products-with-bom" class="p-4 max-h-60 overflow-y-auto">
+            <p class="text-center text-gray-400 py-4"><i class="fas fa-spinner fa-spin"></i></p>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow">
+          <div class="p-4 border-b bg-yellow-50">
+            <h3 class="font-bold text-yellow-800"><i class="fas fa-exclamation-circle mr-2"></i>BOM 미등록</h3>
+          </div>
+          <div id="products-without-bom" class="p-4 max-h-60 overflow-y-auto">
+            <p class="text-center text-gray-400 py-4"><i class="fas fa-spinner fa-spin"></i></p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadBOMSummary();
+}
+
+// BOM 요약 로드
+async function loadBOMSummary() {
+  try {
+    const [withBom, withoutBom] = await Promise.all([
+      api('/bom/products/with-bom'),
+      api('/bom/products/without-bom')
+    ]);
+    
+    const withDiv = document.getElementById('products-with-bom');
+    const withoutDiv = document.getElementById('products-without-bom');
+    
+    if ((withBom.data || []).length === 0) {
+      withDiv.innerHTML = '<p class="text-center text-gray-400 py-4">없음</p>';
+    } else {
+      withDiv.innerHTML = (withBom.data || []).map(p => `
+        <div class="flex items-center justify-between py-2 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer" onclick="selectBOMProduct('${p.item_code}')">
+          <span>${p.item_name}</span>
+          <span class="text-sm text-gray-500">${p.material_count}개 원재료</span>
+        </div>
+      `).join('');
+    }
+    
+    if ((withoutBom.data || []).length === 0) {
+      withoutDiv.innerHTML = '<p class="text-center text-gray-400 py-4">없음</p>';
+    } else {
+      withoutDiv.innerHTML = (withoutBom.data || []).map(p => `
+        <div class="flex items-center justify-between py-2 border-b last:border-b-0 hover:bg-gray-50 cursor-pointer" onclick="selectBOMProduct('${p.item_code}')">
+          <span>${p.item_name}</span>
+          <span class="text-sm text-yellow-600">미등록</span>
+        </div>
+      `).join('');
+    }
+  } catch (e) {
+    console.error('BOM summary load error:', e);
+  }
+}
+
+// 제품 선택 (외부에서 호출용)
+function selectBOMProduct(productCode) {
+  document.getElementById('bom-product-select').value = productCode;
+  loadBOMForProduct();
+}
+
+// 제품별 BOM 로드
+async function loadBOMForProduct() {
+  const productCode = document.getElementById('bom-product-select').value;
+  const listDiv = document.getElementById('bom-list');
+  const titleEl = document.getElementById('bom-product-title');
+  const countEl = document.getElementById('bom-count');
+  const addBtn = document.getElementById('add-bom-btn');
+  
+  if (!productCode) {
+    listDiv.innerHTML = '<p class="text-center text-gray-400 py-8">제품을 선택하세요</p>';
+    titleEl.innerHTML = '<i class="fas fa-clipboard-list mr-2"></i>배합표';
+    countEl.textContent = '';
+    addBtn.disabled = true;
+    return;
+  }
+  
+  addBtn.disabled = false;
+  
+  try {
+    const result = await api(`/bom/product/${productCode}`);
+    const product = result.data?.product;
+    const materials = result.data?.materials || [];
+    
+    window.currentBOMProduct = productCode;
+    bomData = materials;
+    
+    titleEl.innerHTML = `<i class="fas fa-clipboard-list mr-2"></i>${product?.item_name || productCode} 배합표`;
+    countEl.textContent = `${materials.length}개 원재료`;
+    
+    if (materials.length === 0) {
+      listDiv.innerHTML = `
+        <div class="text-center py-8">
+          <i class="fas fa-inbox text-4xl text-gray-300 mb-2"></i>
+          <p class="text-gray-400">등록된 원재료가 없습니다</p>
+          <button onclick="showAddBOMModal()" class="mt-4 text-blue-600 hover:underline">
+            <i class="fas fa-plus mr-1"></i> 원재료 추가하기
+          </button>
+        </div>
+      `;
+      return;
+    }
+    
+    listDiv.innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-4 py-2 text-left">원재료</th>
+            <th class="px-4 py-2 text-center">1개당 사용량</th>
+            <th class="px-4 py-2 text-center">단위</th>
+            <th class="px-4 py-2 text-center">현재고</th>
+            <th class="px-4 py-2 text-center">작업</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          ${materials.map(m => `
+            <tr class="hover:bg-gray-50">
+              <td class="px-4 py-2">${m.item_name || m.item_code}</td>
+              <td class="px-4 py-2 text-center font-medium">${m.quantity}</td>
+              <td class="px-4 py-2 text-center">${m.unit}</td>
+              <td class="px-4 py-2 text-center">${formatNumber(m.current_stock || 0)} ${m.item_unit || 'kg'}</td>
+              <td class="px-4 py-2 text-center">
+                <button onclick="editBOM(${m.id}, '${m.item_code}', ${m.quantity}, '${m.unit}')" class="text-blue-500 hover:text-blue-700 mr-2">
+                  <i class="fas fa-edit"></i>
+                </button>
+                <button onclick="deleteBOM(${m.id})" class="text-red-500 hover:text-red-700">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    listDiv.innerHTML = '<p class="text-center text-red-500 py-8">로드 실패</p>';
+  }
+}
+
+// BOM 추가 모달
+function showAddBOMModal() {
+  const productCode = window.currentBOMProduct;
+  if (!productCode) {
+    showToast('제품을 먼저 선택하세요', 'warning');
+    return;
+  }
+  
+  // 원재료 목록
+  const materials = state.masterItems.filter(item => item.category === '원료');
+  const options = materials.map(m => 
+    `<option value="${m.item_code}">${m.item_name} (${m.item_code})</option>`
+  ).join('');
+  
+  showModal('원재료 추가', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">원재료 선택 <span class="text-red-500">*</span></label>
+        <select id="bom-item" class="w-full border rounded-lg px-4 py-2">
+          <option value="">원재료를 선택하세요</option>
+          ${options}
+        </select>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">1개당 사용량 <span class="text-red-500">*</span></label>
+          <input type="number" id="bom-quantity" step="0.01" min="0" class="w-full border rounded-lg px-4 py-2" placeholder="예: 50">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+          <select id="bom-unit" class="w-full border rounded-lg px-4 py-2">
+            <option value="g">g (그램)</option>
+            <option value="kg">kg (킬로그램)</option>
+            <option value="ml">ml (밀리리터)</option>
+            <option value="L">L (리터)</option>
+            <option value="ea">ea (개)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg">취소</button>
+    <button onclick="saveBOM()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">추가</button>
+  `);
+}
+
+// BOM 저장
+async function saveBOM() {
+  const data = {
+    product_code: window.currentBOMProduct,
+    item_code: document.getElementById('bom-item').value,
+    quantity: parseFloat(document.getElementById('bom-quantity').value),
+    unit: document.getElementById('bom-unit').value
+  };
+  
+  if (!data.item_code || !data.quantity) {
+    showToast('원재료와 사용량을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/bom', 'POST', data);
+    showToast('원재료가 추가되었습니다', 'success');
+    closeModal();
+    loadBOMForProduct();
+    loadBOMSummary();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// BOM 수정
+function editBOM(id, itemCode, quantity, unit) {
+  showModal('원재료 수정', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">원재료</label>
+        <input type="text" class="w-full border rounded-lg px-4 py-2 bg-gray-100" value="${itemCode}" disabled>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">1개당 사용량</label>
+          <input type="number" id="edit-bom-quantity" step="0.01" min="0" class="w-full border rounded-lg px-4 py-2" value="${quantity}">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+          <select id="edit-bom-unit" class="w-full border rounded-lg px-4 py-2">
+            <option value="g" ${unit === 'g' ? 'selected' : ''}>g</option>
+            <option value="kg" ${unit === 'kg' ? 'selected' : ''}>kg</option>
+            <option value="ml" ${unit === 'ml' ? 'selected' : ''}>ml</option>
+            <option value="L" ${unit === 'L' ? 'selected' : ''}>L</option>
+            <option value="ea" ${unit === 'ea' ? 'selected' : ''}>ea</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg">취소</button>
+    <button onclick="updateBOM(${id})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+  `);
+}
+
+// BOM 업데이트
+async function updateBOM(id) {
+  const data = {
+    quantity: parseFloat(document.getElementById('edit-bom-quantity').value),
+    unit: document.getElementById('edit-bom-unit').value
+  };
+  
+  try {
+    await api(`/bom/${id}`, 'PUT', data);
+    showToast('수정되었습니다', 'success');
+    closeModal();
+    loadBOMForProduct();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// BOM 삭제
+async function deleteBOM(id) {
+  if (!confirm('이 원재료를 배합표에서 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/bom/${id}`, 'DELETE');
+    showToast('삭제되었습니다', 'success');
+    loadBOMForProduct();
+    loadBOMSummary();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// BOM Import 모달
+function showBOMImportModal() {
+  // 제품 목록
+  const products = state.masterItems.filter(item => item.category === '제품');
+  const productOptions = products.map(p => 
+    `<option value="${p.item_code}">${p.item_name} (${p.item_code})</option>`
+  ).join('');
+  
+  showModal('BOM 엑셀 Import', `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 입력 형식</h4>
+        <p class="text-sm text-blue-700">엑셀에서 복사한 데이터를 붙여넣기 하세요.</p>
+        <p class="text-xs text-blue-600 mt-1">형식: 원재료명, 사용량(g)</p>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">대상 제품 <span class="text-red-500">*</span></label>
+        <select id="import-product" class="w-full border rounded-lg px-4 py-2">
+          <option value="">제품을 선택하세요</option>
+          ${productOptions}
+        </select>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">BOM 데이터</label>
+        <textarea id="import-bom-data" rows="10" class="w-full border rounded-lg px-4 py-3 text-sm font-mono"
+                  placeholder="난백, 31.64
+프락토올리고당, 14.31
+난황, 12.05
+..."></textarea>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg">취소</button>
+    <button onclick="processBOMImport()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Import</button>
+  `);
+}
+
+// BOM Import 처리
+async function processBOMImport() {
+  const productCode = document.getElementById('import-product').value;
+  const data = document.getElementById('import-bom-data').value.trim();
+  
+  if (!productCode) {
+    showToast('제품을 선택하세요', 'warning');
+    return;
+  }
+  
+  if (!data) {
+    showToast('데이터를 입력하세요', 'warning');
+    return;
+  }
+  
+  const lines = data.split('\\n').filter(line => line.trim());
+  const materials = [];
+  
+  // 원재료 매핑 (이름 → 코드)
+  const materialMap = {};
+  state.masterItems.filter(m => m.category === '원료').forEach(m => {
+    materialMap[m.item_name.toLowerCase()] = m.item_code;
+    materialMap[m.item_code.toLowerCase()] = m.item_code;
+  });
+  
+  for (const line of lines) {
+    const parts = line.split(/[,\\t]/).map(p => p.trim());
+    if (parts.length >= 2) {
+      const name = parts[0];
+      const qty = parseFloat(parts[1]);
+      
+      // 원재료 코드 찾기
+      const itemCode = materialMap[name.toLowerCase()];
+      
+      if (itemCode && qty > 0) {
+        materials.push({
+          item_code: itemCode,
+          quantity: qty,
+          unit: 'g'
+        });
+      }
+    }
+  }
+  
+  if (materials.length === 0) {
+    showToast('유효한 데이터가 없습니다. 원재료명이 마스터에 등록되어 있는지 확인하세요.', 'error');
+    return;
+  }
+  
+  try {
+    const result = await api('/bom/bulk', 'POST', { product_code: productCode, materials });
+    showToast(result.message, 'success');
+    closeModal();
+    
+    // 해당 제품 선택하고 BOM 로드
+    document.getElementById('bom-product-select').value = productCode;
+    loadBOMForProduct();
+    loadBOMSummary();
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// BOM 관리 함수들 전역 노출
+window.renderBOM = renderBOM;
+window.loadBOMSummary = loadBOMSummary;
+window.selectBOMProduct = selectBOMProduct;
+window.loadBOMForProduct = loadBOMForProduct;
+window.showAddBOMModal = showAddBOMModal;
+window.saveBOM = saveBOM;
+window.editBOM = editBOM;
+window.updateBOM = updateBOM;
+window.deleteBOM = deleteBOM;
+window.showBOMImportModal = showBOMImportModal;
+window.processBOMImport = processBOMImport;
+
+// ========== 제품 출고 ==========
+
+async function renderProductOutbound() {
+  const content = document.getElementById('page-content');
+  const today = formatDate(new Date());
+  
+  // 제품 목록
+  const products = state.masterItems.filter(item => item.category === '제품' && item.current_stock > 0);
+  const productOptions = products.map(p => 
+    `<option value="${p.item_code}">${p.item_name} (재고: ${formatNumber(p.current_stock)} ${p.unit})</option>`
+  ).join('');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-shipping-fast mr-2 text-haccp-primary"></i>
+          제품 출고
+        </h2>
+        <button onclick="loadOutboundHistory()" class="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200">
+          <i class="fas fa-history mr-1"></i> 출고 이력
+        </button>
+      </div>
+      
+      <!-- 출고 등록 폼 -->
+      <div class="bg-white rounded-xl shadow p-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">출고일 <span class="text-red-500">*</span></label>
+            <input type="date" id="outbound-date" value="${today}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택 <span class="text-red-500">*</span></label>
+            <select id="outbound-product" class="w-full border rounded-lg px-4 py-2" onchange="loadProductLots()">
+              <option value="">제품을 선택하세요</option>
+              ${productOptions}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">수량 <span class="text-red-500">*</span></label>
+            <input type="number" id="outbound-quantity" min="1" class="w-full border rounded-lg px-4 py-2" placeholder="출고 수량">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">마켓/거래처</label>
+            <select id="outbound-market" class="w-full border rounded-lg px-4 py-2">
+              <option value="">선택</option>
+              <option value="쿠팡">쿠팡</option>
+              <option value="오아시스">오아시스</option>
+              <option value="마켓컬리">마켓컬리</option>
+              <option value="비마트">비마트</option>
+              <option value="아티제">아티제</option>
+              <option value="직접배송">직접배송</option>
+              <option value="기타">기타</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">주문번호</label>
+            <input type="text" id="outbound-order" class="w-full border rounded-lg px-4 py-2" placeholder="주문번호 (선택)">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">비고</label>
+            <input type="text" id="outbound-memo" class="w-full border rounded-lg px-4 py-2" placeholder="메모 (선택)">
+          </div>
+        </div>
+        
+        <!-- 제품 LOT 선택 -->
+        <div id="product-lots" class="hidden mt-4 border-t pt-4">
+          <h4 class="font-medium text-gray-700 mb-2"><i class="fas fa-boxes mr-1"></i> 출고 LOT 선택 (FEFO 자동 적용)</h4>
+          <div id="product-lots-list"></div>
+        </div>
+        
+        <div class="mt-6 flex justify-end">
+          <button onclick="submitProductOutbound()" class="bg-orange-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-orange-700">
+            <i class="fas fa-truck mr-2"></i>
+            출고 등록
+          </button>
+        </div>
+      </div>
+      
+      <!-- 오늘 출고 현황 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="p-4 border-b bg-gray-50">
+          <h3 class="font-bold text-gray-800">
+            <i class="fas fa-clipboard-list mr-2"></i>
+            오늘 출고 현황
+          </h3>
+        </div>
+        <div id="today-outbound" class="p-4">
+          <div class="text-center text-gray-400 py-8">
+            <i class="fas fa-spinner fa-spin text-2xl"></i>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadTodayOutbound();
+}
+
+// 제품 LOT 로드
+async function loadProductLots() {
+  const productCode = document.getElementById('outbound-product').value;
+  const lotsDiv = document.getElementById('product-lots');
+  const lotsListDiv = document.getElementById('product-lots-list');
+  
+  if (!productCode) {
+    lotsDiv.classList.add('hidden');
+    return;
+  }
+  
+  try {
+    const result = await api(`/inbound?item_code=${productCode}&has_stock=true`);
+    const lots = (result.data || []).filter(l => l.remain_qty > 0);
+    
+    if (lots.length === 0) {
+      lotsDiv.classList.remove('hidden');
+      lotsListDiv.innerHTML = '<p class="text-yellow-600"><i class="fas fa-exclamation-triangle mr-1"></i> LOT 정보가 없습니다. 재고 수량에서 직접 차감됩니다.</p>';
+      return;
+    }
+    
+    lotsDiv.classList.remove('hidden');
+    lotsListDiv.innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-3 py-2 text-left">LOT</th>
+            <th class="px-3 py-2 text-center">입고일</th>
+            <th class="px-3 py-2 text-center">유통기한</th>
+            <th class="px-3 py-2 text-center">잔량</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          ${lots.map((l, i) => `
+            <tr class="${i === 0 ? 'bg-blue-50' : ''}">
+              <td class="px-3 py-2">
+                ${l.lot_number}
+                ${i === 0 ? '<span class="ml-2 text-xs text-blue-600">(우선출고)</span>' : ''}
+              </td>
+              <td class="px-3 py-2 text-center">${l.inbound_date}</td>
+              <td class="px-3 py-2 text-center">${l.expiry_date}</td>
+              <td class="px-3 py-2 text-center font-medium">${formatNumber(l.remain_qty)}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    lotsDiv.classList.add('hidden');
+  }
+}
+
+// 제품 출고 제출
+async function submitProductOutbound() {
+  const data = {
+    outbound_date: document.getElementById('outbound-date').value,
+    product_code: document.getElementById('outbound-product').value,
+    quantity: parseFloat(document.getElementById('outbound-quantity').value),
+    market: document.getElementById('outbound-market').value,
+    order_number: document.getElementById('outbound-order').value,
+    memo: document.getElementById('outbound-memo').value
+  };
+  
+  if (!data.outbound_date || !data.product_code || !data.quantity) {
+    showToast('출고일, 제품, 수량을 입력해주세요', 'warning');
+    return;
+  }
+  
+  // 재고 확인
+  const product = state.masterItems.find(m => m.item_code === data.product_code);
+  if (product && product.current_stock < data.quantity) {
+    showToast(`재고가 부족합니다. 현재고: ${formatNumber(product.current_stock)}`, 'error');
+    return;
+  }
+  
+  try {
+    // 제품 출고 기록
+    await api('/outbound', 'POST', {
+      outbound_date: data.outbound_date,
+      item_code: data.product_code,
+      quantity: data.quantity,
+      memo: `[${data.market || '기타'}] ${data.order_number ? '주문:' + data.order_number + ' ' : ''}${data.memo || ''}`
+    });
+    
+    showToast('출고가 등록되었습니다', 'success');
+    
+    // 폼 초기화
+    document.getElementById('outbound-product').value = '';
+    document.getElementById('outbound-quantity').value = '';
+    document.getElementById('outbound-market').value = '';
+    document.getElementById('outbound-order').value = '';
+    document.getElementById('outbound-memo').value = '';
+    document.getElementById('product-lots').classList.add('hidden');
+    
+    await loadMasterData();
+    loadTodayOutbound();
+    renderProductOutbound(); // 제품 목록 갱신
+  } catch (e) {
+    // Error handled
+  }
+}
+
+// 오늘 출고 현황
+async function loadTodayOutbound() {
+  const today = formatDate(new Date());
+  const container = document.getElementById('today-outbound');
+  
+  try {
+    // 제품 출고만 필터링
+    const result = await api(`/transactions/search?start_date=${today}&end_date=${today}&trans_type=출고`);
+    const data = (result.data || []).filter(d => {
+      const item = state.masterItems.find(m => m.item_code === d.item_code);
+      return item && item.category === '제품';
+    });
+    
+    if (data.length === 0) {
+      container.innerHTML = '<p class="text-center text-gray-400 py-4">오늘 출고 기록이 없습니다</p>';
+      return;
+    }
+    
+    const totalQty = data.reduce((sum, d) => sum + Math.abs(d.quantity), 0);
+    
+    container.innerHTML = `
+      <div class="mb-4">
+        <span class="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm">
+          총 ${data.length}건 / ${formatNumber(totalQty)}개 출고
+        </span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-3 py-2 text-left">제품</th>
+              <th class="px-3 py-2 text-center">수량</th>
+              <th class="px-3 py-2 text-left">비고</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${data.map(d => `
+              <tr class="hover:bg-gray-50">
+                <td class="px-3 py-2">${d.item_name || d.item_code}</td>
+                <td class="px-3 py-2 text-center font-medium">${formatNumber(Math.abs(d.quantity))}</td>
+                <td class="px-3 py-2 text-sm text-gray-500">${d.memo || '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = '<p class="text-center text-red-500 py-4">데이터 로드 실패</p>';
+  }
+}
+
+// 출고 이력 보기
+async function loadOutboundHistory() {
+  showModal('출고 이력 (최근 30일)', `
+    <div class="max-h-96 overflow-y-auto" id="outbound-history-content">
+      <div class="text-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-blue-500"></i></div>
+    </div>
+  `, '<button onclick="closeModal()" class="px-4 py-2 border rounded-lg">닫기</button>');
+  
+  const thirtyDaysAgo = formatDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const today = formatDate(new Date());
+  
+  try {
+    const result = await api(`/transactions/search?start_date=${thirtyDaysAgo}&end_date=${today}&trans_type=출고`);
+    const data = (result.data || []).filter(d => {
+      const item = state.masterItems.find(m => m.item_code === d.item_code);
+      return item && item.category === '제품';
+    });
+    
+    const contentDiv = document.getElementById('outbound-history-content');
+    
+    if (data.length === 0) {
+      contentDiv.innerHTML = '<p class="text-center text-gray-400 py-4">출고 이력이 없습니다</p>';
+      return;
+    }
+    
+    contentDiv.innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50 sticky top-0">
+          <tr>
+            <th class="px-3 py-2 text-left">출고일</th>
+            <th class="px-3 py-2 text-left">제품</th>
+            <th class="px-3 py-2 text-center">수량</th>
+            <th class="px-3 py-2 text-left">비고</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          ${data.map(d => `
+            <tr class="hover:bg-gray-50">
+              <td class="px-3 py-2">${d.trans_date}</td>
+              <td class="px-3 py-2">${d.item_name || d.item_code}</td>
+              <td class="px-3 py-2 text-center">${formatNumber(Math.abs(d.quantity))}</td>
+              <td class="px-3 py-2 text-sm text-gray-500">${d.memo || '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    document.getElementById('outbound-history-content').innerHTML = '<p class="text-center text-red-500">로드 실패</p>';
+  }
+}
+
+// 제품 출고 함수들 전역 노출
+window.renderProductOutbound = renderProductOutbound;
+window.loadProductLots = loadProductLots;
+window.submitProductOutbound = submitProductOutbound;
+window.loadTodayOutbound = loadTodayOutbound;
+window.loadOutboundHistory = loadOutboundHistory;

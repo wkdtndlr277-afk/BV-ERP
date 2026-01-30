@@ -44,8 +44,9 @@ app.route('/api/microbial', microbialRoutes);
 app.route('/api/process-kpi', processKpiRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '1.1.0';
-const SYSTEM_BUILD_DATE = '2026-01-29';
+const SYSTEM_VERSION = '1.2.0';
+const SYSTEM_BUILD_DATE = '2026-01-30';
+const CACHE_BUST = Date.now();
 
 // Health check
 app.get('/api/health', (c) => {
@@ -307,7 +308,7 @@ app.get('/*', (c) => {
     <!-- Modal Container -->
     <div id="modal-container"></div>
     
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=${CACHE_BUST}"></script>
 </body>
 </html>
   `);

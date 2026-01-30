@@ -4,7 +4,7 @@ import type { Bindings, UsageRequest, Inbound } from '../types';
 
 const usageRoutes = new Hono<{ Bindings: Bindings }>();
 
-// FEFO 방식으로 LOT에서 차감 처리
+// FEFO 방식으로 LOT에서 차감 처리 (LOT가 없으면 마스터 재고에서 직접 차감)
 async function deductFromLots(
   db: D1Database,
   item_code: string,
@@ -18,12 +18,45 @@ async function deductFromLots(
     ORDER BY expiry_date ASC, inbound_date ASC
   `).bind(item_code).all<Inbound>();
   
+  // LOT가 없는 경우 마스터 재고에서 직접 차감
   if (!lots.results || lots.results.length === 0) {
-    return { success: false, error: `${item_code}: 사용 가능한 재고가 없습니다.` };
+    // 마스터 재고 확인
+    const master = await db.prepare(
+      'SELECT current_stock FROM master WHERE item_code = ?'
+    ).bind(item_code).first<{ current_stock: number }>();
+    
+    if (!master || master.current_stock < quantity) {
+      return { success: false, error: `${item_code}: 재고 부족 (가용: ${master?.current_stock || 0}, 요청: ${quantity})` };
+    }
+    
+    // 마스터 재고에서 직접 차감 (LOT 없이)
+    await db.prepare(`
+      UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+    `).bind(quantity, item_code).run();
+    
+    // Transaction 기록 (LOT 없음)
+    await db.prepare(`
+      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty)
+      VALUES (?, ?, '사용', ?, NULL, NULL)
+    `).bind(trans_date, item_code, -quantity).run();
+    
+    return { 
+      success: true, 
+      deductions: [{ lot_number: '재고조정분', deducted: quantity, remain_qty: master.current_stock - quantity }] 
+    };
   }
   
-  // 총 가용 재고 확인
-  const totalAvailable = lots.results.reduce((sum, lot) => sum + lot.remain_qty, 0);
+  // 총 가용 재고 확인 (LOT + 마스터 조정분)
+  const totalLotAvailable = lots.results.reduce((sum, lot) => sum + lot.remain_qty, 0);
+  
+  // 마스터 현재고 확인 (LOT 잔량과의 차이가 조정분)
+  const master = await db.prepare(
+    'SELECT current_stock FROM master WHERE item_code = ?'
+  ).bind(item_code).first<{ current_stock: number }>();
+  
+  const adjustedStock = (master?.current_stock || 0) - totalLotAvailable;
+  const totalAvailable = totalLotAvailable + Math.max(0, adjustedStock);
+  
   if (totalAvailable < quantity) {
     return { success: false, error: `${item_code}: 재고 부족 (가용: ${totalAvailable}, 요청: ${quantity})` };
   }
@@ -58,6 +91,24 @@ async function deductFromLots(
     remaining -= deductQty;
   }
   
+  // LOT로 다 못 빼면 조정분에서 차감
+  if (remaining > 0 && adjustedStock > 0) {
+    const adjustDeduct = Math.min(remaining, adjustedStock);
+    
+    await db.prepare(`
+      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty)
+      VALUES (?, ?, '사용', ?, NULL, NULL)
+    `).bind(trans_date, item_code, -adjustDeduct).run();
+    
+    deductions.push({
+      lot_number: '재고조정분',
+      deducted: adjustDeduct,
+      remain_qty: adjustedStock - adjustDeduct
+    });
+    
+    remaining -= adjustDeduct;
+  }
+  
   // Master 재고 감소
   await db.prepare(`
     UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
@@ -66,21 +117,46 @@ async function deductFromLots(
   return { success: true, deductions };
 }
 
-// 오늘 사용 가능한 원료 목록 (입고되어 잔량이 있는 것만)
+// 오늘 사용 가능한 원료 목록 (입고 LOT 또는 현재고가 있는 것)
 usageRoutes.get('/available', async (c) => {
-  const result = await c.env.DB.prepare(`
-    SELECT m.*, 
+  // LOT 잔량이 있는 원료 (FEFO 사용 가능)
+  const lotResult = await c.env.DB.prepare(`
+    SELECT m.item_code, m.item_name, m.category, m.unit, m.safety_stock, m.expiry_days,
+           m.created_at, m.updated_at,
            SUM(i.remain_qty) as available_qty,
-           COUNT(DISTINCT i.lot_number) as lot_count
+           COUNT(DISTINCT i.lot_number) as lot_count,
+           'lot' as stock_type
     FROM master m
     INNER JOIN inbound i ON m.item_code = i.item_code AND i.remain_qty > 0 AND i.quality_status = '합격'
     WHERE m.category = '원료'
     GROUP BY m.item_code
     HAVING available_qty > 0
-    ORDER BY m.item_name
   `).all();
   
-  return c.json({ success: true, data: result.results });
+  // LOT가 없지만 현재고가 있는 원료 (재고조정된 것)
+  const lotItemCodes = (lotResult.results as any[]).map(r => r.item_code);
+  
+  const stockResult = await c.env.DB.prepare(`
+    SELECT item_code, item_name, category, unit, safety_stock, expiry_days,
+           current_stock as available_qty,
+           0 as lot_count,
+           'stock' as stock_type,
+           created_at, updated_at
+    FROM master
+    WHERE category = '원료' AND current_stock > 0
+  `).all();
+  
+  // LOT가 없는 것만 필터 (중복 제외)
+  const stockOnly = (stockResult.results as any[]).filter(
+    r => !lotItemCodes.includes(r.item_code)
+  );
+  
+  // 합쳐서 이름순 정렬
+  const combined = [...(lotResult.results as any[]), ...stockOnly].sort(
+    (a, b) => a.item_name.localeCompare(b.item_name)
+  );
+  
+  return c.json({ success: true, data: combined });
 });
 
 // 오늘 사용량 조회

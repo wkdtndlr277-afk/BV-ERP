@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
-// Version: 1.2.2 Build: 20260130-0645
-const APP_VERSION = '1.2.2';
-const APP_BUILD = '20260130-0645';
+// Version: 1.3.0 Build: 20260130-0700
+const APP_VERSION = '1.3.0';
+const APP_BUILD = '20260130-0700';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -3360,7 +3360,27 @@ function switchProcessTab(processType) {
   }
 }
 
-function showProcessKpiModal() {
+async function showProcessKpiModal() {
+  // 먼저 KPI 기준값을 서버에서 불러옴
+  try {
+    const res = await api('/process-kpi/standards');
+    if (res.data) {
+      // 기준값 업데이트
+      res.data.forEach(s => {
+        if (s.product_name === null) { // 기본 기준만
+          KPI_STANDARDS[s.kpi_item] = {
+            min: s.min_value,
+            max: s.max_value,
+            unit: s.unit || ''
+          };
+        }
+      });
+      console.log('📊 KPI 기준 로드됨:', KPI_STANDARDS);
+    }
+  } catch (e) {
+    console.error('KPI 기준 로드 실패:', e);
+  }
+  
   const today = formatDate(new Date());
   const now = new Date();
   const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -3590,6 +3610,35 @@ function bindKpiInputListeners() {
   });
 }
 
+// 기준값 포맷 헬퍼 함수
+function formatStandardRange(kpiItem) {
+  const std = KPI_STANDARDS[kpiItem];
+  if (!std) return '(기준없음)';
+  
+  if (std.min !== null && std.max !== null) {
+    return `${std.min}-${std.max}${std.unit}`;
+  } else if (std.min !== null) {
+    return `${std.min}${std.unit} 이상`;
+  } else if (std.max !== null) {
+    return `${std.max}${std.unit} 이하`;
+  }
+  return '(기준없음)';
+}
+
+function formatStandardPlaceholder(kpiItem) {
+  const std = KPI_STANDARDS[kpiItem];
+  if (!std) return '';
+  
+  if (std.min !== null && std.max !== null) {
+    return `${std.min}-${std.max}`;
+  } else if (std.min !== null) {
+    return `${std.min} 이상`;
+  } else if (std.max !== null) {
+    return `${std.max} 이하`;
+  }
+  return '';
+}
+
 // 공정별 KPI 입력 필드 HTML 반환
 function getKpiFieldsHtml(processType) {
   if (processType === '숙성') {
@@ -3604,25 +3653,25 @@ function getKpiFieldsHtml(processType) {
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">저온숙성시간 (분)</label>
-          <input type="number" id="cold_aging_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="60-120" oninput="updateKpiJudgmentUI('cold_aging_time')">
+          <input type="number" id="cold_aging_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('cold_aging_time')}" oninput="updateKpiJudgmentUI('cold_aging_time')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 60-120분</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('cold_aging_time')}</p>
             <span id="cold_aging_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
-          <input type="number" step="0.1" id="ferment_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="27" oninput="updateKpiJudgmentUI('ferment_temp')">
+          <input type="number" step="0.1" id="ferment_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('ferment_temp')}" oninput="updateKpiJudgmentUI('ferment_temp')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 27±2℃ (25-29)</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('ferment_temp')}</p>
             <span id="ferment_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">최고온도 (℃)</label>
-          <input type="number" step="0.1" id="max_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="30 이하" oninput="updateKpiJudgmentUI('max_temp')">
+          <input type="number" step="0.1" id="max_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('max_temp')}" oninput="updateKpiJudgmentUI('max_temp')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 30℃ 이하</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('max_temp')}</p>
             <span id="max_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
@@ -3640,9 +3689,9 @@ function getKpiFieldsHtml(processType) {
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">반죽온도 (℃)</label>
-          <input type="number" step="0.1" id="dough_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="24-26" oninput="updateKpiJudgmentUI('dough_temp')">
+          <input type="number" step="0.1" id="dough_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('dough_temp')}" oninput="updateKpiJudgmentUI('dough_temp')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 24-26℃</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('dough_temp')}</p>
             <span id="dough_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
@@ -3653,25 +3702,25 @@ function getKpiFieldsHtml(processType) {
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">1차발효시간 (분)</label>
-          <input type="number" id="first_ferment_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="30-60" oninput="updateKpiJudgmentUI('first_ferment_time')">
+          <input type="number" id="first_ferment_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('first_ferment_time')}" oninput="updateKpiJudgmentUI('first_ferment_time')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 30-60분</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('first_ferment_time')}</p>
             <span id="first_ferment_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
-          <input type="number" step="0.1" id="ferment_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="27" oninput="updateKpiJudgmentUI('ferment_temp')">
+          <input type="number" step="0.1" id="ferment_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('ferment_temp')}" oninput="updateKpiJudgmentUI('ferment_temp')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 27±2℃ (25-29)</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('ferment_temp')}</p>
             <span id="ferment_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">벤치타임 (분)</label>
-          <input type="number" id="bench_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="15-20" oninput="updateKpiJudgmentUI('bench_time')">
+          <input type="number" id="bench_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('bench_time')}" oninput="updateKpiJudgmentUI('bench_time')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 15-20분</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('bench_time')}</p>
             <span id="bench_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
@@ -3682,9 +3731,9 @@ function getKpiFieldsHtml(processType) {
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">2차발효시간 (분)</label>
-          <input type="number" id="second_ferment_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="40-60" oninput="updateKpiJudgmentUI('second_ferment_time')">
+          <input type="number" id="second_ferment_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('second_ferment_time')}" oninput="updateKpiJudgmentUI('second_ferment_time')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 40-60분</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('second_ferment_time')}</p>
             <span id="second_ferment_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
@@ -3702,9 +3751,9 @@ function getKpiFieldsHtml(processType) {
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">반죽온도 (℃)</label>
-          <input type="number" step="0.1" id="dough_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="24-26" oninput="updateKpiJudgmentUI('dough_temp')">
+          <input type="number" step="0.1" id="dough_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('dough_temp')}" oninput="updateKpiJudgmentUI('dough_temp')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 24-26℃</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('dough_temp')}</p>
             <span id="dough_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
@@ -3715,25 +3764,25 @@ function getKpiFieldsHtml(processType) {
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">1차발효시간 (분)</label>
-          <input type="number" id="first_ferment_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="30-60" oninput="updateKpiJudgmentUI('first_ferment_time')">
+          <input type="number" id="first_ferment_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('first_ferment_time')}" oninput="updateKpiJudgmentUI('first_ferment_time')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 30-60분</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('first_ferment_time')}</p>
             <span id="first_ferment_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">발효온도 (℃)</label>
-          <input type="number" step="0.1" id="ferment_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="27" oninput="updateKpiJudgmentUI('ferment_temp')">
+          <input type="number" step="0.1" id="ferment_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('ferment_temp')}" oninput="updateKpiJudgmentUI('ferment_temp')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 27±2℃ (25-29)</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('ferment_temp')}</p>
             <span id="ferment_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">벤치타임 (분)</label>
-          <input type="number" id="bench_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="15-20" oninput="updateKpiJudgmentUI('bench_time')">
+          <input type="number" id="bench_time" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('bench_time')}" oninput="updateKpiJudgmentUI('bench_time')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 15-20분</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('bench_time')}</p>
             <span id="bench_time_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
@@ -3766,9 +3815,9 @@ function getKpiFieldsHtml(processType) {
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">오븐온도 (℃)</label>
-          <input type="number" step="0.1" id="oven_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="180" oninput="updateKpiJudgmentUI('oven_temp')">
+          <input type="number" step="0.1" id="oven_temp" class="w-full border-2 rounded-lg px-4 py-2" placeholder="${formatStandardPlaceholder('oven_temp')}" oninput="updateKpiJudgmentUI('oven_temp')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-gray-400">기준: 180±10℃ (170-190)</p>
+            <p class="text-xs text-gray-400">기준: ${formatStandardRange('oven_temp')}</p>
             <span id="oven_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>
@@ -3779,9 +3828,9 @@ function getKpiFieldsHtml(processType) {
         </div>
         <div class="col-span-2">
           <label class="block text-sm font-medium text-gray-700 mb-1">중심온도 (℃) - CCP <span class="text-red-500">*</span></label>
-          <input type="number" step="0.1" id="core_temp" class="w-full border-2 rounded-lg px-4 py-2 border-red-300" placeholder="74 이상" oninput="updateKpiJudgmentUI('core_temp')">
+          <input type="number" step="0.1" id="core_temp" class="w-full border-2 rounded-lg px-4 py-2 border-red-300" placeholder="${formatStandardPlaceholder('core_temp')}" oninput="updateKpiJudgmentUI('core_temp')">
           <div class="flex justify-between items-center mt-1">
-            <p class="text-xs text-red-500">⚠️ CCP: 74℃ 이상 필수</p>
+            <p class="text-xs text-red-500">⚠️ CCP: ${formatStandardRange('core_temp')}</p>
             <span id="core_temp_status" class="text-xs"><span class="text-gray-400">-</span></span>
           </div>
         </div>

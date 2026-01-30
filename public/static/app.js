@@ -2446,10 +2446,17 @@ async function renderDailyReport() {
       
       <!-- 검색 조건 -->
       <div class="bg-white rounded-xl shadow p-4">
-        <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+        <div class="grid grid-cols-2 md:grid-cols-7 gap-3">
           <div>
             <label class="block text-xs text-gray-500 mb-1">조회일</label>
             <input type="date" id="daily-date" class="w-full border rounded-lg px-3 py-2 text-sm" value="${today}">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">보기 방식</label>
+            <select id="daily-view-type" class="w-full border rounded-lg px-3 py-2 text-sm" onchange="loadDailyReport()">
+              <option value="item" selected>품목별</option>
+              <option value="transaction">거래별</option>
+            </select>
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">구분</label>
@@ -2460,8 +2467,8 @@ async function renderDailyReport() {
             </select>
           </div>
           <div class="md:col-span-2">
-            <label class="block text-xs text-gray-500 mb-1">원료명 / LOT 검색</label>
-            <input type="text" id="daily-search" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="원료명 또는 LOT 번호 입력">
+            <label class="block text-xs text-gray-500 mb-1">품목명 검색</label>
+            <input type="text" id="daily-search" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="품목명 또는 품목코드 입력">
           </div>
           <div>
             <label class="block text-xs text-gray-500 mb-1">유형</label>
@@ -2493,32 +2500,73 @@ async function renderDailyReport() {
 
 async function loadDailyReport() {
   const date = document.getElementById('daily-date').value;
+  const viewType = document.getElementById('daily-view-type')?.value || 'item';
   const category = document.getElementById('daily-category').value;
   const searchText = document.getElementById('daily-search').value.trim();
   const transType = document.getElementById('daily-type').value;
   
   try {
-    // 검색 조건 구성
-    const params = new URLSearchParams();
-    params.append('start_date', date);
-    params.append('end_date', date);
-    if (category) params.append('category', category);
-    if (searchText) params.append('search', searchText);  // 원료명/LOT 통합 검색
-    if (transType) params.append('trans_type', transType);
+    let data = [];
+    let summary = {};
     
-    const result = await api(`/transactions/search?${params.toString()}`);
-    const data = result.data || [];
-    const summary = result.summary || {};
+    if (viewType === 'item') {
+      // 품목별 일별 수불부 API 호출
+      const params = new URLSearchParams();
+      params.append('date', date);
+      if (category) params.append('category', category);
+      
+      const result = await api(`/transactions/daily-report?${params.toString()}`);
+      let items = result.data || [];
+      
+      // 검색어 필터링
+      if (searchText) {
+        const searchLower = searchText.toLowerCase();
+        items = items.filter(item => 
+          item.item_name?.toLowerCase().includes(searchLower) || 
+          item.item_code?.toLowerCase().includes(searchLower)
+        );
+      }
+      
+      // 당일 변동이 있거나 재고가 있는 품목만 표시
+      items = items.filter(item => 
+        item.current_stock > 0 || item.inbound > 0 || item.usage > 0 || item.outbound > 0 || item.adjustment !== 0
+      );
+      
+      data = items;
+      summary = {
+        total_inbound: items.reduce((sum, i) => sum + (i.inbound || 0), 0),
+        total_usage: items.reduce((sum, i) => sum + (i.usage || 0), 0),
+        total_adjustment: items.reduce((sum, i) => sum + (i.adjustment || 0), 0)
+      };
+    } else {
+      // 거래별 API 호출 (기존 로직)
+      const params = new URLSearchParams();
+      params.append('start_date', date);
+      params.append('end_date', date);
+      if (category) params.append('category', category);
+      if (searchText) params.append('search', searchText);
+      if (transType) params.append('trans_type', transType);
+      
+      const result = await api(`/transactions/search?${params.toString()}`);
+      data = result.data || [];
+      summary = result.summary || {};
+    }
     
     // 전역에 저장 (엑셀/출력용)
     window.dailyReportData = data;
     window.dailyReportDate = date;
+    window.dailyReportViewType = viewType;
+    
+    const countLabel = viewType === 'item' ? '품목' : '거래';
     
     document.getElementById('daily-content').innerHTML = `
       <div class="p-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-2">
         <div>
           <span class="font-bold text-gray-700">${date} 수불부</span>
-          <span class="ml-2 text-sm text-gray-500">(${data.length}건)</span>
+          <span class="ml-2 text-sm text-gray-500">(${countLabel} ${data.length}건)</span>
+          <span class="ml-2 px-2 py-0.5 text-xs rounded ${viewType === 'item' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">
+            ${viewType === 'item' ? '품목별' : '거래별'}
+          </span>
         </div>
         <div class="flex gap-2">
           <button onclick="downloadDailyReport()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
@@ -2537,25 +2585,47 @@ async function loadDailyReport() {
         <div><span class="text-yellow-600 font-bold">조정</span> <span class="text-yellow-800">${formatNumber(summary.total_adjustment || 0)}</span></div>
       </div>
       
-      <!-- 통합 테이블 (LOT별 입고일자, 입고량, 사용량, 재고량 포함) -->
+      <!-- 수불부 테이블 -->
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
           <thead>
             <tr class="text-gray-500 border-b bg-gray-50">
-              <th class="text-left p-3">LOT 번호</th>
-              <th class="text-left p-3">품목</th>
-              <th class="text-center p-3">입고일</th>
-              <th class="text-center p-3">유통기한</th>
-              <th class="text-center p-3">구분</th>
-              <th class="text-right p-3">입고량</th>
-              <th class="text-right p-3">사용량</th>
-              <th class="text-right p-3">재고량</th>
+              ${viewType === 'item' ? `
+                <th class="text-left p-3">품목코드</th>
+                <th class="text-left p-3">품목명</th>
+                <th class="text-center p-3">구분</th>
+                <th class="text-center p-3">단위</th>
+                <th class="text-right p-3 text-blue-600">입고</th>
+                <th class="text-right p-3 text-orange-600">사용</th>
+                <th class="text-right p-3 text-yellow-600">조정</th>
+                <th class="text-right p-3">현재고</th>
+              ` : `
+                <th class="text-left p-3">LOT 번호</th>
+                <th class="text-left p-3">품목</th>
+                <th class="text-center p-3">입고일</th>
+                <th class="text-center p-3">유통기한</th>
+                <th class="text-center p-3">구분</th>
+                <th class="text-right p-3">입고량</th>
+                <th class="text-right p-3">사용량</th>
+                <th class="text-right p-3">재고량</th>
+              `}
             </tr>
           </thead>
           <tbody>
             ${data.length === 0 ? `
               <tr><td colspan="8" class="p-8 text-center text-gray-400">데이터가 없습니다.</td></tr>
-            ` : data.map(t => `
+            ` : viewType === 'item' ? data.map(item => `
+              <tr class="border-b hover:bg-gray-50 ${item.current_stock <= 0 ? 'bg-gray-100 text-gray-400' : ''}">
+                <td class="p-3 font-mono text-xs">${item.item_code}</td>
+                <td class="p-3">${item.item_name}</td>
+                <td class="p-3 text-center"><span class="px-2 py-0.5 text-xs rounded ${item.category === '원료' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}">${item.category}</span></td>
+                <td class="p-3 text-center text-xs">${item.unit || '-'}</td>
+                <td class="p-3 text-right text-blue-600">${item.inbound > 0 ? '+' + formatNumber(item.inbound) : '-'}</td>
+                <td class="p-3 text-right text-orange-600">${item.usage > 0 ? '-' + formatNumber(item.usage) : '-'}</td>
+                <td class="p-3 text-right text-yellow-600">${item.adjustment !== 0 ? formatNumber(item.adjustment) : '-'}</td>
+                <td class="p-3 text-right font-bold ${item.current_stock <= 0 ? 'text-gray-400' : ''}">${formatNumber(item.current_stock)}</td>
+              </tr>
+            `).join('') : data.map(t => `
               <tr class="border-b hover:bg-gray-50">
                 <td class="p-3 font-mono text-xs">${t.lot_number || '-'}</td>
                 <td class="p-3">${t.item_name} <span class="text-gray-400 text-xs">(${t.item_code})</span></td>
@@ -2578,6 +2648,7 @@ async function loadDailyReport() {
       </div>
     `;
   } catch (e) {
+    console.error('Daily report error:', e);
     document.getElementById('daily-content').innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
   }
 }

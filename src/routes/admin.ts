@@ -338,19 +338,21 @@ admin.delete('/transactions/:id', async (c) => {
 
 // ========== 마스터 데이터 관리 ==========
 
-// 마스터 재고 강제 수정
+// 마스터 재고 강제 수정 (가상 LOT 자동 생성으로 FEFO 추적 가능)
 admin.put('/master/:item_code/stock', async (c) => {
   const item_code = c.req.param('item_code')
   const { new_stock, reason } = await c.req.json()
   const { env } = c
   
   try {
-    const oldData = await env.DB.prepare('SELECT * FROM master WHERE item_code = ?').bind(item_code).first()
+    const oldData = await env.DB.prepare('SELECT * FROM master WHERE item_code = ?').bind(item_code).first() as any
     if (!oldData) {
       return c.json({ success: false, message: '품목을 찾을 수 없습니다' }, 404)
     }
     
-    const diff = new_stock - (oldData.current_stock as number)
+    const diff = new_stock - (oldData.current_stock || 0)
+    const today = new Date().toISOString().split('T')[0]
+    const todayCompact = today.replace(/-/g, '')
     
     // 마스터 재고 수정
     await env.DB.prepare(`
@@ -358,11 +360,70 @@ admin.put('/master/:item_code/stock', async (c) => {
       WHERE item_code = ?
     `).bind(new_stock, item_code).run()
     
-    // 재고조정 트랜잭션 기록
-    await env.DB.prepare(`
-      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
-      VALUES (date('now'), ?, '재고조정', ?, ?)
-    `).bind(item_code, diff, `[관리자 강제조정] ${reason || ''}`).run()
+    // diff > 0 인 경우 (재고 증가) - 가상 LOT 생성
+    if (diff > 0) {
+      // 유통기한 계산 (기본 365일 또는 master의 expiry_days 사용)
+      const expiryDays = oldData.expiry_days || 365
+      const expiryDate = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      
+      // 가상 LOT 번호 생성 (ADJ-날짜-품목코드-순번)
+      const countResult = await env.DB.prepare(`
+        SELECT COUNT(*) as cnt FROM inbound 
+        WHERE lot_number LIKE ? AND inbound_date = ?
+      `).bind(`ADJ-${todayCompact}-${item_code}%`, today).first() as any
+      const seq = String((countResult?.cnt || 0) + 1).padStart(3, '0')
+      const lot_number = `ADJ-${todayCompact}-${item_code}-${seq}`
+      
+      // 입고(inbound) 테이블에 가상 LOT 등록
+      await env.DB.prepare(`
+        INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, memo)
+        VALUES (?, ?, ?, ?, ?, ?, '합격', '재고조정', ?)
+      `).bind(lot_number, item_code, today, expiryDate, diff, diff, `[재고조정] ${reason || ''}`).run()
+      
+      // 트랜잭션 기록 (LOT 포함)
+      await env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo)
+        VALUES (?, ?, '재고조정', ?, ?, ?)
+      `).bind(today, item_code, diff, lot_number, `[관리자 재고조정] ${reason || ''}`).run()
+      
+    } else if (diff < 0) {
+      // diff < 0 인 경우 (재고 감소) - FEFO로 기존 LOT에서 차감
+      let remaining = Math.abs(diff)
+      
+      // 합격된 LOT 중 잔량이 있는 것을 유통기한 순으로 조회
+      const lots = await env.DB.prepare(`
+        SELECT lot_number, remain_qty FROM inbound
+        WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+        ORDER BY expiry_date ASC, inbound_date ASC
+      `).bind(item_code).all()
+      
+      for (const lot of (lots.results || []) as any[]) {
+        if (remaining <= 0) break
+        
+        const deductQty = Math.min(lot.remain_qty, remaining)
+        remaining -= deductQty
+        
+        // LOT 잔량 차감
+        await env.DB.prepare(`
+          UPDATE inbound SET remain_qty = remain_qty - ?, updated_at = CURRENT_TIMESTAMP
+          WHERE lot_number = ?
+        `).bind(deductQty, lot.lot_number).run()
+        
+        // 트랜잭션 기록
+        await env.DB.prepare(`
+          INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo)
+          VALUES (?, ?, '재고조정', ?, ?, ?)
+        `).bind(today, item_code, -deductQty, lot.lot_number, `[관리자 재고조정] ${reason || ''}`).run()
+      }
+      
+      // LOT 없이 남은 차감량이 있으면 LOT 없이 트랜잭션만 기록
+      if (remaining > 0) {
+        await env.DB.prepare(`
+          INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+          VALUES (?, ?, '재고조정', ?, ?)
+        `).bind(today, item_code, -remaining, `[관리자 재고조정-LOT없음] ${reason || ''}`).run()
+      }
+    }
     
     // 로그 기록
     await env.DB.prepare(`
@@ -372,6 +433,7 @@ admin.put('/master/:item_code/stock', async (c) => {
     
     return c.json({ success: true, message: '재고가 조정되었습니다', diff })
   } catch (error) {
+    console.error('Stock adjustment error:', error)
     return c.json({ success: false, message: '재고 조정 실패' }, 500)
   }
 })

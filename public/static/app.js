@@ -2602,7 +2602,7 @@ async function renderMonthlyReport() {
       
       <!-- 검색 조건 -->
       <div class="bg-white rounded-xl shadow p-4">
-        <div class="grid grid-cols-2 md:grid-cols-6 gap-3">
+        <div class="grid grid-cols-2 md:grid-cols-7 gap-3">
           <div>
             <label class="block text-xs text-gray-500 mb-1">년도</label>
             <select id="monthly-year" class="w-full border rounded-lg px-3 py-2 text-sm">
@@ -2618,6 +2618,13 @@ async function renderMonthlyReport() {
             </select>
           </div>
           <div>
+            <label class="block text-xs text-gray-500 mb-1">보기 방식</label>
+            <select id="monthly-view-type" class="w-full border rounded-lg px-3 py-2 text-sm" onchange="loadMonthlyReport()">
+              <option value="item" selected>품목별</option>
+              <option value="lot">LOT별</option>
+            </select>
+          </div>
+          <div>
             <label class="block text-xs text-gray-500 mb-1">구분</label>
             <select id="monthly-category" class="w-full border rounded-lg px-3 py-2 text-sm">
               <option value="">전체</option>
@@ -2626,8 +2633,8 @@ async function renderMonthlyReport() {
             </select>
           </div>
           <div class="md:col-span-2">
-            <label class="block text-xs text-gray-500 mb-1">원료명 / LOT 검색</label>
-            <input type="text" id="monthly-search" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="원료명 또는 LOT 번호 입력">
+            <label class="block text-xs text-gray-500 mb-1">품목명 검색</label>
+            <input type="text" id="monthly-search" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="품목명 또는 품목코드 입력">
           </div>
           <div class="flex items-end">
             <button onclick="loadMonthlyReport()" class="w-full bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm">
@@ -2651,18 +2658,23 @@ async function renderMonthlyReport() {
 async function loadMonthlyReport() {
   const year = document.getElementById('monthly-year').value;
   const month = document.getElementById('monthly-month').value;
+  const viewType = document.getElementById('monthly-view-type')?.value || 'item';
   const category = document.getElementById('monthly-category').value;
   const searchText = document.getElementById('monthly-search').value.trim();
   
   try {
-    // LOT별 월간 수불부 API 호출 (이월량 포함)
     const params = new URLSearchParams();
     params.append('year', year);
     params.append('month', month);
     if (category) params.append('category', category);
-    if (searchText) params.append('search', searchText);  // 원료명/LOT 통합 검색
+    if (searchText) params.append('search', searchText);
     
-    const result = await api(`/transactions/monthly-lot-report?${params.toString()}`);
+    // 보기 방식에 따라 다른 API 호출
+    const endpoint = viewType === 'lot' 
+      ? `/transactions/monthly-lot-report?${params.toString()}`
+      : `/transactions/monthly-item-report?${params.toString()}`;
+    
+    const result = await api(endpoint);
     const data = result.data || [];
     const summary = result.summary || {};
     const period = result.period || {};
@@ -2670,12 +2682,18 @@ async function loadMonthlyReport() {
     // 전역에 저장 (엑셀/출력용)
     window.monthlyReportData = data;
     window.monthlyReportPeriod = { year, month };
+    window.monthlyReportViewType = viewType;
+    
+    const countLabel = viewType === 'lot' ? 'LOT' : '품목';
     
     document.getElementById('monthly-content').innerHTML = `
       <div class="p-4 border-b bg-gray-50 flex justify-between items-center flex-wrap gap-2">
         <div>
           <span class="font-bold text-gray-700">${year}년 ${parseInt(month)}월 수불부</span>
-          <span class="ml-2 text-sm text-gray-500">(LOT ${data.length}건)</span>
+          <span class="ml-2 text-sm text-gray-500">(${countLabel} ${data.length}건)</span>
+          <span class="ml-2 px-2 py-0.5 text-xs rounded ${viewType === 'item' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">
+            ${viewType === 'item' ? '품목별' : 'LOT별'}
+          </span>
         </div>
         <div class="flex gap-2">
           <button onclick="downloadMonthlyReport()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
@@ -2696,26 +2714,33 @@ async function loadMonthlyReport() {
         <div><span class="text-gray-600 font-bold">월말</span> <span class="text-gray-800 font-bold">${formatNumber(summary.total_closing || 0)}</span></div>
       </div>
       
-      <!-- LOT별 수불부 테이블 (이월량 포함) -->
+      <!-- 수불부 테이블 -->
       <div class="overflow-x-auto">
         <table class="w-full text-sm data-table">
           <thead>
             <tr class="text-gray-500 border-b bg-gray-50">
-              <th class="text-left p-3">LOT 번호</th>
-              <th class="text-left p-3">품목</th>
-              <th class="text-center p-3">입고일</th>
-              <th class="text-center p-3">유통기한</th>
+              ${viewType === 'lot' ? `
+                <th class="text-left p-3">LOT 번호</th>
+                <th class="text-left p-3">품목</th>
+                <th class="text-center p-3">입고일</th>
+                <th class="text-center p-3">유통기한</th>
+              ` : `
+                <th class="text-left p-3">품목코드</th>
+                <th class="text-left p-3">품목명</th>
+                <th class="text-center p-3">구분</th>
+                <th class="text-center p-3">단위</th>
+              `}
               <th class="text-right p-3 text-purple-600">이월</th>
               <th class="text-right p-3 text-blue-600">입고</th>
               <th class="text-right p-3 text-orange-600">사용</th>
               <th class="text-right p-3 text-yellow-600">조정</th>
-              <th class="text-right p-3">월말잔량</th>
+              <th class="text-right p-3">월말재고</th>
             </tr>
           </thead>
           <tbody>
             ${data.length === 0 ? `
               <tr><td colspan="9" class="p-8 text-center text-gray-400">데이터가 없습니다.</td></tr>
-            ` : data.map(lot => `
+            ` : viewType === 'lot' ? data.map(lot => `
               <tr class="border-b hover:bg-gray-50 ${lot.closing_qty <= 0 ? 'bg-gray-100 text-gray-400' : ''}">
                 <td class="p-3 font-mono text-xs">${lot.lot_number}</td>
                 <td class="p-3">${lot.item_name} <span class="text-gray-400 text-xs">(${lot.item_code})</span></td>
@@ -2726,6 +2751,18 @@ async function loadMonthlyReport() {
                 <td class="p-3 text-right text-orange-600">${lot.month_usage > 0 ? '-' + formatNumber(lot.month_usage) : '-'}</td>
                 <td class="p-3 text-right text-yellow-600">${lot.month_adjustment !== 0 ? formatNumber(lot.month_adjustment) : '-'}</td>
                 <td class="p-3 text-right font-bold ${lot.closing_qty <= 0 ? 'text-gray-400' : ''}">${formatNumber(lot.closing_qty)}</td>
+              </tr>
+            `).join('') : data.map(item => `
+              <tr class="border-b hover:bg-gray-50 ${item.closing_qty <= 0 ? 'bg-gray-100 text-gray-400' : ''}">
+                <td class="p-3 font-mono text-xs">${item.item_code}</td>
+                <td class="p-3">${item.item_name}</td>
+                <td class="p-3 text-center"><span class="px-2 py-0.5 text-xs rounded ${item.category === '원료' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}">${item.category}</span></td>
+                <td class="p-3 text-center text-xs">${item.unit || '-'}</td>
+                <td class="p-3 text-right text-purple-600">${item.carry_over > 0 ? formatNumber(item.carry_over) : '-'}</td>
+                <td class="p-3 text-right text-blue-600">${item.month_inbound > 0 ? '+' + formatNumber(item.month_inbound) : '-'}</td>
+                <td class="p-3 text-right text-orange-600">${item.month_usage > 0 ? '-' + formatNumber(item.month_usage) : '-'}</td>
+                <td class="p-3 text-right text-yellow-600">${item.month_adjustment !== 0 ? formatNumber(item.month_adjustment) : '-'}</td>
+                <td class="p-3 text-right font-bold ${item.closing_qty <= 0 ? 'text-gray-400' : ''}">${formatNumber(item.closing_qty)}</td>
               </tr>
             `).join('')}
           </tbody>

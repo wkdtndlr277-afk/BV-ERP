@@ -357,4 +357,140 @@ transactionRoutes.get('/monthly-lot-report', async (c) => {
   });
 });
 
+// 품목별 월별 수불부 (재고조정 품목 포함 - LOT 없는 품목도 표시)
+transactionRoutes.get('/monthly-item-report', async (c) => {
+  const year = c.req.query('year') || new Date().getFullYear().toString();
+  const month = c.req.query('month') || String(new Date().getMonth() + 1).padStart(2, '0');
+  const category = c.req.query('category');
+  const search = c.req.query('search');
+  
+  const startDate = `${year}-${month.padStart(2, '0')}-01`;
+  const endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
+  
+  // 1. 마스터의 모든 품목 조회 (재고가 있거나 거래가 있는 품목)
+  let itemQuery = `
+    SELECT 
+      m.id,
+      m.item_code,
+      m.item_name,
+      m.category,
+      m.unit,
+      m.current_stock
+    FROM master m
+    WHERE (
+      m.current_stock > 0
+      OR EXISTS (
+        SELECT 1 FROM transactions t 
+        WHERE t.item_code = m.item_code 
+        AND t.trans_date >= ? AND t.trans_date <= ?
+      )
+      OR EXISTS (
+        SELECT 1 FROM inbound i 
+        WHERE i.item_code = m.item_code 
+        AND i.inbound_date >= ? AND i.inbound_date <= ?
+      )
+    )
+  `;
+  const itemParams: any[] = [startDate, endDate, startDate, endDate];
+  
+  if (category) {
+    itemQuery += ' AND m.category = ?';
+    itemParams.push(category);
+  }
+  if (search) {
+    itemQuery += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
+    itemParams.push(`%${search}%`, `%${search}%`);
+  }
+  
+  itemQuery += ' ORDER BY m.category, m.item_name';
+  
+  const items = await c.env.DB.prepare(itemQuery).bind(...itemParams).all();
+  
+  // 2. 각 품목에 대해 이월량, 당월 입고/사용/출고/조정, 월말 재고 계산
+  const itemData = await Promise.all((items.results || []).map(async (item: any) => {
+    // LOT 기반 이월량 (해당 월 이전까지의 모든 LOT별 거래 합계)
+    const lotCarryOverResult = await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(quantity), 0) as carry_over
+      FROM transactions t
+      JOIN inbound i ON t.lot_number = i.lot_number
+      WHERE i.item_code = ? AND t.trans_date < ?
+    `).bind(item.item_code, startDate).first();
+    
+    // LOT 없는 거래의 이월량 (재고조정 등)
+    const noLotCarryOverResult = await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(quantity), 0) as carry_over
+      FROM transactions t
+      WHERE t.item_code = ? AND t.trans_date < ? AND (t.lot_number IS NULL OR t.lot_number = '')
+    `).bind(item.item_code, startDate).first();
+    
+    // 당월 입고량 (inbound 테이블에서 직접)
+    const monthlyInboundResult = await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(origin_qty), 0) as inbound
+      FROM inbound
+      WHERE item_code = ? AND inbound_date >= ? AND inbound_date <= ?
+    `).bind(item.item_code, startDate, endDate).first();
+    
+    // 당월 거래 내역 (transactions 테이블)
+    const monthlyTransResult = await c.env.DB.prepare(`
+      SELECT 
+        COALESCE(SUM(CASE WHEN trans_type = '사용' THEN ABS(quantity) ELSE 0 END), 0) as usage,
+        COALESCE(SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END), 0) as outbound,
+        COALESCE(SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END), 0) as adjustment
+      FROM transactions
+      WHERE item_code = ? AND trans_date >= ? AND trans_date <= ?
+    `).bind(item.item_code, startDate, endDate).first();
+    
+    const lotCarryOver = (lotCarryOverResult as any)?.carry_over || 0;
+    const noLotCarryOver = (noLotCarryOverResult as any)?.carry_over || 0;
+    const carryOver = lotCarryOver + noLotCarryOver;
+    
+    const inbound = (monthlyInboundResult as any)?.inbound || 0;
+    const usage = (monthlyTransResult as any)?.usage || 0;
+    const outbound = (monthlyTransResult as any)?.outbound || 0;
+    const adjustment = (monthlyTransResult as any)?.adjustment || 0;
+    
+    // 월말 잔량 = 이월 + 입고 - 사용 - 출고 + 조정
+    // 또는 master의 current_stock 사용 (더 정확)
+    const closingQty = item.current_stock;
+    const calculatedClosing = carryOver + inbound - usage - outbound + adjustment;
+    
+    return {
+      ...item,
+      carry_over: carryOver,        // 이월량 (전월 잔량)
+      month_inbound: inbound,       // 당월 입고
+      month_usage: usage,           // 당월 사용
+      month_outbound: outbound,     // 당월 출고
+      month_adjustment: adjustment, // 당월 조정
+      closing_qty: closingQty,      // 월말 잔량 (master 기준)
+      calculated_closing: calculatedClosing  // 계산된 월말 잔량
+    };
+  }));
+  
+  // 3. 요약 계산
+  const summary = itemData.reduce((acc: any, item: any) => {
+    acc.total_carry_over += item.carry_over;
+    acc.total_inbound += item.month_inbound;
+    acc.total_usage += item.month_usage;
+    acc.total_outbound += item.month_outbound;
+    acc.total_adjustment += item.month_adjustment;
+    acc.total_closing += item.closing_qty;
+    return acc;
+  }, {
+    total_carry_over: 0,
+    total_inbound: 0,
+    total_usage: 0,
+    total_outbound: 0,
+    total_adjustment: 0,
+    total_closing: 0
+  });
+  
+  return c.json({
+    success: true,
+    data: itemData,
+    summary,
+    period: { year, month, startDate, endDate },
+    item_count: itemData.length
+  });
+});
+
 export default transactionRoutes;

@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
-// Version: 1.2.0 Build: 20260130-0615
-const APP_VERSION = '1.2.0';
-const APP_BUILD = '20260130-0615';
+// Version: 1.2.1 Build: 20260130-0630
+const APP_VERSION = '1.2.1';
+const APP_BUILD = '20260130-0630';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -3969,15 +3969,17 @@ function renderKpiStandardsTable(standards) {
               <input type="number" step="0.1" value="${s.min_value ?? ''}" 
                      id="kpi-std-min-${s.id}"
                      class="w-16 border rounded px-2 py-1 text-center text-sm kpi-std-input"
-                     data-id="${s.id}" data-field="min_value"
-                     onblur="updateKpiStandard(${s.id}, 'min_value', this.value)">
+                     data-id="${s.id}" data-field="min_value" data-original="${s.min_value ?? ''}"
+                     onchange="updateKpiStandard(${s.id}, 'min_value', this.value)"
+                     onkeydown="if(event.key==='Enter'){this.blur();}">
             </td>
             <td class="p-2 text-center">
               <input type="number" step="0.1" value="${s.max_value ?? ''}" 
                      id="kpi-std-max-${s.id}"
                      class="w-16 border rounded px-2 py-1 text-center text-sm kpi-std-input"
-                     data-id="${s.id}" data-field="max_value"
-                     onblur="updateKpiStandard(${s.id}, 'max_value', this.value)">
+                     data-id="${s.id}" data-field="max_value" data-original="${s.max_value ?? ''}"
+                     onchange="updateKpiStandard(${s.id}, 'max_value', this.value)"
+                     onkeydown="if(event.key==='Enter'){this.blur();}">
             </td>
             <td class="p-2 text-center">${s.unit || '-'}</td>
             <td class="p-2 text-center">
@@ -4022,27 +4024,44 @@ function filterKpiStandards() {
 }
 
 async function updateKpiStandard(id, field, value) {
-  console.log('updateKpiStandard 호출:', { id, field, value });
+  console.log('🔧 updateKpiStandard 호출:', { id, field, value });
+  
+  const inputEl = document.querySelector(`#kpi-std-${field === 'min_value' ? 'min' : 'max'}-${id}`);
   
   try {
     // ID를 숫자로 변환하여 비교
     const numId = parseInt(id, 10);
-    console.log('window.kpiStandardsData:', window.kpiStandardsData?.length, '개');
-    const standard = window.kpiStandardsData?.find(s => parseInt(s.id, 10) === numId);
     
-    if (!standard) {
-      console.error('KPI 기준을 찾을 수 없습니다:', id, numId, 'kpiStandardsData:', window.kpiStandardsData);
-      showToast('기준을 찾을 수 없습니다. 새로고침 후 다시 시도해주세요.', 'error');
+    if (!window.kpiStandardsData || window.kpiStandardsData.length === 0) {
+      console.error('❌ kpiStandardsData가 비어있습니다');
+      showToast('기준 데이터가 없습니다. 모달을 다시 열어주세요.', 'error');
       return;
     }
-    console.log('찾은 기준:', standard);
     
-    // 현재 값과 비교하여 변경된 경우만 업데이트
-    const newValue = value === '' ? null : parseFloat(value);
+    const standard = window.kpiStandardsData.find(s => parseInt(s.id, 10) === numId);
+    
+    if (!standard) {
+      console.error('❌ KPI 기준을 찾을 수 없습니다:', numId);
+      showToast('기준을 찾을 수 없습니다. 모달을 다시 열어주세요.', 'error');
+      return;
+    }
+    
+    // 새 값 파싱
+    const newValue = value === '' || value === null ? null : parseFloat(value);
     const oldValue = standard[field];
     
-    if (newValue === oldValue || (newValue === null && oldValue === null)) {
-      return; // 변경 없으면 스킵
+    console.log('📊 값 비교:', { oldValue, newValue, field });
+    
+    // 변경 없으면 스킵
+    if (newValue === oldValue) {
+      console.log('⏭️ 값이 동일하여 스킵');
+      return;
+    }
+    
+    // 저장 중 표시
+    if (inputEl) {
+      inputEl.classList.add('bg-yellow-100');
+      inputEl.disabled = true;
     }
     
     const updateData = {
@@ -4050,32 +4069,50 @@ async function updateKpiStandard(id, field, value) {
       product_name: standard.product_name,
       kpi_item: standard.kpi_item,
       kpi_item_label: standard.kpi_item_label,
-      min_value: standard.min_value,
-      max_value: standard.max_value,
+      min_value: field === 'min_value' ? newValue : standard.min_value,
+      max_value: field === 'max_value' ? newValue : standard.max_value,
       unit: standard.unit,
       is_ccp: standard.is_ccp === 1 || standard.is_ccp === true,
       is_required: standard.is_required === 1 || standard.is_required === true,
       display_order: standard.display_order
     };
     
-    // 변경된 필드 업데이트
-    updateData[field] = newValue;
+    console.log('📤 API 호출:', updateData);
     
-    await api('/process-kpi/standards', 'POST', updateData);
-    showToast('기준이 수정되었습니다.', 'success');
+    const result = await api('/process-kpi/standards', 'POST', updateData);
+    console.log('✅ API 응답:', result);
     
-    // 로컬 데이터도 업데이트
+    // 로컬 데이터 업데이트
     standard[field] = newValue;
     
-    // 입력 필드 색상 피드백
-    const inputEl = document.querySelector(`#kpi-std-${field === 'min_value' ? 'min' : 'max'}-${id}`);
+    // 성공 피드백
     if (inputEl) {
-      inputEl.classList.add('bg-green-100');
-      setTimeout(() => inputEl.classList.remove('bg-green-100'), 1000);
+      inputEl.disabled = false;
+      inputEl.classList.remove('bg-yellow-100');
+      inputEl.classList.add('bg-green-100', 'border-green-500');
+      inputEl.dataset.original = newValue;
+      setTimeout(() => {
+        inputEl.classList.remove('bg-green-100', 'border-green-500');
+      }, 2000);
     }
+    
+    showToast(`${standard.kpi_item_label} 기준이 수정되었습니다.`, 'success');
+    
   } catch (e) {
-    console.error('KPI 기준 수정 오류:', e);
-    showToast('기준 수정에 실패했습니다.', 'error');
+    console.error('❌ KPI 기준 수정 오류:', e);
+    
+    // 실패 시 원래 값으로 복구
+    if (inputEl) {
+      inputEl.disabled = false;
+      inputEl.classList.remove('bg-yellow-100');
+      inputEl.classList.add('bg-red-100', 'border-red-500');
+      inputEl.value = inputEl.dataset.original || '';
+      setTimeout(() => {
+        inputEl.classList.remove('bg-red-100', 'border-red-500');
+      }, 2000);
+    }
+    
+    showToast('기준 수정에 실패했습니다: ' + (e.message || '알 수 없는 오류'), 'error');
   }
 }
 

@@ -2028,7 +2028,11 @@ async function renderInventory() {
           <i class="fas fa-boxes mr-2 text-haccp-primary"></i>
           재고 현황
         </h2>
-        <div class="flex gap-2">
+        <div class="flex gap-2 flex-wrap">
+          <div class="relative">
+            <input type="text" id="inventory-search" class="border rounded-lg pl-10 pr-4 py-2 w-48" placeholder="품목명/코드 검색...">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+          </div>
           <button onclick="filterInventory('')" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 inventory-filter active" data-category="">전체</button>
           <button onclick="filterInventory('원료')" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 inventory-filter" data-category="원료">원료</button>
           <button onclick="filterInventory('제품')" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 inventory-filter" data-category="제품">제품</button>
@@ -2043,7 +2047,23 @@ async function renderInventory() {
     </div>
   `;
   
+  // 검색 이벤트
+  document.getElementById('inventory-search').addEventListener('input', function(e) {
+    filterInventoryBySearch(e.target.value.toLowerCase().trim());
+  });
+  
   loadInventoryData('');
+}
+
+// 재고 현황 검색 필터
+function filterInventoryBySearch(searchTerm) {
+  const rows = document.querySelectorAll('#inventory-content tbody tr');
+  rows.forEach(row => {
+    const code = row.querySelector('td:nth-child(1)')?.textContent?.toLowerCase() || '';
+    const name = row.querySelector('td:nth-child(2)')?.textContent?.toLowerCase() || '';
+    const match = !searchTerm || code.includes(searchTerm) || name.includes(searchTerm);
+    row.style.display = match ? '' : 'none';
+  });
 }
 
 async function loadInventoryData(category) {
@@ -3942,13 +3962,17 @@ function renderKpiStandardsTable(standards) {
             <td class="p-2 font-medium">${s.kpi_item_label}</td>
             <td class="p-2 text-center">
               <input type="number" step="0.1" value="${s.min_value ?? ''}" 
-                     class="w-16 border rounded px-2 py-1 text-center text-sm"
-                     onchange="updateKpiStandard(${s.id}, 'min_value', this.value)">
+                     id="kpi-std-min-${s.id}"
+                     class="w-16 border rounded px-2 py-1 text-center text-sm kpi-std-input"
+                     data-id="${s.id}" data-field="min_value"
+                     onblur="updateKpiStandard(${s.id}, 'min_value', this.value)">
             </td>
             <td class="p-2 text-center">
               <input type="number" step="0.1" value="${s.max_value ?? ''}" 
-                     class="w-16 border rounded px-2 py-1 text-center text-sm"
-                     onchange="updateKpiStandard(${s.id}, 'max_value', this.value)">
+                     id="kpi-std-max-${s.id}"
+                     class="w-16 border rounded px-2 py-1 text-center text-sm kpi-std-input"
+                     data-id="${s.id}" data-field="max_value"
+                     onblur="updateKpiStandard(${s.id}, 'max_value', this.value)">
             </td>
             <td class="p-2 text-center">${s.unit || '-'}</td>
             <td class="p-2 text-center">
@@ -3994,9 +4018,23 @@ function filterKpiStandards() {
 
 async function updateKpiStandard(id, field, value) {
   try {
-    // 기존 데이터 찾기
-    const standard = window.kpiStandardsData?.find(s => s.id === id);
-    if (!standard) return;
+    // ID를 숫자로 변환하여 비교
+    const numId = parseInt(id, 10);
+    const standard = window.kpiStandardsData?.find(s => parseInt(s.id, 10) === numId);
+    
+    if (!standard) {
+      console.error('KPI 기준을 찾을 수 없습니다:', id, numId);
+      showToast('기준을 찾을 수 없습니다. 새로고침 후 다시 시도해주세요.', 'error');
+      return;
+    }
+    
+    // 현재 값과 비교하여 변경된 경우만 업데이트
+    const newValue = value === '' ? null : parseFloat(value);
+    const oldValue = standard[field];
+    
+    if (newValue === oldValue || (newValue === null && oldValue === null)) {
+      return; // 변경 없으면 스킵
+    }
     
     const updateData = {
       process_type: standard.process_type,
@@ -4006,22 +4044,28 @@ async function updateKpiStandard(id, field, value) {
       min_value: standard.min_value,
       max_value: standard.max_value,
       unit: standard.unit,
-      is_ccp: standard.is_ccp,
-      is_required: standard.is_required,
+      is_ccp: standard.is_ccp === 1 || standard.is_ccp === true,
+      is_required: standard.is_required === 1 || standard.is_required === true,
       display_order: standard.display_order
     };
     
     // 변경된 필드 업데이트
-    updateData[field] = value === '' ? null : parseFloat(value);
+    updateData[field] = newValue;
     
     await api('/process-kpi/standards', 'POST', updateData);
     showToast('기준이 수정되었습니다.', 'success');
     
     // 로컬 데이터도 업데이트
-    if (standard) {
-      standard[field] = updateData[field];
+    standard[field] = newValue;
+    
+    // 입력 필드 색상 피드백
+    const inputEl = document.querySelector(`#kpi-std-${field === 'min_value' ? 'min' : 'max'}-${id}`);
+    if (inputEl) {
+      inputEl.classList.add('bg-green-100');
+      setTimeout(() => inputEl.classList.remove('bg-green-100'), 1000);
     }
   } catch (e) {
+    console.error('KPI 기준 수정 오류:', e);
     showToast('기준 수정에 실패했습니다.', 'error');
   }
 }
@@ -5910,11 +5954,17 @@ async function loadAdminStock() {
     
     tabContent.innerHTML = `
       <div class="space-y-6">
-        <div class="flex justify-between items-center">
+        <div class="flex justify-between items-center flex-wrap gap-4">
           <h3 class="text-lg font-bold text-gray-800">재고 관리</h3>
-          <button onclick="recalculateAllStock()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm">
-            <i class="fas fa-sync-alt mr-1"></i> 전체 재고 재계산
-          </button>
+          <div class="flex gap-2 flex-wrap">
+            <div class="relative">
+              <input type="text" id="admin-stock-search" class="border rounded-lg pl-10 pr-4 py-2 w-48" placeholder="품목명/코드 검색...">
+              <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+            </div>
+            <button onclick="recalculateAllStock()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm">
+              <i class="fas fa-sync-alt mr-1"></i> 전체 재고 재계산
+            </button>
+          </div>
         </div>
         
         <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm">
@@ -5923,7 +5973,7 @@ async function loadAdminStock() {
         </div>
         
         <div class="overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class="w-full text-sm" id="admin-stock-table">
             <thead class="bg-gray-100">
               <tr>
                 <th class="px-3 py-2 text-left">품목코드</th>
@@ -5937,7 +5987,7 @@ async function loadAdminStock() {
             </thead>
             <tbody class="divide-y">
               ${items.map(item => `
-                <tr class="hover:bg-gray-50">
+                <tr class="hover:bg-gray-50 admin-stock-row" data-code="${item.item_code.toLowerCase()}" data-name="${item.item_name.toLowerCase()}">
                   <td class="px-3 py-2 font-mono">${item.item_code}</td>
                   <td class="px-3 py-2 font-medium">${item.item_name}</td>
                   <td class="px-3 py-2 text-center">
@@ -5958,9 +6008,25 @@ async function loadAdminStock() {
         </div>
       </div>
     `;
+    
+    // 검색 이벤트 등록
+    document.getElementById('admin-stock-search').addEventListener('input', function(e) {
+      filterAdminStockBySearch(e.target.value.toLowerCase().trim());
+    });
   } catch (e) {
     tabContent.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
   }
+}
+
+// 관리자 재고 조정 검색 필터
+function filterAdminStockBySearch(searchTerm) {
+  const rows = document.querySelectorAll('.admin-stock-row');
+  rows.forEach(row => {
+    const code = row.dataset.code || '';
+    const name = row.dataset.name || '';
+    const match = !searchTerm || code.includes(searchTerm) || name.includes(searchTerm);
+    row.style.display = match ? '' : 'none';
+  });
 }
 
 // 재고 조정 모달

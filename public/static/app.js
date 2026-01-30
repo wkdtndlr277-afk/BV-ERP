@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
-// Version: 1.2.1 Build: 20260130-0630
-const APP_VERSION = '1.2.1';
-const APP_BUILD = '20260130-0630';
+// Version: 1.2.2 Build: 20260130-0645
+const APP_VERSION = '1.2.2';
+const APP_BUILD = '20260130-0645';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -3985,8 +3985,11 @@ function renderKpiStandardsTable(standards) {
             <td class="p-2 text-center">
               ${s.is_ccp ? '<span class="text-red-600 font-bold">CCP</span>' : '-'}
             </td>
-            <td class="p-2 text-center">
-              <button onclick="deleteKpiStandard(${s.id})" class="text-red-500 hover:text-red-700">
+            <td class="p-2 text-center space-x-1">
+              <button onclick="saveKpiStandardRow(${s.id})" class="text-green-600 hover:text-green-800 px-1" title="저장">
+                <i class="fas fa-save"></i>
+              </button>
+              <button onclick="deleteKpiStandard(${s.id})" class="text-red-500 hover:text-red-700 px-1" title="삭제">
                 <i class="fas fa-trash"></i>
               </button>
             </td>
@@ -4113,6 +4116,88 @@ async function updateKpiStandard(id, field, value) {
     }
     
     showToast('기준 수정에 실패했습니다: ' + (e.message || '알 수 없는 오류'), 'error');
+  }
+}
+
+// 저장 버튼 클릭 시 해당 행의 min/max 값을 저장
+async function saveKpiStandardRow(id) {
+  const minInput = document.querySelector(`#kpi-std-min-${id}`);
+  const maxInput = document.querySelector(`#kpi-std-max-${id}`);
+  
+  if (!minInput || !maxInput) {
+    showToast('입력 필드를 찾을 수 없습니다.', 'error');
+    return;
+  }
+  
+  const numId = parseInt(id, 10);
+  const standard = window.kpiStandardsData?.find(s => parseInt(s.id, 10) === numId);
+  
+  if (!standard) {
+    showToast('기준 데이터를 찾을 수 없습니다. 모달을 다시 열어주세요.', 'error');
+    return;
+  }
+  
+  const newMinValue = minInput.value === '' ? null : parseFloat(minInput.value);
+  const newMaxValue = maxInput.value === '' ? null : parseFloat(maxInput.value);
+  
+  // 저장 중 표시
+  minInput.classList.add('bg-yellow-100');
+  maxInput.classList.add('bg-yellow-100');
+  minInput.disabled = true;
+  maxInput.disabled = true;
+  
+  try {
+    const updateData = {
+      process_type: standard.process_type,
+      product_name: standard.product_name,
+      kpi_item: standard.kpi_item,
+      kpi_item_label: standard.kpi_item_label,
+      min_value: newMinValue,
+      max_value: newMaxValue,
+      unit: standard.unit,
+      is_ccp: standard.is_ccp === 1 || standard.is_ccp === true,
+      is_required: standard.is_required === 1 || standard.is_required === true,
+      display_order: standard.display_order
+    };
+    
+    console.log('💾 저장 버튼 클릭 - API 호출:', updateData);
+    
+    await api('/process-kpi/standards', 'POST', updateData);
+    
+    // 로컬 데이터 업데이트
+    standard.min_value = newMinValue;
+    standard.max_value = newMaxValue;
+    
+    // 성공 피드백
+    minInput.disabled = false;
+    maxInput.disabled = false;
+    minInput.classList.remove('bg-yellow-100');
+    maxInput.classList.remove('bg-yellow-100');
+    minInput.classList.add('bg-green-100');
+    maxInput.classList.add('bg-green-100');
+    
+    setTimeout(() => {
+      minInput.classList.remove('bg-green-100');
+      maxInput.classList.remove('bg-green-100');
+    }, 2000);
+    
+    showToast(`${standard.kpi_item_label} 기준이 저장되었습니다. (${newMinValue ?? '-'} ~ ${newMaxValue ?? '-'})`, 'success');
+    
+  } catch (e) {
+    console.error('❌ 저장 실패:', e);
+    minInput.disabled = false;
+    maxInput.disabled = false;
+    minInput.classList.remove('bg-yellow-100');
+    maxInput.classList.remove('bg-yellow-100');
+    minInput.classList.add('bg-red-100');
+    maxInput.classList.add('bg-red-100');
+    
+    setTimeout(() => {
+      minInput.classList.remove('bg-red-100');
+      maxInput.classList.remove('bg-red-100');
+    }, 2000);
+    
+    showToast('저장에 실패했습니다: ' + (e.message || '알 수 없는 오류'), 'error');
   }
 }
 

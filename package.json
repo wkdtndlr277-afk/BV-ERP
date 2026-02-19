@@ -18,7 +18,8 @@
     "db:console:local": "wrangler d1 execute haccp-erp-production --local"
   },
   "dependencies": {
-    "hono": "^4.11.7"
+    "hono": "^4.11.7",
+    "jsdom": "^28.1.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250129.0",

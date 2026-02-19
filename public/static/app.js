@@ -12339,30 +12339,96 @@ async function parseDirectStoreHtmlXls(arrayBuffer) {
   const itemMap = new Map();
   
   try {
-    // ArrayBuffer를 텍스트로 변환 - 여러 인코딩 시도
-    let html = '';
-    const encodings = ['euc-kr', 'ks_c_5601-1987', 'cp949', 'utf-8'];
+    console.log('=== 직영점 파일 파싱 시작 ===');
+    console.log('직영점 파일 크기:', arrayBuffer.byteLength, 'bytes');
     
-    for (const encoding of encodings) {
+    // EUC-KR 매핑 테이블 로드
+    let eucKrTable = window._eucKrTable;
+    if (!eucKrTable) {
       try {
-        const decoder = new TextDecoder(encoding);
-        html = decoder.decode(arrayBuffer);
-        if (html.includes('상품명') || html.includes('상 품 명') || html.includes('출고수량')) {
-          console.log(`직영점 파일 인코딩 감지: ${encoding}`);
-          break;
+        console.log('EUC-KR 테이블 로드 시도...');
+        // 여러 경로 시도
+        let response;
+        const paths = ['/static/euckr-table.json', './static/euckr-table.json', 'euckr-table.json'];
+        for (const path of paths) {
+          try {
+            response = await fetch(path);
+            if (response.ok) {
+              console.log('EUC-KR 테이블 로드 경로:', path);
+              break;
+            }
+          } catch (fetchErr) {
+            console.log('경로 실패:', path, fetchErr.message);
+          }
+        }
+        
+        if (response && response.ok) {
+          eucKrTable = await response.json();
+          window._eucKrTable = eucKrTable;
+          console.log('EUC-KR 테이블 로드 완료:', Object.keys(eucKrTable).length, '개 매핑');
+        } else {
+          console.error('EUC-KR 테이블을 찾을 수 없습니다');
         }
       } catch (e) {
-        console.log(`인코딩 ${encoding} 실패, 다음 시도...`);
+        console.error('EUC-KR 테이블 로드 실패:', e);
       }
+    } else {
+      console.log('캐시된 EUC-KR 테이블 사용:', Object.keys(eucKrTable).length, '개 매핑');
     }
     
-    if (!html) {
-      console.error('직영점 파일 디코딩 실패');
-      return items;
+    // EUC-KR 디코딩
+    let html = '';
+    if (eucKrTable) {
+      const bytes = new Uint8Array(arrayBuffer);
+      const result = [];
+      let i = 0;
+      let decodedCount = 0;
+      let unknownCount = 0;
+      
+      while (i < bytes.length) {
+        const b1 = bytes[i];
+        
+        // ASCII
+        if (b1 < 0x80) {
+          result.push(String.fromCharCode(b1));
+          i++;
+        }
+        // 2바이트 문자 (EUC-KR: 첫 바이트 0x81-0xFE, 두번째 0x41-0xFE)
+        else if (i + 1 < bytes.length) {
+          const b2 = bytes[i + 1];
+          // 키 생성 시 반드시 소문자 사용
+          const key = b1.toString(16).toLowerCase().padStart(2, '0') + b2.toString(16).toLowerCase().padStart(2, '0');
+          const unicode = eucKrTable[key];
+          
+          if (unicode) {
+            result.push(String.fromCharCode(unicode));
+            decodedCount++;
+          } else {
+            result.push('?');
+            unknownCount++;
+          }
+          i += 2;
+        } else {
+          result.push('?');
+          i++;
+        }
+      }
+      
+      html = result.join('');
+      console.log('EUC-KR 디코딩 완료 - 디코딩:', decodedCount, '알수없음:', unknownCount);
+      console.log('한글 포함 여부:', /[가-힣]/.test(html));
+      console.log('디코딩된 첫 200자:', html.substring(0, 200));
+    } else {
+      console.log('EUC-KR 테이블 없음 - UTF-8 폴백 사용');
     }
     
-    // 디버깅: HTML 일부 출력
-    console.log('직영점 HTML 미리보기:', html.substring(0, 500));
+    // 디코딩 실패 시 UTF-8로 폴백
+    if (!html || !/[가-힣]/.test(html)) {
+      console.log('EUC-KR 디코딩 실패, UTF-8 폴백');
+      const decoder = new TextDecoder('utf-8', { fatal: false });
+      html = decoder.decode(arrayBuffer);
+      console.log('UTF-8 디코딩 결과 첫 200자:', html.substring(0, 200));
+    }
     
     // HTML 테이블 파싱
     const parser = new DOMParser();
@@ -12371,52 +12437,50 @@ async function parseDirectStoreHtmlXls(arrayBuffer) {
     
     console.log(`직영점 파일 테이블 행 수: ${rows.length}`);
     
-    let headerRowIdx = -1;
-    let productNameIdx = 5;
-    let qtyIdx = 9;
-    
-    // 헤더 찾기
-    rows.forEach((row, idx) => {
-      const cells = row.querySelectorAll('td, th');
-      const rowText = Array.from(cells).map(c => c.textContent.trim()).join('|');
-      
-      // 디버깅: 첫 5행 출력
-      if (idx < 5) {
-        console.log(`직영점 행 ${idx}:`, rowText.substring(0, 200));
-      }
-      
-      if (rowText.includes('상 품 명') || rowText.includes('상품명')) {
-        headerRowIdx = idx;
-        cells.forEach((cell, cellIdx) => {
-          const text = cell.textContent.trim();
-          if (text === '상 품 명' || text === '상품명') productNameIdx = cellIdx;
-          if (text === '출고수량' || text.includes('출고수량')) qtyIdx = cellIdx;
-        });
-        console.log(`직영점 헤더 발견: 행 ${idx}, 상품명 열 ${productNameIdx}, 수량 열 ${qtyIdx}`);
-      }
-    });
-    
-    if (headerRowIdx === -1) {
-      console.error('직영점 파일에서 헤더를 찾을 수 없습니다');
+    if (rows.length === 0) {
+      console.error('직영점 파일에서 테이블 행을 찾을 수 없습니다');
+      showToast('직영점 파일을 파싱할 수 없습니다', 'error');
       return items;
     }
     
-    // 데이터 파싱
-    let parsedCount = 0;
+    // 첫 행 내용 로그
+    if (rows.length > 0) {
+      const firstRowCells = rows[0].querySelectorAll('td');
+      console.log('첫 번째 행 셀 수:', firstRowCells.length);
+      const headers = Array.from(firstRowCells).map(c => c.textContent?.trim() || '');
+      console.log('헤더:', headers);
+    }
+    
+    const productNameIdx = 5;
+    const qtyIdx = 9;
+    
+    let processedRows = 0;
+    let validRows = 0;
+    
     rows.forEach((row, idx) => {
-      if (idx <= headerRowIdx) return;
+      if (idx === 0) return; // 헤더 스킵
       
-      const cells = row.querySelectorAll('td, th');
-      if (cells.length < 5) return;
+      processedRows++;
+      const cells = row.querySelectorAll('td');
       
-      const firstCell = cells[0]?.textContent.trim() || '';
-      // 소계 행 스킵
-      if (firstCell.includes('소계') || firstCell.includes('[') || !/^\d+$/.test(firstCell)) return;
+      // 소계 행은 셀이 적음 - 스킵하되 로그 남김
+      if (cells.length < 10) {
+        if (idx <= 5) console.log(`행 ${idx}: 셀 수 부족 (${cells.length}개), 소계행 가능`);
+        return;
+      }
       
-      const productName = cells[productNameIdx]?.textContent.trim() || '';
+      const firstCell = cells[0]?.textContent?.trim() || '';
+      if (!/^\d+$/.test(firstCell)) {
+        if (idx <= 5) console.log(`행 ${idx}: 첫 셀이 숫자 아님 '${firstCell}'`);
+        return;
+      }
+      
+      validRows++;
+      
+      const productName = cells[productNameIdx]?.textContent?.trim() || '';
       if (!productName) return;
       
-      const qtyText = cells[qtyIdx]?.textContent.trim().replace(/,/g, '') || '0';
+      const qtyText = cells[qtyIdx]?.textContent?.trim().replace(/,/g, '') || '0';
       const qty = parseInt(qtyText) || 0;
       if (qty === 0) return;
       
@@ -12424,16 +12488,11 @@ async function parseDirectStoreHtmlXls(arrayBuffer) {
       const cleanName = productName
         .replace(/^\+/, '')
         .replace(/\*생협$/, '')
-        .replace(/\*\d+g\*/, '*')
         .trim();
       
       itemMap.set(cleanName, (itemMap.get(cleanName) || 0) + qty);
-      parsedCount++;
     });
     
-    console.log(`직영점 데이터 행 처리: ${parsedCount}개`);
-    
-    // 결과 변환
     for (const [name, qty] of itemMap) {
       items.push({
         originalName: name,
@@ -12442,9 +12501,22 @@ async function parseDirectStoreHtmlXls(arrayBuffer) {
       });
     }
     
-    console.log(`직영점 HTML 파싱 완료: ${items.length}개 품목`);
+    console.log(`=== 직영점 파싱 결과 ===`);
+    console.log(`처리된 행: ${processedRows}, 유효한 행: ${validRows}, 최종 품목: ${items.length}개`);
+    
+    if (items.length > 0) {
+      console.log('파싱된 품목 샘플 (최대 5개):');
+      items.slice(0, 5).forEach((item, i) => {
+        console.log(`  ${i+1}. ${item.cleanName}: ${item.quantity}개`);
+      });
+      showToast(`직영점 파일 파싱 완료: ${items.length}개 품목`, 'success');
+    } else {
+      console.error('파싱된 품목이 없습니다!');
+    }
+    
   } catch (e) {
     console.error('직영점 파일 파싱 에러:', e);
+    showToast('직영점 파일 파싱 중 오류가 발생했습니다', 'error');
   }
   
   return items;

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>EUC-KR 테스트</title>
+</head>
+<body>
+  <h1>EUC-KR 테이블 로드 테스트</h1>
+  <div id="result"></div>
+  <script>
+    async function test() {
+      console.log('EUC-KR 테스트 시작');
+      const result = document.getElementById('result');
+      result.innerHTML = '테스트 시작...<br>';
+      
+      // EUC-KR 테이블 로드
+      try {
+        result.innerHTML += '/static/euckr-table.json 로드 시도...<br>';
+        const response = await fetch('/static/euckr-table.json');
+        result.innerHTML += `응답 상태: ${response.status} ${response.ok ? 'OK' : 'FAIL'}<br>`;
+        
+        if (response.ok) {
+          const table = await response.json();
+          console.log('EUC-KR 테이블 로드 완료:', Object.keys(table).length, '개 매핑');
+          result.innerHTML += `테이블 로드 완료: ${Object.keys(table).length}개 매핑<br>`;
+          
+          // 테스트 디코딩
+          const testBytes = [0xc1, 0xd6, 0xb9, 0xae]; // '주문' in EUC-KR
+          let decoded = '';
+          for (let i = 0; i < testBytes.length; i += 2) {
+            const key = testBytes[i].toString(16).padStart(2, '0') + testBytes[i+1].toString(16).padStart(2, '0');
+            const unicode = table[key];
+            decoded += unicode ? String.fromCharCode(unicode) : '?';
+          }
+          console.log('테스트 디코딩:', decoded, '(예상: 주문)');
+          result.innerHTML += `테스트 디코딩: '${decoded}' (예상: '주문')<br>`;
+          result.innerHTML += '<br><strong style="color:green">✅ EUC-KR 테이블 정상 작동!</strong>';
+        }
+      } catch (e) {
+        result.innerHTML += `<br><strong style="color:red">❌ 오류: ${e.message}</strong>`;
+        console.error(e);
+      }
+    }
+    test();
+  </script>
+</body>
+</html>

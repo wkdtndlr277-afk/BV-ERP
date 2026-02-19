@@ -816,6 +816,7 @@ function renderPage(page) {
     case 'production-plan': renderProductionPlan(); break;
     case 'bom': renderBOM(); break;
     case 'product-outbound': renderProductOutbound(); break;
+    case 'cost-calc': renderCostCalc(); break;
     case 'inventory': renderInventory(); break;
     case 'transaction-search': renderTransactionSearch(); break;
     case 'lot-history': renderLotHistory(); break;
@@ -11919,7 +11920,21 @@ async function parseSingleOrderFile(file) {
   }
   
   const data = await file.arrayBuffer();
-  const wb = XLSX.read(data, { type: 'array' });
+  
+  // 직영점 HTML xls 파일 특별 처리
+  if (fileName.includes('직영점') || fileName.includes('직영')) {
+    console.log('parseSingleOrderFile: 직영점 파일 감지 ->', file.name);
+    return await parseDirectStoreHtmlXls(data);
+  }
+  
+  // 컬리 파일 특별 처리
+  if (fileName.includes('컬리') || fileName.includes('72시간') || fileName.includes('쿠키')) {
+    console.log('parseSingleOrderFile: 컬리 파일 감지 ->', file.name);
+    const wb = XLSX.read(data, { type: 'array', codepage: 949 });
+    return parseKurlyMultiSheet(wb, fileName);
+  }
+  
+  const wb = XLSX.read(data, { type: 'array', codepage: 949 });
   
   // 판매처 감지
   const channel = detectOrderChannel(fileName, wb);
@@ -18126,3 +18141,574 @@ window.selectFrozenProduct = selectFrozenProduct;
 window.saveFrozenInbound = saveFrozenInbound;
 window.saveFrozenOutbound = saveFrozenOutbound;
 window.deleteFrozenStockLot = deleteFrozenStockLot;
+
+// ==================== 원가 계산 ====================
+
+async function renderCostCalc() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex justify-between items-center">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-calculator mr-2 text-green-600"></i>제조원가 계산
+        </h2>
+        <div class="flex gap-2">
+          <button onclick="loadCostStats()" class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
+            <i class="fas fa-sync-alt mr-1"></i> 새로고침
+          </button>
+        </div>
+      </div>
+      
+      <!-- 통계 카드 -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="cost-stats">
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-gray-500 text-sm">전체 원료</div>
+          <div class="text-2xl font-bold text-gray-800" id="stat-total-materials">-</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-gray-500 text-sm">단가 등록</div>
+          <div class="text-2xl font-bold text-green-600" id="stat-with-cost">-</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-gray-500 text-sm">BOM 등록 제품</div>
+          <div class="text-2xl font-bold text-blue-600" id="stat-products-bom">-</div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="text-gray-500 text-sm">원가 계산 완료</div>
+          <div class="text-2xl font-bold text-purple-600" id="stat-complete">-</div>
+        </div>
+      </div>
+      
+      <!-- 탭 메뉴 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="border-b">
+          <nav class="flex">
+            <button onclick="switchCostTab('materials')" class="cost-tab px-6 py-4 font-medium text-blue-600 border-b-2 border-blue-600" data-tab="materials">
+              <i class="fas fa-boxes mr-1"></i> 원료 단가 관리
+            </button>
+            <button onclick="switchCostTab('products')" class="cost-tab px-6 py-4 font-medium text-gray-500 hover:text-gray-700" data-tab="products">
+              <i class="fas fa-box mr-1"></i> 제품 원가 조회
+            </button>
+            <button onclick="switchCostTab('simulate')" class="cost-tab px-6 py-4 font-medium text-gray-500 hover:text-gray-700" data-tab="simulate">
+              <i class="fas fa-chart-line mr-1"></i> 원가 시뮬레이션
+            </button>
+          </nav>
+        </div>
+        
+        <!-- 원료 단가 관리 탭 -->
+        <div id="cost-tab-materials" class="cost-tab-content p-6">
+          <div class="flex justify-between items-center mb-4">
+            <div class="flex gap-2">
+              <input type="text" id="material-search" placeholder="원료명 검색..." 
+                class="border rounded-lg px-4 py-2 w-64" onkeyup="filterMaterialCosts()">
+              <select id="material-filter" class="border rounded-lg px-4 py-2" onchange="filterMaterialCosts()">
+                <option value="all">전체</option>
+                <option value="with-cost">단가 등록</option>
+                <option value="no-cost">단가 미등록</option>
+              </select>
+            </div>
+            <button onclick="saveMaterialCosts()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+              <i class="fas fa-save mr-1"></i> 일괄 저장
+            </button>
+          </div>
+          
+          <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-100 sticky top-0">
+                <tr>
+                  <th class="px-4 py-3 text-left">원료코드</th>
+                  <th class="px-4 py-3 text-left">원료명</th>
+                  <th class="px-4 py-3 text-center">기준단위</th>
+                  <th class="px-4 py-3 text-right">단가 (원)</th>
+                  <th class="px-4 py-3 text-left">공급업체</th>
+                  <th class="px-4 py-3 text-center">적용일</th>
+                </tr>
+              </thead>
+              <tbody id="material-cost-table">
+                <tr><td colspan="6" class="text-center py-8 text-gray-400">로딩 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <!-- 제품 원가 조회 탭 -->
+        <div id="cost-tab-products" class="cost-tab-content p-6 hidden">
+          <div class="flex justify-between items-center mb-4">
+            <input type="text" id="product-cost-search" placeholder="제품명 검색..." 
+              class="border rounded-lg px-4 py-2 w-64" onkeyup="filterProductCosts()">
+            <div class="flex gap-2">
+              <button onclick="downloadProductCosts()" class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
+                <i class="fas fa-download mr-1"></i> 엑셀 다운로드
+              </button>
+            </div>
+          </div>
+          
+          <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-100 sticky top-0">
+                <tr>
+                  <th class="px-4 py-3 text-left">제품코드</th>
+                  <th class="px-4 py-3 text-left">제품명</th>
+                  <th class="px-4 py-3 text-center">BOM 원료수</th>
+                  <th class="px-4 py-3 text-right">재료비 (원)</th>
+                  <th class="px-4 py-3 text-center">상태</th>
+                  <th class="px-4 py-3 text-center">상세</th>
+                </tr>
+              </thead>
+              <tbody id="product-cost-table">
+                <tr><td colspan="6" class="text-center py-8 text-gray-400">로딩 중...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <!-- 시뮬레이션 탭 -->
+        <div id="cost-tab-simulate" class="cost-tab-content p-6 hidden">
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
+              <h3 class="font-bold mb-4"><i class="fas fa-edit mr-1"></i> 원료 단가 변경</h3>
+              <div class="space-y-2" id="simulate-inputs">
+                <div class="flex gap-2 items-center">
+                  <select id="sim-material-1" class="border rounded px-3 py-2 flex-1" onchange="updateSimMaterialName(1)">
+                    <option value="">원료 선택...</option>
+                  </select>
+                  <input type="number" id="sim-cost-1" class="border rounded px-3 py-2 w-32" placeholder="새 단가">
+                  <span class="text-gray-500">원/kg</span>
+                </div>
+              </div>
+              <button onclick="addSimulateRow()" class="mt-2 text-blue-600 hover:text-blue-800 text-sm">
+                <i class="fas fa-plus mr-1"></i> 원료 추가
+              </button>
+              <div class="mt-4">
+                <button onclick="runCostSimulation()" class="bg-purple-600 text-white px-6 py-2 rounded-lg hover:bg-purple-700">
+                  <i class="fas fa-calculator mr-1"></i> 시뮬레이션 실행
+                </button>
+              </div>
+            </div>
+            <div>
+              <h3 class="font-bold mb-4"><i class="fas fa-chart-bar mr-1"></i> 영향 분석 결과</h3>
+              <div id="simulate-result" class="bg-gray-50 rounded-lg p-4 min-h-[200px]">
+                <p class="text-gray-400 text-center py-8">시뮬레이션을 실행하세요</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 데이터 로드
+  await loadCostStats();
+  await loadMaterialCosts();
+  await loadProductCosts();
+  await loadSimulateMaterials();
+}
+
+// 탭 전환
+function switchCostTab(tab) {
+  document.querySelectorAll('.cost-tab').forEach(t => {
+    t.classList.remove('text-blue-600', 'border-b-2', 'border-blue-600');
+    t.classList.add('text-gray-500');
+  });
+  document.querySelectorAll('.cost-tab-content').forEach(c => c.classList.add('hidden'));
+  
+  const activeTab = document.querySelector(`.cost-tab[data-tab="${tab}"]`);
+  if (activeTab) {
+    activeTab.classList.remove('text-gray-500');
+    activeTab.classList.add('text-blue-600', 'border-b-2', 'border-blue-600');
+  }
+  
+  const activeContent = document.getElementById(`cost-tab-${tab}`);
+  if (activeContent) activeContent.classList.remove('hidden');
+}
+
+// 통계 로드
+async function loadCostStats() {
+  try {
+    const result = await api('/cost/stats');
+    if (result.success) {
+      const d = result.data;
+      document.getElementById('stat-total-materials').textContent = d.total_materials;
+      document.getElementById('stat-with-cost').textContent = d.materials_with_cost;
+      document.getElementById('stat-products-bom').textContent = d.products_with_bom;
+      document.getElementById('stat-complete').textContent = d.complete_products;
+    }
+  } catch (e) {
+    console.error('통계 로드 실패:', e);
+  }
+}
+
+// 원료 단가 목록 로드
+let materialCostData = [];
+async function loadMaterialCosts() {
+  try {
+    const result = await api('/cost/materials');
+    if (result.success) {
+      materialCostData = result.data;
+      renderMaterialCostTable(materialCostData);
+    }
+  } catch (e) {
+    console.error('원료 단가 로드 실패:', e);
+  }
+}
+
+function renderMaterialCostTable(data) {
+  const tbody = document.getElementById('material-cost-table');
+  if (!data || data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-gray-400">원료가 없습니다</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = data.map(m => `
+    <tr class="border-b hover:bg-gray-50 ${!m.cost_per_unit ? 'bg-yellow-50' : ''}" data-item-code="${m.item_code}">
+      <td class="px-4 py-3 font-mono text-xs">${m.item_code}</td>
+      <td class="px-4 py-3 font-medium">${m.item_name}</td>
+      <td class="px-4 py-3 text-center">${m.master_unit || 'kg'}</td>
+      <td class="px-4 py-3 text-right">
+        <input type="number" class="material-cost-input border rounded px-2 py-1 w-28 text-right" 
+          data-item-code="${m.item_code}" 
+          value="${m.cost_per_unit || ''}" 
+          placeholder="단가 입력">
+      </td>
+      <td class="px-4 py-3">
+        <input type="text" class="material-supplier-input border rounded px-2 py-1 w-32" 
+          data-item-code="${m.item_code}" 
+          value="${m.supplier || ''}" 
+          placeholder="공급업체">
+      </td>
+      <td class="px-4 py-3 text-center text-xs text-gray-500">${m.effective_date || '-'}</td>
+    </tr>
+  `).join('');
+}
+
+function filterMaterialCosts() {
+  const search = document.getElementById('material-search').value.toLowerCase();
+  const filter = document.getElementById('material-filter').value;
+  
+  let filtered = materialCostData;
+  
+  if (search) {
+    filtered = filtered.filter(m => 
+      m.item_name.toLowerCase().includes(search) || 
+      m.item_code.toLowerCase().includes(search)
+    );
+  }
+  
+  if (filter === 'with-cost') {
+    filtered = filtered.filter(m => m.cost_per_unit);
+  } else if (filter === 'no-cost') {
+    filtered = filtered.filter(m => !m.cost_per_unit);
+  }
+  
+  renderMaterialCostTable(filtered);
+}
+
+// 원료 단가 일괄 저장
+async function saveMaterialCosts() {
+  const inputs = document.querySelectorAll('.material-cost-input');
+  const items = [];
+  
+  inputs.forEach(input => {
+    const itemCode = input.dataset.itemCode;
+    const cost = parseFloat(input.value);
+    const supplierInput = document.querySelector(`.material-supplier-input[data-item-code="${itemCode}"]`);
+    const supplier = supplierInput ? supplierInput.value : '';
+    
+    if (!isNaN(cost) && cost >= 0) {
+      items.push({ item_code: itemCode, cost_per_unit: cost, supplier });
+    }
+  });
+  
+  if (items.length === 0) {
+    showToast('저장할 단가 정보가 없습니다', 'warning');
+    return;
+  }
+  
+  try {
+    const result = await api('/cost/materials/bulk', 'POST', { items });
+    if (result.success) {
+      showToast(result.message, 'success');
+      await loadCostStats();
+      await loadMaterialCosts();
+      await loadProductCosts();
+    } else {
+      showToast(result.error || '저장 실패', 'error');
+    }
+  } catch (e) {
+    showToast('저장 실패', 'error');
+  }
+}
+
+// 제품 원가 목록 로드
+let productCostData = [];
+async function loadProductCosts() {
+  try {
+    const result = await api('/cost/products');
+    if (result.success) {
+      productCostData = result.data;
+      renderProductCostTable(productCostData);
+    }
+  } catch (e) {
+    console.error('제품 원가 로드 실패:', e);
+  }
+}
+
+function renderProductCostTable(data) {
+  const tbody = document.getElementById('product-cost-table');
+  if (!tbody) return;
+  
+  if (!data || data.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-gray-400">BOM이 등록된 제품이 없습니다</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = data.map(p => `
+    <tr class="border-b hover:bg-gray-50">
+      <td class="px-4 py-3 font-mono text-xs">${p.product_code}</td>
+      <td class="px-4 py-3 font-medium">${p.product_name}</td>
+      <td class="px-4 py-3 text-center">${p.bom_count}</td>
+      <td class="px-4 py-3 text-right font-bold ${p.is_complete ? 'text-green-600' : 'text-orange-500'}">
+        ${formatNumber(Math.round(p.material_cost))}
+      </td>
+      <td class="px-4 py-3 text-center">
+        ${p.is_complete 
+          ? '<span class="text-green-600"><i class="fas fa-check-circle"></i> 완료</span>'
+          : `<span class="text-orange-500"><i class="fas fa-exclamation-triangle"></i> ${p.missing_items}개 미등록</span>`
+        }
+      </td>
+      <td class="px-4 py-3 text-center">
+        <button onclick="showProductCostDetail('${p.product_code}')" class="text-blue-600 hover:text-blue-800">
+          <i class="fas fa-search"></i> 상세
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterProductCosts() {
+  const search = document.getElementById('product-cost-search').value.toLowerCase();
+  let filtered = productCostData;
+  
+  if (search) {
+    filtered = filtered.filter(p => 
+      p.product_name.toLowerCase().includes(search) || 
+      p.product_code.toLowerCase().includes(search)
+    );
+  }
+  
+  renderProductCostTable(filtered);
+}
+
+// 제품 원가 상세 보기
+async function showProductCostDetail(productCode) {
+  try {
+    const result = await api(`/cost/product/${productCode}`);
+    if (!result.success) {
+      showToast('상세 정보를 불러올 수 없습니다', 'error');
+      return;
+    }
+    
+    const d = result.data;
+    
+    const materialsHtml = d.materials.map(m => `
+      <tr class="${m.has_cost ? '' : 'bg-yellow-50'}">
+        <td class="px-3 py-2">${m.item_name}</td>
+        <td class="px-3 py-2 text-right">${m.bom_qty} ${m.bom_unit}</td>
+        <td class="px-3 py-2 text-right">${m.cost_per_unit ? formatNumber(m.cost_per_unit) + '원/' + m.cost_unit : '-'}</td>
+        <td class="px-3 py-2 text-right font-medium">${m.has_cost ? formatNumber(Math.round(m.calculated_cost)) + '원' : '미등록'}</td>
+      </tr>
+    `).join('');
+    
+    showModal(`${d.product_name} 원가 상세`, `
+      <div class="space-y-4">
+        <div class="bg-blue-50 rounded-lg p-4">
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <span class="text-gray-600">제품코드:</span>
+              <span class="font-medium ml-2">${d.product_code}</span>
+            </div>
+            <div>
+              <span class="text-gray-600">재료비 합계:</span>
+              <span class="font-bold text-xl ml-2 ${d.is_complete ? 'text-green-600' : 'text-orange-500'}">
+                ${formatNumber(Math.round(d.material_cost))}원
+              </span>
+            </div>
+          </div>
+          ${!d.is_complete ? `<p class="text-orange-500 mt-2"><i class="fas fa-exclamation-triangle mr-1"></i> ${d.missing_cost_count}개 원료의 단가가 미등록 상태입니다</p>` : ''}
+        </div>
+        
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-3 py-2 text-left">원료명</th>
+                <th class="px-3 py-2 text-right">사용량</th>
+                <th class="px-3 py-2 text-right">단가</th>
+                <th class="px-3 py-2 text-right">원가</th>
+              </tr>
+            </thead>
+            <tbody>${materialsHtml}</tbody>
+            <tfoot class="bg-gray-50 font-bold">
+              <tr>
+                <td colspan="3" class="px-3 py-2 text-right">합계</td>
+                <td class="px-3 py-2 text-right">${formatNumber(Math.round(d.material_cost))}원</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+    `);
+    
+  } catch (e) {
+    showToast('상세 정보 로드 실패', 'error');
+  }
+}
+
+// 시뮬레이션용 원료 목록 로드
+async function loadSimulateMaterials() {
+  const select = document.getElementById('sim-material-1');
+  if (!select) return;
+  
+  if (materialCostData.length === 0) {
+    await loadMaterialCosts();
+  }
+  
+  const options = materialCostData
+    .filter(m => m.cost_per_unit)
+    .map(m => `<option value="${m.item_code}" data-cost="${m.cost_per_unit}">${m.item_name} (현재: ${formatNumber(m.cost_per_unit)}원)</option>`)
+    .join('');
+  
+  select.innerHTML = '<option value="">원료 선택...</option>' + options;
+}
+
+let simRowCount = 1;
+function addSimulateRow() {
+  simRowCount++;
+  const container = document.getElementById('simulate-inputs');
+  
+  const options = materialCostData
+    .filter(m => m.cost_per_unit)
+    .map(m => `<option value="${m.item_code}" data-cost="${m.cost_per_unit}">${m.item_name} (현재: ${formatNumber(m.cost_per_unit)}원)</option>`)
+    .join('');
+  
+  const row = document.createElement('div');
+  row.className = 'flex gap-2 items-center';
+  row.innerHTML = `
+    <select id="sim-material-${simRowCount}" class="border rounded px-3 py-2 flex-1">
+      <option value="">원료 선택...</option>
+      ${options}
+    </select>
+    <input type="number" id="sim-cost-${simRowCount}" class="border rounded px-3 py-2 w-32" placeholder="새 단가">
+    <span class="text-gray-500">원/kg</span>
+    <button onclick="this.parentElement.remove()" class="text-red-500 hover:text-red-700">
+      <i class="fas fa-times"></i>
+    </button>
+  `;
+  container.appendChild(row);
+}
+
+// 시뮬레이션 실행
+async function runCostSimulation() {
+  const changes = [];
+  
+  for (let i = 1; i <= simRowCount; i++) {
+    const select = document.getElementById(`sim-material-${i}`);
+    const costInput = document.getElementById(`sim-cost-${i}`);
+    
+    if (select && costInput && select.value && costInput.value) {
+      changes.push({
+        item_code: select.value,
+        new_cost: parseFloat(costInput.value)
+      });
+    }
+  }
+  
+  if (changes.length === 0) {
+    showToast('변경할 원료와 단가를 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    const result = await api('/cost/simulate', 'POST', { changes });
+    if (result.success) {
+      renderSimulationResult(result.data);
+    } else {
+      showToast(result.error || '시뮬레이션 실패', 'error');
+    }
+  } catch (e) {
+    showToast('시뮬레이션 실패', 'error');
+  }
+}
+
+function renderSimulationResult(data) {
+  const container = document.getElementById('simulate-result');
+  
+  if (!data.affected_products || data.affected_products.length === 0) {
+    container.innerHTML = '<p class="text-gray-500 text-center py-8">영향받는 제품이 없습니다</p>';
+    return;
+  }
+  
+  const rows = data.affected_products.map(p => `
+    <tr class="border-b">
+      <td class="px-3 py-2">${p.product_name}</td>
+      <td class="px-3 py-2 text-right">${formatNumber(Math.round(p.current_cost))}원</td>
+      <td class="px-3 py-2 text-right">${formatNumber(Math.round(p.new_cost))}원</td>
+      <td class="px-3 py-2 text-right ${p.difference > 0 ? 'text-red-600' : 'text-green-600'}">
+        ${p.difference > 0 ? '+' : ''}${formatNumber(Math.round(p.difference))}원
+      </td>
+    </tr>
+  `).join('');
+  
+  container.innerHTML = `
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-200">
+          <tr>
+            <th class="px-3 py-2 text-left">제품명</th>
+            <th class="px-3 py-2 text-right">현재 원가</th>
+            <th class="px-3 py-2 text-right">변경 후</th>
+            <th class="px-3 py-2 text-right">변동</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="text-gray-500 text-sm mt-2">※ ${data.affected_products.length}개 제품이 영향을 받습니다</p>
+  `;
+}
+
+// 제품 원가 엑셀 다운로드
+function downloadProductCosts() {
+  if (!productCostData || productCostData.length === 0) {
+    showToast('다운로드할 데이터가 없습니다', 'warning');
+    return;
+  }
+  
+  const BOM = '\uFEFF';
+  const header = '제품코드,제품명,BOM원료수,재료비(원),상태';
+  const rows = productCostData.map(p => 
+    `${p.product_code},${p.product_name},${p.bom_count},${Math.round(p.material_cost)},${p.is_complete ? '완료' : '미완료'}`
+  );
+  
+  const csv = BOM + header + '\n' + rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `제품원가_${new Date().toISOString().split('T')[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// 전역 함수 노출
+window.renderCostCalc = renderCostCalc;
+window.switchCostTab = switchCostTab;
+window.loadCostStats = loadCostStats;
+window.filterMaterialCosts = filterMaterialCosts;
+window.saveMaterialCosts = saveMaterialCosts;
+window.filterProductCosts = filterProductCosts;
+window.showProductCostDetail = showProductCostDetail;
+window.addSimulateRow = addSimulateRow;
+window.runCostSimulation = runCostSimulation;
+window.downloadProductCosts = downloadProductCosts;

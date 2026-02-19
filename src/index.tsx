@@ -23,6 +23,7 @@ import bomRoutes from './routes/bom';
 import productionRoutes from './routes/production';
 import { productionPlanRoutes } from './routes/production-plan';
 import { frozenStockRoutes } from './routes/frozen-stock';
+import costRoutes from './routes/cost';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -50,6 +51,7 @@ app.route('/api/bom', bomRoutes);
 app.route('/api/production', productionRoutes);
 app.route('/api/production-plan', productionPlanRoutes);
 app.route('/api/frozen-stock', frozenStockRoutes);
+app.route('/api/cost', costRoutes);
 
 // 시스템 버전
 const SYSTEM_VERSION = '1.6.0';
@@ -83,7 +85,47 @@ app.get('/api/init-db', async (c) => {
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_usage_records_date ON usage_records(usage_date)`).run();
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_usage_records_item_code ON usage_records(item_code)`).run();
     
-    return c.json({ success: true, message: 'DB 초기화 완료' });
+    // 원료 단가 테이블 생성
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS material_costs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_code TEXT NOT NULL,
+        cost_per_unit REAL NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'kg',
+        supplier TEXT,
+        effective_date DATE NOT NULL,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (item_code) REFERENCES master(item_code)
+      )
+    `).run();
+    
+    // 제품 원가 테이블 생성
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS product_costs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_code TEXT NOT NULL,
+        material_cost REAL NOT NULL,
+        labor_cost REAL DEFAULT 0,
+        overhead_cost REAL DEFAULT 0,
+        total_cost REAL NOT NULL,
+        selling_price REAL,
+        margin_rate REAL,
+        calc_date DATE NOT NULL,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (product_code) REFERENCES master(item_code)
+      )
+    `).run();
+    
+    // 원가 테이블 인덱스 생성
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_material_costs_item ON material_costs(item_code)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_material_costs_date ON material_costs(effective_date)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_product_costs_product ON product_costs(product_code)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_product_costs_date ON product_costs(calc_date)`).run();
+    
+    return c.json({ success: true, message: 'DB 초기화 완료 (원가 테이블 포함)' });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }
@@ -236,6 +278,11 @@ app.get('/*', (c) => {
                 <a href="#product-outbound" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="product-outbound">
                     <i class="fas fa-shipping-fast w-5"></i>
                     <span>제품 출고</span>
+                </a>
+                
+                <a href="#cost-calc" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="cost-calc">
+                    <i class="fas fa-calculator w-5"></i>
+                    <span>원가 계산</span>
                 </a>
                 
                 <div class="pt-4 pb-2">

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>직영점 파일 파싱 테스트</title>
+  <style>
+    body { font-family: monospace; padding: 20px; }
+    .log { background: #f0f0f0; padding: 10px; margin: 5px 0; white-space: pre-wrap; }
+    .error { background: #ffcccc; }
+    .success { background: #ccffcc; }
+    input { margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>직영점 파일 파싱 테스트</h1>
+  <input type="file" id="fileInput" accept=".xls,.xlsx">
+  <div id="logs"></div>
+
+  <script>
+    const logs = document.getElementById('logs');
+    function log(msg, type = '') {
+      const div = document.createElement('div');
+      div.className = 'log ' + type;
+      div.textContent = msg;
+      logs.appendChild(div);
+      console.log(msg);
+    }
+
+    document.getElementById('fileInput').addEventListener('change', async (e) => {
+      logs.innerHTML = '';
+      const file = e.target.files[0];
+      if (!file) return;
+
+      log(`파일: ${file.name}, 크기: ${file.size} bytes`);
+      
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        log(`ArrayBuffer 크기: ${arrayBuffer.byteLength}`);
+
+        // EUC-KR 테이블 로드
+        log('EUC-KR 테이블 로드 시도...');
+        const response = await fetch('/static/euckr-table.json');
+        log(`fetch 응답: ${response.status} ${response.ok ? 'OK' : 'FAIL'}`);
+        
+        if (!response.ok) {
+          log('테이블 로드 실패!', 'error');
+          return;
+        }
+
+        const eucKrTable = await response.json();
+        log(`테이블 로드 완료: ${Object.keys(eucKrTable).length}개 매핑`, 'success');
+
+        // 테이블 샘플 확인
+        const sampleKeys = Object.keys(eucKrTable).slice(0, 5);
+        log(`테이블 샘플 키: ${sampleKeys.join(', ')}`);
+
+        // 바이트 디코딩
+        const bytes = new Uint8Array(arrayBuffer);
+        log(`첫 50바이트: ${Array.from(bytes.slice(0, 50)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+
+        // 한글 바이트 찾기 (첫 번째 0xb0 이상 바이트)
+        let firstKoreanIdx = -1;
+        for (let i = 0; i < bytes.length; i++) {
+          if (bytes[i] >= 0xb0 && bytes[i] <= 0xc9) {
+            firstKoreanIdx = i;
+            break;
+          }
+        }
+        log(`첫 한글 바이트 위치: ${firstKoreanIdx}`);
+        
+        if (firstKoreanIdx >= 0) {
+          const b1 = bytes[firstKoreanIdx];
+          const b2 = bytes[firstKoreanIdx + 1];
+          const key = b1.toString(16).padStart(2, '0') + b2.toString(16).padStart(2, '0');
+          log(`첫 한글 바이트: 0x${b1.toString(16)} 0x${b2.toString(16)} -> 키: "${key}"`);
+          
+          if (eucKrTable[key]) {
+            log(`테이블에서 찾음: ${String.fromCharCode(eucKrTable[key])}`, 'success');
+          } else {
+            log(`테이블에서 키 "${key}" 찾을 수 없음!`, 'error');
+            // 비슷한 키 찾기
+            const similarKeys = Object.keys(eucKrTable).filter(k => k.startsWith(key.substring(0, 2)));
+            log(`비슷한 키 (${key.substring(0, 2)}로 시작): ${similarKeys.slice(0, 10).join(', ')}`);
+          }
+        }
+
+        // 전체 디코딩 시도
+        log('전체 디코딩 시작...');
+        const result = [];
+        let i = 0;
+        let decodedCount = 0;
+        let unknownCount = 0;
+        let unknownKeys = [];
+
+        while (i < bytes.length) {
+          const b1 = bytes[i];
+          
+          if (b1 < 0x80) {
+            result.push(String.fromCharCode(b1));
+            i++;
+          } else if (i + 1 < bytes.length) {
+            const b2 = bytes[i + 1];
+            const key = b1.toString(16).toLowerCase().padStart(2, '0') + b2.toString(16).toLowerCase().padStart(2, '0');
+            const unicode = eucKrTable[key];
+            
+            if (unicode) {
+              result.push(String.fromCharCode(unicode));
+              decodedCount++;
+            } else {
+              result.push('?');
+              unknownCount++;
+              if (unknownKeys.length < 10) {
+                unknownKeys.push(key);
+              }
+            }
+            i += 2;
+          } else {
+            result.push('?');
+            i++;
+          }
+        }
+
+        const html = result.join('');
+        log(`디코딩 완료 - 성공: ${decodedCount}, 실패: ${unknownCount}`, unknownCount === 0 ? 'success' : 'error');
+        
+        if (unknownKeys.length > 0) {
+          log(`알 수 없는 키: ${unknownKeys.join(', ')}`, 'error');
+        }
+
+        log(`한글 포함 여부: ${/[가-힣]/.test(html)}`);
+        log(`디코딩 결과 (처음 500자):\n${html.substring(0, 500)}`);
+
+        // HTML 파싱
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+        const rows = doc.querySelectorAll('tr');
+        log(`테이블 행 수: ${rows.length}`);
+
+        if (rows.length > 0) {
+          const headerCells = rows[0].querySelectorAll('td');
+          const headers = Array.from(headerCells).map(c => c.textContent.trim());
+          log(`헤더: ${headers.join(' | ')}`);
+        }
+
+        // 상품 파싱
+        const items = [];
+        rows.forEach((row, idx) => {
+          if (idx === 0) return;
+          const cells = row.querySelectorAll('td');
+          if (cells.length < 10) return;
+          const firstCell = cells[0]?.textContent?.trim() || '';
+          if (!/^\d+$/.test(firstCell)) return;
+          
+          const productName = cells[5]?.textContent?.trim() || '';
+          const qty = parseInt((cells[9]?.textContent?.trim() || '0').replace(/,/g, '')) || 0;
+          
+          if (productName && qty > 0) {
+            items.push({ name: productName, qty });
+          }
+        });
+
+        log(`파싱된 품목 수: ${items.length}`, items.length > 0 ? 'success' : 'error');
+        
+        if (items.length > 0) {
+          log(`품목 샘플:\n${items.slice(0, 10).map(i => `  ${i.name}: ${i.qty}개`).join('\n')}`, 'success');
+        }
+
+      } catch (err) {
+        log(`오류: ${err.message}\n${err.stack}`, 'error');
+      }
+    });
+  </script>
+</body>
+</html>

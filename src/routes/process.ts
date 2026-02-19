@@ -80,18 +80,24 @@ process.get('/quality', async (c) => {
   const date = c.req.query('date') || new Date().toISOString().split('T')[0]
   const start_date = c.req.query('start_date')
   const end_date = c.req.query('end_date')
+  const month = c.req.query('month') // 월별 조회용 (YYYY-MM)
   const dough_name = c.req.query('dough_name')
   
   try {
     let query = `
-      SELECT pq.*, dm.temp_min, dm.temp_max, dm.ph_min, dm.ph_max
+      SELECT pq.*, dm.temp_min, dm.temp_max, dm.ph_min, dm.ph_max,
+             dm.humidity_min, dm.humidity_max, dm.fermentation_min, dm.fermentation_max
       FROM process_quality pq
       LEFT JOIN dough_master dm ON pq.dough_name = dm.dough_name
       WHERE 1=1
     `
     const params: any[] = []
     
-    if (start_date && end_date) {
+    if (month) {
+      // 월별 조회: YYYY-MM 형식
+      query += ' AND pq.record_date LIKE ?'
+      params.push(month + '%')
+    } else if (start_date && end_date) {
       query += ' AND pq.record_date BETWEEN ? AND ?'
       params.push(start_date, end_date)
     } else {
@@ -108,7 +114,48 @@ process.get('/quality', async (c) => {
     
     const result = await env.DB.prepare(query).bind(...params).all()
     
-    return c.json({ success: true, data: result.results })
+    // 최신 기준으로 판정 재계산
+    const dataWithJudgment = (result.results as any[]).map(rec => {
+      let dough_temp_judgment = '적합'
+      let ph_judgment = '적합'
+      let humidity_judgment = '적합'
+      let fermentation_judgment = '적합'
+      
+      // 온도 판정 (최신 기준 사용)
+      if (rec.temp_min !== null && rec.temp_max !== null && rec.dough_temp !== null) {
+        dough_temp_judgment = (rec.dough_temp >= rec.temp_min && rec.dough_temp <= rec.temp_max) ? '적합' : '부적합'
+      }
+      
+      // pH 판정 (최신 기준 사용)
+      if (rec.ph_min !== null && rec.ph_max !== null && rec.ph_value !== null) {
+        ph_judgment = (rec.ph_value >= rec.ph_min && rec.ph_value <= rec.ph_max) ? '적합' : '부적합'
+      }
+      
+      // 습도 판정 (최신 기준 사용)
+      if (rec.humidity_min !== null && rec.humidity_max !== null && rec.humidity !== null) {
+        humidity_judgment = (rec.humidity >= rec.humidity_min && rec.humidity <= rec.humidity_max) ? '적합' : '부적합'
+      }
+      
+      // 발효시간 판정 (최신 기준 사용)
+      if (rec.fermentation_min !== null && rec.fermentation_max !== null && rec.fermentation_time !== null) {
+        fermentation_judgment = (rec.fermentation_time >= rec.fermentation_min && rec.fermentation_time <= rec.fermentation_max) ? '적합' : '부적합'
+      }
+      
+      // 종합 판정 재계산
+      const overall_judgment = (dough_temp_judgment === '적합' && ph_judgment === '적합' && 
+                                humidity_judgment === '적합' && fermentation_judgment === '적합') ? '적합' : '부적합'
+      
+      return {
+        ...rec,
+        dough_temp_judgment,
+        ph_judgment,
+        humidity_judgment,
+        fermentation_judgment,
+        overall_judgment
+      }
+    })
+    
+    return c.json({ success: true, data: dataWithJudgment })
   } catch (error) {
     return c.json({ success: false, error: '조회 실패' }, 500)
   }

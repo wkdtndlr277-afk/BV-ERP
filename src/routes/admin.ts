@@ -581,4 +581,456 @@ admin.delete('/quality/:id', async (c) => {
   }
 })
 
+// ========== 데이터베이스 마이그레이션 ==========
+
+// BOM 테이블 및 관련 테이블 생성 (프로덕션 D1 초기화용)
+admin.post('/migrate/production-bom', async (c) => {
+  const { env } = c
+  
+  try {
+    // BOM 테이블 생성
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS bom (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_code TEXT NOT NULL,
+        item_code TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        unit TEXT NOT NULL DEFAULT 'g',
+        sort_order INTEGER DEFAULT 0,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(product_code, item_code)
+      )
+    `).run()
+    
+    // production 테이블 생성
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        prod_date DATE NOT NULL,
+        product_code TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        lot_number TEXT,
+        status TEXT DEFAULT '완료' CHECK (status IN ('계획', '진행중', '완료', '취소')),
+        memo TEXT,
+        created_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // production_materials 테이블 생성
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_materials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        production_id INTEGER NOT NULL,
+        item_code TEXT NOT NULL,
+        lot_number TEXT,
+        planned_qty REAL NOT NULL,
+        actual_qty REAL,
+        unit TEXT NOT NULL DEFAULT 'g',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // product_outbound 테이블 생성
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS product_outbound (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        outbound_date DATE NOT NULL,
+        product_code TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        lot_number TEXT,
+        market TEXT,
+        order_number TEXT,
+        customer TEXT,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // market_codes 테이블 생성
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS market_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_code TEXT NOT NULL,
+        market TEXT NOT NULL,
+        market_product_code TEXT,
+        market_product_name TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(product_code, market)
+      )
+    `).run()
+    
+    // 인덱스 생성 (에러 무시)
+    try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_bom_product_code ON bom(product_code)').run() } catch {}
+    try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_bom_item_code ON bom(item_code)').run() } catch {}
+    try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_production_date ON production(prod_date)').run() } catch {}
+    try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_production_product ON production(product_code)').run() } catch {}
+    try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_production_materials_prod ON production_materials(production_id)').run() } catch {}
+    try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_product_outbound_date ON product_outbound(outbound_date)').run() } catch {}
+    try { await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_market_codes_product ON market_codes(product_code)').run() } catch {}
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES (?, ?, ?)
+    `).bind('마이그레이션', 'bom,production,production_materials,product_outbound,market_codes', 'BOM/생산관리 테이블 생성').run()
+    
+    return c.json({ 
+      success: true, 
+      message: 'BOM 및 생산관리 테이블이 생성되었습니다.',
+      tables: ['bom', 'production', 'production_materials', 'product_outbound', 'market_codes']
+    })
+  } catch (error: any) {
+    return c.json({ success: false, message: `마이그레이션 실패: ${error.message}` }, 500)
+  }
+})
+
+// 테이블 목록 조회
+admin.get('/tables', async (c) => {
+  const { env } = c
+  
+  try {
+    const result = await env.DB.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' ORDER BY name
+    `).all()
+    
+    return c.json({ success: true, tables: result.results?.map((r: any) => r.name) })
+  } catch (error: any) {
+    return c.json({ success: false, message: error.message }, 500)
+  }
+})
+
+// ========== 최고관리자 전용 기능 ==========
+
+// 권한 체크 헬퍼
+async function isSuperAdmin(env: D1Database, token: string): Promise<boolean> {
+  const session = await env.prepare(`
+    SELECT u.role FROM Sessions s
+    JOIN Users u ON s.user_id = u.id
+    WHERE s.session_token = ? AND s.expires_at > datetime('now')
+  `).bind(token).first()
+  return session?.role === 'super_admin'
+}
+
+// 모든 데이터 일괄 삭제 (최고관리자 전용)
+admin.delete('/super/all-data/:table', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const table = c.req.param('table')
+  const { reason } = await c.req.json()
+  const { env } = c
+  
+  if (!token || !await isSuperAdmin(env.DB, token)) {
+    return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
+  }
+  
+  const allowedTables = ['inbound', 'transactions', 'production', 'production_materials', 'product_outbound', 'bom', 'quality_kpi']
+  if (!allowedTables.includes(table)) {
+    return c.json({ success: false, message: '삭제할 수 없는 테이블입니다' }, 400)
+  }
+  
+  try {
+    // 삭제 전 데이터 카운트
+    const countResult = await env.DB.prepare(`SELECT COUNT(*) as count FROM ${table}`).first()
+    const count = countResult?.count || 0
+    
+    // 데이터 삭제
+    await env.DB.prepare(`DELETE FROM ${table}`).run()
+    
+    // 재고 관련 테이블이면 마스터 재고 초기화
+    if (table === 'inbound' || table === 'transactions') {
+      await env.DB.prepare(`UPDATE master SET current_stock = 0, updated_at = CURRENT_TIMESTAMP`).run()
+    }
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, before_data, reason)
+      VALUES (?, ?, ?, ?)
+    `).bind('전체삭제', table, JSON.stringify({ deleted_count: count }), `[최고관리자] ${reason || '전체 삭제'}`).run()
+    
+    return c.json({ success: true, message: `${table} 테이블의 ${count}건이 삭제되었습니다`, deleted: count })
+  } catch (error: any) {
+    return c.json({ success: false, message: `삭제 실패: ${error.message}` }, 500)
+  }
+})
+
+// 마스터 데이터 전체 삭제 (최고관리자 전용)
+admin.delete('/super/master-data', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const { category, reason } = await c.req.json()
+  const { env } = c
+  
+  if (!token || !await isSuperAdmin(env.DB, token)) {
+    return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
+  }
+  
+  try {
+    let query = 'DELETE FROM master'
+    const params: any[] = []
+    
+    if (category) {
+      query += ' WHERE category = ?'
+      params.push(category)
+    }
+    
+    // 삭제 전 카운트
+    let countQuery = 'SELECT COUNT(*) as count FROM master'
+    if (category) countQuery += ' WHERE category = ?'
+    const countResult = await env.DB.prepare(countQuery).bind(...params).first()
+    const count = countResult?.count || 0
+    
+    // 관련 데이터 먼저 삭제
+    if (category === '제품') {
+      await env.DB.prepare('DELETE FROM bom').run()
+      await env.DB.prepare('DELETE FROM production').run()
+      await env.DB.prepare('DELETE FROM production_materials').run()
+      await env.DB.prepare('DELETE FROM product_outbound').run()
+    } else if (category === '원료') {
+      await env.DB.prepare('DELETE FROM bom').run()
+      await env.DB.prepare('DELETE FROM inbound WHERE item_code IN (SELECT item_code FROM master WHERE category = ?)').bind('원료').run()
+      await env.DB.prepare('DELETE FROM transactions WHERE item_code IN (SELECT item_code FROM master WHERE category = ?)').bind('원료').run()
+    }
+    
+    // 마스터 삭제
+    await env.DB.prepare(query).bind(...params).run()
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, before_data, reason)
+      VALUES (?, ?, ?, ?)
+    `).bind('마스터삭제', 'master', JSON.stringify({ category, deleted_count: count }), `[최고관리자] ${reason || '마스터 삭제'}`).run()
+    
+    return c.json({ success: true, message: `마스터 데이터 ${count}건이 삭제되었습니다`, deleted: count })
+  } catch (error: any) {
+    return c.json({ success: false, message: `삭제 실패: ${error.message}` }, 500)
+  }
+})
+
+// 데이터베이스 통계 조회 (최고관리자 전용)
+admin.get('/super/db-stats', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const { env } = c
+  
+  if (!token || !await isSuperAdmin(env.DB, token)) {
+    return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
+  }
+  
+  try {
+    const tables = ['master', 'inbound', 'transactions', 'bom', 'production', 'production_materials', 
+                    'product_outbound', 'quality_kpi', 'Users', 'Sessions', 'admin_logs']
+    
+    const stats: any = {}
+    for (const table of tables) {
+      try {
+        const result = await env.DB.prepare(`SELECT COUNT(*) as count FROM ${table}`).first()
+        stats[table] = result?.count || 0
+      } catch {
+        stats[table] = 'N/A'
+      }
+    }
+    
+    // 카테고리별 마스터 통계
+    const masterStats = await env.DB.prepare(`
+      SELECT category, COUNT(*) as count FROM master GROUP BY category
+    `).all()
+    
+    return c.json({ 
+      success: true, 
+      stats, 
+      masterByCategory: masterStats.results,
+      timestamp: new Date().toISOString()
+    })
+  } catch (error: any) {
+    return c.json({ success: false, message: error.message }, 500)
+  }
+})
+
+// 모든 품목 수정 (최고관리자 전용)
+admin.put('/super/master/:item_code', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const item_code = c.req.param('item_code')
+  const { item_name, category, unit, safety_stock, expiry_days, reason } = await c.req.json()
+  const { env } = c
+  
+  if (!token || !await isSuperAdmin(env.DB, token)) {
+    return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
+  }
+  
+  try {
+    const oldData = await env.DB.prepare('SELECT * FROM master WHERE item_code = ?').bind(item_code).first()
+    if (!oldData) {
+      return c.json({ success: false, message: '품목을 찾을 수 없습니다' }, 404)
+    }
+    
+    await env.DB.prepare(`
+      UPDATE master 
+      SET item_name = COALESCE(?, item_name),
+          category = COALESCE(?, category),
+          unit = COALESCE(?, unit),
+          safety_stock = COALESCE(?, safety_stock),
+          expiry_days = COALESCE(?, expiry_days),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE item_code = ?
+    `).bind(item_name, category, unit, safety_stock, expiry_days, item_code).run()
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, target_id, before_data, after_data, reason)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind('마스터수정', 'master', item_code, JSON.stringify(oldData), JSON.stringify({ item_name, category, unit, safety_stock, expiry_days }), `[최고관리자] ${reason || '품목 수정'}`).run()
+    
+    return c.json({ success: true, message: '품목이 수정되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, message: `수정 실패: ${error.message}` }, 500)
+  }
+})
+
+// 품목 강제 삭제 (최고관리자 전용 - 관련 데이터 포함)
+admin.delete('/super/master/:item_code', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const item_code = c.req.param('item_code')
+  const { reason } = await c.req.json()
+  const { env } = c
+  
+  if (!token || !await isSuperAdmin(env.DB, token)) {
+    return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
+  }
+  
+  try {
+    const oldData = await env.DB.prepare('SELECT * FROM master WHERE item_code = ?').bind(item_code).first()
+    if (!oldData) {
+      return c.json({ success: false, message: '품목을 찾을 수 없습니다' }, 404)
+    }
+    
+    // 관련 데이터 삭제
+    await env.DB.prepare('DELETE FROM bom WHERE product_code = ? OR item_code = ?').bind(item_code, item_code).run()
+    await env.DB.prepare('DELETE FROM production_materials WHERE item_code = ?').bind(item_code).run()
+    await env.DB.prepare('DELETE FROM production WHERE product_code = ?').bind(item_code).run()
+    await env.DB.prepare('DELETE FROM product_outbound WHERE product_code = ?').bind(item_code).run()
+    await env.DB.prepare('DELETE FROM transactions WHERE item_code = ?').bind(item_code).run()
+    await env.DB.prepare('DELETE FROM inbound WHERE item_code = ?').bind(item_code).run()
+    
+    // 마스터 삭제
+    await env.DB.prepare('DELETE FROM master WHERE item_code = ?').bind(item_code).run()
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, target_id, before_data, reason)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind('강제삭제', 'master', item_code, JSON.stringify(oldData), `[최고관리자] ${reason || '품목 강제 삭제 (관련 데이터 포함)'}`).run()
+    
+    return c.json({ success: true, message: '품목 및 관련 데이터가 삭제되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, message: `삭제 실패: ${error.message}` }, 500)
+  }
+})
+
+// 생산 데이터 삭제 (최고관리자 전용)
+admin.delete('/super/production/:id', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const id = c.req.param('id')
+  const { reason, restore_stock } = await c.req.json()
+  const { env } = c
+  
+  if (!token || !await isSuperAdmin(env.DB, token)) {
+    return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
+  }
+  
+  try {
+    const production = await env.DB.prepare('SELECT * FROM production WHERE id = ?').bind(id).first() as any
+    if (!production) {
+      return c.json({ success: false, message: '생산 기록을 찾을 수 없습니다' }, 404)
+    }
+    
+    // 재고 복원 옵션이 있으면 원재료 재고 복원
+    if (restore_stock) {
+      const materials = await env.DB.prepare(`
+        SELECT item_code, actual_qty, unit, lot_number FROM production_materials WHERE production_id = ?
+      `).bind(id).all()
+      
+      for (const mat of materials.results as any[]) {
+        const qty = mat.unit === 'g' ? mat.actual_qty / 1000 : mat.actual_qty
+        
+        // 마스터 재고 복원
+        await env.DB.prepare(`
+          UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
+          WHERE item_code = ?
+        `).bind(qty, mat.item_code).run()
+        
+        // LOT 잔량 복원
+        if (mat.lot_number) {
+          await env.DB.prepare(`
+            UPDATE inbound SET remain_qty = remain_qty + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE lot_number = ?
+          `).bind(qty, mat.lot_number).run()
+        }
+      }
+      
+      // 생산된 제품 재고 차감
+      await env.DB.prepare(`
+        UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
+        WHERE item_code = ?
+      `).bind(production.quantity, production.product_code).run()
+      
+      // 제품 입고 삭제
+      await env.DB.prepare(`DELETE FROM inbound WHERE lot_number = ?`).bind(production.lot_number).run()
+    }
+    
+    // 관련 트랜잭션 삭제
+    await env.DB.prepare(`DELETE FROM transactions WHERE memo LIKE ?`).bind(`%생산ID:${id}%`).run()
+    
+    // 사용 원재료 삭제
+    await env.DB.prepare('DELETE FROM production_materials WHERE production_id = ?').bind(id).run()
+    
+    // 생산 기록 삭제
+    await env.DB.prepare('DELETE FROM production WHERE id = ?').bind(id).run()
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, target_id, before_data, reason)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind('생산삭제', 'production', id, JSON.stringify(production), `[최고관리자] ${reason || '생산 기록 삭제'}${restore_stock ? ' (재고 복원됨)' : ''}`).run()
+    
+    return c.json({ success: true, message: '생산 기록이 삭제되었습니다', restored_stock: restore_stock })
+  } catch (error: any) {
+    return c.json({ success: false, message: `삭제 실패: ${error.message}` }, 500)
+  }
+})
+
+// BOM 일괄 삭제 (최고관리자 전용)
+admin.delete('/super/bom-all', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const { product_code, reason } = await c.req.json()
+  const { env } = c
+  
+  if (!token || !await isSuperAdmin(env.DB, token)) {
+    return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
+  }
+  
+  try {
+    let query = 'DELETE FROM bom'
+    let countQuery = 'SELECT COUNT(*) as count FROM bom'
+    const params: any[] = []
+    
+    if (product_code) {
+      query += ' WHERE product_code = ?'
+      countQuery += ' WHERE product_code = ?'
+      params.push(product_code)
+    }
+    
+    const countResult = await env.DB.prepare(countQuery).bind(...params).first()
+    const count = countResult?.count || 0
+    
+    await env.DB.prepare(query).bind(...params).run()
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, before_data, reason)
+      VALUES (?, ?, ?, ?)
+    `).bind('BOM삭제', 'bom', JSON.stringify({ product_code: product_code || '전체', deleted_count: count }), `[최고관리자] ${reason || 'BOM 삭제'}`).run()
+    
+    return c.json({ success: true, message: `BOM ${count}건이 삭제되었습니다`, deleted: count })
+  } catch (error: any) {
+    return c.json({ success: false, message: `삭제 실패: ${error.message}` }, 500)
+  }
+})
+
 export default admin

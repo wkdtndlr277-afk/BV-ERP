@@ -337,10 +337,10 @@ processKpiRoutes.post('/aging', async (c) => {
   // 제품별 기준 조회
   const standards = await getProductStandards(c.env.DB, '숙성', product_name);
   
-  // 기준이 없으면 기본값 사용
-  const coldAgingStd = standards['cold_aging_time'] || { min: 60, max: 120 };
-  const fermentTempStd = standards['ferment_temp'] || { min: 25, max: 29 };
-  const maxTempStd = standards['max_temp'] || { min: null, max: 30 };
+  // 기준이 없으면 null로 설정 (판정하지 않음)
+  const coldAgingStd = standards['cold_aging_time'] || { min: null, max: null };
+  const fermentTempStd = standards['ferment_temp'] || { min: null, max: null };
+  const maxTempStd = standards['max_temp'] || { min: null, max: null };
   
   // 자동 판정 (제품별 기준 적용)
   const coldAgingJudgment = judgeValue(cold_aging_time, coldAgingStd.min, coldAgingStd.max);
@@ -411,12 +411,12 @@ processKpiRoutes.post('/forming1', async (c) => {
   // 제품별 기준 조회
   const standards = await getProductStandards(c.env.DB, '성형1', product_name);
   
-  // 자동 판정 (제품별 기준 적용)
-  const doughTempStd = standards['dough_temp'] || { min: 24, max: 26 };
-  const firstFermentStd = standards['first_ferment_time'] || { min: 30, max: 60 };
-  const fermentTempStd = standards['ferment_temp'] || { min: 25, max: 29 };
-  const benchStd = standards['bench_time'] || { min: 15, max: 20 };
-  const secondFermentStd = standards['second_ferment_time'] || { min: 40, max: 60 };
+  // 자동 판정 (제품별 기준 적용, 기준 없으면 판정하지 않음)
+  const doughTempStd = standards['dough_temp'] || { min: null, max: null };
+  const firstFermentStd = standards['first_ferment_time'] || { min: null, max: null };
+  const fermentTempStd = standards['ferment_temp'] || { min: null, max: null };
+  const benchStd = standards['bench_time'] || { min: null, max: null };
+  const secondFermentStd = standards['second_ferment_time'] || { min: null, max: null };
   
   const doughTempJudgment = judgeValue(dough_temp, doughTempStd.min, doughTempStd.max);
   const firstFermentJudgment = judgeValue(first_ferment_time, firstFermentStd.min, firstFermentStd.max);
@@ -496,11 +496,11 @@ processKpiRoutes.post('/forming2', async (c) => {
   // 제품별 기준 조회
   const standards = await getProductStandards(c.env.DB, '성형2', product_name);
   
-  // 자동 판정 (제품별 기준 적용)
-  const doughTempStd = standards['dough_temp'] || { min: 24, max: 26 };
-  const firstFermentStd = standards['first_ferment_time'] || { min: 30, max: 60 };
-  const fermentTempStd = standards['ferment_temp'] || { min: 25, max: 29 };
-  const benchStd = standards['bench_time'] || { min: 15, max: 20 };
+  // 자동 판정 (제품별 기준 적용, 기준 없으면 판정하지 않음)
+  const doughTempStd = standards['dough_temp'] || { min: null, max: null };
+  const firstFermentStd = standards['first_ferment_time'] || { min: null, max: null };
+  const fermentTempStd = standards['ferment_temp'] || { min: null, max: null };
+  const benchStd = standards['bench_time'] || { min: null, max: null };
   
   const doughTempJudgment = judgeValue(dough_temp, doughTempStd.min, doughTempStd.max);
   const firstFermentJudgment = judgeValue(first_ferment_time, firstFermentStd.min, firstFermentStd.max);
@@ -576,9 +576,9 @@ processKpiRoutes.post('/oven', async (c) => {
   // 제품별 기준 조회
   const standards = await getProductStandards(c.env.DB, '오븐', product_name);
   
-  // 자동 판정 (제품별 기준 적용)
-  const ovenTempStd = standards['oven_temp'] || { min: 170, max: 190 };
-  const coreTempStd = standards['core_temp'] || { min: 74, max: null };
+  // 자동 판정 (제품별 기준 적용, 기준 없으면 판정하지 않음)
+  const ovenTempStd = standards['oven_temp'] || { min: null, max: null };
+  const coreTempStd = standards['core_temp'] || { min: null, max: null };
   
   const ovenTempJudgment = judgeValue(oven_temp, ovenTempStd.min, ovenTempStd.max);
   const coreTempJudgment = judgeValue(core_temp, coreTempStd.min, coreTempStd.max);

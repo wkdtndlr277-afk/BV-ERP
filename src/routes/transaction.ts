@@ -116,13 +116,76 @@ transactionRoutes.get('/search', async (c) => {
 // LOT 이력 조회
 transactionRoutes.get('/lot/:lot_number', async (c) => {
   const lot_number = c.req.param('lot_number');
+  const isProductLot = lot_number.startsWith('PRD');
   
-  const lot = await c.env.DB.prepare(`
-    SELECT i.*, m.item_name, m.category, m.unit 
-    FROM inbound i 
-    JOIN master m ON i.item_code = m.item_code
-    WHERE i.lot_number = ?
-  `).bind(lot_number).first();
+  let lot: any = null;
+  let usedMaterials: any[] = [];
+  
+  if (isProductLot) {
+    // 제품 LOT: production 테이블에서 조회
+    const production = await c.env.DB.prepare(`
+      SELECT p.*, m.item_name, m.category, m.unit
+      FROM production p
+      JOIN master m ON p.product_code = m.item_code
+      WHERE p.lot_number = ?
+    `).bind(lot_number).first<any>();
+    
+    if (production) {
+      // 입고 형식에 맞게 변환
+      lot = {
+        lot_number: production.lot_number,
+        item_code: production.product_code,
+        item_name: production.item_name,
+        category: production.category,
+        unit: production.unit,
+        inbound_date: production.prod_date,
+        expiry_date: '-', // 제품은 유통기한 별도 관리
+        origin_qty: production.quantity,
+        remain_qty: production.quantity, // 제품은 잔량 = 생산량 (별도 관리 필요시 수정)
+        quality_status: production.status === '완료' ? '합격' : production.status,
+        supplier: '-' // 제품은 거래처 없음
+      };
+      
+      // production_materials에서 사용된 원료 조회
+      const materialsRaw = await c.env.DB.prepare(`
+        SELECT pm.*, m.item_name, m.unit as item_unit
+        FROM production_materials pm
+        LEFT JOIN master m ON pm.item_code = m.item_code
+        WHERE pm.production_id = ?
+        ORDER BY pm.id
+      `).bind(production.id).all<any>();
+      
+      // 각 원료의 입고 정보 (거래처, 입고일, 유통기한) 조회
+      for (const mat of materialsRaw.results || []) {
+        let inboundInfo = null;
+        if (mat.lot_number) {
+          inboundInfo = await c.env.DB.prepare(`
+            SELECT supplier, inbound_date, expiry_date
+            FROM inbound WHERE lot_number = ?
+          `).bind(mat.lot_number).first<any>();
+        }
+        
+        usedMaterials.push({
+          item_code: mat.item_code,
+          item_name: mat.item_name || mat.item_code,
+          lot_number: mat.lot_number || '-',
+          actual_qty: mat.actual_qty || mat.planned_qty,
+          unit: mat.item_unit || mat.unit || 'g',
+          supplier: inboundInfo?.supplier || '-',
+          inbound_date: inboundInfo?.inbound_date || '-',
+          expiry_date: inboundInfo?.expiry_date || '-'
+        });
+      }
+    }
+  } else {
+    // 원료 LOT: inbound 테이블에서 조회
+    lot = await c.env.DB.prepare(`
+      SELECT i.*, m.item_name, m.category, m.unit 
+      FROM inbound i 
+      JOIN master m ON i.item_code = m.item_code
+      WHERE i.lot_number = ?
+    `).bind(lot_number).first();
+  }
   
   if (!lot) {
     return c.json({ success: false, error: 'LOT을 찾을 수 없습니다.' }, 404);
@@ -138,7 +201,8 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
     success: true, 
     data: { 
       lot, 
-      history: history.results 
+      history: history.results,
+      usedMaterials // 제품 LOT인 경우에만 포함
     } 
   });
 });
@@ -554,28 +618,50 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
   
   // 2. 각 품목에 대해 요약 + LOT 상세 조회
   const itemData = await Promise.all((items.results || []).map(async (item: any) => {
-    // 해당 품목의 모든 LOT 조회 (잔량 > 0 또는 기간 내 거래 있는 것)
-    const lotsResult = await c.env.DB.prepare(`
-      SELECT DISTINCT 
-        i.lot_number,
-        i.inbound_date,
-        i.expiry_date,
-        i.origin_qty,
-        i.remain_qty,
-        i.quality_status,
-        i.supplier
-      FROM inbound i
-      WHERE i.item_code = ? AND (
-        i.remain_qty > 0
-        OR i.inbound_date BETWEEN ? AND ?
-        OR EXISTS (
-          SELECT 1 FROM transactions t 
-          WHERE t.lot_number = i.lot_number 
-          AND t.trans_date BETWEEN ? AND ?
+    let lotsResult: any;
+    
+    if (item.category === '제품') {
+      // 제품의 경우 production 테이블에서 LOT 조회
+      lotsResult = await c.env.DB.prepare(`
+        SELECT DISTINCT 
+          p.lot_number,
+          p.prod_date as inbound_date,
+          NULL as expiry_date,
+          p.quantity as origin_qty,
+          p.quantity as remain_qty,
+          p.status as quality_status,
+          '-' as supplier
+        FROM production p
+        WHERE p.product_code = ? AND p.status = '완료' AND (
+          p.quantity > 0
+          OR p.prod_date BETWEEN ? AND ?
         )
-      )
-      ORDER BY i.expiry_date ASC, i.inbound_date ASC
-    `).bind(item.item_code, startDate, endDate, startDate, endDate).all();
+        ORDER BY p.prod_date ASC
+      `).bind(item.item_code, startDate, endDate).all();
+    } else {
+      // 원료의 경우 inbound 테이블에서 LOT 조회
+      lotsResult = await c.env.DB.prepare(`
+        SELECT DISTINCT 
+          i.lot_number,
+          i.inbound_date,
+          i.expiry_date,
+          i.origin_qty,
+          i.remain_qty,
+          i.quality_status,
+          i.supplier
+        FROM inbound i
+        WHERE i.item_code = ? AND (
+          i.remain_qty > 0
+          OR i.inbound_date BETWEEN ? AND ?
+          OR EXISTS (
+            SELECT 1 FROM transactions t 
+            WHERE t.lot_number = i.lot_number 
+            AND t.trans_date BETWEEN ? AND ?
+          )
+        )
+        ORDER BY i.expiry_date ASC, i.inbound_date ASC
+      `).bind(item.item_code, startDate, endDate, startDate, endDate).all();
+    }
     
     // 각 LOT의 기간 내 수불 계산
     const lots = await Promise.all((lotsResult.results || []).map(async (lot: any) => {
@@ -635,25 +721,31 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       closing_qty: 0
     });
     
-    // LOT 없는 거래 처리 (재고조정 등)
+    // LOT 없는 거래 처리 (재고조정, 생산사용 등)
     const noLotTransResult = await c.env.DB.prepare(`
       SELECT 
         COALESCE(SUM(CASE WHEN trans_date < ? THEN quantity ELSE 0 END), 0) as carry_over,
+        COALESCE(SUM(CASE WHEN trans_date BETWEEN ? AND ? AND trans_type = '입고' THEN quantity ELSE 0 END), 0) as inbound,
+        COALESCE(SUM(CASE WHEN trans_date BETWEEN ? AND ? AND trans_type = '사용' THEN ABS(quantity) ELSE 0 END), 0) as usage,
+        COALESCE(SUM(CASE WHEN trans_date BETWEEN ? AND ? AND trans_type = '출고' THEN ABS(quantity) ELSE 0 END), 0) as outbound,
         COALESCE(SUM(CASE WHEN trans_date BETWEEN ? AND ? AND trans_type = '재고조정' THEN quantity ELSE 0 END), 0) as adjustment
       FROM transactions
       WHERE item_code = ? AND (lot_number IS NULL OR lot_number = '')
-    `).bind(startDate, startDate, endDate, item.item_code).first();
+    `).bind(startDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, item.item_code).first();
     
     const noLotCarryOver = (noLotTransResult as any)?.carry_over || 0;
+    const noLotInbound = (noLotTransResult as any)?.inbound || 0;
+    const noLotUsage = (noLotTransResult as any)?.usage || 0;
+    const noLotOutbound = (noLotTransResult as any)?.outbound || 0;
     const noLotAdjustment = (noLotTransResult as any)?.adjustment || 0;
     
     return {
       ...item,
       summary: {
         carry_over: itemSummary.carry_over + noLotCarryOver,
-        period_inbound: itemSummary.period_inbound,
-        period_usage: itemSummary.period_usage,
-        period_outbound: itemSummary.period_outbound,
+        period_inbound: itemSummary.period_inbound + noLotInbound,
+        period_usage: itemSummary.period_usage + noLotUsage,
+        period_outbound: itemSummary.period_outbound + noLotOutbound,
         period_adjustment: itemSummary.period_adjustment + noLotAdjustment,
         closing_qty: item.current_stock  // 마스터 기준
       },

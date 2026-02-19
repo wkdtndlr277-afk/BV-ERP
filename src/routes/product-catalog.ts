@@ -236,6 +236,71 @@ app.delete('/:id', async (c) => {
   })
 })
 
+// 마스터 제품 일괄 등록
+app.post('/sync-from-master', async (c) => {
+  try {
+    // 마스터에서 제품 목록 가져오기
+    const masterProducts = await c.env.DB.prepare(`
+      SELECT item_code, item_name, unit FROM master WHERE category = '제품'
+    `).all()
+    
+    if (!masterProducts.results || masterProducts.results.length === 0) {
+      return c.json({ success: false, error: '마스터에 등록된 제품이 없습니다.' }, 400)
+    }
+    
+    // 이미 등록된 제품 코드 확인
+    const existingProducts = await c.env.DB.prepare(`
+      SELECT product_name FROM product_catalog
+    `).all()
+    
+    const existingNames = new Set((existingProducts.results || []).map((p: any) => p.product_name))
+    
+    let addedCount = 0
+    let skippedCount = 0
+    
+    for (const product of masterProducts.results as any[]) {
+      // 이미 등록된 제품 스킵
+      if (existingNames.has(product.item_name)) {
+        skippedCount++
+        continue
+      }
+      
+      // 제품 코드 생성
+      const codeResult = await c.env.DB.prepare(`
+        SELECT product_code FROM product_catalog 
+        WHERE product_code LIKE 'PRD%' 
+        ORDER BY product_code DESC 
+        LIMIT 1
+      `).first()
+      
+      let nextNum = addedCount + 1
+      if (codeResult && codeResult.product_code) {
+        const code = codeResult.product_code as string
+        const num = parseInt(code.replace('PRD', '')) || 0
+        nextNum = num + 1 + addedCount
+      }
+      const productCode = `PRD${String(nextNum).padStart(4, '0')}`
+      
+      // 제품 등록
+      await c.env.DB.prepare(`
+        INSERT INTO product_catalog (product_code, product_name) 
+        VALUES (?, ?)
+      `).bind(productCode, product.item_name).run()
+      
+      addedCount++
+    }
+    
+    return c.json({
+      success: true,
+      message: `${addedCount}개 제품 등록 완료, ${skippedCount}개 스킵(이미 등록됨)`,
+      data: { added: addedCount, skipped: skippedCount }
+    })
+  } catch (e: any) {
+    console.error('Sync error:', e)
+    return c.json({ success: false, error: e.message || '동기화 중 오류 발생' }, 500)
+  }
+})
+
 // 이미지 업로드 (Base64)
 app.post('/upload-image', async (c) => {
   try {

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+</head>
+<body>
+<script>
+// 테스트용 최소 코드
+const API_BASE = 'https://bv-erp.pages.dev/api';
+
+function formatNumber(n) {
+  return (n || 0).toLocaleString();
+}
+
+function formatDate(d) {
+  return d.toISOString().split('T')[0];
+}
+
+function tableToHtml(data, columns) {
+  if (data.length === 0) return '<p>데이터 없음</p>';
+  let html = '<table border="1"><thead><tr>';
+  columns.forEach(col => html += '<th>' + col.label + '</th>');
+  html += '</tr></thead><tbody>';
+  data.forEach(row => {
+    html += '<tr>';
+    columns.forEach(col => {
+      let value = row[col.key];
+      if (value === null || value === undefined) value = '-';
+      if (col.type === 'number' && typeof value === 'number') value = formatNumber(value);
+      html += '<td>' + value + '</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+function printData(title, tableHtml, info) {
+  console.log('printData 호출됨');
+  console.log('title:', title);
+  console.log('tableHtml 길이:', tableHtml?.length);
+  
+  const htmlContent = '<!DOCTYPE html><html><head><title>' + title + '</title></head><body><h1>' + title + '</h1><p>' + info + '</p>' + tableHtml + '</body></html>';
+  
+  const blob = new Blob([htmlContent], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, '_blank');
+  
+  if (!win) {
+    console.error('팝업 차단됨!');
+    alert('팝업이 차단되었습니다');
+  } else {
+    console.log('팝업 열림 성공');
+  }
+}
+
+async function testPrint() {
+  console.log('=== 테스트 시작 ===');
+  
+  try {
+    // API 호출
+    const url = API_BASE + '/transactions/inventory-ledger?date=2026-02-05&period_type=daily';
+    console.log('API 호출:', url);
+    
+    const response = await axios.get(url);
+    const result = response.data;
+    
+    console.log('API 응답:', result.success, '데이터 수:', result.data?.length);
+    
+    if (!result.data || result.data.length === 0) {
+      console.error('데이터 없음!');
+      return;
+    }
+    
+    const data = result.data;
+    const summary = result.summary || {};
+    
+    // 데이터 변환
+    const rows = data.map(item => ({
+      item_code: item.item_code,
+      item_name: item.item_name,
+      category: item.category,
+      unit: item.unit || '-',
+      carry_over: item.summary?.carry_over || 0,
+      closing_qty: item.summary?.closing_qty || 0,
+      lot_count: item.lot_count || 0
+    }));
+    
+    console.log('변환된 첫번째 row:', rows[0]);
+    
+    const columns = [
+      { key: 'item_code', label: '품목코드' },
+      { key: 'item_name', label: '품목명' },
+      { key: 'category', label: '구분' },
+      { key: 'carry_over', label: '전일재고', type: 'number' },
+      { key: 'closing_qty', label: '현재고', type: 'number' },
+      { key: 'lot_count', label: 'LOT수' }
+    ];
+    
+    const tableHtml = tableToHtml(rows, columns);
+    console.log('tableHtml 생성됨, 길이:', tableHtml.length);
+    
+    printData('일별 수불부 테스트', tableHtml, '테스트 정보');
+    
+  } catch (e) {
+    console.error('에러 발생:', e);
+  }
+}
+
+// 버튼 클릭으로 실행
+document.write('<button onclick="testPrint()" style="padding:20px;font-size:20px;">인쇄 테스트</button>');
+</script>
+</body>
+</html>

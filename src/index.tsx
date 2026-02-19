@@ -21,6 +21,8 @@ import microbialRoutes from './routes/microbial';
 import processKpiRoutes from './routes/process-kpi';
 import bomRoutes from './routes/bom';
 import productionRoutes from './routes/production';
+import { productionPlanRoutes } from './routes/production-plan';
+import { frozenStockRoutes } from './routes/frozen-stock';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -46,15 +48,45 @@ app.route('/api/microbial', microbialRoutes);
 app.route('/api/process-kpi', processKpiRoutes);
 app.route('/api/bom', bomRoutes);
 app.route('/api/production', productionRoutes);
+app.route('/api/production-plan', productionPlanRoutes);
+app.route('/api/frozen-stock', frozenStockRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '1.2.0';
-const SYSTEM_BUILD_DATE = '2026-01-30';
-const CACHE_BUST = Date.now();
+const SYSTEM_VERSION = '1.6.0';
+const SYSTEM_BUILD_DATE = '2026-02-02';
+const CACHE_BUST = '20260219022520';
 
 // Health check
 app.get('/api/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// DB 초기화 (필요한 테이블 자동 생성)
+app.get('/api/init-db', async (c) => {
+  try {
+    // usage_records 테이블 생성 (없으면)
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS usage_records (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usage_date DATE NOT NULL,
+        item_code TEXT NOT NULL,
+        item_name TEXT,
+        quantity REAL NOT NULL,
+        unit TEXT DEFAULT 'g',
+        purpose TEXT,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    
+    // 인덱스 생성
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_usage_records_date ON usage_records(usage_date)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_usage_records_item_code ON usage_records(item_code)`).run();
+    
+    return c.json({ success: true, message: 'DB 초기화 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
 });
 
 // Version info
@@ -79,6 +111,7 @@ app.get('/*', (c) => {
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dayjs@1.11.10/dayjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -187,6 +220,11 @@ app.get('/*', (c) => {
                 <a href="#production" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production">
                     <i class="fas fa-industry w-5"></i>
                     <span>생산 등록</span>
+                </a>
+                
+                <a href="#production-plan" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production-plan">
+                    <i class="fas fa-calendar-check w-5"></i>
+                    <span>생산계획</span>
                 </a>
                 
                 <a href="#bom" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="bom">

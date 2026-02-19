@@ -4,6 +4,18 @@ import type { Bindings } from '../types';
 
 const bomRoutes = new Hono<{ Bindings: Bindings }>();
 
+// D1 바인딩 검증 미들웨어
+bomRoutes.use('*', async (c, next) => {
+  if (!c.env.DB) {
+    return c.json({ 
+      success: false, 
+      error: 'D1 데이터베이스가 연결되지 않았습니다. Cloudflare 대시보드에서 D1 바인딩을 설정해주세요.',
+      hint: 'Cloudflare Pages > Settings > Functions > D1 database bindings 에서 DB 변수명으로 haccp-erp-production을 연결하세요.'
+    }, 503);
+  }
+  await next();
+});
+
 // BOM 목록 조회 (제품별)
 bomRoutes.get('/', async (c) => {
   const productCode = c.req.query('product_code');
@@ -45,16 +57,42 @@ bomRoutes.get('/product/:product_code', async (c) => {
   }
   
   // BOM 목록
-  const bom = await c.env.DB.prepare(`
-    SELECT b.*, 
-           m.item_name,
-           m.unit as item_unit,
-           m.current_stock
-    FROM bom b
-    LEFT JOIN master m ON b.item_code = m.item_code
-    WHERE b.product_code = ?
-    ORDER BY b.sort_order, b.id
-  `).bind(productCode).all();
+  // BOM 조회 - 별도 쿼리로 RM/R 코드 매칭
+  const bomRaw = await c.env.DB.prepare(`
+    SELECT b.* FROM bom b WHERE b.product_code = ? ORDER BY b.sort_order, b.id
+  `).bind(productCode).all<any>();
+  
+  // 각 BOM 항목에 대해 마스터 정보 조회 (RM/R 코드 모두 시도)
+  const materials: any[] = [];
+  for (const item of bomRaw.results || []) {
+    let master = await c.env.DB.prepare(`
+      SELECT item_name, unit, current_stock FROM master WHERE item_code = ?
+    `).bind(item.item_code).first<any>();
+    
+    // 매칭되지 않으면 변환된 코드로 시도
+    if (!master) {
+      let altCode = '';
+      if (item.item_code.startsWith('RM')) {
+        altCode = 'R' + item.item_code.substring(2); // RM047 -> R047
+      } else if (item.item_code.startsWith('R') && !item.item_code.startsWith('RM')) {
+        altCode = 'RM' + item.item_code.substring(1); // R047 -> RM047
+      }
+      if (altCode) {
+        master = await c.env.DB.prepare(`
+          SELECT item_name, unit, current_stock FROM master WHERE item_code = ?
+        `).bind(altCode).first<any>();
+      }
+    }
+    
+    materials.push({
+      ...item,
+      item_name: master?.item_name || null,
+      item_unit: master?.unit || item.unit,
+      current_stock: master?.current_stock ?? 0
+    });
+  }
+  
+  const bom = { results: materials };
   
   return c.json({ 
     success: true, 
@@ -169,21 +207,92 @@ bomRoutes.post('/bulk', async (c) => {
   });
 });
 
+// BOM 전체 일괄 동기화 (데이터 마이그레이션용)
+bomRoutes.post('/sync-all', async (c) => {
+  const { items } = await c.req.json();
+  
+  if (!items || !Array.isArray(items)) {
+    return c.json({ success: false, error: '잘못된 요청입니다.' }, 400);
+  }
+  
+  const results = { success: 0, failed: 0, errors: [] as string[] };
+  
+  for (const item of items) {
+    try {
+      const { product_code, item_code, quantity, unit, sort_order, memo } = item;
+      
+      if (!product_code || !item_code) {
+        results.failed++;
+        continue;
+      }
+      
+      // 기존 BOM 있으면 업데이트, 없으면 삽입
+      const existing = await c.env.DB.prepare(
+        'SELECT id FROM bom WHERE product_code = ? AND item_code = ?'
+      ).bind(product_code, item_code).first();
+      
+      if (existing) {
+        await c.env.DB.prepare(`
+          UPDATE bom SET quantity = ?, unit = ?, sort_order = ?, memo = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE product_code = ? AND item_code = ?
+        `).bind(
+          quantity || 0,
+          unit || 'g',
+          sort_order || 0,
+          memo || null,
+          product_code,
+          item_code
+        ).run();
+      } else {
+        await c.env.DB.prepare(`
+          INSERT INTO bom (product_code, item_code, quantity, unit, sort_order, memo)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(
+          product_code,
+          item_code,
+          quantity || 0,
+          unit || 'g',
+          sort_order || 0,
+          memo || null
+        ).run();
+      }
+      results.success++;
+    } catch (error: any) {
+      results.failed++;
+      if (results.errors.length < 10) {
+        results.errors.push(`${item.product_code}-${item.item_code}: ${error.message}`);
+      }
+    }
+  }
+  
+  return c.json({ 
+    success: true, 
+    message: `${results.success}건 성공, ${results.failed}건 실패`,
+    results
+  });
+});
+
 // BOM 수정
 bomRoutes.put('/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
   const { quantity, unit, sort_order, memo } = body;
   
+  // undefined 값을 null로 변환
+  const safeQuantity = quantity !== undefined ? quantity : null;
+  const safeUnit = unit !== undefined ? unit : null;
+  const safeSortOrder = sort_order !== undefined ? sort_order : null;
+  const safeMemo = memo !== undefined ? memo : null;
+  
   const result = await c.env.DB.prepare(`
     UPDATE bom 
     SET quantity = COALESCE(?, quantity),
         unit = COALESCE(?, unit),
         sort_order = COALESCE(?, sort_order),
-        memo = ?,
+        memo = COALESCE(?, memo),
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).bind(quantity, unit, sort_order, memo, id).run();
+  `).bind(safeQuantity, safeUnit, safeSortOrder, safeMemo, id).run();
   
   if (result.meta.changes === 0) {
     return c.json({ success: false, error: 'BOM을 찾을 수 없습니다.' }, 404);
@@ -216,6 +325,21 @@ bomRoutes.delete('/product/:product_code', async (c) => {
   ).bind(productCode).run();
   
   return c.json({ success: true, message: '제품의 BOM이 모두 삭제되었습니다.' });
+});
+
+// 제품의 BOM 전체 삭제 (clear 엔드포인트 - 일괄 Import용)
+bomRoutes.delete('/product/:product_code/clear', async (c) => {
+  const productCode = c.req.param('product_code');
+  
+  const result = await c.env.DB.prepare(
+    'DELETE FROM bom WHERE product_code = ?'
+  ).bind(productCode).run();
+  
+  return c.json({ 
+    success: true, 
+    message: '제품의 BOM이 모두 삭제되었습니다.',
+    deleted: result.meta.changes 
+  });
 });
 
 // BOM 있는 제품 목록

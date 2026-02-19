@@ -3527,23 +3527,7 @@ function downloadDailyLedger() {
     }
   });
   
-  const columns = [
-    { key: '품목코드', label: '품목코드' },
-    { key: '품목명', label: '품목명' },
-    { key: '구분', label: '구분' },
-    { key: '단위', label: '단위' },
-    { key: 'LOT번호', label: 'LOT번호' },
-    { key: '입고일', label: '입고일' },
-    { key: '유통기한', label: '유통기한' },
-    { key: '납품처', label: '납품처' },
-    { key: '전일재고', label: '전일재고', type: 'number' },
-    { key: '입고', label: '입고', type: 'number' },
-    { key: '사용', label: '사용', type: 'number' },
-    { key: '조정', label: '조정', type: 'number' },
-    { key: '현재고', label: '현재고', type: 'number' },
-    { key: 'LOT수', label: 'LOT수', type: 'number' }
-  ];
-  downloadExcel(rows, columns, `일별수불부_${period.start_date || formatDate(new Date())}`);
+  downloadExcel(rows, `일별수불부_${period.start_date || formatDate(new Date())}`);
   showToast('엑셀 다운로드 완료', 'success');
 }
 
@@ -3678,24 +3662,7 @@ function downloadMonthlyLedger() {
   });
   
   const filename = `월별수불부_${period.year || new Date().getFullYear()}년${period.month || (new Date().getMonth()+1)}월`;
-  const columns = [
-    { key: '품목코드', label: '품목코드' },
-    { key: '품목명', label: '품목명' },
-    { key: '구분', label: '구분' },
-    { key: '단위', label: '단위' },
-    { key: 'LOT번호', label: 'LOT번호' },
-    { key: '입고일', label: '입고일' },
-    { key: '유통기한', label: '유통기한' },
-    { key: '납품처', label: '납품처' },
-    { key: '월초재고', label: '월초재고', type: 'number' },
-    { key: '입고', label: '입고', type: 'number' },
-    { key: '사용', label: '사용', type: 'number' },
-    { key: '출고', label: '출고', type: 'number' },
-    { key: '조정', label: '조정', type: 'number' },
-    { key: '월말재고', label: '월말재고', type: 'number' },
-    { key: 'LOT수', label: 'LOT수', type: 'number' }
-  ];
-  downloadExcel(rows, columns, filename);
+  downloadExcel(rows, filename);
   showToast('엑셀 다운로드 완료', 'success');
 }
 
@@ -8750,31 +8717,9 @@ async function loadProcessMonthlySummary() {
     const result = await api(`/process/quality/summary/monthly?month=${month}`);
     const data = result.data;
     
-    // 전체 기록도 로드 (세부 내역 표시용)
-    const allRecordsResult = await api(`/process/quality?month=${month}`);
-    const allRecords = allRecordsResult.data || [];
-    
-    // 날짜별로 기록 그룹화
-    const recordsByDate = {};
-    allRecords.forEach(rec => {
-      const d = rec.record_date;
-      if (!recordsByDate[d]) recordsByDate[d] = [];
-      recordsByDate[d].push(rec);
-    });
-    
     contentEl.innerHTML = `
       <div class="space-y-6">
-        <div class="flex justify-between items-center flex-wrap gap-2">
-          <h3 class="text-lg font-bold text-gray-800">${month} 공정 품질 월별 요약</h3>
-          <div class="flex items-center gap-2">
-            <button onclick="downloadProcessQualityMonthly('${month}')" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
-              <i class="fas fa-file-excel mr-1"></i> 엑셀
-            </button>
-            <button onclick="printProcessQualityMonthly('${month}')" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
-              <i class="fas fa-print mr-1"></i> 출력
-            </button>
-          </div>
-        </div>
+        <h3 class="text-lg font-bold text-gray-800">${month} 공정 품질 월별 요약</h3>
         
         <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div class="bg-purple-50 rounded-lg p-4 text-center">
@@ -8812,33 +8757,22 @@ async function loadProcessMonthlySummary() {
         
         ${data.daily && data.daily.length > 0 ? `
           <div>
-            <h4 class="font-bold text-gray-700 mb-3">
-              <i class="fas fa-calendar-day mr-2"></i>일별 현황 
-              <span class="text-sm font-normal text-gray-500">(클릭하여 세부 내역 확인)</span>
-            </h4>
+            <h4 class="font-bold text-gray-700 mb-3">일별 현황</h4>
             <div class="overflow-x-auto">
               <table class="w-full text-sm">
                 <thead class="bg-gray-100">
                   <tr>
-                    <th class="px-3 py-2 text-left w-8"></th>
                     <th class="px-3 py-2 text-left">날짜</th>
                     <th class="px-3 py-2 text-center">기록 건수</th>
-                    <th class="px-3 py-2 text-center">적합</th>
                     <th class="px-3 py-2 text-center">부적합</th>
                     <th class="px-3 py-2 text-center">상태</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y">
-                  ${data.daily.map(d => {
-                    const dateRecords = recordsByDate[d.record_date] || [];
-                    return `
-                    <tr class="hover:bg-gray-50 cursor-pointer" onclick="toggleProcessQualityDetail('${d.record_date}')">
-                      <td class="px-3 py-2 text-center">
-                        <i class="fas fa-chevron-right text-gray-400 transition-transform" id="icon-${d.record_date.replace(/-/g, '')}"></i>
-                      </td>
-                      <td class="px-3 py-2 font-medium">${d.record_date}</td>
+                  ${data.daily.map(d => `
+                    <tr class="hover:bg-gray-50">
+                      <td class="px-3 py-2">${d.record_date}</td>
                       <td class="px-3 py-2 text-center">${d.total_records}</td>
-                      <td class="px-3 py-2 text-center text-green-600">${d.total_records - d.fail_count}</td>
                       <td class="px-3 py-2 text-center ${d.fail_count > 0 ? 'text-red-600 font-bold' : ''}">${d.fail_count}</td>
                       <td class="px-3 py-2 text-center">
                         <span class="px-2 py-1 rounded text-xs ${d.fail_count === 0 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
@@ -8846,196 +8780,17 @@ async function loadProcessMonthlySummary() {
                         </span>
                       </td>
                     </tr>
-                    <tr id="detail-${d.record_date.replace(/-/g, '')}" class="hidden">
-                      <td colspan="6" class="p-0 bg-gray-50">
-                        <div class="p-4">
-                          <div class="bg-white rounded-lg shadow-sm overflow-hidden">
-                            <table class="w-full text-sm">
-                              <thead class="bg-purple-50">
-                                <tr>
-                                  <th class="px-3 py-2 text-left">시간</th>
-                                  <th class="px-3 py-2 text-left">반죽명</th>
-                                  <th class="px-3 py-2 text-center">반죽온도</th>
-                                  <th class="px-3 py-2 text-center">pH</th>
-                                  <th class="px-3 py-2 text-center">습도</th>
-                                  <th class="px-3 py-2 text-center">발효시간</th>
-                                  <th class="px-3 py-2 text-center">종합판정</th>
-                                  <th class="px-3 py-2 text-left">담당자</th>
-                                </tr>
-                              </thead>
-                              <tbody class="divide-y">
-                                ${dateRecords.length > 0 ? dateRecords.map(rec => `
-                                  <tr class="hover:bg-purple-50">
-                                    <td class="px-3 py-2">${rec.record_time || '-'}</td>
-                                    <td class="px-3 py-2 font-medium">${rec.dough_name}</td>
-                                    <td class="px-3 py-2 text-center">
-                                      <span class="px-2 py-1 rounded text-xs ${rec.dough_temp_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                                        ${rec.dough_temp !== null ? rec.dough_temp + '°C' : '-'}
-                                      </span>
-                                    </td>
-                                    <td class="px-3 py-2 text-center">
-                                      <span class="px-2 py-1 rounded text-xs ${rec.ph_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                                        ${rec.ph_value !== null ? rec.ph_value : '-'}
-                                      </span>
-                                    </td>
-                                    <td class="px-3 py-2 text-center">
-                                      <span class="px-2 py-1 rounded text-xs ${rec.humidity_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                                        ${rec.humidity !== null ? rec.humidity + '%' : '-'}
-                                      </span>
-                                    </td>
-                                    <td class="px-3 py-2 text-center">
-                                      <span class="px-2 py-1 rounded text-xs ${rec.fermentation_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
-                                        ${rec.fermentation_time !== null ? rec.fermentation_time + '분' : '-'}
-                                      </span>
-                                    </td>
-                                    <td class="px-3 py-2 text-center">
-                                      <span class="px-2 py-1 rounded font-medium ${rec.overall_judgment === '적합' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}">
-                                        ${rec.overall_judgment}
-                                      </span>
-                                    </td>
-                                    <td class="px-3 py-2">${rec.worker_name || '-'}</td>
-                                  </tr>
-                                `).join('') : '<tr><td colspan="8" class="px-3 py-4 text-center text-gray-400">세부 기록 없음</td></tr>'}
-                              </tbody>
-                            </table>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  `;}).join('')}
+                  `).join('')}
                 </tbody>
               </table>
             </div>
           </div>
-        ` : '<div class="text-center py-8 text-gray-400"><i class="fas fa-clipboard text-4xl mb-4"></i><p>해당 월에 기록된 데이터가 없습니다.</p></div>'}
+        ` : ''}
       </div>
     `;
-    
-    // 전역에 저장 (엑셀/출력용)
-    window.processQualityMonthlyData = {
-      month: month,
-      summary: data.summary,
-      daily: data.daily,
-      records: allRecords
-    };
-    
   } catch (e) {
-    console.error('월별 요약 로드 실패:', e);
     contentEl.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
   }
-}
-
-// 월별 세부 내역 토글
-function toggleProcessQualityDetail(dateStr) {
-  const rowId = dateStr.replace(/-/g, '');
-  const detailRow = document.getElementById('detail-' + rowId);
-  const icon = document.getElementById('icon-' + rowId);
-  
-  if (detailRow && icon) {
-    if (detailRow.classList.contains('hidden')) {
-      detailRow.classList.remove('hidden');
-      icon.classList.add('rotate-90');
-    } else {
-      detailRow.classList.add('hidden');
-      icon.classList.remove('rotate-90');
-    }
-  }
-}
-
-// 월별 공정품질 엑셀 다운로드
-function downloadProcessQualityMonthly(month) {
-  const data = window.processQualityMonthlyData;
-  if (!data || !data.records || data.records.length === 0) {
-    showToast('다운로드할 데이터가 없습니다', 'warning');
-    return;
-  }
-  
-  const columns = [
-    { key: 'record_date', title: '기록일자', width: 12 },
-    { key: 'record_time', title: '기록시간', width: 10 },
-    { key: 'dough_name', title: '반죽명', width: 20 },
-    { key: 'dough_temp', title: '반죽온도(°C)', width: 12 },
-    { key: 'dough_temp_judgment', title: '온도판정', width: 10 },
-    { key: 'ph_value', title: 'pH', width: 8 },
-    { key: 'ph_judgment', title: 'pH판정', width: 10 },
-    { key: 'humidity', title: '습도(%)', width: 10 },
-    { key: 'humidity_judgment', title: '습도판정', width: 10 },
-    { key: 'fermentation_time', title: '발효시간(분)', width: 12 },
-    { key: 'fermentation_judgment', title: '발효판정', width: 10 },
-    { key: 'overall_judgment', title: '종합판정', width: 10 },
-    { key: 'worker_name', title: '담당자', width: 12 },
-    { key: 'memo', title: '비고', width: 20 }
-  ];
-  
-  downloadExcel(data.records, columns, `반제품공정품질_${month}`);
-}
-
-// 월별 공정품질 출력
-function printProcessQualityMonthly(month) {
-  const data = window.processQualityMonthlyData;
-  if (!data || !data.records || data.records.length === 0) {
-    showToast('출력할 데이터가 없습니다', 'warning');
-    return;
-  }
-  
-  let tableHtml = `
-    <div style="margin-bottom: 20px;">
-      <h3>월별 요약</h3>
-      <table border="1" style="border-collapse: collapse; width: 100%;">
-        <tr>
-          <th style="padding: 8px; background: #f0f0f0;">총 기록</th>
-          <th style="padding: 8px; background: #f0f0f0;">적합</th>
-          <th style="padding: 8px; background: #f0f0f0;">부적합</th>
-          <th style="padding: 8px; background: #f0f0f0;">적합률</th>
-          <th style="padding: 8px; background: #f0f0f0;">평균온도</th>
-          <th style="padding: 8px; background: #f0f0f0;">평균pH</th>
-        </tr>
-        <tr>
-          <td style="padding: 8px; text-align: center;">${data.summary.total_records || 0}건</td>
-          <td style="padding: 8px; text-align: center;">${data.summary.pass_count || 0}건</td>
-          <td style="padding: 8px; text-align: center;">${data.summary.fail_count || 0}건</td>
-          <td style="padding: 8px; text-align: center;">${data.summary.total_records > 0 ? Math.round((data.summary.pass_count / data.summary.total_records) * 100) : 0}%</td>
-          <td style="padding: 8px; text-align: center;">${data.summary.avg_temp || '-'}°C</td>
-          <td style="padding: 8px; text-align: center;">${data.summary.avg_ph || '-'}</td>
-        </tr>
-      </table>
-    </div>
-    <h3>세부 기록</h3>
-    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 11px;">
-      <thead>
-        <tr style="background: #f0f0f0;">
-          <th style="padding: 6px;">날짜</th>
-          <th style="padding: 6px;">시간</th>
-          <th style="padding: 6px;">반죽명</th>
-          <th style="padding: 6px;">온도</th>
-          <th style="padding: 6px;">pH</th>
-          <th style="padding: 6px;">습도</th>
-          <th style="padding: 6px;">발효</th>
-          <th style="padding: 6px;">판정</th>
-          <th style="padding: 6px;">담당자</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${data.records.map(rec => `
-          <tr>
-            <td style="padding: 6px;">${rec.record_date}</td>
-            <td style="padding: 6px;">${rec.record_time || '-'}</td>
-            <td style="padding: 6px;">${rec.dough_name}</td>
-            <td style="padding: 6px; text-align: center; ${rec.dough_temp_judgment !== '적합' ? 'color: red;' : ''}">${rec.dough_temp !== null ? rec.dough_temp + '°C' : '-'}</td>
-            <td style="padding: 6px; text-align: center; ${rec.ph_judgment !== '적합' ? 'color: red;' : ''}">${rec.ph_value !== null ? rec.ph_value : '-'}</td>
-            <td style="padding: 6px; text-align: center; ${rec.humidity_judgment !== '적합' ? 'color: red;' : ''}">${rec.humidity !== null ? rec.humidity + '%' : '-'}</td>
-            <td style="padding: 6px; text-align: center; ${rec.fermentation_judgment !== '적합' ? 'color: red;' : ''}">${rec.fermentation_time !== null ? rec.fermentation_time + '분' : '-'}</td>
-            <td style="padding: 6px; text-align: center; font-weight: bold; ${rec.overall_judgment !== '적합' ? 'color: red;' : 'color: green;'}">${rec.overall_judgment}</td>
-            <td style="padding: 6px;">${rec.worker_name || '-'}</td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-  `;
-  
-  printData(`반제품 공정품질 (${month})`, tableHtml, 
-    { orientation: 'landscape', pageSize: 'A4' }
-  );
 }
 
 // 공정 품질 기록 모달
@@ -11148,9 +10903,6 @@ window.downloadQualityKpi = downloadQualityKpi;
 window.printQualityKpi = printQualityKpi;
 window.downloadProcessQuality = downloadProcessQuality;
 window.printProcessQuality = printProcessQuality;
-window.toggleProcessQualityDetail = toggleProcessQualityDetail;
-window.downloadProcessQualityMonthly = downloadProcessQualityMonthly;
-window.printProcessQualityMonthly = printProcessQualityMonthly;
 window.downloadMasterList = downloadMasterList;
 window.printMasterList = printMasterList;
 window.downloadTransactionSearch = downloadTransactionSearch;
@@ -11268,12 +11020,9 @@ async function renderProduction() {
               <p class="text-blue-800 font-medium"><i class="fas fa-info-circle mr-1"></i> 지원 발주서 형식</p>
               <ul class="text-sm text-blue-700 mt-2 space-y-1">
                 <li>• <strong>쿠팡</strong>: 상품명/발주수량 열 자동 인식</li>
-                <li>• <strong>컬리</strong>: 제품명/물류센터별 수량 합산 (72시간빵 포함)</li>
-                <li>• <strong>배민 (발주상세)</strong>: 상품명/총 발주 수량 자동 인식</li>
+                <li>• <strong>컬리</strong>: 제품명/물류센터별 수량 합산</li>
                 <li>• <strong>비마트</strong>: SKU명/요청수량 열 자동 인식</li>
                 <li>• <strong>오아시스</strong>: 상품명/출고수량 열 자동 인식</li>
-                <li>• <strong>직영점</strong>: 상품명/출고수량 합산</li>
-                <li>• <strong>생산계획표</strong>: 品名/합계 열 자동 인식</li>
               </ul>
             </div>
           </div>
@@ -11286,11 +11035,8 @@ async function renderProduction() {
                 <option value="">자동 감지</option>
                 <option value="coupang">쿠팡</option>
                 <option value="kurly">컬리</option>
-                <option value="baemin">배민 (발주상세)</option>
                 <option value="bmart">비마트</option>
                 <option value="oasis">오아시스</option>
-                <option value="direct_store">직영점</option>
-                <option value="production_plan">생산계획표</option>
               </select>
             </div>
             <div>
@@ -11690,16 +11436,10 @@ async function loadTodayProduction() {
 
 // 생산 전체 삭제
 async function deleteAllProduction() {
-  // 먼저 삭제할 건수 확인 (에러 응답에서 count 추출)
+  // 먼저 삭제할 건수 확인
   try {
-    let count = 0;
-    try {
-      const response = await fetch(`${API_BASE}/production/all/clear`, { method: 'DELETE' });
-      const data = await response.json();
-      count = data.count || 0;
-    } catch (e) {
-      // 무시 - 건수 확인 실패
-    }
+    const checkResult = await api('/production/all/clear', 'DELETE');
+    const count = checkResult.count || 0;
     
     if (count === 0) {
       showToast('삭제할 생산 기록이 없습니다.', 'warning');
@@ -11950,35 +11690,7 @@ async function processOrderFile(file) {
   
   try {
     const data = await file.arrayBuffer();
-    
-    // 직영점 HTML xls 파일 특별 처리
-    if (fileName.includes('직영점') || fileName.includes('직영')) {
-      const items = await parseDirectStoreHtmlXls(data);
-      if (items.length === 0) {
-        showToast('유효한 발주 항목을 찾을 수 없습니다', 'warning');
-        return;
-      }
-      const matchedItems = matchOrderToProducts(items);
-      window.orderUploadData = { fileName: file.name, channel: 'direct_store', items: matchedItems };
-      showOrderPreview(matchedItems, file.name);
-      return;
-    }
-    
-    // 컬리 파일 특별 처리 (시트가 많은 파일)
-    if (fileName.includes('컬리') || fileName.includes('72시간') || fileName.includes('쿠키')) {
-      const wb = XLSX.read(data, { type: 'array', codepage: 949 });
-      const items = parseKurlyMultiSheet(wb, fileName);
-      if (items.length === 0) {
-        showToast('유효한 발주 항목을 찾을 수 없습니다', 'warning');
-        return;
-      }
-      const matchedItems = matchOrderToProducts(items);
-      window.orderUploadData = { fileName: file.name, channel: 'kurly', items: matchedItems };
-      showOrderPreview(matchedItems, file.name);
-      return;
-    }
-    
-    const wb = XLSX.read(data, { type: 'array', codepage: 949 });
+    const wb = XLSX.read(data, { type: 'array' });
     
     // 판매처 감지
     let channel = document.getElementById('order-channel').value;
@@ -12016,19 +11728,14 @@ async function processOrderFile(file) {
 function detectOrderChannel(fileName, wb) {
   const fn = fileName.toLowerCase();
   
-  // 파일명으로 판단
   if (fn.includes('쿠팡') || fn.includes('coupang')) return 'coupang';
-  if (fn.includes('컬리') || fn.includes('kurly') || fn.includes('72시간')) return 'kurly';
+  if (fn.includes('컬리') || fn.includes('kurly')) return 'kurly';
   if (fn.includes('비마트') || fn.includes('bmart')) return 'bmart';
   if (fn.includes('오아시스') || fn.includes('oasis')) return 'oasis';
-  if (fn.includes('발주 상세') || fn.includes('발주상세')) return 'baemin';
-  if (fn.includes('직영점') || fn.includes('직영')) return 'direct_store';
-  if (fn.includes('계획')) return 'production_plan';
   
   // 시트명 또는 내용으로 감지
   const sheetNames = wb.SheetNames.join(' ').toLowerCase();
   if (sheetNames.includes('발주서내역')) return 'kurly';
-  if (sheetNames.includes('orderdetail')) return 'baemin';
   
   // 첫 번째 시트 내용 확인
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -12039,8 +11746,6 @@ function detectOrderChannel(fileName, wb) {
   if (headerRow.includes('로켓프레시') || headerRow.includes('상품코드')) return 'coupang';
   if (headerRow.includes('매장코드') || headerRow.includes('출고수량')) return 'oasis';
   if (headerRow.includes('김포냉동') || headerRow.includes('평택냉동')) return 'kurly';
-  if (headerRow.includes('총 발주 수량') || headerRow.includes('발주서 -')) return 'baemin';
-  if (headerRow.includes('品') || headerRow.includes('품명')) return 'production_plan';
   
   return 'generic';
 }
@@ -12054,531 +11759,14 @@ function parseOrderByChannel(wb, channel) {
     case 'coupang':
       return parseCoupangOrder(rows);
     case 'kurly':
-      return parseKurlyOrderForProduction(wb);
+      return parseKurlyOrder(wb);
     case 'bmart':
       return parseBmartOrder(rows);
     case 'oasis':
       return parseOasisOrder(rows);
-    case 'baemin':
-      return parseBaeminOrderForProduction(rows);
-    case 'direct_store':
-      return parseDirectStoreOrderForProduction(rows);
-    case 'production_plan':
-      return parseProductionPlanForProduction(rows);
     default:
       return parseGenericOrder(rows);
   }
-}
-
-// 배민 발주상세 파싱 (생산등록용)
-function parseBaeminOrderForProduction(rows) {
-  const items = [];
-  
-  // 헤더 행 찾기 (순서, 상품명 포함)
-  let headerIdx = -1;
-  for (let i = 0; i < Math.min(20, rows.length); i++) {
-    const row = rows[i] || [];
-    const rowStr = row.join(' ');
-    if (rowStr.includes('순서') && rowStr.includes('상품명')) {
-      headerIdx = i;
-      break;
-    }
-  }
-  
-  if (headerIdx === -1) {
-    console.log('배민 헤더를 찾을 수 없습니다');
-    return items;
-  }
-  
-  const headerRow = rows[headerIdx];
-  let productNameIdx = -1, qtyIdx = -1;
-  
-  headerRow.forEach((cell, idx) => {
-    const cellStr = String(cell || '').trim();
-    if (cellStr === '상품명') productNameIdx = idx;
-    if (cellStr === '총 발주 수량') qtyIdx = idx;
-  });
-  
-  if (productNameIdx === -1) productNameIdx = 1;
-  if (qtyIdx === -1) qtyIdx = 7;
-  
-  for (let i = headerIdx + 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || row.length === 0) continue;
-    
-    const productName = String(row[productNameIdx] || '').trim();
-    if (!productName) continue;
-    
-    const qtyRaw = String(row[qtyIdx] || '').replace(/,/g, '').trim();
-    const quantity = parseInt(qtyRaw) || 0;
-    if (quantity === 0) continue;
-    
-    // 상품명 정리
-    const cleanName = productName
-      .replace(/브로드카세\s*/gi, '')
-      .replace(/프롬위트\s*/gi, '')
-      .replace(/비블리\s*/gi, '')
-      .trim();
-    
-    items.push({
-      originalName: productName,
-      cleanName: cleanName,
-      quantity: quantity
-    });
-  }
-  
-  console.log(`배민 파싱 완료: ${items.length}개 품목`);
-  return items;
-}
-
-// 직영점 파일 파싱 (생산등록용)
-function parseDirectStoreOrderForProduction(rows) {
-  const items = [];
-  const itemMap = new Map(); // 상품명 → 총수량
-  
-  // 헤더 행 찾기
-  let headerRowIdx = 0;
-  for (let i = 0; i < Math.min(5, rows.length); i++) {
-    const row = rows[i] || [];
-    const rowStr = row.join(' ');
-    if (rowStr.includes('No') && (rowStr.includes('상 품 명') || rowStr.includes('상품명'))) {
-      headerRowIdx = i;
-      break;
-    }
-  }
-  
-  const headerRow = rows[headerRowIdx] || [];
-  let productNameIdx = -1, qtyIdx = -1;
-  
-  headerRow.forEach((cell, idx) => {
-    const cellStr = String(cell || '').trim();
-    if (cellStr === '상 품 명' || cellStr === '상품명') productNameIdx = idx;
-    if (cellStr === '출고수량' || cellStr.includes('수량')) qtyIdx = idx;
-  });
-  
-  if (productNameIdx === -1) productNameIdx = 5;
-  if (qtyIdx === -1) qtyIdx = 9;
-  
-  for (let i = headerRowIdx + 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || row.length === 0) continue;
-    
-    // 소계 행 스킵
-    const firstCell = String(row[0] || '');
-    if (firstCell.includes('소계') || firstCell.includes('소 계') || 
-        firstCell.includes('[') || !firstCell.match(/^\d+$/)) continue;
-    
-    const productName = String(row[productNameIdx] || '').trim();
-    if (!productName) continue;
-    
-    const qtyRaw = String(row[qtyIdx] || '').replace(/,/g, '').trim();
-    const quantity = parseInt(qtyRaw) || 0;
-    if (quantity === 0) continue;
-    
-    // 동일 상품 합산
-    const cleanName = productName
-      .replace(/^\+/, '')
-      .replace(/\*생협$/, '')
-      .trim();
-    
-    itemMap.set(cleanName, (itemMap.get(cleanName) || 0) + quantity);
-  }
-  
-  // 결과 변환
-  for (const [name, qty] of itemMap) {
-    items.push({
-      originalName: name,
-      cleanName: name,
-      quantity: qty
-    });
-  }
-  
-  console.log(`직영점 파싱 완료: ${items.length}개 품목`);
-  return items;
-}
-
-// 컬리 파일 파싱 (생산등록용 - 최신 시트만)
-function parseKurlyOrderForProduction(wb) {
-  const items = [];
-  
-  // 기존 컬리 파싱 로직 먼저 시도
-  const summarySheet = wb.Sheets['상품별 수량 합산'];
-  const pivotSheet = wb.Sheets['Sheet1'];
-  
-  if (summarySheet || pivotSheet) {
-    // 기존 parseKurlyOrder 로직 사용
-    return parseKurlyOrder(wb);
-  }
-  
-  // 날짜별 시트 형식 (72시간빵 등)
-  const sheetNames = wb.SheetNames;
-  const targetSheet = sheetNames[sheetNames.length - 1]; // 마지막 시트
-  
-  const sheet = wb.Sheets[targetSheet];
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-  
-  // 헤더 행 찾기
-  let headerRowIdx = -1;
-  for (let i = 0; i < Math.min(10, rows.length); i++) {
-    const row = rows[i] || [];
-    const rowStr = row.join(' ');
-    if (rowStr.includes('번호') && rowStr.includes('상품명')) {
-      headerRowIdx = i;
-      break;
-    }
-  }
-  
-  if (headerRowIdx === -1) headerRowIdx = 1;
-  
-  const headerRow = rows[headerRowIdx] || [];
-  let productNameIdx = 2;
-  let qtyIndices = [];
-  
-  headerRow.forEach((cell, idx) => {
-    const cellStr = String(cell || '').trim();
-    if (cellStr === '상품명') productNameIdx = idx;
-    // 수량 컬럼 찾기 (평택, 김포 등 다음의 숫자 컬럼)
-    if (cellStr.includes('평택') || cellStr.includes('김포') || cellStr.includes('창원')) {
-      qtyIndices.push(idx);
-    }
-  });
-  
-  if (qtyIndices.length === 0) qtyIndices = [6, 8]; // 기본값
-  
-  for (let i = headerRowIdx + 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || row.length === 0) continue;
-    
-    const productName = String(row[productNameIdx] || '').trim();
-    if (!productName || productName.includes('합계') || productName.includes('박스 입수량')) continue;
-    
-    // 수량 합산
-    let totalQty = 0;
-    qtyIndices.forEach(idx => {
-      const qtyRaw = String(row[idx] || '').replace(/,/g, '').trim();
-      totalQty += parseInt(qtyRaw) || 0;
-    });
-    
-    if (totalQty === 0) continue;
-    
-    const cleanName = productName
-      .replace(/72시간\s*/gi, '')
-      .replace(/저당\s*/gi, '')
-      .trim();
-    
-    items.push({
-      originalName: productName,
-      cleanName: cleanName,
-      quantity: totalQty
-    });
-  }
-  
-  console.log(`컬리(날짜별) 파싱 완료: ${items.length}개 품목`);
-  return items;
-}
-
-// 생산계획표 파싱 (생산등록용)
-function parseProductionPlanForProduction(rows) {
-  const items = [];
-  
-  // 헤더 행 찾기
-  let headerRowIdx = 1;
-  let colMap = {};
-  
-  for (let i = 0; i < Math.min(15, rows.length); i++) {
-    const row = rows[i] || [];
-    const rowStr = row.join(' ');
-    if (rowStr.includes('品') || rowStr.includes('품명') || rowStr.includes('상품명')) {
-      headerRowIdx = i;
-      break;
-    }
-  }
-  
-  const headerRow = rows[headerRowIdx] || [];
-  
-  headerRow.forEach((cell, idx) => {
-    if (cell) {
-      const cellStr = String(cell).trim();
-      if (cellStr === '品  名' || cellStr.includes('품명') || cellStr.includes('상품명')) colMap['product_name'] = idx;
-      if (cellStr === '.' || cellStr === '합계' || cellStr === '수량') colMap['total'] = idx;
-    }
-  });
-  
-  if (!colMap['product_name']) colMap['product_name'] = 3;
-  if (!colMap['total']) colMap['total'] = 4;
-  
-  const dataStartRow = headerRowIdx + 3;
-  
-  for (let i = dataStartRow; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || row.length === 0) continue;
-    
-    const productName = String(row[colMap['product_name']] || '').trim();
-    if (!productName || productName.includes('合計') || productName.includes('총합') ||
-        productName.includes('소계') || productName.includes('합계')) continue;
-    
-    const qtyRaw = String(row[colMap['total']] || '').replace(/,/g, '').trim();
-    let orderTotal = parseFloat(qtyRaw) || 0;
-    
-    if (orderTotal === 0) continue;
-    
-    items.push({
-      originalName: productName,
-      cleanName: productName,
-      quantity: Math.round(orderTotal)
-    });
-  }
-  
-  console.log(`생산계획표 파싱 완료: ${items.length}개 품목`);
-  return items;
-}
-
-// 직영점 HTML xls 파일 파싱 (EUC-KR 인코딩)
-async function parseDirectStoreHtmlXls(arrayBuffer) {
-  const items = [];
-  const itemMap = new Map();
-  
-  try {
-    // ArrayBuffer를 텍스트로 변환 - 여러 인코딩 시도
-    let html = '';
-    const encodings = ['euc-kr', 'ks_c_5601-1987', 'cp949', 'utf-8'];
-    
-    for (const encoding of encodings) {
-      try {
-        const decoder = new TextDecoder(encoding);
-        html = decoder.decode(arrayBuffer);
-        if (html.includes('상품명') || html.includes('상 품 명') || html.includes('출고수량')) {
-          console.log(`직영점 파일 인코딩 감지: ${encoding}`);
-          break;
-        }
-      } catch (e) {
-        console.log(`인코딩 ${encoding} 실패, 다음 시도...`);
-      }
-    }
-    
-    if (!html) {
-      console.error('직영점 파일 디코딩 실패');
-      return items;
-    }
-    
-    // 디버깅: HTML 일부 출력
-    console.log('직영점 HTML 미리보기:', html.substring(0, 500));
-    
-    // HTML 테이블 파싱
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const rows = doc.querySelectorAll('tr');
-    
-    console.log(`직영점 파일 테이블 행 수: ${rows.length}`);
-    
-    let headerRowIdx = -1;
-    let productNameIdx = 5;
-    let qtyIdx = 9;
-    
-    // 헤더 찾기
-    rows.forEach((row, idx) => {
-      const cells = row.querySelectorAll('td, th');
-      const rowText = Array.from(cells).map(c => c.textContent.trim()).join('|');
-      
-      // 디버깅: 첫 5행 출력
-      if (idx < 5) {
-        console.log(`직영점 행 ${idx}:`, rowText.substring(0, 200));
-      }
-      
-      if (rowText.includes('상 품 명') || rowText.includes('상품명')) {
-        headerRowIdx = idx;
-        cells.forEach((cell, cellIdx) => {
-          const text = cell.textContent.trim();
-          if (text === '상 품 명' || text === '상품명') productNameIdx = cellIdx;
-          if (text === '출고수량' || text.includes('출고수량')) qtyIdx = cellIdx;
-        });
-        console.log(`직영점 헤더 발견: 행 ${idx}, 상품명 열 ${productNameIdx}, 수량 열 ${qtyIdx}`);
-      }
-    });
-    
-    if (headerRowIdx === -1) {
-      console.error('직영점 파일에서 헤더를 찾을 수 없습니다');
-      return items;
-    }
-    
-    // 데이터 파싱
-    let parsedCount = 0;
-    rows.forEach((row, idx) => {
-      if (idx <= headerRowIdx) return;
-      
-      const cells = row.querySelectorAll('td, th');
-      if (cells.length < 5) return;
-      
-      const firstCell = cells[0]?.textContent.trim() || '';
-      // 소계 행 스킵
-      if (firstCell.includes('소계') || firstCell.includes('[') || !/^\d+$/.test(firstCell)) return;
-      
-      const productName = cells[productNameIdx]?.textContent.trim() || '';
-      if (!productName) return;
-      
-      const qtyText = cells[qtyIdx]?.textContent.trim().replace(/,/g, '') || '0';
-      const qty = parseInt(qtyText) || 0;
-      if (qty === 0) return;
-      
-      // 상품명 정리 및 합산
-      const cleanName = productName
-        .replace(/^\+/, '')
-        .replace(/\*생협$/, '')
-        .replace(/\*\d+g\*/, '*')
-        .trim();
-      
-      itemMap.set(cleanName, (itemMap.get(cleanName) || 0) + qty);
-      parsedCount++;
-    });
-    
-    console.log(`직영점 데이터 행 처리: ${parsedCount}개`);
-    
-    // 결과 변환
-    for (const [name, qty] of itemMap) {
-      items.push({
-        originalName: name,
-        cleanName: name,
-        quantity: qty
-      });
-    }
-    
-    console.log(`직영점 HTML 파싱 완료: ${items.length}개 품목`);
-  } catch (e) {
-    console.error('직영점 파일 파싱 에러:', e);
-  }
-  
-  return items;
-}
-
-// 컬리 멀티시트 파싱 (날짜별 시트)
-function parseKurlyMultiSheet(wb, fileName) {
-  const items = [];
-  const itemMap = new Map();
-  
-  // 마지막 시트 사용 (최신 데이터)
-  const sheetNames = wb.SheetNames;
-  const targetSheet = sheetNames[sheetNames.length - 1];
-  console.log(`컬리 파싱 - 시트: ${targetSheet} (총 ${sheetNames.length}개 시트)`);
-  
-  const sheet = wb.Sheets[targetSheet];
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-  
-  // 파일 종류별 구조 파악
-  const isCookie = fileName.includes('쿠키');
-  const isFrozen = fileName.includes('냉동');
-  const isRoomTemp = fileName.includes('실온') || fileName.includes('72시간');
-  
-  // 헤더 행 찾기
-  let headerRowIdx = 1;
-  let productNameIdx = 1; // 기본값: 상품명은 보통 1번 열
-  let qtyIndices = [];
-  
-  // 로그 디버깅용
-  console.log('컬리 파일 첫 5행:');
-  for (let i = 0; i < Math.min(5, rows.length); i++) {
-    console.log(`  행 ${i}:`, rows[i]?.slice(0, 10));
-  }
-  
-  for (let i = 0; i < Math.min(5, rows.length); i++) {
-    const row = rows[i] || [];
-    const rowStr = row.map(c => String(c || '')).join('|');
-    if (rowStr.includes('번호') && rowStr.includes('상품명')) {
-      headerRowIdx = i;
-      
-      row.forEach((cell, idx) => {
-        const cellStr = String(cell || '').trim();
-        if (cellStr === '상품명') productNameIdx = idx;
-        
-        // 수량 컬럼 찾기
-        if (isCookie) {
-          // 쿠키: 합계 컬럼 사용
-          if (cellStr === '합계') {
-            qtyIndices.push(idx);
-          }
-        } else if (isRoomTemp) {
-          // 실온/72시간빵: 평택, 김포, 창원 등 위치별 수량 합산
-          if (cellStr.includes('평택') || cellStr.includes('김포') || cellStr.includes('창원')) {
-            qtyIndices.push(idx);
-          }
-        } else if (isFrozen) {
-          // 냉동: BOX, 수량 컬럼 사용
-          if (cellStr === '수량' || cellStr === 'BOX') {
-            qtyIndices.push(idx);
-          }
-        }
-      });
-      
-      break;
-    }
-  }
-  
-  // 수량 컬럼 없으면 파일 유형에 따라 기본값 설정
-  if (qtyIndices.length === 0) {
-    if (isCookie) {
-      // 쿠키 파일: 번호(0), 상품명(1), BOX/수량(2), 낱개수량(3), 합계(4)
-      qtyIndices = [4]; // 합계
-    } else if (isFrozen) {
-      // 냉동 파일: 번호(0), 상품명(1), 중량(2), BOX/수량(3), BOX(4), 수량(5)
-      qtyIndices = [5]; // 수량
-    } else {
-      // 실온/72시간빵: 번호(0), 상품명(1), 중량(2), BOX/수량(3), 평택(4~), 김포, 창원 등
-      // 첫 행 분석하여 수량 열 위치 추정
-      const headerRow = rows[headerRowIdx] || [];
-      headerRow.forEach((cell, idx) => {
-        if (idx > 3) { // 4번 열부터 수량 열 가능성
-          const cellStr = String(cell || '');
-          if (cellStr && !cellStr.includes('박스') && !cellStr.includes('BOX')) {
-            qtyIndices.push(idx);
-          }
-        }
-      });
-      if (qtyIndices.length === 0) qtyIndices = [5, 7]; // 최종 기본값
-    }
-  }
-  
-  console.log(`컬리 파싱 - 상품명 열: ${productNameIdx}, 수량 열: [${qtyIndices.join(',')}]`);
-  
-  // 데이터 파싱 (헤더 다음 행부터)
-  const dataStartRow = headerRowIdx + 1;
-  
-  for (let i = dataStartRow; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || row.length === 0) continue;
-    
-    const productName = String(row[productNameIdx] || '').trim();
-    if (!productName || productName.includes('합계') || productName.includes('박스 입수량')) continue;
-    
-    // 수량 합산
-    let totalQty = 0;
-    qtyIndices.forEach(idx => {
-      const qtyRaw = String(row[idx] || '').replace(/,/g, '').trim();
-      totalQty += parseInt(qtyRaw) || 0;
-    });
-    
-    if (totalQty === 0) continue;
-    
-    // 상품명 정리
-    const cleanName = productName
-      .replace(/\[브로드카세\]\s*/gi, '')
-      .replace(/72시간\s*/gi, '')
-      .replace(/저당\s*/gi, '')
-      .trim();
-    
-    // 동일 상품 합산
-    itemMap.set(cleanName, (itemMap.get(cleanName) || 0) + totalQty);
-  }
-  
-  // 결과 변환
-  for (const [name, qty] of itemMap) {
-    items.push({
-      originalName: name,
-      cleanName: name,
-      quantity: qty
-    });
-  }
-  
-  console.log(`컬리 멀티시트 파싱 완료: ${items.length}개 품목`);
-  return items;
 }
 
 // 쿠팡 발주서 파싱
@@ -16919,11 +16107,9 @@ window.printMonthlyLedger = printMonthlyLedger;
 window.downloadDailyLedger = downloadDailyLedger;
 window.downloadMonthlyLedger = downloadMonthlyLedger;
 
-
-// ========== 생산계획 관리 (간소화 버전) ==========
+// ========== 생산계획 관리 ==========
 let productionPlanData = [];
-let productionPlanDate = '';
-let productionPlanFileName = '';
+let currentPlanId = null;
 
 async function renderProductionPlan() {
   const content = document.getElementById('page-content');
@@ -16934,55 +16120,37 @@ async function renderProductionPlan() {
       <div class="flex items-center justify-between flex-wrap gap-4">
         <h2 class="text-2xl font-bold text-gray-800">
           <i class="fas fa-calendar-check mr-2 text-indigo-600"></i>
-          생산계획
+          생산계획 관리
         </h2>
-        <div class="flex gap-2 flex-wrap">
+        <div class="flex gap-2">
           <button onclick="showFrozenStockModal()" class="bg-cyan-600 text-white px-4 py-2 rounded-lg hover:bg-cyan-700">
             <i class="fas fa-snowflake mr-1"></i> 냉동재고
           </button>
-          <label class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 cursor-pointer">
+          <button onclick="showUploadPlanModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700">
             <i class="fas fa-upload mr-1"></i> 발주서 업로드
-            <input type="file" id="plan-file-input" accept=".xlsx,.xls" class="hidden" onchange="handlePlanFileUpload(event)">
-          </label>
+          </button>
         </div>
       </div>
       
-      <!-- 요약 카드 -->
-      <div id="plan-summary" class="hidden">
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
-          <div class="bg-white rounded-lg shadow p-4 text-center">
-            <div id="sum-total" class="text-2xl font-bold text-gray-800">0</div>
-            <div class="text-sm text-gray-500">총 품목</div>
-          </div>
-          <div class="bg-white rounded-lg shadow p-4 text-center">
-            <div id="sum-order" class="text-2xl font-bold text-indigo-600">0</div>
-            <div class="text-sm text-gray-500">발주합계</div>
-          </div>
-          <div class="bg-white rounded-lg shadow p-4 text-center">
-            <div id="sum-need" class="text-2xl font-bold text-red-600">0</div>
-            <div class="text-sm text-gray-500">🔴 생산필요</div>
-          </div>
-          <div class="bg-white rounded-lg shadow p-4 text-center">
-            <div id="sum-frozen" class="text-2xl font-bold text-yellow-600">0</div>
-            <div class="text-sm text-gray-500">🟡 냉동사용</div>
-          </div>
-          <div class="bg-white rounded-lg shadow p-4 text-center">
-            <div id="sum-ok" class="text-2xl font-bold text-green-600">0</div>
-            <div class="text-sm text-gray-500">🟢 재고충분</div>
+      <!-- 계획 목록 -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="p-4 bg-gradient-to-r from-indigo-50 to-white border-b">
+          <h3 class="font-bold text-gray-700"><i class="fas fa-list mr-2"></i>생산계획 목록</h3>
+        </div>
+        <div id="plan-list" class="p-4">
+          <div class="text-center text-gray-400 py-8">
+            <i class="fas fa-spinner fa-spin text-2xl"></i>
           </div>
         </div>
-        
-        <!-- 액션 버튼 -->
-        <div class="flex justify-between items-center mb-4">
+      </div>
+      
+      <!-- 계획 상세 -->
+      <div id="plan-detail" class="hidden bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="p-4 bg-gradient-to-r from-purple-50 to-white border-b flex justify-between items-center">
+          <h3 class="font-bold text-gray-700"><i class="fas fa-clipboard-list mr-2"></i>계획 상세</h3>
           <div class="flex gap-2">
-            <button onclick="filterPlanItems('all')" class="plan-filter-btn px-3 py-1 rounded text-sm bg-gray-800 text-white" data-filter="all">전체</button>
-            <button onclick="filterPlanItems('need')" class="plan-filter-btn px-3 py-1 rounded text-sm bg-gray-200" data-filter="need">🔴 생산필요</button>
-            <button onclick="filterPlanItems('frozen')" class="plan-filter-btn px-3 py-1 rounded text-sm bg-gray-200" data-filter="frozen">🟡 냉동사용</button>
-            <button onclick="filterPlanItems('ok')" class="plan-filter-btn px-3 py-1 rounded text-sm bg-gray-200" data-filter="ok">🟢 충분</button>
-          </div>
-          <div class="flex gap-2">
-            <button onclick="refreshPlanStock()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
-              <i class="fas fa-sync mr-1"></i> 재고새로고침
+            <button onclick="syncPlanStock()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+              <i class="fas fa-sync mr-1"></i> 재고동기화
             </button>
             <button onclick="downloadPlanExcel()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
               <i class="fas fa-file-excel mr-1"></i> 엑셀
@@ -16992,599 +16160,470 @@ async function renderProductionPlan() {
             </button>
           </div>
         </div>
-      </div>
-      
-      <!-- 데이터 테이블 -->
-      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-        <div id="plan-content" class="p-4">
-          <div class="text-center text-gray-400 py-12">
-            <i class="fas fa-file-upload text-5xl mb-4"></i>
-            <p class="text-lg">발주서 엑셀 파일을 업로드하세요</p>
-            <p class="text-sm mt-2">업로드하면 현재 재고/냉동재고와 자동 비교됩니다</p>
-          </div>
-        </div>
+        <div id="plan-detail-content" class="p-4"></div>
       </div>
     </div>
   `;
+  
+  await loadPlanList();
 }
 
-// 파일 업로드 처리
-async function handlePlanFileUpload(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  
-  if (typeof XLSX === 'undefined') {
-    showToast('엑셀 라이브러리 로드 실패', 'error');
-    return;
-  }
-  
-  showToast('파일 분석 중...', 'info');
-  
+async function loadPlanList() {
   try {
-    const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: 'array', codepage: 949 }); // EUC-KR 지원
+    const result = await api('/production-plan');
+    const plans = result.data || [];
     
-    // 파일 형식 자동 감지
-    const fileName = file.name.toLowerCase();
-    let items = [];
+    const container = document.getElementById('plan-list');
     
-    if (fileName.includes('발주 상세') || fileName.includes('발주상세')) {
-      // 형식 2: 배민 발주 상세
-      items = parseBaeminOrder(workbook);
-    } else if (fileName.includes('컬리') || fileName.includes('72시간')) {
-      // 형식 3: 컬리 파일 (날짜별 시트)
-      items = parseKurlyOrder(workbook);
-    } else if (fileName.includes('직영점') || fileName.includes('직영')) {
-      // 형식 4: 직영점 HTML xls
-      items = parseDirectStoreOrder(workbook);
-    } else {
-      // 형식 1: 기존 생산계획표 또는 일반 형식
-      items = parseProductionPlan(workbook);
-    }
-    
-    if (items.length === 0) {
-      showToast('파싱된 데이터가 없습니다. 파일 형식을 확인하세요.', 'warning');
+    if (plans.length === 0) {
+      container.innerHTML = `
+        <div class="text-center text-gray-400 py-8">
+          <i class="fas fa-inbox text-4xl mb-2"></i>
+          <p>등록된 생산계획이 없습니다.</p>
+          <p class="text-sm mt-2">발주서를 업로드하여 생산계획을 생성하세요.</p>
+        </div>
+      `;
       return;
     }
     
-    // 동일 제품 합산
-    const merged = mergeItems(items);
-    
-    productionPlanData = merged;
-    productionPlanFileName = file.name;
-    productionPlanDate = formatDate(new Date());
-    
-    showToast(`${merged.length}개 품목 로드 완료 (원본 ${items.length}건)`, 'success');
-    
-    // 재고 정보 가져오기
-    await refreshPlanStock();
-    
+    container.innerHTML = `
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-gray-50 text-gray-600">
+              <th class="p-3 text-left">계획일</th>
+              <th class="p-3 text-left">계획명</th>
+              <th class="p-3 text-center">품목수</th>
+              <th class="p-3 text-right">총수량</th>
+              <th class="p-3 text-center">상태</th>
+              <th class="p-3 text-center">관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${plans.map(p => `
+              <tr class="border-b hover:bg-indigo-50 cursor-pointer" onclick="loadPlanDetail(${p.id})">
+                <td class="p-3 font-medium">${p.plan_date}</td>
+                <td class="p-3">${p.plan_name || p.file_name || '-'}</td>
+                <td class="p-3 text-center">${p.total_items}개</td>
+                <td class="p-3 text-right font-medium">${formatNumber(p.total_quantity)}</td>
+                <td class="p-3 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${
+                    p.status === '완료' ? 'bg-green-100 text-green-700' :
+                    p.status === '확정' ? 'bg-blue-100 text-blue-700' :
+                    'bg-yellow-100 text-yellow-700'
+                  }">${p.status}</span>
+                </td>
+                <td class="p-3 text-center">
+                  <button onclick="event.stopPropagation(); deletePlan(${p.id})" class="text-red-500 hover:text-red-700">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
   } catch (e) {
-    console.error(e);
-    showToast('파일 처리 오류: ' + e.message, 'error');
+    document.getElementById('plan-list').innerHTML = `
+      <div class="text-center text-red-500 py-4">로드 실패</div>
+    `;
   }
-  
-  // 파일 인풋 초기화
-  event.target.value = '';
 }
 
-// 동일 제품 합산
-function mergeItems(items) {
-  const map = new Map();
-  items.forEach(item => {
-    const key = item.product_name;
-    if (map.has(key)) {
-      const existing = map.get(key);
-      existing.order_total += item.order_total;
-    } else {
-      map.set(key, { ...item });
-    }
-  });
-  return Array.from(map.values());
-}
-
-// 형식 1: 생산계획표 파싱
-function parseProductionPlan(workbook) {
-  const sheetName = workbook.SheetNames.find(name => 
-    name.includes('계획') || name === 'Sheet1'
-  ) || workbook.SheetNames[0];
-  
-  const sheet = workbook.Sheets[sheetName];
-  const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-  
-  // 컬럼 매핑 (헤더 찾기)
-  let headerRowIdx = 1;
-  let colMap = {};
-  
-  // 헤더 행 찾기 (品 名 또는 상품명 포함된 행)
-  for (let i = 0; i < Math.min(15, data.length); i++) {
-    const row = data[i] || [];
-    const rowStr = row.join(' ');
-    if (rowStr.includes('品') || rowStr.includes('품명') || rowStr.includes('상품명')) {
-      headerRowIdx = i;
-      break;
-    }
-  }
-  
-  const headerRow = data[headerRowIdx] || [];
-  let firstCoupangIdx = -1;
-  
-  headerRow.forEach((cell, idx) => {
-    if (cell) {
-      const cellStr = String(cell).trim();
-      if (cellStr === '品  名' || cellStr.includes('품명') || cellStr.includes('상품명')) colMap['product_name'] = idx;
-      if (cellStr === '.' || cellStr === '합계' || cellStr === '수량') colMap['total'] = idx;
-      if (cellStr === '쿠팡' && firstCoupangIdx === -1) { colMap['coupang'] = idx; firstCoupangIdx = idx; }
-      if (cellStr === '오아시스' && idx < 15) colMap['oasis'] = idx;
-      if (cellStr === '의왕' && idx < 15) colMap['uiwang'] = idx;
-      if (cellStr === '매장용' || (cellStr === '매장' && idx < 15)) colMap['store'] = idx;
-      if (cellStr === '가맹점') colMap['franchise'] = idx;
-      if (cellStr.includes('컬리') && cellStr.includes('냉동')) colMap['kurly_frozen'] = idx;
-      if (cellStr.includes('컬리') && cellStr.includes('평택')) colMap['kurly_pyeongtaek'] = idx;
-      if (cellStr.includes('컬리') && cellStr.includes('김포')) colMap['kurly_gimpo'] = idx;
-      if (cellStr.includes('컬리') && cellStr.includes('창원')) colMap['kurly_changwon'] = idx;
-      if (cellStr === '배민') colMap['baemin'] = idx;
-      if (cellStr === '네이버') colMap['naver'] = idx;
-      if (cellStr === '재고') colMap['stock'] = idx;
-      if (cellStr === '추가') colMap['extra'] = idx;
-      if (cellStr === '順番' || cellStr.includes('순번')) colMap['seq'] = idx;
-    }
-  });
-  
-  if (!colMap['product_name']) colMap['product_name'] = 3;
-  if (!colMap['total']) colMap['total'] = 4;
-  
-  const safeNum = (val) => {
-    if (val === null || val === undefined || val === '' || val === '-' || val === '—') return 0;
-    const num = parseFloat(String(val).replace(/,/g, '').trim());
-    return isNaN(num) ? 0 : num;
-  };
-  
-  const items = [];
-  const dataStartRow = headerRowIdx + 3; // 헤더 + 2행 후 데이터 시작
-  
-  for (let i = dataStartRow; i < data.length; i++) {
-    const row = data[i];
-    if (!row || row.length === 0) continue;
-    
-    const productName = row[colMap['product_name']];
-    if (!productName || typeof productName !== 'string' || 
-        productName.includes('合計') || productName.includes('총합') ||
-        productName.includes('소계') || productName.includes('합계')) continue;
-    
-    let orderTotal = safeNum(row[colMap['total']]);
-    
-    const qtyCoupang = safeNum(row[colMap['coupang']]);
-    const qtyOasis = safeNum(row[colMap['oasis']]);
-    const qtyUiwang = safeNum(row[colMap['uiwang']]);
-    const qtyStore = safeNum(row[colMap['store']]);
-    const qtyFranchise = safeNum(row[colMap['franchise']]);
-    const qtyKurlyFrozen = safeNum(row[colMap['kurly_frozen']]);
-    const qtyKurlyPyeongtaek = safeNum(row[colMap['kurly_pyeongtaek']]);
-    const qtyKurlyGimpo = safeNum(row[colMap['kurly_gimpo']]);
-    const qtyKurlyChangwon = safeNum(row[colMap['kurly_changwon']]);
-    const qtyBaemin = safeNum(row[colMap['baemin']]);
-    const qtyNaver = safeNum(row[colMap['naver']]);
-    const qtyExtra = safeNum(row[colMap['extra']]);
-    
-    if (orderTotal === 0) {
-      orderTotal = qtyCoupang + qtyOasis + qtyUiwang + qtyStore + qtyFranchise +
-                   qtyKurlyFrozen + qtyKurlyPyeongtaek + qtyKurlyGimpo + qtyKurlyChangwon +
-                   qtyBaemin + qtyNaver + qtyExtra;
-    }
-    
-    if (orderTotal === 0) continue;
-    
-    items.push({
-      product_name: productName.trim(),
-      order_total: Math.round(orderTotal),
-      current_stock: 0,
-      frozen_stock: 0,
-      required_qty: Math.round(orderTotal)
-    });
-  }
-  
-  return items;
-}
-
-// 형식 2: 배민 발주 상세 파싱
-function parseBaeminOrder(workbook) {
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-  
-  // 헤더 행 찾기 (순서, 상품명 포함)
-  let headerRowIdx = -1;
-  for (let i = 0; i < Math.min(20, data.length); i++) {
-    const row = data[i] || [];
-    const rowStr = row.join(' ');
-    if (rowStr.includes('순서') && rowStr.includes('상품명')) {
-      headerRowIdx = i;
-      break;
-    }
-  }
-  
-  if (headerRowIdx === -1) return [];
-  
-  const headerRow = data[headerRowIdx];
-  let productNameIdx = -1, qtyIdx = -1;
-  
-  headerRow.forEach((cell, idx) => {
-    const cellStr = String(cell || '').trim();
-    if (cellStr === '상품명') productNameIdx = idx;
-    if (cellStr === '총 발주 수량') qtyIdx = idx;
-  });
-  
-  if (productNameIdx === -1) productNameIdx = 1;
-  if (qtyIdx === -1) qtyIdx = 7;
-  
-  const safeNum = (val) => {
-    if (val === null || val === undefined || val === '') return 0;
-    const num = parseFloat(String(val).replace(/,/g, '').trim());
-    return isNaN(num) ? 0 : num;
-  };
-  
-  const items = [];
-  for (let i = headerRowIdx + 1; i < data.length; i++) {
-    const row = data[i];
-    if (!row || row.length === 0) continue;
-    
-    const productName = row[productNameIdx];
-    if (!productName || typeof productName !== 'string') continue;
-    
-    const qty = safeNum(row[qtyIdx]);
-    if (qty === 0) continue;
-    
-    items.push({
-      product_name: productName.trim(),
-      order_total: Math.round(qty),
-      current_stock: 0,
-      frozen_stock: 0,
-      required_qty: Math.round(qty)
-    });
-  }
-  
-  return items;
-}
-
-// 형식 3: 컬리 파일 파싱 (모든 시트 합산)
-function parseKurlyOrder(workbook) {
-  const safeNum = (val) => {
-    if (val === null || val === undefined || val === '') return 0;
-    const num = parseFloat(String(val).replace(/,/g, '').trim());
-    return isNaN(num) ? 0 : num;
-  };
-  
-  const allItems = [];
-  
-  // 최신 시트만 처리 (마지막 시트 또는 특정 날짜)
-  const sheetNames = workbook.SheetNames;
-  const targetSheet = sheetNames[sheetNames.length - 1]; // 마지막 시트
-  
-  const sheet = workbook.Sheets[targetSheet];
-  const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-  
-  // 헤더 행 찾기 (번호, 상품명 포함)
-  let headerRowIdx = -1;
-  for (let i = 0; i < Math.min(10, data.length); i++) {
-    const row = data[i] || [];
-    const rowStr = row.join(' ');
-    if (rowStr.includes('번호') && rowStr.includes('상품명')) {
-      headerRowIdx = i;
-      break;
-    }
-  }
-  
-  if (headerRowIdx === -1) headerRowIdx = 1;
-  
-  const headerRow = data[headerRowIdx] || [];
-  let productNameIdx = -1;
-  let qtyIndices = []; // 수량 컬럼들 (평택, 김포, 창원 등)
-  
-  headerRow.forEach((cell, idx) => {
-    const cellStr = String(cell || '').trim();
-    if (cellStr === '상품명') productNameIdx = idx;
-    if (cellStr.includes('평택') || cellStr.includes('김포') || cellStr.includes('창원')) {
-      // BOX/수량 다음 컬럼이 실제 수량
-      if (headerRow[idx - 1] && String(headerRow[idx - 1]).includes('BOX')) {
-        qtyIndices.push(idx);
-      }
-    }
-  });
-  
-  if (productNameIdx === -1) productNameIdx = 2;
-  if (qtyIndices.length === 0) qtyIndices = [6, 8]; // 기본값
-  
-  for (let i = headerRowIdx + 1; i < data.length; i++) {
-    const row = data[i];
-    if (!row || row.length === 0) continue;
-    
-    const productName = row[productNameIdx];
-    if (!productName || typeof productName !== 'string' || 
-        productName.includes('합계') || productName.includes('박스 입수량')) continue;
-    
-    // 수량 합산
-    let totalQty = 0;
-    qtyIndices.forEach(idx => {
-      totalQty += safeNum(row[idx]);
-    });
-    
-    if (totalQty === 0) continue;
-    
-    allItems.push({
-      product_name: productName.trim(),
-      order_total: Math.round(totalQty),
-      current_stock: 0,
-      frozen_stock: 0,
-      required_qty: Math.round(totalQty)
-    });
-  }
-  
-  return allItems;
-}
-
-// 형식 4: 직영점 HTML xls 파싱
-function parseDirectStoreOrder(workbook) {
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-  
-  // 헤더 행 찾기
-  let headerRowIdx = 0;
-  for (let i = 0; i < Math.min(5, data.length); i++) {
-    const row = data[i] || [];
-    const rowStr = row.join(' ');
-    if (rowStr.includes('No') && (rowStr.includes('상 품 명') || rowStr.includes('상품명'))) {
-      headerRowIdx = i;
-      break;
-    }
-  }
-  
-  const headerRow = data[headerRowIdx] || [];
-  let productNameIdx = -1, qtyIdx = -1;
-  
-  headerRow.forEach((cell, idx) => {
-    const cellStr = String(cell || '').trim();
-    if (cellStr === '상 품 명' || cellStr === '상품명') productNameIdx = idx;
-    if (cellStr === '출고수량' || cellStr.includes('수량')) qtyIdx = idx;
-  });
-  
-  if (productNameIdx === -1) productNameIdx = 5;
-  if (qtyIdx === -1) qtyIdx = 9;
-  
-  const safeNum = (val) => {
-    if (val === null || val === undefined || val === '') return 0;
-    const num = parseFloat(String(val).replace(/,/g, '').trim());
-    return isNaN(num) ? 0 : num;
-  };
-  
-  const items = [];
-  for (let i = headerRowIdx + 1; i < data.length; i++) {
-    const row = data[i];
-    if (!row || row.length === 0) continue;
-    
-    // 소계 행 스킵
-    const firstCell = String(row[0] || '');
-    if (firstCell.includes('소계') || firstCell.includes('소 계') || 
-        firstCell.includes('[') || !firstCell.match(/^\d+$/)) continue;
-    
-    const productName = row[productNameIdx];
-    if (!productName || typeof productName !== 'string') continue;
-    
-    const qty = safeNum(row[qtyIdx]);
-    if (qty === 0) continue;
-    
-    items.push({
-      product_name: productName.trim(),
-      order_total: Math.round(qty),
-      current_stock: 0,
-      frozen_stock: 0,
-      required_qty: Math.round(qty)
-    });
-  }
-  
-  return items;
-}
-
-// 재고 새로고침
-async function refreshPlanStock() {
-  if (productionPlanData.length === 0) {
-    showToast('먼저 발주서를 업로드하세요', 'warning');
-    return;
-  }
-  
-  showToast('재고 정보 조회 중...', 'info');
+async function loadPlanDetail(planId) {
+  currentPlanId = planId;
   
   try {
-    // 제품 마스터에서 재고 조회 (PD 코드만 필터링)
-    const masterResult = await api('/master');
-    const allItems = masterResult.data || masterResult || [];
-    const products = allItems.filter(p => p.item_code && p.item_code.startsWith('PD'));
-    console.log(`제품 마스터: 총 ${allItems.length}개 중 PD 제품 ${products.length}개`);
+    const result = await api(`/production-plan/${planId}`);
+    const { plan, items } = result.data;
     
-    const stockMap = new Map();
-    products.forEach(p => {
-      stockMap.set(p.item_name, p.current_stock || 0);
-      stockMap.set(p.item_code, p.current_stock || 0);
-    });
+    productionPlanData = items;
     
-    // 냉동 재고 조회
-    const frozenResult = await api('/frozen-stock');
-    const frozenStocks = frozenResult.data || [];
-    console.log('냉동재고 데이터:', frozenStocks);
-    const frozenMap = new Map();
-    frozenStocks.forEach(f => {
-      frozenMap.set(f.product_name, (frozenMap.get(f.product_name) || 0) + (f.total_qty || 0));
-    });
+    // 요약 통계
+    const totalItems = items.length;
+    const urgentItems = items.filter(i => i.required_qty > 0).length;
+    const warningItems = items.filter(i => i.required_qty > 0 && i.frozen_stock > 0).length;
+    const okItems = items.filter(i => i.required_qty <= 0).length;
     
-    // 제품명 정규화 함수 (공백, 괄호 제거, 소문자)
-    const normalizeName = (name) => {
-      return name.replace(/\s+/g, '').replace(/[()（）\[\]\'\"]/g, '').toLowerCase();
-    };
+    const totalOrder = items.reduce((sum, i) => sum + (i.order_total || 0), 0);
+    const totalStock = items.reduce((sum, i) => sum + (i.current_stock || 0), 0);
+    const totalFrozen = items.reduce((sum, i) => sum + (i.frozen_stock || 0), 0);
+    const totalRequired = items.reduce((sum, i) => sum + Math.max(0, i.required_qty || 0), 0);
     
-    // 용량(g) 추출 함수
-    const extractWeight = (name) => {
-      const match = name.match(/(\d+)\s*g/i);
-      return match ? parseInt(match[1]) : null;
-    };
-    
-    // 제품명 매칭 함수 (엄격한 기준)
-    const matchProductName = (orderName, masterName) => {
-      const orderNorm = normalizeName(orderName);
-      const masterNorm = normalizeName(masterName);
+    document.getElementById('plan-detail').classList.remove('hidden');
+    document.getElementById('plan-detail-content').innerHTML = `
+      <!-- 요약 -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-indigo-50 rounded-lg p-4 text-center">
+          <div class="text-2xl font-bold text-indigo-600">${totalItems}</div>
+          <div class="text-sm text-gray-600">총 품목</div>
+        </div>
+        <div class="bg-red-50 rounded-lg p-4 text-center">
+          <div class="text-2xl font-bold text-red-600">${urgentItems}</div>
+          <div class="text-sm text-gray-600">🔴 생산필요</div>
+        </div>
+        <div class="bg-yellow-50 rounded-lg p-4 text-center">
+          <div class="text-2xl font-bold text-yellow-600">${warningItems}</div>
+          <div class="text-sm text-gray-600">🟡 냉동사용</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-4 text-center">
+          <div class="text-2xl font-bold text-green-600">${okItems}</div>
+          <div class="text-sm text-gray-600">🟢 재고충분</div>
+        </div>
+      </div>
       
-      // 1. 정확히 일치
-      if (orderNorm === masterNorm) return true;
+      <!-- 수량 요약 -->
+      <div class="bg-gray-50 rounded-lg p-4 mb-6 grid grid-cols-4 gap-4 text-center">
+        <div>
+          <div class="text-sm text-gray-500">발주합계</div>
+          <div class="text-lg font-bold text-gray-800">${formatNumber(totalOrder)}</div>
+        </div>
+        <div>
+          <div class="text-sm text-gray-500">현재재고</div>
+          <div class="text-lg font-bold text-blue-600">${formatNumber(totalStock)}</div>
+        </div>
+        <div>
+          <div class="text-sm text-gray-500">냉동재고</div>
+          <div class="text-lg font-bold text-cyan-600">${formatNumber(totalFrozen)}</div>
+        </div>
+        <div>
+          <div class="text-sm text-gray-500">생산필요량</div>
+          <div class="text-lg font-bold text-red-600">${formatNumber(totalRequired)}</div>
+        </div>
+      </div>
       
-      // 2. 정규화 후 포함 관계 (한쪽이 다른쪽을 완전히 포함)
-      if (orderNorm.includes(masterNorm) || masterNorm.includes(orderNorm)) {
-        // 용량이 둘 다 있으면 용량도 비교
-        const orderWeight = extractWeight(orderName);
-        const masterWeight = extractWeight(masterName);
-        if (orderWeight && masterWeight) {
-          // 용량 차이가 50g 이내면 같은 제품으로 간주
-          return Math.abs(orderWeight - masterWeight) <= 50;
-        }
-        return true;
-      }
+      <!-- 필터 탭 -->
+      <div class="flex gap-2 mb-4 flex-wrap">
+        <button onclick="filterPlanItems('all')" class="plan-filter-btn px-3 py-1 rounded text-sm bg-gray-800 text-white" data-filter="all">전체 (${totalItems})</button>
+        <button onclick="filterPlanItems('urgent')" class="plan-filter-btn px-3 py-1 rounded text-sm bg-gray-200 text-gray-700" data-filter="urgent">🔴 생산필요 (${urgentItems})</button>
+        <button onclick="filterPlanItems('warning')" class="plan-filter-btn px-3 py-1 rounded text-sm bg-gray-200 text-gray-700" data-filter="warning">🟡 냉동사용 (${warningItems})</button>
+        <button onclick="filterPlanItems('ok')" class="plan-filter-btn px-3 py-1 rounded text-sm bg-gray-200 text-gray-700" data-filter="ok">🟢 충분 (${okItems})</button>
+      </div>
       
-      return false;
-    };
-    
-    // 데이터 업데이트
-    productionPlanData.forEach(item => {
-      let currentStock = 0;
-      let frozenStock = 0;
-      
-      // 현재 재고 매칭 (엄격한 기준)
-      for (const [name, stock] of stockMap) {
-        if (matchProductName(item.product_name, name)) {
-          currentStock = stock;
-          console.log(`재고 매칭: ${item.product_name} -> ${name} = ${stock}`);
-          break;
-        }
-      }
-      
-      // 냉동 재고 매칭 (엄격한 기준)
-      for (const [name, stock] of frozenMap) {
-        if (matchProductName(item.product_name, name)) {
-          frozenStock = stock;
-          console.log(`냉동재고 매칭: ${item.product_name} -> ${name} = ${stock}`);
-          break;
-        }
-      }
-      
-      item.current_stock = Math.round(currentStock);
-      item.frozen_stock = Math.round(frozenStock);
-      item.required_qty = Math.round(item.order_total - currentStock - frozenStock);
-    });
-    
-    renderPlanTable('all');
-    showToast('재고 정보 업데이트 완료', 'success');
+      <!-- 품목 테이블 -->
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm" id="plan-items-table">
+          <thead>
+            <tr class="bg-gray-100 text-gray-600 text-xs">
+              <th class="p-2 text-center">상태</th>
+              <th class="p-2 text-left">제품명</th>
+              <th class="p-2 text-right">발주합계</th>
+              <th class="p-2 text-right text-blue-600">현재재고</th>
+              <th class="p-2 text-right text-cyan-600">냉동재고</th>
+              <th class="p-2 text-right text-red-600 font-bold">필요량</th>
+              <th class="p-2 text-right text-purple-600">쿠팡</th>
+              <th class="p-2 text-right text-green-600">오아시스</th>
+              <th class="p-2 text-right text-orange-600">컬리</th>
+              <th class="p-2 text-right">기타</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${renderPlanItemsRows(items, 'all')}
+          </tbody>
+        </table>
+      </div>
+    `;
     
   } catch (e) {
     console.error(e);
-    showToast('재고 조회 실패', 'error');
-    renderPlanTable('all');
+    showToast('계획 로드 실패', 'error');
   }
 }
 
-// 테이블 렌더링
-function renderPlanTable(filter = 'all') {
-  document.getElementById('plan-summary').classList.remove('hidden');
-  
-  // 필터링
-  let filtered = productionPlanData;
-  if (filter === 'need') {
-    filtered = productionPlanData.filter(i => i.required_qty > 0 && i.frozen_stock === 0);
-  } else if (filter === 'frozen') {
-    filtered = productionPlanData.filter(i => i.required_qty > 0 && i.frozen_stock > 0);
+function renderPlanItemsRows(items, filter) {
+  let filtered = items;
+  if (filter === 'urgent') {
+    filtered = items.filter(i => i.required_qty > 0);
+  } else if (filter === 'warning') {
+    filtered = items.filter(i => i.required_qty > 0 && i.frozen_stock > 0);
   } else if (filter === 'ok') {
-    filtered = productionPlanData.filter(i => i.required_qty <= 0);
+    filtered = items.filter(i => i.required_qty <= 0);
   }
   
-  // 요약 업데이트
-  const needCount = productionPlanData.filter(i => i.required_qty > 0 && i.frozen_stock === 0).length;
-  const frozenCount = productionPlanData.filter(i => i.required_qty > 0 && i.frozen_stock > 0).length;
-  const okCount = productionPlanData.filter(i => i.required_qty <= 0).length;
+  if (filtered.length === 0) {
+    return '<tr><td colspan="10" class="p-4 text-center text-gray-400">해당 항목이 없습니다.</td></tr>';
+  }
   
-  document.getElementById('sum-total').textContent = productionPlanData.length;
-  document.getElementById('sum-order').textContent = formatNumber(productionPlanData.reduce((s, i) => s + i.order_total, 0));
-  document.getElementById('sum-need').textContent = needCount;
-  document.getElementById('sum-frozen').textContent = frozenCount;
-  document.getElementById('sum-ok').textContent = okCount;
-  
-  // 필터 버튼 스타일
+  return filtered.map(item => {
+    const status = item.required_qty > 0 
+      ? (item.frozen_stock > 0 ? '🟡' : '🔴') 
+      : '🟢';
+    const statusClass = item.required_qty > 0 
+      ? (item.frozen_stock > 0 ? 'bg-yellow-50' : 'bg-red-50') 
+      : '';
+    
+    const kurlyTotal = (item.qty_kurly_frozen || 0) + (item.qty_kurly_pyeongtaek || 0) + 
+                       (item.qty_kurly_gimpo || 0) + (item.qty_kurly_changwon || 0);
+    const etcTotal = (item.qty_uiwang || 0) + (item.qty_store || 0) + (item.qty_franchise || 0) +
+                     (item.qty_baemin || 0) + (item.qty_naver || 0) + (item.qty_extra || 0);
+    
+    return `
+      <tr class="border-b hover:bg-gray-50 ${statusClass}" data-status="${item.required_qty > 0 ? (item.frozen_stock > 0 ? 'warning' : 'urgent') : 'ok'}">
+        <td class="p-2 text-center text-lg">${status}</td>
+        <td class="p-2">
+          <div class="font-medium">${item.product_name}</div>
+          ${item.product_code ? `<div class="text-xs text-gray-400">${item.product_code}</div>` : ''}
+        </td>
+        <td class="p-2 text-right font-bold">${formatNumber(item.order_total)}</td>
+        <td class="p-2 text-right text-blue-600">${formatNumber(item.current_stock)}</td>
+        <td class="p-2 text-right text-cyan-600">${item.frozen_stock > 0 ? formatNumber(item.frozen_stock) : '-'}</td>
+        <td class="p-2 text-right font-bold ${item.required_qty > 0 ? 'text-red-600' : 'text-green-600'}">
+          ${item.required_qty > 0 ? '+' + formatNumber(item.required_qty) : formatNumber(item.required_qty)}
+        </td>
+        <td class="p-2 text-right text-purple-600">${item.qty_coupang > 0 ? formatNumber(item.qty_coupang) : '-'}</td>
+        <td class="p-2 text-right text-green-600">${item.qty_oasis > 0 ? formatNumber(item.qty_oasis) : '-'}</td>
+        <td class="p-2 text-right text-orange-600">${kurlyTotal > 0 ? formatNumber(kurlyTotal) : '-'}</td>
+        <td class="p-2 text-right text-gray-500">${etcTotal > 0 ? formatNumber(etcTotal) : '-'}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function filterPlanItems(filter) {
+  // 버튼 스타일 변경
   document.querySelectorAll('.plan-filter-btn').forEach(btn => {
-    btn.className = btn.dataset.filter === filter 
-      ? 'plan-filter-btn px-3 py-1 rounded text-sm bg-gray-800 text-white'
-      : 'plan-filter-btn px-3 py-1 rounded text-sm bg-gray-200';
+    if (btn.dataset.filter === filter) {
+      btn.classList.add('bg-gray-800', 'text-white');
+      btn.classList.remove('bg-gray-200', 'text-gray-700');
+    } else {
+      btn.classList.remove('bg-gray-800', 'text-white');
+      btn.classList.add('bg-gray-200', 'text-gray-700');
+    }
   });
   
-  // 테이블 렌더링
-  const content = document.getElementById('plan-content');
+  // 테이블 필터링
+  document.querySelector('#plan-items-table tbody').innerHTML = renderPlanItemsRows(productionPlanData, filter);
+}
+
+function showUploadPlanModal() {
+  const today = formatDate(new Date());
   
-  if (filtered.length === 0) {
-    content.innerHTML = `<div class="text-center text-gray-400 py-8">해당 조건의 품목이 없습니다.</div>`;
+  showModal('발주서 업로드', `
+    <form id="upload-plan-form" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">계획일 <span class="text-red-500">*</span></label>
+        <input type="date" id="plan-date" value="${today}" required class="w-full px-3 py-2 border rounded-lg">
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">발주서 파일 (엑셀) <span class="text-red-500">*</span></label>
+        <input type="file" id="plan-file" accept=".xlsx,.xls" required 
+               class="w-full px-3 py-2 border rounded-lg">
+        <p class="text-xs text-gray-500 mt-1">
+          <i class="fas fa-info-circle mr-1"></i>
+          '계획' 시트에서 품명, 발주처별 수량을 자동으로 파싱합니다.
+        </p>
+      </div>
+      
+      <div class="bg-blue-50 p-3 rounded-lg text-sm">
+        <p class="font-medium text-blue-800 mb-1"><i class="fas fa-magic mr-1"></i>자동 연동 기능</p>
+        <ul class="text-blue-700 text-xs space-y-1">
+          <li>• 시스템의 제품 재고와 자동 매칭</li>
+          <li>• 냉동 재고 자동 반영</li>
+          <li>• 생산 필요량 자동 계산</li>
+        </ul>
+      </div>
+    </form>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="uploadPlanFile()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+      <i class="fas fa-upload mr-1"></i> 업로드
+    </button>
+  `);
+}
+
+async function uploadPlanFile() {
+  const fileInput = document.getElementById('plan-file');
+  const planDate = document.getElementById('plan-date').value;
+  
+  if (!fileInput.files[0]) {
+    showToast('파일을 선택해주세요', 'warning');
     return;
   }
   
-  content.innerHTML = `
-    <div class="text-sm text-gray-500 mb-2">
-      <i class="fas fa-file mr-1"></i> ${productionPlanFileName} (${productionPlanDate})
-    </div>
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="bg-gray-50 text-gray-600">
-            <th class="p-2 text-left">제품명</th>
-            <th class="p-2 text-right">발주</th>
-            <th class="p-2 text-right text-blue-600">재고</th>
-            <th class="p-2 text-right text-cyan-600">냉동</th>
-            <th class="p-2 text-right">필요량</th>
-            <th class="p-2 text-center">상태</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${filtered.map(item => {
-            let status = '';
-            let statusClass = '';
-            if (item.required_qty <= 0) {
-              status = '🟢 충분';
-              statusClass = 'text-green-600';
-            } else if (item.frozen_stock > 0) {
-              status = '🟡 냉동';
-              statusClass = 'text-yellow-600';
-            } else {
-              status = '🔴 생산';
-              statusClass = 'text-red-600';
-            }
-            
-            return `
-              <tr class="border-b hover:bg-gray-50">
-                <td class="p-2 font-medium">${item.product_name}</td>
-                <td class="p-2 text-right">${formatNumber(item.order_total)}</td>
-                <td class="p-2 text-right text-blue-600">${formatNumber(item.current_stock)}</td>
-                <td class="p-2 text-right text-cyan-600">${formatNumber(item.frozen_stock)}</td>
-                <td class="p-2 text-right font-bold ${item.required_qty > 0 ? 'text-red-600' : 'text-green-600'}">
-                  ${item.required_qty > 0 ? formatNumber(item.required_qty) : '-'}
-                </td>
-                <td class="p-2 text-center ${statusClass}">${status}</td>
-              </tr>
-            `;
-          }).join('')}
-        </tbody>
-      </table>
-    </div>
-  `;
+  if (!planDate) {
+    showToast('계획일을 선택해주세요', 'warning');
+    return;
+  }
+  
+  // XLSX 라이브러리 확인
+  if (typeof XLSX === 'undefined') {
+    showToast('엑셀 라이브러리가 로드되지 않았습니다', 'error');
+    return;
+  }
+  
+  try {
+    showToast('파일 분석 중...', 'info');
+    
+    // 프론트엔드에서 엑셀 파싱
+    const file = fileInput.files[0];
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    
+    // '계획' 시트 찾기
+    const sheetName = workbook.SheetNames.find(name => 
+      name.includes('계획') || name === 'Sheet1'
+    ) || workbook.SheetNames[0];
+    
+    const sheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    
+    // 컬럼 매핑 (1행이 헤더)
+    const headerRow = data[1] || [];
+    const colMap = {};
+    headerRow.forEach((cell, idx) => {
+      if (cell) {
+        const cellStr = String(cell).trim();
+        if (cellStr === '品  名' || cellStr.includes('품명')) colMap['product_name'] = idx;
+        if (cellStr === '쿠팡') colMap['coupang'] = idx;
+        if (cellStr === '오아시스') colMap['oasis'] = idx;
+        if (cellStr === '의왕') colMap['uiwang'] = idx;
+        if (cellStr === '매장용' || cellStr === '매장') colMap['store'] = idx;
+        if (cellStr === '가맹점') colMap['franchise'] = idx;
+        if (cellStr.includes('컬리') && cellStr.includes('냉동')) colMap['kurly_frozen'] = idx;
+        if (cellStr.includes('컬리') && cellStr.includes('평택')) colMap['kurly_pyeongtaek'] = idx;
+        if (cellStr.includes('컬리') && cellStr.includes('김포')) colMap['kurly_gimpo'] = idx;
+        if (cellStr.includes('컬리') && cellStr.includes('창원')) colMap['kurly_changwon'] = idx;
+        if (cellStr === '배민') colMap['baemin'] = idx;
+        if (cellStr === '네이버') colMap['naver'] = idx;
+        if (cellStr === '재고') colMap['stock'] = idx;
+        if (cellStr === '추가') colMap['extra'] = idx;
+        if (cellStr === '順番' || cellStr.includes('순번')) colMap['seq'] = idx;
+      }
+    });
+    
+    // 품명 컬럼 기본값
+    if (!colMap['product_name']) colMap['product_name'] = 3;
+    
+    // 안전한 숫자 파싱 함수 (엑셀에서 '-', 공백, 텍스트 등 처리)
+    const safeParseNum = (val) => {
+      if (val === null || val === undefined || val === '' || val === '-' || val === '—') return 0;
+      const num = parseFloat(String(val).replace(/,/g, '').trim());
+      return isNaN(num) ? 0 : num;
+    };
+    
+    // 데이터 파싱 (4행부터 데이터)
+    const items = [];
+    let seqNo = 0;
+    
+    for (let i = 4; i < data.length; i++) {
+      const row = data[i];
+      if (!row || row.length === 0) continue;
+      
+      const productName = row[colMap['product_name']];
+      if (!productName || typeof productName !== 'string' || 
+          productName.includes('合計') || productName.includes('총합') ||
+          productName.includes('소계') || productName.includes('합계')) continue;
+      
+      // 발주 수량 합계 계산 (안전한 파싱 사용)
+      const qtyCoupang = safeParseNum(row[colMap['coupang']]);
+      const qtyOasis = safeParseNum(row[colMap['oasis']]);
+      const qtyUiwang = safeParseNum(row[colMap['uiwang']]);
+      const qtyStore = safeParseNum(row[colMap['store']]);
+      const qtyFranchise = safeParseNum(row[colMap['franchise']]);
+      const qtyKurlyFrozen = safeParseNum(row[colMap['kurly_frozen']]);
+      const qtyKurlyPyeongtaek = safeParseNum(row[colMap['kurly_pyeongtaek']]);
+      const qtyKurlyGimpo = safeParseNum(row[colMap['kurly_gimpo']]);
+      const qtyKurlyChangwon = safeParseNum(row[colMap['kurly_changwon']]);
+      const qtyBaemin = safeParseNum(row[colMap['baemin']]);
+      const qtyNaver = safeParseNum(row[colMap['naver']]);
+      const qtyExtra = safeParseNum(row[colMap['extra']]);
+      
+      const orderTotal = qtyCoupang + qtyOasis + qtyUiwang + qtyStore + qtyFranchise +
+                         qtyKurlyFrozen + qtyKurlyPyeongtaek + qtyKurlyGimpo + qtyKurlyChangwon +
+                         qtyBaemin + qtyNaver + qtyExtra;
+      
+      // 재고
+      const excelStock = safeParseNum(row[colMap['stock']]);
+      
+      // 순번
+      const seq = row[colMap['seq']] || null;
+      if (seq && !isNaN(parseFloat(String(seq)))) {
+        seqNo = parseFloat(String(seq));
+      }
+      
+      items.push({
+        seq_no: seqNo,
+        product_name: productName.trim(),
+        order_total: orderTotal,
+        qty_coupang: qtyCoupang,
+        qty_oasis: qtyOasis,
+        qty_uiwang: qtyUiwang,
+        qty_store: qtyStore,
+        qty_franchise: qtyFranchise,
+        qty_kurly_frozen: qtyKurlyFrozen,
+        qty_kurly_pyeongtaek: qtyKurlyPyeongtaek,
+        qty_kurly_gimpo: qtyKurlyGimpo,
+        qty_kurly_changwon: qtyKurlyChangwon,
+        qty_baemin: qtyBaemin,
+        qty_naver: qtyNaver,
+        qty_extra: qtyExtra,
+        excel_stock: excelStock
+      });
+    }
+    
+    if (items.length === 0) {
+      showToast('파싱된 데이터가 없습니다. 엑셀 형식을 확인해주세요.', 'warning');
+      return;
+    }
+    
+    showToast(`${items.length}개 품목 파싱 완료, 서버 저장 중...`, 'info');
+    
+    // JSON 데이터를 백엔드로 전송
+    const result = await api('/production-plan/upload', 'POST', {
+      plan_date: planDate,
+      file_name: file.name,
+      items: items
+    });
+    
+    if (result.success) {
+      showToast(`업로드 완료! ${result.data.items_count}개 품목`, 'success');
+      closeModal();
+      await loadPlanList();
+      await loadPlanDetail(result.data.plan_id);
+    } else {
+      showToast(result.error || '업로드 실패', 'error');
+    }
+  } catch (e) {
+    console.error(e);
+    showToast('파일 처리 중 오류 발생: ' + e.message, 'error');
+  }
 }
 
-// 필터링
-function filterPlanItems(filter) {
-  renderPlanTable(filter);
+async function deletePlan(planId) {
+  if (!confirm('이 생산계획을 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/production-plan/${planId}`, 'DELETE');
+    showToast('삭제되었습니다', 'success');
+    
+    if (currentPlanId === planId) {
+      document.getElementById('plan-detail').classList.add('hidden');
+      currentPlanId = null;
+    }
+    
+    await loadPlanList();
+  } catch (e) {
+    showToast('삭제 실패', 'error');
+  }
 }
 
-// 엑셀 다운로드
+async function syncPlanStock() {
+  if (!currentPlanId) return;
+  
+  try {
+    showToast('재고 동기화 중...', 'info');
+    await api(`/production-plan/${currentPlanId}/sync-stock`, 'POST');
+    showToast('재고 동기화 완료', 'success');
+    await loadPlanDetail(currentPlanId);
+  } catch (e) {
+    showToast('동기화 실패', 'error');
+  }
+}
+
 function downloadPlanExcel() {
-  if (productionPlanData.length === 0) {
+  if (!productionPlanData || productionPlanData.length === 0) {
     showToast('다운로드할 데이터가 없습니다', 'warning');
     return;
   }
@@ -17597,23 +16636,22 @@ function downloadPlanExcel() {
     { key: 'required_qty', label: '필요량' },
     { key: 'qty_coupang', label: '쿠팡' },
     { key: 'qty_oasis', label: '오아시스' },
+    { key: 'qty_kurly_frozen', label: '컬리냉동' },
+    { key: 'qty_kurly_pyeongtaek', label: '컬리평택' },
     { key: 'qty_uiwang', label: '의왕' },
     { key: 'qty_store', label: '매장' }
   ];
   
-  downloadExcel(productionPlanData, columns, `생산계획_${productionPlanDate}`);
+  downloadExcel(productionPlanData, columns, `생산계획_${formatDate(new Date())}`);
 }
 
-// 출력
 function printPlanReport() {
-  if (productionPlanData.length === 0) {
+  if (!productionPlanData || productionPlanData.length === 0) {
     showToast('출력할 데이터가 없습니다', 'warning');
     return;
   }
   
-  // 생산 필요 품목만 출력
-  const needItems = productionPlanData.filter(i => i.required_qty > 0);
-  const printItems = needItems.length > 0 ? needItems : productionPlanData;
+  const urgentItems = productionPlanData.filter(i => i.required_qty > 0);
   
   const columns = [
     { key: 'product_name', label: '제품명' },
@@ -17623,172 +16661,47 @@ function printPlanReport() {
     { key: 'required_qty', label: '필요량' }
   ];
   
-  const tableHtml = tableToHtml(printItems, columns);
-  const info = `총 ${productionPlanData.length}개 품목 / 생산필요 ${needItems.length}개`;
+  const tableHtml = tableToHtml(urgentItems.length > 0 ? urgentItems : productionPlanData, columns);
+  const info = `총 ${productionPlanData.length}개 품목 / 생산필요 ${urgentItems.length}개`;
   
-  printData(`생산계획 (${productionPlanDate})`, tableHtml, info);
+  printData(`생산계획 (${formatDate(new Date())})`, tableHtml, info);
 }
 
-// ========== 냉동재고 관리 ==========
-
-// 냉동재고 관리 모달 (수불 관리 기능 포함)
+// 냉동재고 관리 모달
 async function showFrozenStockModal() {
   try {
-    // 제품별 집계 현황 조회
-    const result = await api('/frozen-stock');
+    const result = await api('/production-plan/frozen-stock/list');
     const stocks = result.data || [];
-    
-    // 최근 수불 이력 조회
-    const transResult = await api('/frozen-stock/transactions?start_date=' + 
-      formatDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)));
-    const transactions = transResult.data || [];
     
     showModal('냉동재고 관리', `
       <div class="space-y-4">
-        <!-- 탭 메뉴 -->
-        <div class="flex border-b">
-          <button onclick="switchFrozenTab('stock')" id="frozen-tab-stock" 
-                  class="px-4 py-2 font-medium text-cyan-600 border-b-2 border-cyan-600">
-            <i class="fas fa-boxes mr-1"></i> 현재 재고
-          </button>
-          <button onclick="switchFrozenTab('history')" id="frozen-tab-history"
-                  class="px-4 py-2 font-medium text-gray-500 hover:text-cyan-600">
-            <i class="fas fa-history mr-1"></i> 수불 이력
+        <div class="flex justify-between items-center">
+          <p class="text-sm text-gray-600">냉동 보관 중인 제품 재고를 관리합니다.</p>
+          <button onclick="showAddFrozenStockModal()" class="text-sm bg-cyan-600 text-white px-3 py-1 rounded hover:bg-cyan-700">
+            <i class="fas fa-plus mr-1"></i> 추가
           </button>
         </div>
         
-        <!-- 현재 재고 탭 -->
-        <div id="frozen-content-stock">
-          <div class="flex justify-between items-center mb-3">
-            <p class="text-sm text-gray-600">제품별 냉동 재고 현황</p>
-            <div class="flex gap-2">
-              <button onclick="showFrozenInboundModal()" class="text-sm bg-cyan-600 text-white px-3 py-1 rounded hover:bg-cyan-700">
-                <i class="fas fa-plus mr-1"></i> 입고
-              </button>
-              <button onclick="showFrozenOutboundModal()" class="text-sm bg-orange-500 text-white px-3 py-1 rounded hover:bg-orange-600">
-                <i class="fas fa-minus mr-1"></i> 출고
-              </button>
-            </div>
-          </div>
-          
-          <div class="overflow-x-auto max-h-80">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="bg-gray-50 text-gray-600">
-                  <th class="p-2 text-left">제품명</th>
-                  <th class="p-2 text-right">수량</th>
-                  <th class="p-2 text-center">LOT</th>
-                  <th class="p-2 text-center">최초냉동</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${stocks.length === 0 ? `
-                  <tr><td colspan="4" class="p-4 text-center text-gray-400">등록된 냉동재고가 없습니다.</td></tr>
-                ` : stocks.map(s => `
-                  <tr class="border-b hover:bg-cyan-50 cursor-pointer" onclick="showFrozenStockDetail('${s.product_name.replace(/'/g, "\\'")}')">
-                    <td class="p-2 font-medium">${s.product_name}</td>
-                    <td class="p-2 text-right font-bold text-cyan-600">${formatNumber(s.total_qty)}</td>
-                    <td class="p-2 text-center text-gray-500">${s.lot_count}개</td>
-                    <td class="p-2 text-center text-gray-500">${s.oldest_date || '-'}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-          ${stocks.length > 0 ? `
-            <div class="mt-3 text-right text-sm text-gray-600">
-              총 <span class="font-bold text-cyan-600">${stocks.reduce((sum, s) => sum + s.total_qty, 0)}</span>개 
-              (${stocks.length}개 제품)
-            </div>
-          ` : ''}
-        </div>
-        
-        <!-- 수불 이력 탭 -->
-        <div id="frozen-content-history" class="hidden">
-          <div class="overflow-x-auto max-h-80">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="bg-gray-50 text-gray-600">
-                  <th class="p-2 text-left">일자</th>
-                  <th class="p-2 text-left">제품명</th>
-                  <th class="p-2 text-center">구분</th>
-                  <th class="p-2 text-right">수량</th>
-                  <th class="p-2 text-left">메모</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${transactions.length === 0 ? `
-                  <tr><td colspan="5" class="p-4 text-center text-gray-400">최근 7일간 수불 이력이 없습니다.</td></tr>
-                ` : transactions.map(t => `
-                  <tr class="border-b">
-                    <td class="p-2 text-gray-600">${t.trans_date}</td>
-                    <td class="p-2">${t.product_name}</td>
-                    <td class="p-2 text-center">
-                      <span class="px-2 py-0.5 rounded text-xs ${
-                        t.trans_type === '입고' ? 'bg-cyan-100 text-cyan-700' :
-                        t.trans_type === '출고' ? 'bg-orange-100 text-orange-700' :
-                        'bg-gray-100 text-gray-700'
-                      }">${t.trans_type}</span>
-                    </td>
-                    <td class="p-2 text-right font-medium ${t.quantity > 0 ? 'text-cyan-600' : 'text-orange-600'}">
-                      ${t.quantity > 0 ? '+' : ''}${formatNumber(t.quantity)}
-                    </td>
-                    <td class="p-2 text-gray-500 text-xs">${t.memo || '-'}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    `, `
-      <button onclick="closeModal()" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">닫기</button>
-    `);
-  } catch (e) {
-    console.error(e);
-    showToast('냉동재고 로드 실패', 'error');
-  }
-}
-
-// 냉동재고 탭 전환
-function switchFrozenTab(tab) {
-  document.getElementById('frozen-tab-stock').className = 
-    tab === 'stock' ? 'px-4 py-2 font-medium text-cyan-600 border-b-2 border-cyan-600' : 
-    'px-4 py-2 font-medium text-gray-500 hover:text-cyan-600';
-  document.getElementById('frozen-tab-history').className = 
-    tab === 'history' ? 'px-4 py-2 font-medium text-cyan-600 border-b-2 border-cyan-600' : 
-    'px-4 py-2 font-medium text-gray-500 hover:text-cyan-600';
-  
-  document.getElementById('frozen-content-stock').classList.toggle('hidden', tab !== 'stock');
-  document.getElementById('frozen-content-history').classList.toggle('hidden', tab !== 'history');
-}
-
-// 냉동재고 상세 (LOT별)
-async function showFrozenStockDetail(productName) {
-  try {
-    const result = await api('/frozen-stock/detail?product_name=' + encodeURIComponent(productName));
-    const lots = result.data || [];
-    
-    showModal(`냉동재고 상세: ${productName}`, `
-      <div class="space-y-3">
-        <div class="overflow-x-auto max-h-80">
+        <div class="overflow-x-auto max-h-96">
           <table class="w-full text-sm">
             <thead>
               <tr class="bg-gray-50 text-gray-600">
-                <th class="p-2 text-center">냉동일</th>
+                <th class="p-2 text-left">제품명</th>
                 <th class="p-2 text-right">수량</th>
-                <th class="p-2 text-left">메모</th>
+                <th class="p-2 text-center">냉동일</th>
                 <th class="p-2 text-center">관리</th>
               </tr>
             </thead>
             <tbody>
-              ${lots.map(l => `
+              ${stocks.length === 0 ? `
+                <tr><td colspan="4" class="p-4 text-center text-gray-400">등록된 냉동재고가 없습니다.</td></tr>
+              ` : stocks.map(s => `
                 <tr class="border-b">
-                  <td class="p-2 text-center">${l.frozen_date || '-'}</td>
-                  <td class="p-2 text-right font-medium text-cyan-600">${formatNumber(l.quantity)}</td>
-                  <td class="p-2 text-gray-500 text-xs">${l.memo || '-'}</td>
+                  <td class="p-2">${s.product_name}</td>
+                  <td class="p-2 text-right font-medium">${formatNumber(s.quantity)}</td>
+                  <td class="p-2 text-center text-gray-500">${s.frozen_date || '-'}</td>
                   <td class="p-2 text-center">
-                    <button onclick="deleteFrozenStockLot(${l.id})" class="text-red-500 hover:text-red-700">
+                    <button onclick="deleteFrozenStock(${s.id})" class="text-red-500 hover:text-red-700">
                       <i class="fas fa-trash"></i>
                     </button>
                   </td>
@@ -17797,34 +16710,34 @@ async function showFrozenStockDetail(productName) {
             </tbody>
           </table>
         </div>
-        <div class="text-right text-sm">
-          합계: <span class="font-bold text-cyan-600">${formatNumber(lots.reduce((sum, l) => sum + l.quantity, 0))}</span>
-        </div>
       </div>
     `, `
-      <button onclick="showFrozenStockModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">뒤로</button>
+      <button onclick="closeModal()" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700">닫기</button>
     `);
   } catch (e) {
-    showToast('상세 로드 실패', 'error');
+    showToast('냉동재고 로드 실패', 'error');
   }
 }
 
-// 냉동재고 입고 모달
-async function showFrozenInboundModal() {
+async function showAddFrozenStockModal() {
   closeModal();
   
+  // 제품 목록 가져오기
   let products = [];
   try {
     const result = await api('/master?category=제품');
     products = result.data || [];
-  } catch (e) {}
+  } catch (e) {
+    console.error('제품 로드 실패', e);
+  }
   
+  // 전역 변수로 제품 목록 저장 (검색용)
   window.frozenStockProducts = products;
   
-  showModal('냉동재고 입고', `
-    <form id="frozen-inbound-form" class="space-y-4">
-      <div class="relative">
-        <label class="block text-sm font-medium text-gray-700 mb-1">제품 검색 <span class="text-red-500">*</span></label>
+  showModal('냉동재고 추가', `
+    <form id="frozen-stock-form" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택 <span class="text-red-500">*</span></label>
         <input type="text" id="frozen-product-search" 
                class="w-full px-3 py-2 border rounded-lg" 
                placeholder="제품명 검색..."
@@ -17832,16 +16745,17 @@ async function showFrozenInboundModal() {
                autocomplete="off">
         <div id="frozen-product-dropdown" class="hidden absolute z-50 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto mt-1"></div>
         <input type="hidden" id="frozen-product-code">
-        <input type="hidden" id="frozen-product-name">
       </div>
-      <div id="frozen-selected-product" class="hidden p-2 bg-cyan-50 rounded-lg">
-        <span class="text-sm text-cyan-700">선택됨: </span>
-        <span id="frozen-selected-name" class="font-medium"></span>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">선택된 제품</label>
+        <input type="text" id="frozen-product-name" readonly 
+               class="w-full px-3 py-2 border rounded-lg bg-gray-50" 
+               placeholder="위에서 제품을 검색하여 선택하세요">
       </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">수량 <span class="text-red-500">*</span></label>
-          <input type="number" id="frozen-quantity" required class="w-full px-3 py-2 border rounded-lg" placeholder="0" min="1">
+          <input type="number" id="frozen-quantity" required class="w-full px-3 py-2 border rounded-lg" placeholder="0">
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">냉동일</label>
@@ -17850,80 +16764,16 @@ async function showFrozenInboundModal() {
       </div>
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
-        <input type="text" id="frozen-memo" class="w-full px-3 py-2 border rounded-lg" placeholder="입고 사유">
+        <input type="text" id="frozen-memo" class="w-full px-3 py-2 border rounded-lg" placeholder="메모">
       </div>
     </form>
   `, `
     <button onclick="showFrozenStockModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
-    <button onclick="saveFrozenInbound()" class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700">
-      <i class="fas fa-plus mr-1"></i> 입고
-    </button>
+    <button onclick="saveFrozenStock()" class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700">저장</button>
   `);
 }
 
-// 냉동재고 출고 모달
-async function showFrozenOutboundModal() {
-  closeModal();
-  
-  let stocks = [];
-  try {
-    const result = await api('/frozen-stock');
-    stocks = result.data || [];
-  } catch (e) {}
-  
-  if (stocks.length === 0) {
-    showToast('출고할 냉동재고가 없습니다', 'warning');
-    showFrozenStockModal();
-    return;
-  }
-  
-  showModal('냉동재고 출고', `
-    <form id="frozen-outbound-form" class="space-y-4">
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택 <span class="text-red-500">*</span></label>
-        <select id="frozen-outbound-product" class="w-full px-3 py-2 border rounded-lg" onchange="updateFrozenOutboundMax()">
-          <option value="">-- 제품 선택 --</option>
-          ${stocks.map(s => `
-            <option value="${s.product_name}" data-qty="${s.total_qty}">${s.product_name} (재고: ${formatNumber(s.total_qty)})</option>
-          `).join('')}
-        </select>
-      </div>
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">출고 수량 <span class="text-red-500">*</span></label>
-          <input type="number" id="frozen-outbound-qty" required class="w-full px-3 py-2 border rounded-lg" placeholder="0" min="1">
-          <p id="frozen-outbound-max" class="text-xs text-gray-500 mt-1"></p>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">출고일</label>
-          <input type="date" id="frozen-outbound-date" class="w-full px-3 py-2 border rounded-lg" value="${formatDate(new Date())}">
-        </div>
-      </div>
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
-        <input type="text" id="frozen-outbound-memo" class="w-full px-3 py-2 border rounded-lg" placeholder="출고 사유">
-      </div>
-      <div class="bg-orange-50 p-3 rounded-lg text-sm text-orange-700">
-        <i class="fas fa-info-circle mr-1"></i>
-        선입선출(FIFO) 방식으로 오래된 재고부터 자동 차감됩니다.
-      </div>
-    </form>
-  `, `
-    <button onclick="showFrozenStockModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
-    <button onclick="saveFrozenOutbound()" class="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600">
-      <i class="fas fa-minus mr-1"></i> 출고
-    </button>
-  `);
-}
-
-function updateFrozenOutboundMax() {
-  const select = document.getElementById('frozen-outbound-product');
-  const option = select.options[select.selectedIndex];
-  const maxQty = option.dataset.qty || 0;
-  document.getElementById('frozen-outbound-max').textContent = maxQty > 0 ? `최대 ${formatNumber(maxQty)}개` : '';
-  document.getElementById('frozen-outbound-qty').max = maxQty;
-}
-
+// 제품 검색 필터
 function filterFrozenProducts(searchTerm) {
   const dropdown = document.getElementById('frozen-product-dropdown');
   const products = window.frozenStockProducts || [];
@@ -17954,81 +16804,42 @@ function filterFrozenProducts(searchTerm) {
   dropdown.classList.remove('hidden');
 }
 
+// 제품 선택
 function selectFrozenProduct(code, name) {
   document.getElementById('frozen-product-code').value = code;
   document.getElementById('frozen-product-name').value = name;
-  document.getElementById('frozen-product-search').value = '';
+  document.getElementById('frozen-product-search').value = name;
   document.getElementById('frozen-product-dropdown').classList.add('hidden');
-  
-  const selectedDiv = document.getElementById('frozen-selected-product');
-  if (selectedDiv) {
-    selectedDiv.classList.remove('hidden');
-    document.getElementById('frozen-selected-name').textContent = name;
-  }
 }
 
-async function saveFrozenInbound() {
-  const productName = document.getElementById('frozen-product-name').value;
-  const productCode = document.getElementById('frozen-product-code')?.value || null;
-  const quantity = parseFloat(document.getElementById('frozen-quantity').value) || 0;
-  const frozenDate = document.getElementById('frozen-date').value;
-  const memo = document.getElementById('frozen-memo').value;
+async function saveFrozenStock() {
+  const data = {
+    product_name: document.getElementById('frozen-product-name').value,
+    product_code: document.getElementById('frozen-product-code')?.value || null,
+    quantity: parseFloat(document.getElementById('frozen-quantity').value) || 0,
+    frozen_date: document.getElementById('frozen-date').value,
+    memo: document.getElementById('frozen-memo').value
+  };
   
-  if (!productName || !quantity) {
+  if (!data.product_name || !data.quantity) {
     showToast('제품명과 수량을 입력해주세요', 'warning');
     return;
   }
   
   try {
-    await api('/frozen-stock/inbound', 'POST', {
-      product_name: productName,
-      product_code: productCode,
-      quantity: quantity,
-      frozen_date: frozenDate,
-      memo: memo || '입고'
-    });
-    showToast('입고 완료', 'success');
+    await api('/production-plan/frozen-stock', 'POST', data);
+    showToast('저장되었습니다', 'success');
     await showFrozenStockModal();
   } catch (e) {
-    showToast('입고 실패', 'error');
+    showToast('저장 실패', 'error');
   }
 }
 
-async function saveFrozenOutbound() {
-  const productName = document.getElementById('frozen-outbound-product').value;
-  const quantity = parseFloat(document.getElementById('frozen-outbound-qty').value) || 0;
-  const transDate = document.getElementById('frozen-outbound-date').value;
-  const memo = document.getElementById('frozen-outbound-memo').value;
-  
-  if (!productName || !quantity) {
-    showToast('제품과 수량을 입력해주세요', 'warning');
-    return;
-  }
-  
-  try {
-    const result = await api('/frozen-stock/outbound', 'POST', {
-      product_name: productName,
-      quantity: quantity,
-      trans_date: transDate,
-      memo: memo || '출고'
-    });
-    
-    if (result.success) {
-      showToast(`출고 완료 (${result.data.used_qty}개)`, 'success');
-      await showFrozenStockModal();
-    } else {
-      showToast(result.error || '출고 실패', 'error');
-    }
-  } catch (e) {
-    showToast('출고 실패', 'error');
-  }
-}
-
-async function deleteFrozenStockLot(id) {
+async function deleteFrozenStock(id) {
   if (!confirm('이 냉동재고를 삭제하시겠습니까?')) return;
   
   try {
-    await api(`/frozen-stock/${id}`, 'DELETE');
+    await api(`/production-plan/frozen-stock/${id}`, 'DELETE');
     showToast('삭제되었습니다', 'success');
     await showFrozenStockModal();
   } catch (e) {
@@ -18038,19 +16849,18 @@ async function deleteFrozenStockLot(id) {
 
 // 전역 함수 노출
 window.renderProductionPlan = renderProductionPlan;
-window.handlePlanFileUpload = handlePlanFileUpload;
-window.refreshPlanStock = refreshPlanStock;
+window.loadPlanList = loadPlanList;
+window.loadPlanDetail = loadPlanDetail;
 window.filterPlanItems = filterPlanItems;
+window.showUploadPlanModal = showUploadPlanModal;
+window.uploadPlanFile = uploadPlanFile;
+window.deletePlan = deletePlan;
+window.syncPlanStock = syncPlanStock;
 window.downloadPlanExcel = downloadPlanExcel;
 window.printPlanReport = printPlanReport;
 window.showFrozenStockModal = showFrozenStockModal;
-window.switchFrozenTab = switchFrozenTab;
-window.showFrozenStockDetail = showFrozenStockDetail;
-window.showFrozenInboundModal = showFrozenInboundModal;
-window.showFrozenOutboundModal = showFrozenOutboundModal;
-window.updateFrozenOutboundMax = updateFrozenOutboundMax;
+window.showAddFrozenStockModal = showAddFrozenStockModal;
+window.saveFrozenStock = saveFrozenStock;
+window.deleteFrozenStock = deleteFrozenStock;
 window.filterFrozenProducts = filterFrozenProducts;
 window.selectFrozenProduct = selectFrozenProduct;
-window.saveFrozenInbound = saveFrozenInbound;
-window.saveFrozenOutbound = saveFrozenOutbound;
-window.deleteFrozenStockLot = deleteFrozenStockLot;

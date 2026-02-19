@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>인쇄 디버그 테스트</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+</head>
+<body style="font-family: sans-serif; padding: 20px;">
+  <h1>인쇄 기능 디버그</h1>
+  
+  <div id="log" style="background: #f5f5f5; padding: 10px; margin: 10px 0; white-space: pre-wrap; font-family: monospace; max-height: 400px; overflow: auto;"></div>
+  
+  <button onclick="testInventory()" style="padding: 10px 20px; margin: 5px;">1. 재고현황 테스트</button>
+  <button onclick="testDaily()" style="padding: 10px 20px; margin: 5px;">2. 일별수불부 테스트</button>
+  <button onclick="testPrintInventory()" style="padding: 10px 20px; margin: 5px; background: green; color: white;">3. 재고현황 인쇄</button>
+  <button onclick="testPrintDaily()" style="padding: 10px 20px; margin: 5px; background: blue; color: white;">4. 일별수불부 인쇄</button>
+
+  <script>
+    const API_BASE = '/api';
+    
+    function log(msg) {
+      const el = document.getElementById('log');
+      el.textContent += new Date().toLocaleTimeString() + ': ' + msg + '\n';
+      el.scrollTop = el.scrollHeight;
+      console.log(msg);
+    }
+    
+    function formatNumber(n) {
+      return (n || 0).toLocaleString();
+    }
+    
+    // tableToHtml 함수 복사
+    function tableToHtml(data, columns) {
+      log('tableToHtml 호출: data=' + data.length + '건, columns=' + columns.length + '개');
+      
+      if (!data || data.length === 0) {
+        return '<p style="text-align:center; color:#888; padding:20px;">데이터가 없습니다.</p>';
+      }
+      
+      let html = '<table border="1" cellpadding="5" style="border-collapse: collapse; width: 100%;"><thead><tr>';
+      columns.forEach(col => {
+        html += '<th style="background:#f0f0f0;">' + col.label + '</th>';
+      });
+      html += '</tr></thead><tbody>';
+      
+      data.forEach((row, idx) => {
+        html += '<tr>';
+        columns.forEach(col => {
+          let value = row[col.key];
+          if (value === null || value === undefined) value = '-';
+          if (col.type === 'number' && typeof value === 'number') value = formatNumber(value);
+          html += '<td>' + value + '</td>';
+        });
+        html += '</tr>';
+      });
+      
+      html += '</tbody></table>';
+      log('tableToHtml 완료: HTML길이=' + html.length);
+      return html;
+    }
+    
+    // printData 함수 복사
+    function printData(title, tableHtml, info) {
+      log('printData 호출: title=' + title + ', tableHtml길이=' + (tableHtml?.length || 0));
+      
+      if (!tableHtml || tableHtml.length === 0) {
+        alert('출력할 데이터가 없습니다.');
+        return;
+      }
+      
+      const htmlContent = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + title + '</title><style>body{font-family:sans-serif;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:8px;text-align:left}th{background:#f0f0f0}</style></head><body><h1>' + title + '</h1><div>' + (info || '') + '</div><br>' + tableHtml + '</body></html>';
+      
+      const blob = new Blob([htmlContent], { type: 'text/html; charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      
+      log('팝업 열기 시도...');
+      const printWindow = window.open(url, '_blank', 'width=900,height=700');
+      
+      if (!printWindow) {
+        alert('팝업이 차단되었습니다!');
+        log('❌ 팝업 차단됨');
+        return;
+      }
+      
+      log('✅ 팝업 열림');
+      printWindow.onload = function() {
+        log('✅ 팝업 로드 완료, 인쇄 다이얼로그 표시');
+        printWindow.print();
+      };
+    }
+    
+    // 재고현황 데이터 로드
+    async function testInventory() {
+      log('=== 재고현황 데이터 로드 ===');
+      try {
+        const res = await axios.get(API_BASE + '/stock/current');
+        window.inventoryData = res.data.data || [];
+        log('✅ 재고현황 로드 완료: ' + window.inventoryData.length + '건');
+        log('첫번째 데이터: ' + JSON.stringify(window.inventoryData[0], null, 2));
+      } catch(e) {
+        log('❌ 오류: ' + e.message);
+      }
+    }
+    
+    // 일별수불부 데이터 로드
+    async function testDaily() {
+      log('=== 일별수불부 데이터 로드 ===');
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const res = await axios.get(API_BASE + '/transactions/inventory-ledger?date=' + today + '&period_type=daily');
+        window.dailyLedgerData = res.data.data || [];
+        window.dailyLedgerPeriod = res.data.period || {};
+        window.dailyLedgerSummary = res.data.summary || {};
+        log('✅ 일별수불부 로드 완료: ' + window.dailyLedgerData.length + '건');
+        log('첫번째 데이터: ' + JSON.stringify(window.dailyLedgerData[0], null, 2));
+      } catch(e) {
+        log('❌ 오류: ' + e.message);
+      }
+    }
+    
+    // 재고현황 인쇄 (실제 printInventory와 동일)
+    function testPrintInventory() {
+      log('=== 재고현황 인쇄 테스트 ===');
+      const data = window.inventoryData || [];
+      log('데이터 개수: ' + data.length);
+      
+      if (data.length === 0) {
+        alert('먼저 "재고현황 테스트" 버튼을 클릭하세요');
+        return;
+      }
+      
+      const columns = [
+        { key: 'item_code', label: '품목코드' },
+        { key: 'item_name', label: '품목명' },
+        { key: 'category', label: '구분' },
+        { key: 'current_stock', label: '현재고', type: 'number' },
+        { key: 'unit', label: '단위' }
+      ];
+      
+      const tableHtml = tableToHtml(data, columns);
+      printData('재고 현황', tableHtml, '총 ' + data.length + '건');
+    }
+    
+    // 일별수불부 인쇄 (실제 printDailyLedger와 동일)
+    function testPrintDaily() {
+      log('=== 일별수불부 인쇄 테스트 ===');
+      const data = window.dailyLedgerData || [];
+      const period = window.dailyLedgerPeriod || {};
+      const summary = window.dailyLedgerSummary || {};
+      
+      log('데이터 개수: ' + data.length);
+      
+      if (data.length === 0) {
+        alert('먼저 "일별수불부 테스트" 버튼을 클릭하세요');
+        return;
+      }
+      
+      // 데이터 변환 (printDailyLedger와 동일)
+      const rows = data.map(item => {
+        const row = {
+          item_code: item.item_code,
+          item_name: item.item_name,
+          category: item.category,
+          unit: item.unit || '-',
+          carry_over: item.summary?.carry_over || 0,
+          period_inbound: item.summary?.period_inbound || 0,
+          period_usage: item.summary?.period_usage || 0,
+          period_adjustment: item.summary?.period_adjustment || 0,
+          closing_qty: item.summary?.closing_qty || item.current_stock || 0,
+          lot_count: item.lot_count || 0
+        };
+        return row;
+      });
+      
+      log('변환된 rows 개수: ' + rows.length);
+      log('첫번째 row: ' + JSON.stringify(rows[0], null, 2));
+      
+      const columns = [
+        { key: 'item_code', label: '품목코드' },
+        { key: 'item_name', label: '품목명' },
+        { key: 'category', label: '구분' },
+        { key: 'unit', label: '단위' },
+        { key: 'carry_over', label: '전일재고', type: 'number' },
+        { key: 'period_inbound', label: '입고', type: 'number' },
+        { key: 'period_usage', label: '사용', type: 'number' },
+        { key: 'period_adjustment', label: '조정', type: 'number' },
+        { key: 'closing_qty', label: '현재고', type: 'number' },
+        { key: 'lot_count', label: 'LOT수' }
+      ];
+      
+      const tableHtml = tableToHtml(rows, columns);
+      const title = '일별 수불부 (' + (period.start_date || new Date().toISOString().split('T')[0]) + ')';
+      const info = '전일: ' + formatNumber(summary.carry_over) + ' | 입고: +' + formatNumber(summary.period_inbound) + ' | 사용: -' + formatNumber(summary.period_usage) + ' | 품목: ' + data.length + '건';
+      
+      printData(title, tableHtml, info);
+    }
+    
+    log('디버그 페이지 로드 완료');
+    log('순서: 1번 → 3번 (재고현황) / 2번 → 4번 (일별수불부)');
+  </script>
+</body>
+</html>

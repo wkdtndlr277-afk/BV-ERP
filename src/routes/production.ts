@@ -62,22 +62,122 @@ productionRoutes.get('/:id', async (c) => {
     return c.json({ success: false, error: '생산 기록을 찾을 수 없습니다.' }, 404);
   }
   
-  // 사용된 원재료 목록
-  const materials = await c.env.DB.prepare(`
-    SELECT pm.*, 
-           m.item_name,
-           m.unit as item_unit
-    FROM production_materials pm
-    LEFT JOIN master m ON pm.item_code = m.item_code
+  // 사용된 원재료 목록 조회
+  const materialsRaw = await c.env.DB.prepare(`
+    SELECT pm.* FROM production_materials pm
     WHERE pm.production_id = ?
     ORDER BY pm.id
-  `).bind(id).all();
+  `).bind(id).all<any>();
+  
+  // 각 원재료에 대해 마스터 정보 조회 (RM/R 코드 자동 매칭)
+  const materials: any[] = [];
+  for (const pm of materialsRaw.results || []) {
+    let master = await c.env.DB.prepare(`
+      SELECT item_name, unit FROM master WHERE item_code = ?
+    `).bind(pm.item_code).first<any>();
+    
+    // 매칭되지 않으면 변환된 코드로 시도
+    if (!master) {
+      let altCode = '';
+      if (pm.item_code.startsWith('RM')) {
+        altCode = 'R' + pm.item_code.substring(2);
+      } else if (pm.item_code.startsWith('R') && !pm.item_code.startsWith('RM')) {
+        altCode = 'RM' + pm.item_code.substring(1);
+      }
+      if (altCode) {
+        master = await c.env.DB.prepare(`
+          SELECT item_name, unit FROM master WHERE item_code = ?
+        `).bind(altCode).first<any>();
+      }
+    }
+    
+    materials.push({
+      ...pm,
+      item_name: master?.item_name || null,
+      item_unit: master?.unit || pm.unit
+    });
+  }
   
   return c.json({ 
     success: true, 
     data: {
       ...production,
-      materials: materials.results
+      materials
+    }
+  });
+});
+
+// LOT 번호로 생산 조회 (이력추적용)
+productionRoutes.get('/lot/:lotNumber', async (c) => {
+  const lotNumber = decodeURIComponent(c.req.param('lotNumber'));
+  
+  // 생산 정보 조회
+  const production = await c.env.DB.prepare(`
+    SELECT p.*, 
+           m.item_name as product_name,
+           m.unit as product_unit
+    FROM production p
+    LEFT JOIN master m ON p.product_code = m.item_code
+    WHERE p.lot_number = ?
+  `).bind(lotNumber).first<any>();
+  
+  if (!production) {
+    return c.json({ success: false, error: '해당 LOT의 생산 기록을 찾을 수 없습니다.' }, 404);
+  }
+  
+  // 사용된 원재료 목록 조회
+  const materialsRaw = await c.env.DB.prepare(`
+    SELECT pm.* FROM production_materials pm
+    WHERE pm.production_id = ?
+    ORDER BY pm.id
+  `).bind(production.id).all<any>();
+  
+  // 각 원재료에 대해 마스터 정보 및 입고 정보 조회
+  const materials: any[] = [];
+  for (const pm of materialsRaw.results || []) {
+    let master = await c.env.DB.prepare(`
+      SELECT item_name, unit FROM master WHERE item_code = ?
+    `).bind(pm.item_code).first<any>();
+    
+    // 매칭되지 않으면 변환된 코드로 시도
+    if (!master) {
+      let altCode = '';
+      if (pm.item_code.startsWith('RM')) {
+        altCode = 'R' + pm.item_code.substring(2);
+      } else if (pm.item_code.startsWith('R') && !pm.item_code.startsWith('RM')) {
+        altCode = 'RM' + pm.item_code.substring(1);
+      }
+      if (altCode) {
+        master = await c.env.DB.prepare(`
+          SELECT item_name, unit FROM master WHERE item_code = ?
+        `).bind(altCode).first<any>();
+      }
+    }
+    
+    // 원료 LOT의 입고 정보 조회 (거래처, 입고일, 유통기한)
+    let inboundInfo = null;
+    if (pm.lot_number) {
+      inboundInfo = await c.env.DB.prepare(`
+        SELECT supplier, inbound_date, expiry_date, origin_qty
+        FROM inbound WHERE lot_number = ?
+      `).bind(pm.lot_number).first<any>();
+    }
+    
+    materials.push({
+      ...pm,
+      item_name: master?.item_name || null,
+      item_unit: master?.unit || pm.unit,
+      supplier: inboundInfo?.supplier || null,
+      inbound_date: inboundInfo?.inbound_date || null,
+      expiry_date: inboundInfo?.expiry_date || null
+    });
+  }
+  
+  return c.json({ 
+    success: true, 
+    data: {
+      ...production,
+      materials
     }
   });
 });
@@ -100,11 +200,18 @@ productionRoutes.post('/', async (c) => {
     return c.json({ success: false, error: '제품을 찾을 수 없습니다.' }, 404);
   }
   
-  // BOM 조회
+  // BOM 조회 (RM코드와 R코드 모두 매칭)
   const bomResult = await c.env.DB.prepare(`
-    SELECT b.*, m.item_name, m.current_stock
+    SELECT b.*, 
+           COALESCE(m1.item_name, m2.item_name) as item_name, 
+           COALESCE(m1.current_stock, m2.current_stock, 0) as current_stock,
+           COALESCE(m1.item_code, m2.item_code) as matched_item_code
     FROM bom b
-    LEFT JOIN master m ON b.item_code = m.item_code
+    LEFT JOIN master m1 ON b.item_code = m1.item_code
+    LEFT JOIN master m2 ON (
+      (b.item_code LIKE 'RM%' AND m2.item_code = 'R' || SUBSTR(b.item_code, 3)) OR
+      (b.item_code LIKE 'R%' AND b.item_code NOT LIKE 'RM%' AND m2.item_code = 'RM' || SUBSTR(b.item_code, 2))
+    )
     WHERE b.product_code = ?
     ORDER BY b.sort_order
   `).bind(product_code).all<any>();
@@ -114,13 +221,17 @@ productionRoutes.post('/', async (c) => {
   // 재고 확인 (BOM이 있는 경우만)
   const stockErrors: string[] = [];
   for (const bom of bomItems) {
+    // 매칭된 실제 아이템 코드 사용 (RM/R 코드 자동 매칭)
+    const actualItemCode = bom.matched_item_code || bom.item_code;
     const requiredQty = bom.quantity * quantity;
     // 단위 변환: BOM은 g 기준, 재고는 kg 기준일 수 있음
     const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
     
     if (bom.current_stock < requiredKg) {
-      stockErrors.push(`${bom.item_name}: 필요 ${requiredKg.toFixed(2)}kg, 재고 ${bom.current_stock.toFixed(2)}kg`);
+      stockErrors.push(`${bom.item_name || actualItemCode}: 필요 ${requiredKg.toFixed(2)}kg, 재고 ${bom.current_stock.toFixed(2)}kg`);
     }
+    // 매칭된 코드를 BOM 객체에 저장하여 나중에 사용
+    bom.actualItemCode = actualItemCode;
   }
   
   if (stockErrors.length > 0) {
@@ -148,25 +259,40 @@ productionRoutes.post('/', async (c) => {
       const requiredQty = bom.quantity * quantity;
       const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
       
-      // 원재료 사용 기록
-      await c.env.DB.prepare(`
-        INSERT INTO production_materials (production_id, item_code, planned_qty, actual_qty, unit)
-        VALUES (?, ?, ?, ?, ?)
-      `).bind(productionId, bom.item_code, requiredQty, requiredQty, bom.unit).run();
-      
       // FEFO 방식으로 LOT에서 차감
       let remainingToDeduct = requiredKg;
+      const usedLots: string[] = [];
       
-      const lots = await c.env.DB.prepare(`
+      // 매칭된 실제 아이템 코드로 LOT 조회 (RM/R 코드 모두 시도)
+      const actualItemCode = bom.actualItemCode || bom.matched_item_code || bom.item_code;
+      let lots = await c.env.DB.prepare(`
         SELECT * FROM inbound 
         WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
         ORDER BY expiry_date ASC, inbound_date ASC
-      `).bind(bom.item_code).all<any>();
+      `).bind(actualItemCode).all<any>();
+      
+      // LOT이 없으면 다른 형식의 코드로 재시도
+      if (!lots.results || lots.results.length === 0) {
+        let altCode = '';
+        if (actualItemCode.startsWith('RM')) {
+          altCode = 'R' + actualItemCode.substring(2);
+        } else if (actualItemCode.startsWith('R') && !actualItemCode.startsWith('RM')) {
+          altCode = 'RM' + actualItemCode.substring(1);
+        }
+        if (altCode) {
+          lots = await c.env.DB.prepare(`
+            SELECT * FROM inbound 
+            WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+            ORDER BY expiry_date ASC, inbound_date ASC
+          `).bind(altCode).all<any>();
+        }
+      }
       
       for (const lot of lots.results || []) {
         if (remainingToDeduct <= 0) break;
         
         const deductQty = Math.min(lot.remain_qty, remainingToDeduct);
+        usedLots.push(lot.lot_number);
         
         // LOT 잔량 차감
         await c.env.DB.prepare(`
@@ -174,13 +300,13 @@ productionRoutes.post('/', async (c) => {
           WHERE id = ?
         `).bind(deductQty, lot.id).run();
         
-        // 거래 이력 기록 (생산사용)
+        // 거래 이력 기록 (생산사용) - 실제 LOT의 item_code 사용
         await c.env.DB.prepare(`
           INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, memo)
           VALUES (?, ?, '사용', ?, ?, ?, ?)
         `).bind(
           prod_date,
-          bom.item_code,
+          lot.item_code, // 실제 LOT의 item_code 사용
           deductQty,
           lot.lot_number,
           lot.remain_qty - deductQty,
@@ -197,17 +323,30 @@ productionRoutes.post('/', async (c) => {
           VALUES (?, ?, '사용', ?, ?)
         `).bind(
           prod_date,
-          bom.item_code,
+          actualItemCode, // 매칭된 실제 코드 사용
           remainingToDeduct,
           `생산사용: ${product.item_name} ${quantity}개 (생산ID: ${productionId}) - LOT 없음`
         ).run();
       }
       
-      // 마스터 재고 업데이트
+      // 원재료 사용 기록 (사용된 LOT 번호 포함)
+      await c.env.DB.prepare(`
+        INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).bind(
+        productionId, 
+        actualItemCode, // 매칭된 실제 코드 사용
+        usedLots.length > 0 ? usedLots.join(', ') : null,
+        requiredQty, 
+        requiredQty, 
+        bom.unit
+      ).run();
+      
+      // 마스터 재고 업데이트 - 매칭된 실제 코드로 업데이트
       await c.env.DB.prepare(`
         UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
         WHERE item_code = ?
-      `).bind(requiredKg, bom.item_code).run();
+      `).bind(requiredKg, actualItemCode).run();
     }
     
     // 3. 제품 재고 증가
@@ -439,6 +578,87 @@ productionRoutes.post('/simulate', async (c) => {
       shortage_items: materials.filter((m: any) => !m.is_available)
     }
   });
+});
+
+// 생산 삭제 (강제 삭제)
+productionRoutes.delete('/:id', async (c) => {
+  const id = c.req.param('id');
+  const force = c.req.query('force') === 'true';
+  
+  const production = await c.env.DB.prepare(
+    'SELECT * FROM production WHERE id = ?'
+  ).bind(id).first<any>();
+  
+  if (!production) {
+    return c.json({ success: false, error: '생산 기록을 찾을 수 없습니다.' }, 404);
+  }
+  
+  try {
+    // 1. production_materials 먼저 삭제
+    await c.env.DB.prepare('DELETE FROM production_materials WHERE production_id = ?').bind(id).run();
+    
+    // 2. 관련 거래 내역 삭제 (force 옵션 시)
+    if (force) {
+      await c.env.DB.prepare(
+        "DELETE FROM transactions WHERE memo LIKE ?"
+      ).bind(`%생산ID: ${id}%`).run();
+      
+      // 3. 관련 입고 삭제
+      await c.env.DB.prepare(
+        'DELETE FROM inbound WHERE lot_number = ?'
+      ).bind(production.lot_number).run();
+    }
+    
+    // 4. 생산 삭제
+    await c.env.DB.prepare('DELETE FROM production WHERE id = ?').bind(id).run();
+    
+    return c.json({ 
+      success: true, 
+      message: '생산 기록이 삭제되었습니다.',
+      deleted: { id, lot_number: production.lot_number }
+    });
+  } catch (error: any) {
+    console.error('Production delete error:', error);
+    return c.json({ success: false, error: `삭제 실패: ${error.message}` }, 500);
+  }
+});
+
+// 생산 전체 삭제
+productionRoutes.delete('/all/clear', async (c) => {
+  const confirm = c.req.query('confirm');
+  const restoreStock = c.req.query('restore_stock') === 'true';
+  
+  if (confirm !== 'DELETE_ALL') {
+    const count = await c.env.DB.prepare('SELECT COUNT(*) as count FROM production').first<{count:number}>();
+    return c.json({ 
+      success: false, 
+      error: `${count?.count || 0}건의 생산 기록을 삭제하려면 ?confirm=DELETE_ALL을 추가하세요.`,
+      count: count?.count || 0
+    }, 400);
+  }
+  
+  try {
+    // 1. production_materials 먼저 삭제
+    await c.env.DB.prepare('DELETE FROM production_materials').run();
+    
+    // 2. 생산 관련 거래 삭제
+    await c.env.DB.prepare("DELETE FROM transactions WHERE memo LIKE '%생산%'").run();
+    
+    // 3. 생산 입고 삭제
+    await c.env.DB.prepare("DELETE FROM inbound WHERE supplier = '자체생산'").run();
+    
+    // 4. 생산 삭제
+    const result = await c.env.DB.prepare('DELETE FROM production').run();
+    
+    return c.json({ 
+      success: true, 
+      message: `모든 생산 기록이 삭제되었습니다.`,
+      deleted: result.meta.changes
+    });
+  } catch (error: any) {
+    console.error('Production clear error:', error);
+    return c.json({ success: false, error: `삭제 실패: ${error.message}` }, 500);
+  }
 });
 
 export default productionRoutes;

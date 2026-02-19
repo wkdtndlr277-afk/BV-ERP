@@ -8,16 +8,17 @@ const dashboardRoutes = new Hono<{ Bindings: Bindings }>();
 dashboardRoutes.get('/', async (c) => {
   const today = new Date().toISOString().split('T')[0];
   
-  // 안전재고 미만 품목
+  // 안전재고 미만 품목 (단위 포함)
   const lowStockItems = await c.env.DB.prepare(`
-    SELECT m.*, (m.safety_stock - m.current_stock) as shortage
+    SELECT m.item_code, m.item_name, m.category, m.unit, m.current_stock, m.safety_stock,
+           (m.safety_stock - m.current_stock) as shortage
     FROM master m
     WHERE m.current_stock < m.safety_stock
     ORDER BY shortage DESC
     LIMIT 10
   `).all();
   
-  // 유통기한 30일 이내 LOT
+  // 유통기한 30일 이내 LOT (원료만 해당)
   const expiringLots = await c.env.DB.prepare(`
     SELECT i.*, m.item_name, m.category, m.unit,
            CAST(julianday(i.expiry_date) - julianday(?) AS INTEGER) as days_until_expiry
@@ -25,6 +26,7 @@ dashboardRoutes.get('/', async (c) => {
     JOIN master m ON i.item_code = m.item_code
     WHERE i.remain_qty > 0 
       AND i.quality_status = '합격'
+      AND m.category = '원료'
       AND julianday(i.expiry_date) - julianday(?) <= 30
       AND julianday(i.expiry_date) - julianday(?) >= 0
     ORDER BY i.expiry_date ASC
@@ -125,10 +127,12 @@ dashboardRoutes.get('/alerts/count', async (c) => {
   `).first<{ count: number }>();
   
   const expiring = await c.env.DB.prepare(`
-    SELECT COUNT(*) as count FROM inbound 
-    WHERE remain_qty > 0 AND quality_status = '합격'
-      AND julianday(expiry_date) - julianday(?) <= 30
-      AND julianday(expiry_date) - julianday(?) >= 0
+    SELECT COUNT(*) as count FROM inbound i
+    JOIN master m ON i.item_code = m.item_code
+    WHERE i.remain_qty > 0 AND i.quality_status = '합격'
+      AND m.category = '원료'
+      AND julianday(i.expiry_date) - julianday(?) <= 30
+      AND julianday(i.expiry_date) - julianday(?) >= 0
   `).bind(today, today).first<{ count: number }>();
   
   const kpiIssues = await c.env.DB.prepare(`

@@ -428,6 +428,518 @@ app.post('/simulate', async (c) => {
   }
 });
 
+// ==================== 상세 제조원가계산서 ====================
+
+// 상세 원가계산서 목록 조회
+app.get('/sheets', async (c) => {
+  try {
+    const result = await c.env.DB.prepare(`
+      SELECT 
+        s.*,
+        m.item_name as product_name,
+        cs.total_manufacturing_cost,
+        cs.unit_manufacturing_cost
+      FROM product_cost_sheet s
+      LEFT JOIN master m ON s.product_code = m.item_code
+      LEFT JOIN cost_summary cs ON s.id = cs.sheet_id
+      WHERE s.is_active = 1
+      ORDER BY s.updated_at DESC
+    `).all();
+    
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 상세 원가계산서 조회
+app.get('/sheets/:id', async (c) => {
+  try {
+    const sheetId = c.req.param('id');
+    
+    // 기본 정보
+    const sheet = await c.env.DB.prepare(`
+      SELECT s.*, m.item_name as product_name
+      FROM product_cost_sheet s
+      LEFT JOIN master m ON s.product_code = m.item_code
+      WHERE s.id = ?
+    `).bind(sheetId).first();
+    
+    if (!sheet) {
+      return c.json({ success: false, error: '원가계산서를 찾을 수 없습니다' }, 404);
+    }
+    
+    // 원재료비
+    const rawMaterials = await c.env.DB.prepare(`
+      SELECT * FROM cost_raw_materials WHERE sheet_id = ? ORDER BY sort_order
+    `).bind(sheetId).all();
+    
+    // 부재료비
+    const subMaterials = await c.env.DB.prepare(`
+      SELECT * FROM cost_sub_materials WHERE sheet_id = ? ORDER BY sort_order
+    `).bind(sheetId).all();
+    
+    // 노무비
+    const laborCosts = await c.env.DB.prepare(`
+      SELECT * FROM cost_labor WHERE sheet_id = ? ORDER BY cost_type, sort_order
+    `).bind(sheetId).all();
+    
+    // 경비
+    const overheadCosts = await c.env.DB.prepare(`
+      SELECT * FROM cost_overhead WHERE sheet_id = ? ORDER BY cost_type, sort_order
+    `).bind(sheetId).all();
+    
+    // 요약
+    const summary = await c.env.DB.prepare(`
+      SELECT * FROM cost_summary WHERE sheet_id = ?
+    `).bind(sheetId).first();
+    
+    return c.json({
+      success: true,
+      data: {
+        sheet,
+        raw_materials: rawMaterials.results,
+        sub_materials: subMaterials.results,
+        labor_costs: laborCosts.results,
+        overhead_costs: overheadCosts.results,
+        summary
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 상세 원가계산서 생성
+app.post('/sheets', async (c) => {
+  try {
+    const body = await c.req.json();
+    const {
+      product_code,
+      sheet_name,
+      base_quantity = 1,
+      base_unit = 'ea',
+      retail_price,
+      wholesale_price,
+      target_margin_rate,
+      memo,
+      raw_materials = [],      // 원재료비 목록
+      sub_materials = [],      // 부재료비 목록
+      labor_costs = [],        // 노무비 목록
+      overhead_costs = []      // 경비 목록
+    } = body;
+    
+    if (!product_code) {
+      return c.json({ success: false, error: '제품코드는 필수입니다' }, 400);
+    }
+    
+    // 원가계산서 생성
+    const sheetResult = await c.env.DB.prepare(`
+      INSERT INTO product_cost_sheet 
+        (product_code, sheet_name, base_quantity, base_unit, retail_price, wholesale_price, target_margin_rate, memo)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      product_code,
+      sheet_name || null,
+      base_quantity,
+      base_unit,
+      retail_price || null,
+      wholesale_price || null,
+      target_margin_rate || null,
+      memo || null
+    ).run();
+    
+    const sheetId = sheetResult.meta.last_row_id;
+    
+    // 원재료비 삽입
+    let rawMaterialTotal = 0;
+    for (let i = 0; i < raw_materials.length; i++) {
+      const m = raw_materials[i];
+      const amount = m.amount || (m.weight && m.unit_price ? (m.weight / 1000) * m.unit_price * (1 + (m.loss_rate || 0)) : 0);
+      rawMaterialTotal += amount;
+      
+      await c.env.DB.prepare(`
+        INSERT INTO cost_raw_materials 
+          (sheet_id, sort_order, item_code, item_name, ratio, weight, loss_rate, unit_price, amount, unit_cost, memo)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        sheetId, i, m.item_code || null, m.item_name,
+        m.ratio || null, m.weight || null, m.loss_rate || 0,
+        m.unit_price || null, amount, m.unit_cost || null, m.memo || null
+      ).run();
+    }
+    
+    // 부재료비 삽입
+    let subMaterialTotal = 0;
+    for (let i = 0; i < sub_materials.length; i++) {
+      const m = sub_materials[i];
+      const amount = m.amount || (m.quantity && m.unit_price ? m.quantity * m.unit_price * (1 + (m.loss_rate || 0)) : 0);
+      subMaterialTotal += amount;
+      
+      await c.env.DB.prepare(`
+        INSERT INTO cost_sub_materials 
+          (sheet_id, sort_order, category, item_name, ratio, quantity, loss_rate, unit_price, amount, unit_cost, memo)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        sheetId, i, m.category || null, m.item_name,
+        m.ratio || null, m.quantity || null, m.loss_rate || 0,
+        m.unit_price || null, amount, m.unit_cost || null, m.memo || null
+      ).run();
+    }
+    
+    // 노무비 삽입
+    let directLaborTotal = 0, indirectLaborTotal = 0;
+    for (let i = 0; i < labor_costs.length; i++) {
+      const l = labor_costs[i];
+      const amount = l.amount || 0;
+      if (l.cost_type === 'direct') directLaborTotal += amount;
+      else indirectLaborTotal += amount;
+      
+      await c.env.DB.prepare(`
+        INSERT INTO cost_labor 
+          (sheet_id, sort_order, cost_type, category, item_name, base_cost, allocation_rate, amount, unit_cost, memo)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        sheetId, i, l.cost_type || 'direct', l.category || null, l.item_name,
+        l.base_cost || null, l.allocation_rate || null, amount, l.unit_cost || null, l.memo || null
+      ).run();
+    }
+    
+    // 경비 삽입
+    let directOverheadTotal = 0, indirectOverheadTotal = 0;
+    for (let i = 0; i < overhead_costs.length; i++) {
+      const o = overhead_costs[i];
+      const amount = o.amount || 0;
+      if (o.cost_type === 'direct') directOverheadTotal += amount;
+      else indirectOverheadTotal += amount;
+      
+      await c.env.DB.prepare(`
+        INSERT INTO cost_overhead 
+          (sheet_id, sort_order, cost_type, category, item_name, base_cost, allocation_rate, amount, unit_cost, memo)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        sheetId, i, o.cost_type || 'direct', o.category || null, o.item_name,
+        o.base_cost || null, o.allocation_rate || null, amount, o.unit_cost || null, o.memo || null
+      ).run();
+    }
+    
+    // 요약 계산 및 저장
+    const directCostTotal = rawMaterialTotal + subMaterialTotal + directLaborTotal + directOverheadTotal;
+    const indirectCostTotal = indirectLaborTotal + indirectOverheadTotal;
+    const totalManufacturingCost = directCostTotal + indirectCostTotal;
+    const unitManufacturingCost = base_quantity > 0 ? totalManufacturingCost / base_quantity : 0;
+    
+    await c.env.DB.prepare(`
+      INSERT INTO cost_summary 
+        (sheet_id, raw_material_cost, sub_material_cost, direct_labor_cost, direct_overhead_cost, direct_cost_total,
+         indirect_labor_cost, indirect_overhead_cost, indirect_cost_total, total_manufacturing_cost, unit_manufacturing_cost,
+         retail_unit_cost, wholesale_unit_cost)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      sheetId, rawMaterialTotal, subMaterialTotal, directLaborTotal, directOverheadTotal, directCostTotal,
+      indirectLaborTotal, indirectOverheadTotal, indirectCostTotal, totalManufacturingCost, unitManufacturingCost,
+      retail_price ? (unitManufacturingCost / retail_price * 100) : null,
+      wholesale_price ? (unitManufacturingCost / wholesale_price * 100) : null
+    ).run();
+    
+    return c.json({ 
+      success: true, 
+      message: '원가계산서가 생성되었습니다',
+      data: { sheet_id: sheetId, total_manufacturing_cost: totalManufacturingCost }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// BOM 기반 원가계산서 자동 생성
+app.post('/sheets/from-bom/:productCode', async (c) => {
+  try {
+    const productCode = c.req.param('productCode');
+    const body = await c.req.json();
+    const { 
+      sheet_name,
+      base_quantity = 1,
+      retail_price,
+      wholesale_price,
+      labor_rate = 0,      // 노무비 비율 (원재료비 대비 %)
+      overhead_rate = 0    // 경비 비율 (원재료비 대비 %)
+    } = body;
+    
+    // 제품 정보
+    const product = await c.env.DB.prepare(`
+      SELECT item_code, item_name FROM master WHERE item_code = ? AND category = '제품'
+    `).bind(productCode).first();
+    
+    if (!product) {
+      return c.json({ success: false, error: '제품을 찾을 수 없습니다' }, 404);
+    }
+    
+    // BOM 및 원가 조회
+    const bomResult = await c.env.DB.prepare(`
+      SELECT 
+        b.item_code,
+        m.item_name,
+        b.quantity as weight,
+        b.unit,
+        mc.cost_per_unit as unit_price
+      FROM bom b
+      JOIN master m ON b.item_code = m.item_code
+      LEFT JOIN (
+        SELECT mc1.*
+        FROM material_costs mc1
+        INNER JOIN (
+          SELECT item_code, MAX(effective_date) as max_date
+          FROM material_costs
+          GROUP BY item_code
+        ) mc2 ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
+      ) mc ON b.item_code = mc.item_code
+      WHERE b.product_code = ?
+      ORDER BY b.sort_order
+    `).bind(productCode).all();
+    
+    // 원재료 목록 생성
+    const raw_materials = bomResult.results.map((b: any) => ({
+      item_code: b.item_code,
+      item_name: b.item_name,
+      weight: b.weight,
+      unit_price: b.unit_price || 0,
+      loss_rate: 0.02,  // 기본 LOSS 2%
+      amount: b.unit_price ? (b.weight / 1000) * b.unit_price * 1.02 : 0
+    }));
+    
+    // 원재료비 합계
+    const rawMaterialTotal = raw_materials.reduce((sum: number, m: any) => sum + (m.amount || 0), 0);
+    
+    // 노무비 (원재료비 기준)
+    const labor_costs = [];
+    if (labor_rate > 0) {
+      labor_costs.push({
+        cost_type: 'direct',
+        item_name: '직접노무비',
+        amount: rawMaterialTotal * labor_rate / 100
+      });
+    }
+    
+    // 경비 (원재료비 기준)
+    const overhead_costs = [];
+    if (overhead_rate > 0) {
+      overhead_costs.push({
+        cost_type: 'direct',
+        item_name: '직접경비',
+        amount: rawMaterialTotal * overhead_rate / 100
+      });
+    }
+    
+    // 원가계산서 생성 API 재호출
+    const createBody = {
+      product_code: productCode,
+      sheet_name: sheet_name || (product as any).item_name,
+      base_quantity,
+      retail_price,
+      wholesale_price,
+      raw_materials,
+      labor_costs,
+      overhead_costs
+    };
+    
+    // 직접 생성 로직
+    const sheetResult = await c.env.DB.prepare(`
+      INSERT INTO product_cost_sheet 
+        (product_code, sheet_name, base_quantity, retail_price, wholesale_price)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(
+      productCode,
+      createBody.sheet_name,
+      base_quantity,
+      retail_price || null,
+      wholesale_price || null
+    ).run();
+    
+    const sheetId = sheetResult.meta.last_row_id;
+    
+    // 원재료비 삽입
+    let rawTotal = 0;
+    for (let i = 0; i < raw_materials.length; i++) {
+      const m = raw_materials[i];
+      rawTotal += m.amount || 0;
+      
+      await c.env.DB.prepare(`
+        INSERT INTO cost_raw_materials 
+          (sheet_id, sort_order, item_code, item_name, weight, loss_rate, unit_price, amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(sheetId, i, m.item_code, m.item_name, m.weight, m.loss_rate, m.unit_price, m.amount).run();
+    }
+    
+    // 노무비 삽입
+    let laborTotal = 0;
+    for (const l of labor_costs) {
+      laborTotal += l.amount || 0;
+      await c.env.DB.prepare(`
+        INSERT INTO cost_labor (sheet_id, cost_type, item_name, amount)
+        VALUES (?, ?, ?, ?)
+      `).bind(sheetId, l.cost_type, l.item_name, l.amount).run();
+    }
+    
+    // 경비 삽입
+    let overheadTotal = 0;
+    for (const o of overhead_costs) {
+      overheadTotal += o.amount || 0;
+      await c.env.DB.prepare(`
+        INSERT INTO cost_overhead (sheet_id, cost_type, item_name, amount)
+        VALUES (?, ?, ?, ?)
+      `).bind(sheetId, o.cost_type, o.item_name, o.amount).run();
+    }
+    
+    const totalCost = rawTotal + laborTotal + overheadTotal;
+    
+    // 요약 저장
+    await c.env.DB.prepare(`
+      INSERT INTO cost_summary 
+        (sheet_id, raw_material_cost, direct_labor_cost, direct_overhead_cost, 
+         direct_cost_total, total_manufacturing_cost, unit_manufacturing_cost)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(sheetId, rawTotal, laborTotal, overheadTotal, totalCost, totalCost, totalCost / base_quantity).run();
+    
+    return c.json({
+      success: true,
+      message: 'BOM 기반 원가계산서가 생성되었습니다',
+      data: { 
+        sheet_id: sheetId, 
+        total_manufacturing_cost: totalCost,
+        raw_material_cost: rawTotal
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 원가계산서 삭제
+app.delete('/sheets/:id', async (c) => {
+  try {
+    const sheetId = c.req.param('id');
+    
+    // 비활성화 (soft delete)
+    await c.env.DB.prepare(`
+      UPDATE product_cost_sheet SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).bind(sheetId).run();
+    
+    return c.json({ success: true, message: '원가계산서가 삭제되었습니다' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 원가계산서 인쇄용 데이터 조회
+app.get('/sheets/:id/print', async (c) => {
+  try {
+    const sheetId = c.req.param('id');
+    
+    // 기본 정보
+    const sheet = await c.env.DB.prepare(`
+      SELECT s.*, m.item_name as product_name
+      FROM product_cost_sheet s
+      LEFT JOIN master m ON s.product_code = m.item_code
+      WHERE s.id = ?
+    `).bind(sheetId).first();
+    
+    if (!sheet) {
+      return c.json({ success: false, error: '원가계산서를 찾을 수 없습니다' }, 404);
+    }
+    
+    // 원재료비
+    const rawMaterials = await c.env.DB.prepare(`
+      SELECT * FROM cost_raw_materials WHERE sheet_id = ? ORDER BY sort_order
+    `).bind(sheetId).all();
+    
+    // 부재료비
+    const subMaterials = await c.env.DB.prepare(`
+      SELECT * FROM cost_sub_materials WHERE sheet_id = ? ORDER BY category, sort_order
+    `).bind(sheetId).all();
+    
+    // 노무비
+    const laborCosts = await c.env.DB.prepare(`
+      SELECT * FROM cost_labor WHERE sheet_id = ? ORDER BY cost_type, sort_order
+    `).bind(sheetId).all();
+    
+    // 경비
+    const overheadCosts = await c.env.DB.prepare(`
+      SELECT * FROM cost_overhead WHERE sheet_id = ? ORDER BY cost_type, sort_order
+    `).bind(sheetId).all();
+    
+    // 요약
+    const summary = await c.env.DB.prepare(`
+      SELECT * FROM cost_summary WHERE sheet_id = ?
+    `).bind(sheetId).first();
+    
+    // 노무비/경비 분류
+    const directLabor = (laborCosts.results as any[]).filter(l => l.cost_type === 'direct');
+    const indirectLabor = (laborCosts.results as any[]).filter(l => l.cost_type === 'indirect');
+    const directOverhead = (overheadCosts.results as any[]).filter(o => o.cost_type === 'direct');
+    const indirectOverhead = (overheadCosts.results as any[]).filter(o => o.cost_type === 'indirect');
+    
+    // 부재료비 카테고리별 분류
+    const subMaterialsByCategory: Record<string, any[]> = {};
+    for (const sm of subMaterials.results as any[]) {
+      const cat = sm.category || '기타';
+      if (!subMaterialsByCategory[cat]) subMaterialsByCategory[cat] = [];
+      subMaterialsByCategory[cat].push(sm);
+    }
+    
+    return c.json({
+      success: true,
+      data: {
+        sheet,
+        summary,
+        raw_materials: rawMaterials.results,
+        sub_materials: subMaterials.results,
+        sub_materials_by_category: subMaterialsByCategory,
+        direct_labor: directLabor,
+        indirect_labor: indirectLabor,
+        direct_overhead: directOverhead,
+        indirect_overhead: indirectOverhead
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 노무비/경비 기준 설정 조회
+app.get('/standard-rates', async (c) => {
+  try {
+    const result = await c.env.DB.prepare(`
+      SELECT * FROM cost_standard_rates WHERE is_active = 1 ORDER BY rate_type, category, item_name
+    `).all();
+    
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 노무비/경비 기준 설정 저장
+app.post('/standard-rates', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { rate_type, category, item_name, monthly_base_cost, allocation_method, memo } = body;
+    
+    if (!rate_type || !item_name) {
+      return c.json({ success: false, error: '유형과 항목명은 필수입니다' }, 400);
+    }
+    
+    await c.env.DB.prepare(`
+      INSERT INTO cost_standard_rates (rate_type, category, item_name, monthly_base_cost, allocation_method, memo)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(rate_type, category || null, item_name, monthly_base_cost || null, allocation_method || null, memo || null).run();
+    
+    return c.json({ success: true, message: '기준 설정이 저장되었습니다' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 원가 통계
 app.get('/stats', async (c) => {
   try {

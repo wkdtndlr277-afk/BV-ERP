@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>원가계산 기능 테스트</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-100 p-8">
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-2xl font-bold mb-6">원가계산 기능 테스트</h1>
+    
+    <!-- 테스트 버튼들 -->
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+      <h2 class="font-bold text-lg mb-4">API 테스트</h2>
+      <div class="flex flex-wrap gap-2 mb-4">
+        <button onclick="testStats()" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">통계 조회</button>
+        <button onclick="testProducts()" class="bg-green-500 text-white px-4 py-2 rounded hover:bg-green-600">제품 목록</button>
+        <button onclick="testSheets()" class="bg-purple-500 text-white px-4 py-2 rounded hover:bg-purple-600">원가계산서 목록</button>
+        <button onclick="testPrintData(1)" class="bg-orange-500 text-white px-4 py-2 rounded hover:bg-orange-600">인쇄 데이터</button>
+      </div>
+    </div>
+    
+    <!-- 인쇄 테스트 -->
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+      <h2 class="font-bold text-lg mb-4">인쇄 테스트</h2>
+      <button onclick="testPrint(1)" class="bg-red-500 text-white px-4 py-2 rounded hover:bg-red-600">
+        인쇄 페이지 열기 (ID: 1)
+      </button>
+    </div>
+    
+    <!-- 결과 출력 -->
+    <div class="bg-white rounded-lg shadow p-6">
+      <h2 class="font-bold text-lg mb-4">결과</h2>
+      <pre id="result" class="bg-gray-100 p-4 rounded overflow-x-auto text-sm"></pre>
+    </div>
+  </div>
+  
+  <script>
+    const API_BASE = '/api';
+    
+    function log(msg) {
+      const el = document.getElementById('result');
+      el.textContent = typeof msg === 'object' ? JSON.stringify(msg, null, 2) : msg;
+    }
+    
+    async function testStats() {
+      try {
+        const res = await axios.get(`${API_BASE}/cost/stats`);
+        log(res.data);
+      } catch (e) {
+        log('Error: ' + e.message);
+      }
+    }
+    
+    async function testProducts() {
+      try {
+        const res = await axios.get(`${API_BASE}/cost/products`);
+        log({ count: res.data.data.length, sample: res.data.data.slice(0, 3) });
+      } catch (e) {
+        log('Error: ' + e.message);
+      }
+    }
+    
+    async function testSheets() {
+      try {
+        const res = await axios.get(`${API_BASE}/cost/sheets`);
+        log(res.data);
+      } catch (e) {
+        log('Error: ' + e.message);
+      }
+    }
+    
+    async function testPrintData(id) {
+      try {
+        const res = await axios.get(`${API_BASE}/cost/sheets/${id}/print`);
+        log(res.data);
+      } catch (e) {
+        log('Error: ' + e.message);
+      }
+    }
+    
+    function formatNumber(n) {
+      return n?.toLocaleString('ko-KR') || '0';
+    }
+    
+    async function testPrint(sheetId) {
+      try {
+        const res = await axios.get(`${API_BASE}/cost/sheets/${sheetId}/print`);
+        if (!res.data.success) {
+          log('인쇄 데이터를 불러올 수 없습니다');
+          return;
+        }
+        
+        const { sheet, summary, raw_materials, sub_materials_by_category, direct_labor, indirect_labor, direct_overhead, indirect_overhead } = res.data.data;
+        
+        // 인쇄용 HTML 생성
+        const printHtml = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>${sheet.sheet_name || sheet.product_code} - 제조원가계산서</title>
+            <style>
+              @page { size: A4; margin: 15mm; }
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              body { font-family: 'Malgun Gothic', sans-serif; font-size: 10pt; line-height: 1.4; }
+              .container { max-width: 190mm; margin: 0 auto; }
+              .header { text-align: center; margin-bottom: 15px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+              .header h1 { font-size: 16pt; margin-bottom: 5px; }
+              .header .subtitle { font-size: 10pt; color: #666; }
+              .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; padding: 8px; background: #f5f5f5; }
+              .info-item { flex: 1; }
+              .info-label { font-size: 9pt; color: #666; }
+              .info-value { font-weight: bold; }
+              
+              .summary-box { border: 2px solid #333; margin-bottom: 15px; }
+              .summary-header { background: #333; color: #fff; padding: 8px 12px; font-weight: bold; }
+              .summary-content { padding: 10px; }
+              .summary-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dotted #ccc; }
+              .summary-row:last-child { border-bottom: none; }
+              .summary-row.total { font-weight: bold; font-size: 11pt; background: #e8f4fd; padding: 8px 4px; margin-top: 5px; }
+              .summary-row.subtotal { font-weight: bold; background: #f0f0f0; padding: 4px; }
+              .indent { padding-left: 20px; }
+              
+              .section { margin-bottom: 15px; border: 1px solid #ddd; }
+              .section-header { background: #e0e0e0; padding: 6px 10px; font-weight: bold; font-size: 10pt; }
+              .section-header.blue { background: #d4e5f7; }
+              .section-header.green { background: #d4f7e0; }
+              .section-header.orange { background: #f7e8d4; }
+              
+              table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+              th, td { padding: 5px 8px; border: 1px solid #ddd; }
+              th { background: #f5f5f5; font-weight: bold; text-align: center; }
+              td.right { text-align: right; }
+              td.center { text-align: center; }
+              tr.total-row { background: #f0f0f0; font-weight: bold; }
+              
+              .footer { margin-top: 20px; text-align: center; font-size: 9pt; color: #666; border-top: 1px solid #ddd; padding-top: 10px; }
+              
+              @media print {
+                .no-print { display: none; }
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>사전 제조원가 계산서</h1>
+                <div class="subtitle">(주)본비반트</div>
+              </div>
+              
+              <div class="info-row">
+                <div class="info-item">
+                  <div class="info-label">제품명</div>
+                  <div class="info-value">${sheet.sheet_name || sheet.product_name || sheet.product_code}</div>
+                </div>
+                <div class="info-item">
+                  <div class="info-label">기준수량</div>
+                  <div class="info-value">${sheet.base_quantity || 1} ${sheet.base_unit || 'ea'}</div>
+                </div>
+                <div class="info-item">
+                  <div class="info-label">작성일자</div>
+                  <div class="info-value">${sheet.created_date || new Date().toISOString().split('T')[0]}</div>
+                </div>
+              </div>
+              
+              <!-- 제조원가 요약 -->
+              <div class="summary-box">
+                <div class="summary-header">▣ 제 조 원 가</div>
+                <div class="summary-content">
+                  <div class="summary-row total">
+                    <span>제 조 원 가</span>
+                    <span>${formatNumber(Math.round(summary?.total_manufacturing_cost || 0))}원</span>
+                  </div>
+                  <div class="summary-row subtotal">
+                    <span>생산직접비</span>
+                    <span>${formatNumber(Math.round(summary?.direct_cost_total || 0))}원</span>
+                  </div>
+                  <div class="summary-row indent">
+                    <span>원재료비</span>
+                    <span>${formatNumber(Math.round(summary?.raw_material_cost || 0))}원</span>
+                  </div>
+                  <div class="summary-row indent">
+                    <span>부재료비</span>
+                    <span>${formatNumber(Math.round(summary?.sub_material_cost || 0))}원</span>
+                  </div>
+                  <div class="summary-row indent">
+                    <span>노 무 비</span>
+                    <span>${formatNumber(Math.round(summary?.direct_labor_cost || 0))}원</span>
+                  </div>
+                  <div class="summary-row indent">
+                    <span>경    비</span>
+                    <span>${formatNumber(Math.round(summary?.direct_overhead_cost || 0))}원</span>
+                  </div>
+                  <div class="summary-row subtotal">
+                    <span>생산간접비</span>
+                    <span>${formatNumber(Math.round(summary?.indirect_cost_total || 0))}원</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 원재료비 -->
+              ${raw_materials && raw_materials.length > 0 ? `
+              <div class="section">
+                <div class="section-header blue">1. 원재료비</div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>원 재 료 명</th>
+                      <th>배합률</th>
+                      <th>중량(g)</th>
+                      <th>LOSS</th>
+                      <th>Kg 단가</th>
+                      <th>금액</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${raw_materials.map(m => `
+                      <tr>
+                        <td>${m.item_name}</td>
+                        <td class="right">${m.ratio ? m.ratio.toFixed(1) : ''}</td>
+                        <td class="right">${m.weight ? m.weight.toFixed(1) : ''}</td>
+                        <td class="center">${m.loss_rate ? (m.loss_rate * 100).toFixed(0) + '%' : ''}</td>
+                        <td class="right">${m.unit_price ? formatNumber(Math.round(m.unit_price)) : ''}</td>
+                        <td class="right">${m.amount ? formatNumber(Math.round(m.amount)) : ''}</td>
+                      </tr>
+                    `).join('')}
+                    <tr class="total-row">
+                      <td colspan="5" style="text-align: right;">합 계</td>
+                      <td class="right">${formatNumber(Math.round(summary?.raw_material_cost || 0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              ` : ''}
+              
+              <div class="footer">
+                출력일시: ${new Date().toLocaleString('ko-KR')} | (주)본비반트 HACCP 통합관리시스템
+              </div>
+            </div>
+            
+            <script>
+              // 자동 인쇄
+              window.onload = function() {
+                window.print();
+              };
+            <\/script>
+          </body>
+          </html>
+        `;
+        
+        // 새 창에서 인쇄
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(printHtml);
+          printWindow.document.close();
+          log('인쇄 창이 열렸습니다');
+        } else {
+          log('팝업이 차단되었습니다. 팝업 차단을 해제해주세요.');
+        }
+        
+      } catch (e) {
+        log('인쇄 실패: ' + e.message);
+        console.error(e);
+      }
+    }
+    
+    // 페이지 로드 시 통계 자동 로드
+    window.onload = () => {
+      testStats();
+    };
+  </script>
+</body>
+</html>

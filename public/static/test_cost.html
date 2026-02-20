@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>원가계산 테스트</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+</head>
+<body class="p-8 bg-gray-100">
+    <h1 class="text-2xl font-bold mb-4">원가계산 API 테스트</h1>
+    
+    <div id="results" class="space-y-4">
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="font-bold">1. 통계 API</h2>
+            <pre id="stats" class="text-sm bg-gray-50 p-2 mt-2">로딩중...</pre>
+        </div>
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="font-bold">2. 원료 단가 API (첫 5개)</h2>
+            <pre id="materials" class="text-sm bg-gray-50 p-2 mt-2">로딩중...</pre>
+        </div>
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="font-bold">3. 제품 원가 API (첫 5개)</h2>
+            <pre id="products" class="text-sm bg-gray-50 p-2 mt-2">로딩중...</pre>
+        </div>
+        <div class="bg-white p-4 rounded shadow">
+            <h2 class="font-bold">4. 원가계산서 목록 API</h2>
+            <pre id="sheets" class="text-sm bg-gray-50 p-2 mt-2">로딩중...</pre>
+        </div>
+    </div>
+    
+    <div class="mt-8 space-x-2">
+        <button onclick="testCreateSheet()" class="bg-blue-600 text-white px-4 py-2 rounded">
+            원가계산서 생성 테스트
+        </button>
+        <button onclick="testPrintSheet()" class="bg-green-600 text-white px-4 py-2 rounded">
+            인쇄 테스트 (ID:1)
+        </button>
+    </div>
+    <pre id="test-result" class="mt-4 bg-white p-4 rounded shadow text-sm"></pre>
+
+    <script>
+        const API_BASE = '/api';
+        
+        async function api(endpoint) {
+            try {
+                const res = await axios.get(API_BASE + endpoint);
+                return res.data;
+            } catch (e) {
+                return { error: e.message };
+            }
+        }
+        
+        async function loadAll() {
+            // 1. 통계
+            const stats = await api('/cost/stats');
+            document.getElementById('stats').textContent = JSON.stringify(stats, null, 2);
+            
+            // 2. 원료 단가
+            const materials = await api('/cost/materials');
+            const matPreview = materials.success ? materials.data.slice(0, 5) : materials;
+            document.getElementById('materials').textContent = JSON.stringify(matPreview, null, 2);
+            
+            // 3. 제품 원가
+            const products = await api('/cost/products');
+            const prodPreview = products.success ? products.data.slice(0, 5) : products;
+            document.getElementById('products').textContent = JSON.stringify(prodPreview, null, 2);
+            
+            // 4. 원가계산서
+            const sheets = await api('/cost/sheets');
+            document.getElementById('sheets').textContent = JSON.stringify(sheets, null, 2);
+        }
+        
+        async function testCreateSheet() {
+            try {
+                const products = await api('/cost/products');
+                if (!products.success || products.data.length === 0) {
+                    document.getElementById('test-result').textContent = 'BOM 제품이 없습니다';
+                    return;
+                }
+                
+                const productCode = products.data[0].product_code;
+                const res = await axios.post(API_BASE + '/cost/sheets/from-bom/' + productCode, {
+                    base_quantity: 1,
+                    labor_rate: 30,
+                    overhead_rate: 15
+                });
+                document.getElementById('test-result').textContent = '생성 결과:\n' + JSON.stringify(res.data, null, 2);
+                loadAll();
+            } catch (e) {
+                document.getElementById('test-result').textContent = '오류: ' + e.message;
+            }
+        }
+        
+        async function testPrintSheet() {
+            try {
+                const res = await api('/cost/sheets/1/print');
+                document.getElementById('test-result').textContent = '인쇄 데이터:\n' + JSON.stringify(res, null, 2);
+                
+                if (res.success) {
+                    // 인쇄 창 열기
+                    const printWindow = window.open('', '_blank');
+                    printWindow.document.write('<h1>인쇄 테스트</h1><pre>' + JSON.stringify(res.data, null, 2) + '</pre>');
+                }
+            } catch (e) {
+                document.getElementById('test-result').textContent = '오류: ' + e.message;
+            }
+        }
+        
+        loadAll();
+    </script>
+</body>
+</html>

@@ -18619,9 +18619,9 @@ async function loadSimulateMaterials() {
     await loadMaterialCosts();
   }
   
+  // 모든 원료를 표시 (단가 등록 여부 관계없이)
   const options = materialCostData
-    .filter(m => m.cost_per_unit)
-    .map(m => `<option value="${m.item_code}" data-cost="${m.cost_per_unit}">${m.item_name} (현재: ${formatNumber(m.cost_per_unit)}원)</option>`)
+    .map(m => `<option value="${m.item_code}" data-cost="${m.cost_per_unit || 0}">${m.item_name}${m.cost_per_unit ? ` (현재: ${formatNumber(m.cost_per_unit)}원)` : ' (미등록)'}</option>`)
     .join('');
   
   select.innerHTML = '<option value="">원료 선택...</option>' + options;
@@ -18632,9 +18632,9 @@ function addSimulateRow() {
   simRowCount++;
   const container = document.getElementById('simulate-inputs');
   
+  // 모든 원료를 표시 (단가 등록 여부 관계없이)
   const options = materialCostData
-    .filter(m => m.cost_per_unit)
-    .map(m => `<option value="${m.item_code}" data-cost="${m.cost_per_unit}">${m.item_name} (현재: ${formatNumber(m.cost_per_unit)}원)</option>`)
+    .map(m => `<option value="${m.item_code}" data-cost="${m.cost_per_unit || 0}">${m.item_name}${m.cost_per_unit ? ` (현재: ${formatNumber(m.cost_per_unit)}원)` : ' (미등록)'}</option>`)
     .join('');
   
   const row = document.createElement('div');

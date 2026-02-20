@@ -125,7 +125,128 @@ app.get('/api/init-db', async (c) => {
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_product_costs_product ON product_costs(product_code)`).run();
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_product_costs_date ON product_costs(calc_date)`).run();
     
-    return c.json({ success: true, message: 'DB 초기화 완료 (원가 테이블 포함)' });
+    // 상세 제조원가계산서 테이블들
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS product_cost_sheet (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_code TEXT NOT NULL,
+        sheet_name TEXT,
+        created_date TEXT DEFAULT (date('now')),
+        version INTEGER DEFAULT 1,
+        base_quantity REAL DEFAULT 1,
+        base_unit TEXT DEFAULT 'ea',
+        retail_price REAL,
+        wholesale_price REAL,
+        target_margin_rate REAL,
+        memo TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS cost_raw_materials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        item_code TEXT,
+        item_name TEXT NOT NULL,
+        ratio REAL,
+        weight REAL,
+        loss_rate REAL DEFAULT 0,
+        unit_price REAL,
+        amount REAL,
+        unit_cost REAL,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sheet_id) REFERENCES product_cost_sheet(id) ON DELETE CASCADE
+      )
+    `).run();
+    
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS cost_sub_materials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        category TEXT,
+        item_name TEXT NOT NULL,
+        ratio REAL,
+        quantity REAL,
+        loss_rate REAL DEFAULT 0,
+        unit_price REAL,
+        amount REAL,
+        unit_cost REAL,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sheet_id) REFERENCES product_cost_sheet(id) ON DELETE CASCADE
+      )
+    `).run();
+    
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS cost_labor (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        cost_type TEXT NOT NULL,
+        category TEXT,
+        item_name TEXT NOT NULL,
+        base_cost REAL,
+        allocation_rate REAL,
+        amount REAL,
+        unit_cost REAL,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sheet_id) REFERENCES product_cost_sheet(id) ON DELETE CASCADE
+      )
+    `).run();
+    
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS cost_overhead (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER NOT NULL,
+        sort_order INTEGER DEFAULT 0,
+        cost_type TEXT NOT NULL,
+        category TEXT,
+        item_name TEXT NOT NULL,
+        base_cost REAL,
+        allocation_rate REAL,
+        amount REAL,
+        unit_cost REAL,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sheet_id) REFERENCES product_cost_sheet(id) ON DELETE CASCADE
+      )
+    `).run();
+    
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS cost_summary (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER NOT NULL UNIQUE,
+        raw_material_cost REAL DEFAULT 0,
+        sub_material_cost REAL DEFAULT 0,
+        direct_labor_cost REAL DEFAULT 0,
+        direct_overhead_cost REAL DEFAULT 0,
+        direct_cost_total REAL DEFAULT 0,
+        indirect_labor_cost REAL DEFAULT 0,
+        indirect_overhead_cost REAL DEFAULT 0,
+        indirect_cost_total REAL DEFAULT 0,
+        other_cost REAL DEFAULT 0,
+        total_manufacturing_cost REAL DEFAULT 0,
+        unit_manufacturing_cost REAL DEFAULT 0,
+        retail_unit_cost REAL DEFAULT 0,
+        wholesale_unit_cost REAL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (sheet_id) REFERENCES product_cost_sheet(id) ON DELETE CASCADE
+      )
+    `).run();
+    
+    return c.json({ success: true, message: 'DB 초기화 완료 (상세 원가계산서 테이블 포함)' });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }

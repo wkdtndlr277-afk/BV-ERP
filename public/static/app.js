@@ -19201,14 +19201,23 @@ async function deleteCostSheet(sheetId) {
 }
 
 // BOM 기반 원가계산서 생성 모달
-function showCreateCostSheetModal() {
+async function showCreateCostSheetModal() {
+  // 제품 목록이 없으면 먼저 로드
+  if (!productCostData || productCostData.length === 0) {
+    await loadProductCosts();
+  }
+  
+  const productOptions = productCostData.map(p => 
+    `<option value="${p.product_code}">${p.product_name} (${p.product_code})</option>`
+  ).join('');
+  
   showModal('BOM 기반 원가계산서 생성', `
     <div class="space-y-4">
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택</label>
         <select id="new-sheet-product" class="w-full border rounded-lg px-4 py-2" onchange="loadProductBOMForCost()">
-          <option value="">제품을 선택하세요...</option>
-          ${productCostData.map(p => `<option value="${p.product_code}">${p.product_name} (${p.product_code})</option>`).join('')}
+          <option value="">제품을 선택하세요... (${productCostData.length}개)</option>
+          ${productOptions}
         </select>
       </div>
       

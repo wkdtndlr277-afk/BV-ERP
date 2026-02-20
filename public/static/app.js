@@ -18478,13 +18478,19 @@ async function saveMaterialCosts() {
 let productCostData = [];
 async function loadProductCosts() {
   try {
+    console.log('loadProductCosts 시작');
     const result = await api('/cost/products');
+    console.log('loadProductCosts 결과:', result?.success, '데이터 수:', result?.data?.length);
     if (result.success) {
-      productCostData = result.data;
+      productCostData = result.data || [];
       renderProductCostTable(productCostData);
+    } else {
+      console.error('제품 원가 API 실패:', result);
+      renderProductCostTable([]);
     }
   } catch (e) {
     console.error('제품 원가 로드 실패:', e);
+    renderProductCostTable([]);
   }
 }
 
@@ -18742,13 +18748,21 @@ let costSheetList = [];
 // 상세 원가계산서 목록 로드
 async function loadCostSheets() {
   try {
+    console.log('loadCostSheets 시작');
     const result = await api('/cost/sheets');
+    console.log('loadCostSheets 결과:', result?.success, '데이터 수:', result?.data?.length);
     if (result.success) {
-      costSheetList = result.data;
+      costSheetList = result.data || [];
+      renderCostSheetList();
+    } else {
+      console.error('원가계산서 API 실패:', result);
+      costSheetList = [];
       renderCostSheetList();
     }
   } catch (e) {
     console.error('원가계산서 목록 로드 실패:', e);
+    costSheetList = [];
+    renderCostSheetList();
   }
 }
 
@@ -19163,23 +19177,24 @@ async function printCostSheet(sheetId) {
         </div>
         
         <script>
-          // 자동 인쇄
-          window.onload = function() {
-            window.print();
-          };
-        </script>
+          window.onload = function() { window.print(); };
+        <\/script>
       </body>
       </html>
     `;
     
     // 새 창에서 인쇄
     const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      showToast('팝업이 차단되었습니다. 팝업 차단을 해제해주세요.', 'error');
+      return;
+    }
     printWindow.document.write(printHtml);
     printWindow.document.close();
     
   } catch (e) {
     console.error('인쇄 실패:', e);
-    showToast('인쇄 실패', 'error');
+    showToast('인쇄 실패: ' + e.message, 'error');
   }
 }
 

@@ -1,0 +1,939 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>원가계산 디버그 페이지</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-100">
+  <!-- 헤더 -->
+  <div class="bg-blue-600 text-white py-4 px-6 shadow">
+    <h1 class="text-xl font-bold"><i class="fas fa-bug mr-2"></i>원가계산 디버그 페이지 (로그인 불필요)</h1>
+    <p class="text-sm text-blue-100">이 페이지에서 원가계산 기능을 직접 테스트합니다.</p>
+  </div>
+
+  <div class="container mx-auto p-6 max-w-7xl">
+    <!-- 상태 표시 -->
+    <div class="bg-white rounded-lg shadow p-4 mb-6">
+      <h2 class="font-bold text-lg mb-2"><i class="fas fa-check-circle mr-2 text-green-500"></i>시스템 상태</h2>
+      <div id="status" class="text-sm text-gray-600">로딩 중...</div>
+    </div>
+
+    <!-- 원가계산 메인 영역 -->
+    <div id="page-content">
+      <!-- 원가계산 UI가 여기에 렌더링됩니다 -->
+    </div>
+
+    <!-- 로그 영역 -->
+    <div class="bg-white rounded-lg shadow p-4 mt-6">
+      <h2 class="font-bold text-lg mb-2"><i class="fas fa-terminal mr-2 text-gray-500"></i>디버그 로그</h2>
+      <pre id="log" class="bg-gray-100 p-4 rounded text-xs overflow-x-auto max-h-64 overflow-y-auto"></pre>
+    </div>
+  </div>
+
+  <script>
+    // 로그 함수
+    function log(msg) {
+      const logEl = document.getElementById('log');
+      const time = new Date().toLocaleTimeString('ko-KR');
+      logEl.textContent += `[${time}] ${typeof msg === 'object' ? JSON.stringify(msg, null, 2) : msg}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    // 토스트 함수
+    function showToast(message, type = 'success') {
+      const colors = { success: 'bg-green-500', error: 'bg-red-500', warning: 'bg-orange-500' };
+      const toast = document.createElement('div');
+      toast.className = `fixed top-4 right-4 ${colors[type]} text-white px-4 py-2 rounded shadow-lg z-50`;
+      toast.textContent = message;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+      log(`Toast [${type}]: ${message}`);
+    }
+
+    // 모달 함수
+    function showModal(title, content, size = 'md') {
+      const sizes = { sm: 'max-w-md', md: 'max-w-2xl', lg: 'max-w-4xl', xl: 'max-w-6xl' };
+      const modal = document.createElement('div');
+      modal.id = 'modal-overlay';
+      modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+      modal.innerHTML = `
+        <div class="${sizes[size]} w-full bg-white rounded-xl shadow-2xl">
+          <div class="flex justify-between items-center p-4 border-b">
+            <h3 class="text-lg font-bold">${title}</h3>
+            <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-2xl">&times;</button>
+          </div>
+          <div class="p-4">${content}</div>
+        </div>
+      `;
+      modal.onclick = (e) => { if (e.target === modal) closeModal(); };
+      document.body.appendChild(modal);
+    }
+
+    function closeModal() {
+      const modal = document.getElementById('modal-overlay');
+      if (modal) modal.remove();
+    }
+
+    // 숫자 포맷
+    function formatNumber(num) {
+      return Number(num || 0).toLocaleString('ko-KR');
+    }
+
+    // API 호출
+    async function api(endpoint, method = 'GET', data = null) {
+      try {
+        log(`API 호출: ${method} ${endpoint}`);
+        const config = {
+          method,
+          url: `/api${endpoint}`,
+          headers: { 'Content-Type': 'application/json' }
+        };
+        if (data) config.data = data;
+        const response = await axios(config);
+        log(`API 응답: ${endpoint} - success=${response.data?.success}`);
+        return response.data;
+      } catch (e) {
+        log(`API 오류: ${endpoint} - ${e.message}`);
+        showToast('API 오류: ' + e.message, 'error');
+        throw e;
+      }
+    }
+
+    // ==================== 원가 계산 ====================
+    let materialCostData = [];
+    let productCostData = [];
+    let costSheetList = [];
+
+    async function renderCostCalc() {
+      log('renderCostCalc 시작');
+      const content = document.getElementById('page-content');
+      
+      content.innerHTML = `
+        <div class="space-y-6">
+          <div class="flex justify-between items-center">
+            <h2 class="text-2xl font-bold text-gray-800">
+              <i class="fas fa-calculator mr-2 text-green-600"></i>제조원가 계산
+            </h2>
+            <div class="flex gap-2">
+              <button onclick="loadCostStats()" class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
+                <i class="fas fa-sync-alt mr-1"></i> 새로고침
+              </button>
+            </div>
+          </div>
+          
+          <!-- 통계 카드 -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="cost-stats">
+            <div class="bg-white rounded-xl shadow p-4">
+              <div class="text-gray-500 text-sm">전체 원료</div>
+              <div class="text-2xl font-bold text-gray-800" id="stat-total-materials">-</div>
+            </div>
+            <div class="bg-white rounded-xl shadow p-4">
+              <div class="text-gray-500 text-sm">단가 등록</div>
+              <div class="text-2xl font-bold text-green-600" id="stat-with-cost">-</div>
+            </div>
+            <div class="bg-white rounded-xl shadow p-4">
+              <div class="text-gray-500 text-sm">BOM 등록 제품</div>
+              <div class="text-2xl font-bold text-blue-600" id="stat-products-bom">-</div>
+            </div>
+            <div class="bg-white rounded-xl shadow p-4">
+              <div class="text-gray-500 text-sm">원가 계산 완료</div>
+              <div class="text-2xl font-bold text-purple-600" id="stat-complete">-</div>
+            </div>
+          </div>
+          
+          <!-- 탭 메뉴 -->
+          <div class="bg-white rounded-xl shadow">
+            <div class="border-b">
+              <nav class="flex flex-wrap">
+                <button onclick="switchCostTab('materials')" class="cost-tab px-6 py-4 font-medium text-blue-600 border-b-2 border-blue-600" data-tab="materials">
+                  <i class="fas fa-boxes mr-1"></i> 원료 단가 관리
+                </button>
+                <button onclick="switchCostTab('products')" class="cost-tab px-6 py-4 font-medium text-gray-500 hover:text-gray-700" data-tab="products">
+                  <i class="fas fa-box mr-1"></i> 제품 원가 조회
+                </button>
+                <button onclick="switchCostTab('sheets')" class="cost-tab px-6 py-4 font-medium text-gray-500 hover:text-gray-700" data-tab="sheets">
+                  <i class="fas fa-file-invoice-dollar mr-1"></i> 상세 원가계산서
+                </button>
+              </nav>
+            </div>
+            
+            <!-- 원료 단가 관리 탭 -->
+            <div id="cost-tab-materials" class="cost-tab-content p-6">
+              <div class="flex justify-between items-center mb-4">
+                <div class="flex gap-2">
+                  <input type="text" id="material-search" placeholder="원료명 검색..." 
+                    class="border rounded-lg px-4 py-2 w-64" onkeyup="filterMaterialCosts()">
+                  <select id="material-filter" class="border rounded-lg px-4 py-2" onchange="filterMaterialCosts()">
+                    <option value="all">전체</option>
+                    <option value="with-cost">단가 등록</option>
+                    <option value="no-cost">단가 미등록</option>
+                  </select>
+                </div>
+                <button onclick="saveMaterialCosts()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+                  <i class="fas fa-save mr-1"></i> 일괄 저장
+                </button>
+              </div>
+              
+              <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
+                <table class="w-full text-sm">
+                  <thead class="bg-gray-100 sticky top-0">
+                    <tr>
+                      <th class="px-4 py-3 text-left">원료코드</th>
+                      <th class="px-4 py-3 text-left">원료명</th>
+                      <th class="px-4 py-3 text-center">기준단위</th>
+                      <th class="px-4 py-3 text-right">단가 (원)</th>
+                      <th class="px-4 py-3 text-left">공급업체</th>
+                    </tr>
+                  </thead>
+                  <tbody id="material-cost-table">
+                    <tr><td colspan="5" class="text-center py-8 text-gray-400">로딩 중...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            
+            <!-- 제품 원가 조회 탭 -->
+            <div id="cost-tab-products" class="cost-tab-content p-6 hidden">
+              <div class="flex justify-between items-center mb-4">
+                <input type="text" id="product-cost-search" placeholder="제품명 검색..." 
+                  class="border rounded-lg px-4 py-2 w-64" onkeyup="filterProductCosts()">
+              </div>
+              
+              <div class="overflow-x-auto max-h-[500px] overflow-y-auto">
+                <table class="w-full text-sm">
+                  <thead class="bg-gray-100 sticky top-0">
+                    <tr>
+                      <th class="px-4 py-3 text-left">제품코드</th>
+                      <th class="px-4 py-3 text-left">제품명</th>
+                      <th class="px-4 py-3 text-center">BOM 원료수</th>
+                      <th class="px-4 py-3 text-right">재료비 (원)</th>
+                      <th class="px-4 py-3 text-center">상태</th>
+                      <th class="px-4 py-3 text-center">상세</th>
+                    </tr>
+                  </thead>
+                  <tbody id="product-cost-table">
+                    <tr><td colspan="6" class="text-center py-8 text-gray-400">로딩 중...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            
+            <!-- 상세 원가계산서 탭 -->
+            <div id="cost-tab-sheets" class="cost-tab-content p-6 hidden">
+              <div class="flex justify-between items-center mb-4">
+                <div class="text-sm text-gray-500">
+                  <i class="fas fa-info-circle mr-1"></i> BOM 데이터 기반으로 상세 제조원가계산서를 생성하고 인쇄할 수 있습니다.
+                </div>
+                <button onclick="showCreateCostSheetModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                  <i class="fas fa-plus mr-1"></i> 새 원가계산서
+                </button>
+              </div>
+              
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead class="bg-gray-100 sticky top-0">
+                    <tr>
+                      <th class="px-4 py-3 text-left">제품코드</th>
+                      <th class="px-4 py-3 text-left">제품명/시트명</th>
+                      <th class="px-4 py-3 text-right">제조원가</th>
+                      <th class="px-4 py-3 text-right">단위원가</th>
+                      <th class="px-4 py-3 text-center">작성일</th>
+                      <th class="px-4 py-3 text-center">관리</th>
+                    </tr>
+                  </thead>
+                  <tbody id="cost-sheet-table">
+                    <tr><td colspan="6" class="text-center py-8 text-gray-400">로딩 중...</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      log('UI 렌더링 완료, 데이터 로드 시작');
+      
+      // 데이터 로드
+      await loadCostStats();
+      await loadMaterialCosts();
+      await loadProductCosts();
+      await loadCostSheets();
+      
+      log('모든 데이터 로드 완료');
+    }
+
+    // 탭 전환
+    function switchCostTab(tab) {
+      log('탭 전환: ' + tab);
+      document.querySelectorAll('.cost-tab').forEach(t => {
+        t.classList.remove('text-blue-600', 'border-b-2', 'border-blue-600');
+        t.classList.add('text-gray-500');
+      });
+      document.querySelectorAll('.cost-tab-content').forEach(c => c.classList.add('hidden'));
+      
+      const activeTab = document.querySelector(`.cost-tab[data-tab="${tab}"]`);
+      if (activeTab) {
+        activeTab.classList.remove('text-gray-500');
+        activeTab.classList.add('text-blue-600', 'border-b-2', 'border-blue-600');
+      }
+      
+      const activeContent = document.getElementById(`cost-tab-${tab}`);
+      if (activeContent) activeContent.classList.remove('hidden');
+    }
+
+    // 통계 로드
+    async function loadCostStats() {
+      try {
+        const result = await api('/cost/stats');
+        if (result.success) {
+          const d = result.data;
+          document.getElementById('stat-total-materials').textContent = d.total_materials;
+          document.getElementById('stat-with-cost').textContent = d.materials_with_cost;
+          document.getElementById('stat-products-bom').textContent = d.products_with_bom;
+          document.getElementById('stat-complete').textContent = d.complete_products;
+          log('통계 로드 완료: ' + JSON.stringify(d));
+        }
+      } catch (e) {
+        log('통계 로드 실패: ' + e.message);
+      }
+    }
+
+    // 원료 단가 목록 로드
+    async function loadMaterialCosts() {
+      try {
+        const result = await api('/cost/materials');
+        if (result.success) {
+          materialCostData = result.data;
+          log('원료 단가 로드 완료: ' + materialCostData.length + '개');
+          renderMaterialCostTable(materialCostData);
+        }
+      } catch (e) {
+        log('원료 단가 로드 실패: ' + e.message);
+      }
+    }
+
+    function renderMaterialCostTable(data) {
+      const tbody = document.getElementById('material-cost-table');
+      if (!tbody) { log('material-cost-table 요소 없음'); return; }
+      
+      if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-gray-400">원료가 없습니다</td></tr>';
+        return;
+      }
+      
+      log('원료 테이블 렌더링: ' + data.length + '개');
+      tbody.innerHTML = data.map(m => `
+        <tr class="border-b hover:bg-gray-50 ${!m.cost_per_unit ? 'bg-yellow-50' : ''}" data-item-code="${m.item_code}">
+          <td class="px-4 py-3 font-mono text-xs">${m.item_code}</td>
+          <td class="px-4 py-3 font-medium">${m.item_name || '(이름없음)'}</td>
+          <td class="px-4 py-3 text-center">${m.master_unit || 'kg'}</td>
+          <td class="px-4 py-3 text-right">
+            <input type="number" class="material-cost-input border rounded px-2 py-1 w-28 text-right" 
+              data-item-code="${m.item_code}" 
+              value="${m.cost_per_unit || ''}" 
+              placeholder="단가 입력">
+          </td>
+          <td class="px-4 py-3">
+            <input type="text" class="material-supplier-input border rounded px-2 py-1 w-32" 
+              data-item-code="${m.item_code}" 
+              value="${m.supplier || ''}" 
+              placeholder="공급업체">
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function filterMaterialCosts() {
+      const search = document.getElementById('material-search').value.toLowerCase();
+      const filter = document.getElementById('material-filter').value;
+      
+      let filtered = materialCostData;
+      
+      if (search) {
+        filtered = filtered.filter(m => 
+          (m.item_name || '').toLowerCase().includes(search) || 
+          (m.item_code || '').toLowerCase().includes(search)
+        );
+      }
+      
+      if (filter === 'with-cost') {
+        filtered = filtered.filter(m => m.cost_per_unit);
+      } else if (filter === 'no-cost') {
+        filtered = filtered.filter(m => !m.cost_per_unit);
+      }
+      
+      renderMaterialCostTable(filtered);
+    }
+
+    // 원료 단가 일괄 저장
+    async function saveMaterialCosts() {
+      const inputs = document.querySelectorAll('.material-cost-input');
+      const items = [];
+      
+      inputs.forEach(input => {
+        const itemCode = input.dataset.itemCode;
+        const cost = parseFloat(input.value);
+        const supplierInput = document.querySelector(`.material-supplier-input[data-item-code="${itemCode}"]`);
+        const supplier = supplierInput ? supplierInput.value : '';
+        
+        if (!isNaN(cost) && cost >= 0) {
+          items.push({ item_code: itemCode, cost_per_unit: cost, supplier });
+        }
+      });
+      
+      if (items.length === 0) {
+        showToast('저장할 단가 정보가 없습니다', 'warning');
+        return;
+      }
+      
+      try {
+        log('원료 단가 저장: ' + items.length + '개');
+        const result = await api('/cost/materials/bulk', 'POST', { items });
+        if (result.success) {
+          showToast(result.message || '저장 완료', 'success');
+          await loadCostStats();
+          await loadMaterialCosts();
+          await loadProductCosts();
+        } else {
+          showToast(result.error || '저장 실패', 'error');
+        }
+      } catch (e) {
+        showToast('저장 실패: ' + e.message, 'error');
+      }
+    }
+
+    // 제품 원가 목록 로드
+    async function loadProductCosts() {
+      try {
+        const result = await api('/cost/products');
+        if (result.success) {
+          productCostData = result.data || [];
+          log('제품 원가 로드 완료: ' + productCostData.length + '개');
+          renderProductCostTable(productCostData);
+        }
+      } catch (e) {
+        log('제품 원가 로드 실패: ' + e.message);
+        renderProductCostTable([]);
+      }
+    }
+
+    function renderProductCostTable(data) {
+      const tbody = document.getElementById('product-cost-table');
+      if (!tbody) { log('product-cost-table 요소 없음'); return; }
+      
+      if (!data || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-gray-400">BOM이 등록된 제품이 없습니다</td></tr>';
+        return;
+      }
+      
+      log('제품 테이블 렌더링: ' + data.length + '개');
+      tbody.innerHTML = data.map(p => `
+        <tr class="border-b hover:bg-gray-50">
+          <td class="px-4 py-3 font-mono text-xs">${p.product_code}</td>
+          <td class="px-4 py-3 font-medium">${p.product_name || '(이름없음)'}</td>
+          <td class="px-4 py-3 text-center">${p.bom_count}</td>
+          <td class="px-4 py-3 text-right font-bold ${p.is_complete ? 'text-green-600' : 'text-orange-500'}">
+            ${formatNumber(Math.round(p.material_cost))}
+          </td>
+          <td class="px-4 py-3 text-center">
+            ${p.is_complete 
+              ? '<span class="text-green-600"><i class="fas fa-check-circle"></i> 완료</span>'
+              : `<span class="text-orange-500"><i class="fas fa-exclamation-triangle"></i> ${p.missing_items}개 미등록</span>`
+            }
+          </td>
+          <td class="px-4 py-3 text-center">
+            <button onclick="showProductCostDetail('${p.product_code}')" class="text-blue-600 hover:text-blue-800">
+              <i class="fas fa-search"></i> 상세
+            </button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function filterProductCosts() {
+      const search = document.getElementById('product-cost-search').value.toLowerCase();
+      let filtered = productCostData;
+      
+      if (search) {
+        filtered = filtered.filter(p => 
+          (p.product_name || '').toLowerCase().includes(search) || 
+          (p.product_code || '').toLowerCase().includes(search)
+        );
+      }
+      
+      renderProductCostTable(filtered);
+    }
+
+    // 제품 원가 상세
+    async function showProductCostDetail(productCode) {
+      try {
+        log('제품 원가 상세 조회: ' + productCode);
+        const result = await api(`/cost/product/${productCode}`);
+        if (!result.success) {
+          showToast('제품 정보를 불러올 수 없습니다', 'error');
+          return;
+        }
+        
+        const { product, materials, total_cost, missing_count } = result.data;
+        
+        showModal(`${product.product_name} 원가 상세`, `
+          <div class="space-y-4">
+            <div class="bg-gray-50 p-4 rounded-lg">
+              <div class="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <div class="text-gray-500 text-sm">총 재료비</div>
+                  <div class="text-xl font-bold text-blue-600">${formatNumber(Math.round(total_cost))}원</div>
+                </div>
+                <div>
+                  <div class="text-gray-500 text-sm">BOM 원료수</div>
+                  <div class="text-xl font-bold">${materials.length}개</div>
+                </div>
+                <div>
+                  <div class="text-gray-500 text-sm">단가 미등록</div>
+                  <div class="text-xl font-bold text-orange-500">${missing_count}개</div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="max-h-[400px] overflow-y-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-100 sticky top-0">
+                  <tr>
+                    <th class="px-3 py-2 text-left">원료명</th>
+                    <th class="px-3 py-2 text-right">사용량</th>
+                    <th class="px-3 py-2 text-right">단가</th>
+                    <th class="px-3 py-2 text-right">비용</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${materials.map(m => `
+                    <tr class="border-t ${!m.cost_per_unit ? 'bg-red-50' : ''}">
+                      <td class="px-3 py-2">${m.item_name || '(이름없음)'}</td>
+                      <td class="px-3 py-2 text-right">${m.usage_qty} ${m.usage_unit}</td>
+                      <td class="px-3 py-2 text-right">${m.cost_per_unit ? formatNumber(m.cost_per_unit) + '원' : '<span class="text-red-500">미등록</span>'}</td>
+                      <td class="px-3 py-2 text-right font-medium">${formatNumber(Math.round(m.calculated_cost || 0))}원</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+            
+            ${missing_count > 0 ? `
+              <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 text-sm text-orange-700">
+                <i class="fas fa-exclamation-triangle mr-1"></i>
+                ${missing_count}개 원료의 단가가 등록되지 않았습니다. 정확한 원가 계산을 위해 원료 단가를 등록해주세요.
+              </div>
+            ` : ''}
+          </div>
+        `, 'lg');
+        
+      } catch (e) {
+        log('제품 원가 상세 조회 실패: ' + e.message);
+        showToast('조회 실패: ' + e.message, 'error');
+      }
+    }
+
+    // 원가계산서 목록 로드
+    async function loadCostSheets() {
+      try {
+        const result = await api('/cost/sheets');
+        if (result.success) {
+          costSheetList = result.data || [];
+          log('원가계산서 로드 완료: ' + costSheetList.length + '개');
+          renderCostSheetList();
+        }
+      } catch (e) {
+        log('원가계산서 로드 실패: ' + e.message);
+        costSheetList = [];
+        renderCostSheetList();
+      }
+    }
+
+    function renderCostSheetList() {
+      const tbody = document.getElementById('cost-sheet-table');
+      if (!tbody) { log('cost-sheet-table 요소 없음'); return; }
+      
+      if (costSheetList.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-gray-400">등록된 원가계산서가 없습니다</td></tr>';
+        return;
+      }
+      
+      log('원가계산서 테이블 렌더링: ' + costSheetList.length + '개');
+      tbody.innerHTML = costSheetList.map(s => `
+        <tr class="border-b hover:bg-gray-50">
+          <td class="px-4 py-3">${s.product_code}</td>
+          <td class="px-4 py-3 font-medium">${s.sheet_name || s.product_name || '-'}</td>
+          <td class="px-4 py-3 text-right">${s.total_manufacturing_cost ? formatNumber(Math.round(s.total_manufacturing_cost)) + '원' : '-'}</td>
+          <td class="px-4 py-3 text-right">${s.unit_manufacturing_cost ? formatNumber(Math.round(s.unit_manufacturing_cost)) + '원' : '-'}</td>
+          <td class="px-4 py-3 text-center text-gray-500">${s.created_date || '-'}</td>
+          <td class="px-4 py-3 text-center">
+            <button onclick="viewCostSheet(${s.id})" class="text-blue-600 hover:text-blue-800 mr-2" title="상세보기">
+              <i class="fas fa-eye"></i>
+            </button>
+            <button onclick="printCostSheet(${s.id})" class="text-green-600 hover:text-green-800 mr-2" title="인쇄">
+              <i class="fas fa-print"></i>
+            </button>
+            <button onclick="deleteCostSheet(${s.id})" class="text-red-600 hover:text-red-800" title="삭제">
+              <i class="fas fa-trash"></i>
+            </button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    // 원가계산서 상세 보기
+    async function viewCostSheet(sheetId) {
+      try {
+        log('원가계산서 상세 조회: ' + sheetId);
+        const result = await api(`/cost/sheets/${sheetId}`);
+        if (!result.success) {
+          showToast('원가계산서를 불러올 수 없습니다', 'error');
+          return;
+        }
+        
+        const { sheet, raw_materials, summary } = result.data;
+        
+        showModal(`${sheet.sheet_name || sheet.product_code} 원가계산서`, `
+          <div class="space-y-6 max-h-[70vh] overflow-y-auto">
+            <!-- 요약 -->
+            <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4">
+              <h4 class="font-bold text-lg mb-3"><i class="fas fa-chart-pie mr-2"></i>제조원가 요약</h4>
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="bg-white rounded-lg p-3 shadow-sm">
+                  <div class="text-gray-500 text-xs">원재료비</div>
+                  <div class="text-lg font-bold text-blue-600">${formatNumber(Math.round(summary?.raw_material_cost || 0))}원</div>
+                </div>
+                <div class="bg-white rounded-lg p-3 shadow-sm">
+                  <div class="text-gray-500 text-xs">부재료비</div>
+                  <div class="text-lg font-bold text-green-600">${formatNumber(Math.round(summary?.sub_material_cost || 0))}원</div>
+                </div>
+                <div class="bg-white rounded-lg p-3 shadow-sm">
+                  <div class="text-gray-500 text-xs">노무비+경비</div>
+                  <div class="text-lg font-bold text-orange-600">${formatNumber(Math.round((summary?.direct_labor_cost || 0) + (summary?.direct_overhead_cost || 0)))}원</div>
+                </div>
+                <div class="bg-white rounded-lg p-3 shadow-sm">
+                  <div class="text-gray-500 text-xs">제조원가 합계</div>
+                  <div class="text-xl font-bold text-purple-600">${formatNumber(Math.round(summary?.total_manufacturing_cost || 0))}원</div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- 원재료비 -->
+            ${raw_materials && raw_materials.length > 0 ? `
+            <div class="bg-white rounded-lg border">
+              <div class="bg-blue-100 px-4 py-2 font-bold text-blue-800">1. 원재료비</div>
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead class="bg-gray-50">
+                    <tr>
+                      <th class="px-3 py-2 text-left">원재료명</th>
+                      <th class="px-3 py-2 text-right">중량(g)</th>
+                      <th class="px-3 py-2 text-right">LOSS</th>
+                      <th class="px-3 py-2 text-right">kg단가</th>
+                      <th class="px-3 py-2 text-right">금액</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${raw_materials.map(m => `
+                      <tr class="border-t">
+                        <td class="px-3 py-2">${m.item_name || '(이름없음)'}</td>
+                        <td class="px-3 py-2 text-right">${m.weight ? m.weight.toFixed(1) : '-'}</td>
+                        <td class="px-3 py-2 text-right">${m.loss_rate ? (m.loss_rate * 100).toFixed(0) + '%' : '-'}</td>
+                        <td class="px-3 py-2 text-right">${m.unit_price ? formatNumber(m.unit_price) : '-'}</td>
+                        <td class="px-3 py-2 text-right font-medium">${m.amount ? formatNumber(Math.round(m.amount)) : '-'}</td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                  <tfoot class="bg-gray-100 font-bold">
+                    <tr>
+                      <td colspan="4" class="px-3 py-2 text-right">합계</td>
+                      <td class="px-3 py-2 text-right">${formatNumber(Math.round(summary?.raw_material_cost || 0))}원</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+            ` : '<p class="text-gray-500 text-center">원재료 정보가 없습니다.</p>'}
+            
+            <div class="flex gap-2 justify-end">
+              <button onclick="printCostSheet(${sheetId})" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+                <i class="fas fa-print mr-1"></i> 인쇄
+              </button>
+            </div>
+          </div>
+        `, 'lg');
+        
+      } catch (e) {
+        log('원가계산서 조회 실패: ' + e.message);
+        showToast('조회 실패: ' + e.message, 'error');
+      }
+    }
+
+    // 원가계산서 인쇄
+    async function printCostSheet(sheetId) {
+      try {
+        log('원가계산서 인쇄: ' + sheetId);
+        const result = await api(`/cost/sheets/${sheetId}/print`);
+        if (!result.success) {
+          showToast('인쇄 데이터를 불러올 수 없습니다', 'error');
+          return;
+        }
+        
+        const { sheet, summary, raw_materials, sub_materials_by_category } = result.data;
+        
+        // 인쇄용 HTML 생성
+        const printHtml = `
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>${sheet.sheet_name || sheet.product_code} - 제조원가계산서</title>
+            <style>
+              @page { size: A4; margin: 15mm; }
+              * { margin: 0; padding: 0; box-sizing: border-box; }
+              body { font-family: 'Malgun Gothic', sans-serif; font-size: 10pt; line-height: 1.4; }
+              .container { max-width: 190mm; margin: 0 auto; }
+              .header { text-align: center; margin-bottom: 15px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+              .header h1 { font-size: 16pt; margin-bottom: 5px; }
+              .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; padding: 8px; background: #f5f5f5; }
+              .info-item { flex: 1; }
+              .info-label { font-size: 9pt; color: #666; }
+              .info-value { font-weight: bold; }
+              
+              .summary-box { border: 2px solid #333; margin-bottom: 15px; }
+              .summary-header { background: #333; color: #fff; padding: 8px 12px; font-weight: bold; }
+              .summary-content { padding: 10px; }
+              .summary-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dotted #ccc; }
+              .summary-row.total { font-weight: bold; font-size: 11pt; background: #e8f4fd; padding: 8px 4px; }
+              
+              .section { margin-bottom: 15px; border: 1px solid #ddd; }
+              .section-header { background: #d4e5f7; padding: 6px 10px; font-weight: bold; }
+              
+              table { width: 100%; border-collapse: collapse; font-size: 9pt; }
+              th, td { padding: 5px 8px; border: 1px solid #ddd; }
+              th { background: #f5f5f5; font-weight: bold; text-align: center; }
+              td.right { text-align: right; }
+              td.center { text-align: center; }
+              tr.total-row { background: #f0f0f0; font-weight: bold; }
+              
+              .footer { margin-top: 20px; text-align: center; font-size: 9pt; color: #666; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <div class="header">
+                <h1>사전 제조원가 계산서</h1>
+                <div>(주)본비반트</div>
+              </div>
+              
+              <div class="info-row">
+                <div class="info-item">
+                  <div class="info-label">제품명</div>
+                  <div class="info-value">${sheet.sheet_name || sheet.product_name || sheet.product_code}</div>
+                </div>
+                <div class="info-item">
+                  <div class="info-label">기준수량</div>
+                  <div class="info-value">${sheet.base_quantity || 1} ${sheet.base_unit || 'ea'}</div>
+                </div>
+                <div class="info-item">
+                  <div class="info-label">작성일자</div>
+                  <div class="info-value">${sheet.created_date || new Date().toISOString().split('T')[0]}</div>
+                </div>
+              </div>
+              
+              <!-- 제조원가 요약 -->
+              <div class="summary-box">
+                <div class="summary-header">▣ 제 조 원 가</div>
+                <div class="summary-content">
+                  <div class="summary-row total">
+                    <span>제 조 원 가</span>
+                    <span>${formatNumber(Math.round(summary?.total_manufacturing_cost || 0))}원</span>
+                  </div>
+                  <div class="summary-row">
+                    <span>원재료비</span>
+                    <span>${formatNumber(Math.round(summary?.raw_material_cost || 0))}원</span>
+                  </div>
+                  <div class="summary-row">
+                    <span>부재료비</span>
+                    <span>${formatNumber(Math.round(summary?.sub_material_cost || 0))}원</span>
+                  </div>
+                  <div class="summary-row">
+                    <span>노 무 비</span>
+                    <span>${formatNumber(Math.round(summary?.direct_labor_cost || 0))}원</span>
+                  </div>
+                  <div class="summary-row">
+                    <span>경    비</span>
+                    <span>${formatNumber(Math.round(summary?.direct_overhead_cost || 0))}원</span>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- 원재료비 -->
+              ${raw_materials && raw_materials.length > 0 ? `
+              <div class="section">
+                <div class="section-header">1. 원재료비</div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>원 재 료 명</th>
+                      <th>중량(g)</th>
+                      <th>LOSS</th>
+                      <th>Kg 단가</th>
+                      <th>금액</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${raw_materials.map(m => `
+                      <tr>
+                        <td>${m.item_name || '(이름없음)'}</td>
+                        <td class="right">${m.weight ? m.weight.toFixed(1) : ''}</td>
+                        <td class="center">${m.loss_rate ? (m.loss_rate * 100).toFixed(0) + '%' : ''}</td>
+                        <td class="right">${m.unit_price ? formatNumber(Math.round(m.unit_price)) : ''}</td>
+                        <td class="right">${m.amount ? formatNumber(Math.round(m.amount)) : ''}</td>
+                      </tr>
+                    `).join('')}
+                    <tr class="total-row">
+                      <td colspan="4" style="text-align: right;">합 계</td>
+                      <td class="right">${formatNumber(Math.round(summary?.raw_material_cost || 0))}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              ` : ''}
+              
+              <div class="footer">
+                출력일시: ${new Date().toLocaleString('ko-KR')} | (주)본비반트 HACCP 통합관리시스템
+              </div>
+            </div>
+            
+            <script>
+              window.onload = function() { window.print(); };
+            <\/script>
+          </body>
+          </html>
+        `;
+        
+        // 새 창에서 인쇄
+        log('인쇄 창 열기 시도');
+        const printWindow = window.open('', '_blank', 'width=800,height=600');
+        if (!printWindow) {
+          showToast('팝업이 차단되었습니다. 팝업 차단을 해제해주세요.', 'error');
+          log('팝업 차단됨');
+          return;
+        }
+        printWindow.document.write(printHtml);
+        printWindow.document.close();
+        log('인쇄 창 열림');
+        showToast('인쇄 페이지가 열렸습니다', 'success');
+        
+      } catch (e) {
+        log('인쇄 실패: ' + e.message);
+        showToast('인쇄 실패: ' + e.message, 'error');
+      }
+    }
+
+    // 원가계산서 삭제
+    async function deleteCostSheet(sheetId) {
+      if (!confirm('이 원가계산서를 삭제하시겠습니까?')) return;
+      
+      try {
+        const result = await api(`/cost/sheets/${sheetId}`, 'DELETE');
+        if (result.success) {
+          showToast('원가계산서가 삭제되었습니다', 'success');
+          loadCostSheets();
+        } else {
+          showToast(result.error || '삭제 실패', 'error');
+        }
+      } catch (e) {
+        showToast('삭제 실패: ' + e.message, 'error');
+      }
+    }
+
+    // 원가계산서 생성 모달
+    async function showCreateCostSheetModal() {
+      if (!productCostData || productCostData.length === 0) {
+        await loadProductCosts();
+      }
+      
+      const productOptions = productCostData.map(p => 
+        `<option value="${p.product_code}">${p.product_name} (${p.product_code})</option>`
+      ).join('');
+      
+      showModal('BOM 기반 원가계산서 생성', `
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택</label>
+            <select id="new-sheet-product" class="w-full border rounded-lg px-4 py-2">
+              <option value="">제품을 선택하세요... (${productCostData.length}개)</option>
+              ${productOptions}
+            </select>
+          </div>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">기준 생산량</label>
+              <input type="number" id="new-sheet-qty" value="1" class="w-full border rounded-lg px-4 py-2">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">소매가</label>
+              <input type="number" id="new-sheet-retail" placeholder="선택사항" class="w-full border rounded-lg px-4 py-2">
+            </div>
+          </div>
+          
+          <div class="flex justify-end gap-2">
+            <button onclick="closeModal()" class="px-4 py-2 border rounded-lg">취소</button>
+            <button onclick="createCostSheetFromBOM()" class="bg-blue-600 text-white px-4 py-2 rounded-lg">생성</button>
+          </div>
+        </div>
+      `);
+    }
+
+    async function createCostSheetFromBOM() {
+      const productCode = document.getElementById('new-sheet-product').value;
+      if (!productCode) {
+        showToast('제품을 선택해주세요', 'warning');
+        return;
+      }
+      
+      const baseQty = parseFloat(document.getElementById('new-sheet-qty').value) || 1;
+      const retailPrice = parseFloat(document.getElementById('new-sheet-retail').value) || null;
+      
+      try {
+        const result = await api(`/cost/sheets/from-bom/${productCode}`, 'POST', {
+          base_quantity: baseQty,
+          retail_price: retailPrice
+        });
+        
+        if (result.success) {
+          showToast('원가계산서가 생성되었습니다', 'success');
+          closeModal();
+          await loadCostSheets();
+          switchCostTab('sheets');
+        } else {
+          showToast(result.error || '생성 실패', 'error');
+        }
+      } catch (e) {
+        showToast('생성 실패: ' + e.message, 'error');
+      }
+    }
+
+    // 페이지 로드 시 실행
+    window.onload = async () => {
+      log('페이지 로드 시작');
+      document.getElementById('status').innerHTML = '<span class="text-green-600">✓ 시스템 정상</span>';
+      
+      try {
+        await renderCostCalc();
+        log('원가계산 페이지 렌더링 완료');
+      } catch (e) {
+        log('렌더링 오류: ' + e.message);
+        document.getElementById('status').innerHTML = '<span class="text-red-600">✗ 오류 발생: ' + e.message + '</span>';
+      }
+    };
+  </script>
+</body>
+</html>

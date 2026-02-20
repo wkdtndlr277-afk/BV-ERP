@@ -220,57 +220,56 @@ app.get('/product/:productCode', async (c) => {
   }
 });
 
-// 전체 제품 원가 목록
+// 전체 제품 원가 목록 (최적화된 단일 쿼리)
 app.get('/products', async (c) => {
   try {
-    // BOM이 있는 제품 목록 + 원가 계산
+    // 단일 쿼리로 모든 제품의 원가 계산
     const result = await c.env.DB.prepare(`
-      SELECT DISTINCT 
-        m.item_code,
-        m.item_name,
-        (SELECT COUNT(*) FROM bom WHERE product_code = m.item_code) as bom_count
+      WITH latest_costs AS (
+        SELECT mc1.item_code, mc1.cost_per_unit, mc1.unit
+        FROM material_costs mc1
+        INNER JOIN (
+          SELECT item_code, MAX(effective_date) as max_date
+          FROM material_costs
+          GROUP BY item_code
+        ) mc2 ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
+      ),
+      product_costs AS (
+        SELECT 
+          b.product_code,
+          SUM(
+            CASE 
+              WHEN b.unit = 'g' AND lc.unit = 'kg' THEN (b.quantity / 1000.0) * COALESCE(lc.cost_per_unit, 0)
+              WHEN b.unit = 'kg' AND lc.unit = 'g' THEN (b.quantity * 1000.0) * COALESCE(lc.cost_per_unit, 0)
+              ELSE b.quantity * COALESCE(lc.cost_per_unit, 0)
+            END
+          ) as total_cost,
+          COUNT(*) as bom_count,
+          SUM(CASE WHEN lc.cost_per_unit IS NULL THEN 1 ELSE 0 END) as missing_items
+        FROM bom b
+        LEFT JOIN latest_costs lc ON b.item_code = lc.item_code
+        GROUP BY b.product_code
+      )
+      SELECT 
+        m.item_code as product_code,
+        m.item_name as product_name,
+        COALESCE(pc.bom_count, 0) as bom_count,
+        COALESCE(pc.total_cost, 0) as material_cost,
+        COALESCE(pc.missing_items, 0) as missing_items
       FROM master m
+      INNER JOIN product_costs pc ON m.item_code = pc.product_code
       WHERE m.category = '제품'
-        AND EXISTS (SELECT 1 FROM bom WHERE product_code = m.item_code)
       ORDER BY m.item_name
     `).all();
     
-    // 각 제품별 원가 계산
-    const products = [];
-    for (const row of result.results as any[]) {
-      const costResult = await c.env.DB.prepare(`
-        SELECT 
-          SUM(
-            CASE 
-              WHEN b.unit = 'g' AND mc.unit = 'kg' THEN (b.quantity / 1000) * COALESCE(mc.cost_per_unit, 0)
-              WHEN b.unit = 'kg' AND mc.unit = 'g' THEN (b.quantity * 1000) * COALESCE(mc.cost_per_unit, 0)
-              ELSE b.quantity * COALESCE(mc.cost_per_unit, 0)
-            END
-          ) as total_cost,
-          COUNT(*) as total_items,
-          SUM(CASE WHEN mc.cost_per_unit IS NULL THEN 1 ELSE 0 END) as missing_items
-        FROM bom b
-        LEFT JOIN (
-          SELECT mc1.*
-          FROM material_costs mc1
-          INNER JOIN (
-            SELECT item_code, MAX(effective_date) as max_date
-            FROM material_costs
-            GROUP BY item_code
-          ) mc2 ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
-        ) mc ON b.item_code = mc.item_code
-        WHERE b.product_code = ?
-      `).bind(row.item_code).first();
-      
-      products.push({
-        product_code: row.item_code,
-        product_name: row.item_name,
-        bom_count: row.bom_count,
-        material_cost: costResult ? Math.round((costResult.total_cost as number || 0) * 100) / 100 : 0,
-        missing_items: costResult?.missing_items || 0,
-        is_complete: (costResult?.missing_items || 0) === 0
-      });
-    }
+    const products = (result.results as any[]).map(row => ({
+      product_code: row.product_code,
+      product_name: row.product_name,
+      bom_count: row.bom_count,
+      material_cost: Math.round((row.material_cost || 0) * 100) / 100,
+      missing_items: row.missing_items,
+      is_complete: row.missing_items === 0
+    }));
     
     return c.json({ success: true, data: products });
   } catch (error: any) {

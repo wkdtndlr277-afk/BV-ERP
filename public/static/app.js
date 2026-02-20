@@ -5201,8 +5201,8 @@ function bindKpiInputListeners() {
   });
 }
 
-// 기준값 포맷 헬퍼 함수
-function formatStandardRange(kpiItem) {
+// 기준값 포맷 헬퍼 함수 (KPI용)
+function formatKpiStandardRange(kpiItem) {
   const std = KPI_STANDARDS[kpiItem];
   if (!std) return '(기준없음)';
   
@@ -17120,7 +17120,7 @@ async function handlePlanFileUpload(event) {
       items = parseBaeminOrder(workbook);
     } else if (fileName.includes('컬리') || fileName.includes('72시간')) {
       // 형식 3: 컬리 파일 (날짜별 시트)
-      items = parseKurlyOrder(workbook);
+      items = parseKurlyOrderForPlan(workbook);
     } else if (fileName.includes('직영점') || fileName.includes('직영')) {
       // 형식 4: 직영점 HTML xls
       items = parseDirectStoreOrder(workbook);
@@ -17333,8 +17333,8 @@ function parseBaeminOrder(workbook) {
   return items;
 }
 
-// 형식 3: 컬리 파일 파싱 (모든 시트 합산)
-function parseKurlyOrder(workbook) {
+// 형식 3: 컬리 파일 파싱 (모든 시트 합산) - 생산계획용
+function parseKurlyOrderForPlan(workbook) {
   const safeNum = (val) => {
     if (val === null || val === undefined || val === '') return 0;
     const num = parseFloat(String(val).replace(/,/g, '').trim());

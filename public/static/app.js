@@ -11625,7 +11625,6 @@ async function submitProduction() {
 
 // 오늘 생산 현황 로드
 async function loadTodayProduction() {
-  const today = formatDate(new Date());
   const container = document.getElementById('today-production');
   
   if (!container) {
@@ -11634,7 +11633,19 @@ async function loadTodayProduction() {
   }
   
   try {
+    // dayjs가 없으면 네이티브 Date 사용
+    let today;
+    if (typeof dayjs !== 'undefined') {
+      today = dayjs().format('YYYY-MM-DD');
+    } else {
+      const d = new Date();
+      today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    
+    console.log('loadTodayProduction: 날짜 =', today);
+    
     const result = await api(`/production?start_date=${today}&end_date=${today}`);
+    console.log('loadTodayProduction: 결과 =', result?.success, '데이터 수:', result?.data?.length);
     const data = result.data || [];
     
     if (data.length === 0) {
@@ -11685,7 +11696,8 @@ async function loadTodayProduction() {
       </div>
     `;
   } catch (e) {
-    container.innerHTML = '<p class="text-center text-red-500 py-4">데이터 로드 실패</p>';
+    console.error('loadTodayProduction 실패:', e);
+    container.innerHTML = '<p class="text-center text-red-500 py-4">데이터 로드 실패: ' + (e.message || e) + '</p>';
   }
 }
 

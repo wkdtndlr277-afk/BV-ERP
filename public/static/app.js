@@ -18268,13 +18268,18 @@ async function renderCostCalc() {
         
         <!-- 상세 원가계산서 탭 -->
         <div id="cost-tab-sheets" class="cost-tab-content p-6 hidden">
-          <div class="flex justify-between items-center mb-4">
+          <div class="flex flex-wrap justify-between items-center gap-4 mb-4">
             <div class="text-sm text-gray-500">
               <i class="fas fa-info-circle mr-1"></i> BOM 데이터 기반으로 상세 제조원가계산서를 생성하고 인쇄할 수 있습니다.
             </div>
-            <button onclick="showCreateCostSheetModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
-              <i class="fas fa-plus mr-1"></i> 새 원가계산서
-            </button>
+            <div class="flex gap-2">
+              <button onclick="showCreateCostSheetModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                <i class="fas fa-plus mr-1"></i> 새 원가계산서
+              </button>
+              <button onclick="showManualCostSheetModal()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700">
+                <i class="fas fa-edit mr-1"></i> 직접 입력
+              </button>
+            </div>
           </div>
           
           <div class="overflow-x-auto">
@@ -18787,10 +18792,13 @@ function renderCostSheetList() {
         <button onclick="viewCostSheet(${s.id})" class="text-blue-600 hover:text-blue-800 mr-2" title="상세보기">
           <i class="fas fa-eye"></i>
         </button>
-        <button onclick="printCostSheet(${s.id})" class="text-green-600 hover:text-green-800 mr-2" title="인쇄">
+        <button onclick="printCostSheet(${s.id})" class="text-green-600 hover:text-green-800 mx-1" title="인쇄">
           <i class="fas fa-print"></i>
         </button>
-        <button onclick="deleteCostSheet(${s.id})" class="text-red-600 hover:text-red-800" title="삭제">
+        <button onclick="exportCostSheetExcel(${s.id})" class="text-orange-600 hover:text-orange-800 mx-1" title="엑셀 다운로드">
+          <i class="fas fa-file-excel"></i>
+        </button>
+        <button onclick="deleteCostSheet(${s.id})" class="text-red-600 hover:text-red-800 mx-1" title="삭제">
           <i class="fas fa-trash"></i>
         </button>
       </td>
@@ -19338,6 +19346,167 @@ async function createCostSheetFromBOM() {
   }
 }
 
+// 직접 입력 원가계산서 모달
+function showManualCostSheetModal() {
+  showModal('직접 입력 원가계산서', `
+    <div class="space-y-4">
+      <div class="bg-purple-50 border border-purple-200 rounded-lg p-3 text-sm text-purple-700">
+        <i class="fas fa-edit mr-1"></i>
+        BOM 없이 직접 원가 정보를 입력하여 원가계산서를 생성합니다.
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">제품코드 *</label>
+          <input type="text" id="manual-product-code" class="w-full border rounded-lg px-4 py-2" placeholder="예: PD001">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">제품명 *</label>
+          <input type="text" id="manual-product-name" class="w-full border rounded-lg px-4 py-2" placeholder="예: 유기농 식빵">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">기준수량</label>
+          <input type="number" id="manual-base-qty" value="1" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+          <input type="text" id="manual-base-unit" value="ea" class="w-full border rounded-lg px-4 py-2">
+        </div>
+      </div>
+      
+      <div class="border-t pt-4">
+        <h4 class="font-medium mb-3">원가 항목</h4>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">원재료비</label>
+            <input type="number" id="manual-raw-cost" value="0" class="w-full border rounded-lg px-4 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">부재료비</label>
+            <input type="number" id="manual-sub-cost" value="0" class="w-full border rounded-lg px-4 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">직접노무비</label>
+            <input type="number" id="manual-labor-cost" value="0" class="w-full border rounded-lg px-4 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">경비</label>
+            <input type="number" id="manual-overhead-cost" value="0" class="w-full border rounded-lg px-4 py-2">
+          </div>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">소매가</label>
+          <input type="number" id="manual-retail-price" placeholder="선택사항" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">공급가</label>
+          <input type="number" id="manual-wholesale-price" placeholder="선택사항" class="w-full border rounded-lg px-4 py-2">
+        </div>
+      </div>
+      
+      <div class="flex justify-end gap-2 pt-4 border-t">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button onclick="createManualCostSheet()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700">
+          <i class="fas fa-save mr-1"></i> 저장
+        </button>
+      </div>
+    </div>
+  `, 'md');
+}
+
+// 직접 입력 원가계산서 생성
+async function createManualCostSheet() {
+  const productCode = document.getElementById('manual-product-code').value.trim();
+  const productName = document.getElementById('manual-product-name').value.trim();
+  
+  if (!productCode || !productName) {
+    showToast('제품코드와 제품명을 입력해주세요', 'warning');
+    return;
+  }
+  
+  const data = {
+    product_code: productCode,
+    sheet_name: productName,
+    base_quantity: parseFloat(document.getElementById('manual-base-qty').value) || 1,
+    base_unit: document.getElementById('manual-base-unit').value || 'ea',
+    raw_material_cost: parseFloat(document.getElementById('manual-raw-cost').value) || 0,
+    sub_material_cost: parseFloat(document.getElementById('manual-sub-cost').value) || 0,
+    direct_labor_cost: parseFloat(document.getElementById('manual-labor-cost').value) || 0,
+    direct_overhead_cost: parseFloat(document.getElementById('manual-overhead-cost').value) || 0,
+    retail_price: parseFloat(document.getElementById('manual-retail-price').value) || null,
+    wholesale_price: parseFloat(document.getElementById('manual-wholesale-price').value) || null
+  };
+  
+  try {
+    const result = await api('/cost/sheets', 'POST', data);
+    if (result.success) {
+      showToast('원가계산서가 생성되었습니다', 'success');
+      closeModal();
+      loadCostSheets();
+      switchCostTab('sheets');
+    } else {
+      showToast(result.error || '생성 실패', 'error');
+    }
+  } catch (e) {
+    showToast('생성 실패: ' + e.message, 'error');
+  }
+}
+
+// 원가계산서 엑셀 다운로드
+async function exportCostSheetExcel(sheetId) {
+  try {
+    const result = await api(`/cost/sheets/${sheetId}/print`);
+    if (!result.success) {
+      showToast('데이터를 불러올 수 없습니다', 'error');
+      return;
+    }
+    
+    const { sheet, summary, raw_materials } = result.data;
+    
+    // CSV 생성 (UTF-8 BOM 포함)
+    let csv = '\uFEFF';
+    csv += '제조원가계산서\n';
+    csv += `제품명,${sheet.sheet_name || sheet.product_name || ''}\n`;
+    csv += `제품코드,${sheet.product_code}\n`;
+    csv += `기준수량,${sheet.base_quantity || 1} ${sheet.base_unit || 'ea'}\n`;
+    csv += `작성일,${sheet.created_date || ''}\n`;
+    csv += '\n';
+    csv += '제조원가 요약\n';
+    csv += `원재료비,${summary?.raw_material_cost || 0}\n`;
+    csv += `부재료비,${summary?.sub_material_cost || 0}\n`;
+    csv += `직접노무비,${summary?.direct_labor_cost || 0}\n`;
+    csv += `직접경비,${summary?.direct_overhead_cost || 0}\n`;
+    csv += `제조원가합계,${summary?.total_manufacturing_cost || 0}\n`;
+    csv += '\n';
+    csv += '원재료비 상세\n';
+    csv += '원재료명,중량(g),LOSS,kg단가,금액\n';
+    
+    if (raw_materials) {
+      raw_materials.forEach(m => {
+        csv += `${m.item_name || ''},${m.weight || ''},${m.loss_rate ? (m.loss_rate * 100) + '%' : ''},${m.unit_price || ''},${m.amount || ''}\n`;
+      });
+    }
+    
+    // 다운로드
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `원가계산서_${sheet.product_code}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    
+    showToast('엑셀 파일이 다운로드되었습니다', 'success');
+  } catch (e) {
+    showToast('다운로드 실패: ' + e.message, 'error');
+  }
+}
+
 // 전역 함수 노출
 window.renderCostCalc = renderCostCalc;
 window.switchCostTab = switchCostTab;
@@ -19356,3 +19525,6 @@ window.deleteCostSheet = deleteCostSheet;
 window.showCreateCostSheetModal = showCreateCostSheetModal;
 window.loadProductBOMForCost = loadProductBOMForCost;
 window.createCostSheetFromBOM = createCostSheetFromBOM;
+window.showManualCostSheetModal = showManualCostSheetModal;
+window.createManualCostSheet = createManualCostSheet;
+window.exportCostSheetExcel = exportCostSheetExcel;

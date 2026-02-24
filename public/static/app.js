@@ -13367,7 +13367,7 @@ function cancelOrderUpload() {
   window.orderUploadData = null;
 }
 
-// 일괄 생산 등록 실행 + 생산 스케줄 자동 생성
+// 일괄 생산 등록 실행
 async function executeOrderProduction() {
   if (!window.orderUploadData) return;
   
@@ -13393,12 +13393,11 @@ async function executeOrderProduction() {
   
   if (!confirm(`${selectedItems.length}개 제품을 일괄 생산 등록하시겠습니까?`)) return;
   
-  showToast('일괄 생산 등록 및 스케줄 생성 중...', 'info');
+  showToast('일괄 생산 등록 중...', 'info');
   
   let successCount = 0;
   let failCount = 0;
   
-  // 1. 먼저 생산 등록 수행
   for (const item of selectedItems) {
     try {
       const data = {
@@ -13416,43 +13415,11 @@ async function executeOrderProduction() {
     }
   }
   
-  // 2. 생산 스케줄 자동 생성 (발주서 -> 스케줄 연동)
   if (successCount > 0) {
-    try {
-      const scheduleItems = selectedItems.map(item => ({
-        product_code: item.matchedProduct.item_code,
-        product_name: item.matchedProduct.item_name,
-        quantity: item.quantity
-      }));
-      
-      const scheduleResult = await api('/production-plan/from-order', 'POST', {
-        plan_date: prodDate,
-        channel: channel,
-        file_name: window.orderUploadData.fileName || `${channel}_order.xlsx`,
-        items: scheduleItems
-      });
-      
-      if (scheduleResult.success) {
-        const scheduleMsg = scheduleResult.data.is_new 
-          ? '새 생산 스케줄이 생성되었습니다.' 
-          : '기존 스케줄에 추가되었습니다.';
-        showToast(`생산 등록 완료: ${successCount}건 / 스케줄: ${scheduleMsg}`, 'success');
-      } else {
-        showToast(`생산 등록 완료: ${successCount}건 (스케줄 생성 실패)`, 'warning');
-      }
-    } catch (e) {
-      console.error('Schedule creation failed:', e);
-      showToast(`생산 등록 완료: ${successCount}건 (스케줄 생성 실패)`, 'warning');
-    }
-    
+    showToast(`생산 등록 완료: ${successCount}건 성공${failCount > 0 ? `, ${failCount}건 실패` : ''}`, 'success');
     cancelOrderUpload();
     await loadMasterData();
     loadTodayProduction();
-    
-    // 생산 스케줄 목록도 갱신 (해당 페이지가 열려있는 경우)
-    if (typeof loadProductionPlans === 'function') {
-      loadProductionPlans();
-    }
   } else {
     showToast('생산 등록 실패', 'error');
   }
@@ -17056,7 +17023,6 @@ window.downloadMonthlyLedger = downloadMonthlyLedger;
 let productionPlanData = [];
 let productionPlanDate = '';
 let productionPlanFileName = '';
-let savedProductionPlans = []; // 저장된 스케줄 목록
 
 async function renderProductionPlan() {
   const content = document.getElementById('page-content');
@@ -17077,24 +17043,6 @@ async function renderProductionPlan() {
             <i class="fas fa-upload mr-1"></i> 발주서 업로드
             <input type="file" id="plan-file-input" accept=".xlsx,.xls" class="hidden" onchange="handlePlanFileUpload(event)">
           </label>
-        </div>
-      </div>
-      
-      <!-- 저장된 스케줄 목록 -->
-      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-        <div class="px-4 py-3 bg-gray-50 border-b flex items-center justify-between">
-          <h3 class="font-semibold text-gray-700">
-            <i class="fas fa-list-check mr-2 text-indigo-500"></i>
-            저장된 생산 스케줄
-          </h3>
-          <button onclick="loadProductionPlans()" class="text-sm text-indigo-600 hover:text-indigo-800">
-            <i class="fas fa-sync mr-1"></i> 새로고침
-          </button>
-        </div>
-        <div id="saved-plans-content" class="p-4">
-          <div class="text-center text-gray-400 py-4">
-            <i class="fas fa-spinner fa-spin mr-2"></i> 로딩 중...
-          </div>
         </div>
       </div>
       
@@ -17157,288 +17105,6 @@ async function renderProductionPlan() {
       </div>
     </div>
   `;
-  
-  // 저장된 스케줄 목록 로드
-  loadProductionPlans();
-}
-
-// 저장된 생산 스케줄 목록 로드
-async function loadProductionPlans() {
-  const container = document.getElementById('saved-plans-content');
-  if (!container) return;
-  
-  try {
-    const result = await api('/production-plan');
-    
-    if (!result.success || !result.data || result.data.length === 0) {
-      container.innerHTML = `
-        <div class="text-center text-gray-400 py-4">
-          <i class="fas fa-inbox text-2xl mb-2"></i>
-          <p>저장된 스케줄이 없습니다</p>
-          <p class="text-sm">발주서 업로드 후 생산 등록 시 자동 생성됩니다</p>
-        </div>
-      `;
-      return;
-    }
-    
-    savedProductionPlans = result.data;
-    
-    container.innerHTML = `
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-gray-50">
-            <tr>
-              <th class="px-3 py-2 text-left">날짜</th>
-              <th class="px-3 py-2 text-left">스케줄명</th>
-              <th class="px-3 py-2 text-center">품목수</th>
-              <th class="px-3 py-2 text-center">총수량</th>
-              <th class="px-3 py-2 text-center">상태</th>
-              <th class="px-3 py-2 text-center">관리</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${savedProductionPlans.map(plan => `
-              <tr class="border-t hover:bg-gray-50">
-                <td class="px-3 py-2">${plan.plan_date || '-'}</td>
-                <td class="px-3 py-2 font-medium">${plan.plan_name || plan.file_name || '-'}</td>
-                <td class="px-3 py-2 text-center">${formatNumber(plan.total_items || 0)}</td>
-                <td class="px-3 py-2 text-center">${formatNumber(plan.total_quantity || 0)}</td>
-                <td class="px-3 py-2 text-center">
-                  <span class="px-2 py-1 rounded text-xs ${
-                    plan.status === '완료' ? 'bg-green-100 text-green-700' :
-                    plan.status === '진행중' ? 'bg-blue-100 text-blue-700' :
-                    'bg-gray-100 text-gray-700'
-                  }">${plan.status || '작성중'}</span>
-                </td>
-                <td class="px-3 py-2 text-center">
-                  <button onclick="viewProductionPlanDetail(${plan.id})" class="text-indigo-600 hover:text-indigo-800 mr-2" title="상세보기">
-                    <i class="fas fa-eye"></i>
-                  </button>
-                  <button onclick="viewMaterialRequirements(${plan.id})" class="text-green-600 hover:text-green-800 mr-2" title="원료 소요량">
-                    <i class="fas fa-boxes"></i>
-                  </button>
-                  <button onclick="deleteProductionPlan(${plan.id})" class="text-red-600 hover:text-red-800" title="삭제">
-                    <i class="fas fa-trash"></i>
-                  </button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-    
-  } catch (e) {
-    console.error('Failed to load production plans:', e);
-    container.innerHTML = `
-      <div class="text-center text-red-500 py-4">
-        <i class="fas fa-exclamation-triangle mr-2"></i>
-        스케줄 로드 실패
-      </div>
-    `;
-  }
-}
-
-// 스케줄 상세보기
-async function viewProductionPlanDetail(planId) {
-  try {
-    const result = await api(`/production-plan/${planId}`);
-    
-    if (!result.success) {
-      showToast('상세 정보 로드 실패', 'error');
-      return;
-    }
-    
-    const { plan, items } = result.data;
-    
-    // 모달로 표시
-    const modal = document.createElement('div');
-    modal.id = 'plan-detail-modal';
-    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
-    modal.innerHTML = `
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-        <div class="px-6 py-4 border-b flex justify-between items-center bg-gray-50 rounded-t-lg">
-          <div>
-            <h3 class="text-lg font-bold text-gray-900">${plan.plan_name || '스케줄 상세'}</h3>
-            <p class="text-sm text-gray-500">${plan.plan_date} | ${plan.total_items || 0}개 품목</p>
-          </div>
-          <button onclick="document.getElementById('plan-detail-modal').remove()" class="text-gray-500 hover:text-gray-700">
-            <i class="fas fa-times text-xl"></i>
-          </button>
-        </div>
-        <div class="flex-1 overflow-y-auto p-6">
-          <table class="w-full text-sm">
-            <thead class="bg-gray-100">
-              <tr>
-                <th class="px-3 py-2 text-left">순번</th>
-                <th class="px-3 py-2 text-left">제품명</th>
-                <th class="px-3 py-2 text-left">코드</th>
-                <th class="px-3 py-2 text-right">주문수량</th>
-                <th class="px-3 py-2 text-right">시스템재고</th>
-                <th class="px-3 py-2 text-right">냉동재고</th>
-                <th class="px-3 py-2 text-right">필요수량</th>
-                <th class="px-3 py-2 text-center">상태</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${(items || []).map((item, idx) => `
-                <tr class="border-t hover:bg-gray-50">
-                  <td class="px-3 py-2">${item.seq_no || idx + 1}</td>
-                  <td class="px-3 py-2 font-medium">${item.product_name || '-'}</td>
-                  <td class="px-3 py-2 text-gray-500 text-xs">${item.product_code || '-'}</td>
-                  <td class="px-3 py-2 text-right">${formatNumber(item.order_total || 0)}</td>
-                  <td class="px-3 py-2 text-right">${formatNumber(item.current_stock || 0)}</td>
-                  <td class="px-3 py-2 text-right">${formatNumber(item.frozen_stock || 0)}</td>
-                  <td class="px-3 py-2 text-right ${item.required_qty > 0 ? 'text-red-600 font-semibold' : 'text-green-600'}">${formatNumber(item.required_qty || 0)}</td>
-                  <td class="px-3 py-2 text-center">
-                    <span class="px-2 py-1 rounded text-xs ${
-                      item.required_qty > 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
-                    }">${item.required_qty > 0 ? '생산필요' : '충분'}</span>
-                  </td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        </div>
-        <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-2">
-          <button onclick="syncPlanStock(${plan.id})" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">
-            <i class="fas fa-sync mr-1"></i> 재고 동기화
-          </button>
-          <button onclick="document.getElementById('plan-detail-modal').remove()" class="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400">
-            닫기
-          </button>
-        </div>
-      </div>
-    `;
-    
-    document.body.appendChild(modal);
-    
-  } catch (e) {
-    console.error(e);
-    showToast('상세 정보 로드 오류', 'error');
-  }
-}
-
-// 재고 동기화
-async function syncPlanStock(planId) {
-  try {
-    showToast('재고 동기화 중...', 'info');
-    const result = await api(`/production-plan/${planId}/sync-stock`, 'POST');
-    
-    if (result.success) {
-      showToast('재고 동기화 완료', 'success');
-      document.getElementById('plan-detail-modal')?.remove();
-      viewProductionPlanDetail(planId); // 다시 로드
-    } else {
-      showToast('동기화 실패', 'error');
-    }
-  } catch (e) {
-    console.error(e);
-    showToast('동기화 오류', 'error');
-  }
-}
-
-// 원료 소요량 보기
-async function viewMaterialRequirements(planId) {
-  try {
-    showToast('원료 소요량 계산 중...', 'info');
-    const result = await api(`/production-plan/${planId}/material-requirements`);
-    
-    if (!result.success) {
-      showToast('소요량 계산 실패', 'error');
-      return;
-    }
-    
-    const materials = result.data || [];
-    
-    // 모달로 표시
-    const modal = document.createElement('div');
-    modal.id = 'material-req-modal';
-    modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
-    modal.innerHTML = `
-      <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col">
-        <div class="px-6 py-4 border-b flex justify-between items-center bg-gray-50 rounded-t-lg">
-          <div>
-            <h3 class="text-lg font-bold text-gray-900">
-              <i class="fas fa-boxes mr-2 text-green-600"></i>
-              원료 소요량 (BOM 기반)
-            </h3>
-            <p class="text-sm text-gray-500">${materials.length}개 원료 | 부족: ${materials.filter(m => m.is_short).length}개</p>
-          </div>
-          <button onclick="document.getElementById('material-req-modal').remove()" class="text-gray-500 hover:text-gray-700">
-            <i class="fas fa-times text-xl"></i>
-          </button>
-        </div>
-        <div class="flex-1 overflow-y-auto p-6">
-          ${materials.length === 0 ? `
-            <div class="text-center text-gray-400 py-8">
-              <i class="fas fa-box-open text-4xl mb-3"></i>
-              <p>소요량 데이터가 없습니다</p>
-              <p class="text-sm">BOM 데이터 또는 생산필요 품목이 없을 수 있습니다</p>
-            </div>
-          ` : `
-            <table class="w-full text-sm">
-              <thead class="bg-gray-100">
-                <tr>
-                  <th class="px-3 py-2 text-left">원료코드</th>
-                  <th class="px-3 py-2 text-left">원료명</th>
-                  <th class="px-3 py-2 text-right">필요량</th>
-                  <th class="px-3 py-2 text-right">현재재고</th>
-                  <th class="px-3 py-2 text-right">부족량</th>
-                  <th class="px-3 py-2 text-center">상태</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${materials.map(mat => `
-                  <tr class="border-t hover:bg-gray-50 ${mat.is_short ? 'bg-red-50' : ''}">
-                    <td class="px-3 py-2 text-gray-500 text-xs">${mat.item_code}</td>
-                    <td class="px-3 py-2 font-medium">${mat.item_name}</td>
-                    <td class="px-3 py-2 text-right">${formatNumber(mat.total_qty)} ${mat.unit}</td>
-                    <td class="px-3 py-2 text-right">${formatNumber(mat.current_stock)} ${mat.unit}</td>
-                    <td class="px-3 py-2 text-right ${mat.is_short ? 'text-red-600 font-semibold' : 'text-green-600'}">${mat.is_short ? formatNumber(mat.shortage) : '-'} ${mat.is_short ? mat.unit : ''}</td>
-                    <td class="px-3 py-2 text-center">
-                      <span class="px-2 py-1 rounded text-xs ${mat.is_short ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">${mat.is_short ? '부족' : '충분'}</span>
-                    </td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          `}
-        </div>
-        <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-2">
-          <button onclick="document.getElementById('material-req-modal').remove()" class="px-4 py-2 bg-gray-300 text-gray-700 rounded hover:bg-gray-400">
-            닫기
-          </button>
-        </div>
-      </div>
-    `;
-    
-    document.body.appendChild(modal);
-    showToast('소요량 계산 완료', 'success');
-    
-  } catch (e) {
-    console.error(e);
-    showToast('소요량 계산 오류', 'error');
-  }
-}
-
-// 스케줄 삭제
-async function deleteProductionPlan(planId) {
-  if (!confirm('이 스케줄을 삭제하시겠습니까?')) return;
-  
-  try {
-    const result = await api(`/production-plan/${planId}`, 'DELETE');
-    
-    if (result.success) {
-      showToast('스케줄 삭제 완료', 'success');
-      loadProductionPlans();
-    } else {
-      showToast('삭제 실패', 'error');
-    }
-  } catch (e) {
-    console.error(e);
-    showToast('삭제 오류', 'error');
-  }
 }
 
 // 파일 업로드 처리
@@ -18477,12 +18143,6 @@ window.filterPlanItems = filterPlanItems;
 window.downloadPlanExcel = downloadPlanExcel;
 window.printPlanReport = printPlanReport;
 window.showFrozenStockModal = showFrozenStockModal;
-// 스케줄 관련 함수
-window.loadProductionPlans = loadProductionPlans;
-window.viewProductionPlanDetail = viewProductionPlanDetail;
-window.viewMaterialRequirements = viewMaterialRequirements;
-window.deleteProductionPlan = deleteProductionPlan;
-window.syncPlanStock = syncPlanStock;
 window.switchFrozenTab = switchFrozenTab;
 window.showFrozenStockDetail = showFrozenStockDetail;
 window.showFrozenInboundModal = showFrozenInboundModal;

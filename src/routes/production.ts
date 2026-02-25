@@ -398,7 +398,7 @@ productionRoutes.post('/', async (c) => {
   }
 });
 
-// 빠른 일괄 생산 등록 (발주서 업로드용 - 재고 차감 간소화)
+// 빠른 일괄 생산 등록 (발주서 업로드용 - 원재료 차감 포함)
 productionRoutes.post('/batch', async (c) => {
   const body = await c.req.json();
   const { items, prod_date, memo } = body;
@@ -426,7 +426,33 @@ productionRoutes.post('/batch', async (c) => {
     productMap.set(p.item_code, p);
   }
   
-  // 각 제품 등록 (간소화된 버전)
+  // 모든 BOM 정보를 한 번에 조회
+  const allBom = await c.env.DB.prepare(`
+    SELECT b.product_code, b.item_code, b.quantity, b.unit,
+           COALESCE(m1.item_code, m2.item_code) as matched_item_code,
+           COALESCE(m1.item_name, m2.item_name) as item_name
+    FROM bom b
+    LEFT JOIN master m1 ON b.item_code = m1.item_code
+    LEFT JOIN master m2 ON (
+      (b.item_code LIKE 'RM%' AND m2.item_code = 'R' || SUBSTR(b.item_code, 3)) OR
+      (b.item_code LIKE 'R%' AND b.item_code NOT LIKE 'RM%' AND m2.item_code = 'RM' || SUBSTR(b.item_code, 2))
+    )
+    WHERE b.product_code IN (${placeholders})
+  `).bind(...productCodes).all<any>();
+  
+  // BOM을 제품별로 그룹핑
+  const bomMap = new Map<string, any[]>();
+  for (const bom of allBom.results || []) {
+    if (!bomMap.has(bom.product_code)) {
+      bomMap.set(bom.product_code, []);
+    }
+    bomMap.get(bom.product_code)!.push(bom);
+  }
+  
+  // 원재료 차감 누적 (한 번에 처리)
+  const materialDeductions = new Map<string, { qty: number, itemName: string, memos: string[] }>();
+  
+  // 각 제품 등록
   for (const item of items) {
     const product = productMap.get(item.product_code);
     
@@ -439,19 +465,47 @@ productionRoutes.post('/batch', async (c) => {
     try {
       const productLot = `PRD-${productionDate.replace(/-/g, '')}-${item.product_code}-${String(Date.now()).slice(-4)}`;
       
-      // 1. 생산 기록만 등록 (원재료 차감 생략)
+      // 1. 생산 기록 등록
       const prodResult = await c.env.DB.prepare(`
         INSERT INTO production (prod_date, product_code, quantity, lot_number, status, memo)
         VALUES (?, ?, ?, ?, '완료', ?)
       `).bind(productionDate, item.product_code, item.quantity, productLot, memo || '발주서 일괄등록').run();
       
-      // 2. 제품 재고 증가
+      const productionId = prodResult.meta.last_row_id;
+      
+      // 2. BOM 기반 원재료 차감 누적
+      const bomItems = bomMap.get(item.product_code) || [];
+      for (const bom of bomItems) {
+        const actualItemCode = bom.matched_item_code || bom.item_code;
+        const requiredQty = bom.quantity * item.quantity;
+        const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
+        
+        if (materialDeductions.has(actualItemCode)) {
+          const existing = materialDeductions.get(actualItemCode)!;
+          existing.qty += requiredKg;
+          existing.memos.push(`${product.item_name} ${item.quantity}개`);
+        } else {
+          materialDeductions.set(actualItemCode, {
+            qty: requiredKg,
+            itemName: bom.item_name || actualItemCode,
+            memos: [`${product.item_name} ${item.quantity}개`]
+          });
+        }
+        
+        // 생산 자재 기록
+        await c.env.DB.prepare(`
+          INSERT INTO production_materials (production_id, item_code, planned_qty, actual_qty, unit)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(productionId, actualItemCode, requiredQty, requiredQty, bom.unit).run();
+      }
+      
+      // 3. 제품 재고 증가
       await c.env.DB.prepare(`
         UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
         WHERE item_code = ?
       `).bind(item.quantity, item.product_code).run();
       
-      // 3. 제품 입고 기록
+      // 4. 제품 입고 기록
       await c.env.DB.prepare(`
         INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
         VALUES (?, ?, ?, date(?, '+' || ? || ' days'), ?, ?, '합격', '자체생산')
@@ -464,6 +518,12 @@ productionRoutes.post('/batch', async (c) => {
         item.quantity,
         item.quantity
       ).run();
+      
+      // 5. 제품 입고 트랜잭션
+      await c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo)
+        VALUES (?, ?, '입고', ?, ?, ?)
+      `).bind(productionDate, item.product_code, item.quantity, productLot, `생산입고 (생산ID: ${productionId})`).run();
       
       results.push({ 
         product_code: item.product_code, 
@@ -481,12 +541,37 @@ productionRoutes.post('/batch', async (c) => {
     }
   }
   
+  // 원재료 일괄 차감 및 트랜잭션 기록
+  for (const [itemCode, data] of materialDeductions) {
+    try {
+      // 마스터 재고 차감
+      await c.env.DB.prepare(`
+        UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
+        WHERE item_code = ?
+      `).bind(data.qty, itemCode).run();
+      
+      // 사용 트랜잭션 기록
+      await c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+        VALUES (?, ?, '사용', ?, ?)
+      `).bind(
+        productionDate, 
+        itemCode, 
+        data.qty, 
+        `생산사용: ${data.memos.slice(0, 3).join(', ')}${data.memos.length > 3 ? ` 외 ${data.memos.length - 3}건` : ''}`
+      ).run();
+    } catch (e) {
+      console.error('Material deduction error:', itemCode, e);
+    }
+  }
+  
   return c.json({
     success: true,
     data: {
       total: items.length,
       success: successCount,
       fail: failCount,
+      materials_deducted: materialDeductions.size,
       results
     }
   });

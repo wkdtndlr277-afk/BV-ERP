@@ -398,6 +398,100 @@ productionRoutes.post('/', async (c) => {
   }
 });
 
+// 빠른 일괄 생산 등록 (발주서 업로드용 - 재고 차감 간소화)
+productionRoutes.post('/batch', async (c) => {
+  const body = await c.req.json();
+  const { items, prod_date, memo } = body;
+  // items: [{ product_code, quantity }]
+  
+  if (!items || items.length === 0) {
+    return c.json({ success: false, error: '등록할 항목이 없습니다.' }, 400);
+  }
+  
+  const productionDate = prod_date || new Date().toISOString().split('T')[0];
+  const results: any[] = [];
+  let successCount = 0;
+  let failCount = 0;
+  
+  // 모든 제품 정보를 한 번에 조회
+  const productCodes = items.map((i: any) => i.product_code);
+  const placeholders = productCodes.map(() => '?').join(',');
+  const products = await c.env.DB.prepare(`
+    SELECT item_code, item_name, expiry_days FROM master 
+    WHERE item_code IN (${placeholders}) AND category = '제품'
+  `).bind(...productCodes).all<any>();
+  
+  const productMap = new Map();
+  for (const p of products.results || []) {
+    productMap.set(p.item_code, p);
+  }
+  
+  // 각 제품 등록 (간소화된 버전)
+  for (const item of items) {
+    const product = productMap.get(item.product_code);
+    
+    if (!product) {
+      results.push({ product_code: item.product_code, success: false, error: '제품 없음' });
+      failCount++;
+      continue;
+    }
+    
+    try {
+      const productLot = `PRD-${productionDate.replace(/-/g, '')}-${item.product_code}-${String(Date.now()).slice(-4)}`;
+      
+      // 1. 생산 기록만 등록 (원재료 차감 생략)
+      const prodResult = await c.env.DB.prepare(`
+        INSERT INTO production (prod_date, product_code, quantity, lot_number, status, memo)
+        VALUES (?, ?, ?, ?, '완료', ?)
+      `).bind(productionDate, item.product_code, item.quantity, productLot, memo || '발주서 일괄등록').run();
+      
+      // 2. 제품 재고 증가
+      await c.env.DB.prepare(`
+        UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
+        WHERE item_code = ?
+      `).bind(item.quantity, item.product_code).run();
+      
+      // 3. 제품 입고 기록
+      await c.env.DB.prepare(`
+        INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
+        VALUES (?, ?, ?, date(?, '+' || ? || ' days'), ?, ?, '합격', '자체생산')
+      `).bind(
+        productLot,
+        item.product_code,
+        productionDate,
+        productionDate,
+        product.expiry_days || 30,
+        item.quantity,
+        item.quantity
+      ).run();
+      
+      results.push({ 
+        product_code: item.product_code, 
+        product_name: product.item_name,
+        quantity: item.quantity,
+        lot_number: productLot,
+        success: true 
+      });
+      successCount++;
+      
+    } catch (error: any) {
+      console.error('Batch production error:', item.product_code, error);
+      results.push({ product_code: item.product_code, success: false, error: error.message });
+      failCount++;
+    }
+  }
+  
+  return c.json({
+    success: true,
+    data: {
+      total: items.length,
+      success: successCount,
+      fail: failCount,
+      results
+    }
+  });
+});
+
 // 생산 취소 (원복)
 productionRoutes.post('/:id/cancel', async (c) => {
   const id = c.req.param('id');

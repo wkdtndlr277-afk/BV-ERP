@@ -13399,7 +13399,7 @@ function cancelOrderUpload() {
   window.orderUploadData = null;
 }
 
-// 일괄 생산 등록 실행
+// 일괄 생산 등록 실행 (배치 API 사용으로 속도 개선)
 async function executeOrderProduction() {
   if (!window.orderUploadData) return;
   
@@ -13427,33 +13427,31 @@ async function executeOrderProduction() {
   
   showToast('일괄 생산 등록 중...', 'info');
   
-  let successCount = 0;
-  let failCount = 0;
-  
-  for (const item of selectedItems) {
-    try {
-      const data = {
-        prod_date: prodDate,
-        product_code: item.matchedProduct.item_code,
-        quantity: item.quantity,
-        memo: memo
-      };
-      
-      await api('/production', 'POST', data);
-      successCount++;
-    } catch (e) {
-      console.error('Production register failed:', item.matchedProduct.item_name, e);
-      failCount++;
+  try {
+    // 배치 API로 한 번에 등록
+    const batchItems = selectedItems.map(item => ({
+      product_code: item.matchedProduct.item_code,
+      quantity: item.quantity
+    }));
+    
+    const result = await api('/production/batch', 'POST', {
+      items: batchItems,
+      prod_date: prodDate,
+      memo: memo
+    });
+    
+    if (result.success) {
+      const { success, fail } = result.data;
+      showToast(`생산 등록 완료: ${success}건 성공${fail > 0 ? `, ${fail}건 실패` : ''}`, 'success');
+      cancelOrderUpload();
+      await loadMasterData();
+      loadTodayProduction();
+    } else {
+      showToast(result.error || '생산 등록 실패', 'error');
     }
-  }
-  
-  if (successCount > 0) {
-    showToast(`생산 등록 완료: ${successCount}건 성공${failCount > 0 ? `, ${failCount}건 실패` : ''}`, 'success');
-    cancelOrderUpload();
-    await loadMasterData();
-    loadTodayProduction();
-  } else {
-    showToast('생산 등록 실패', 'error');
+  } catch (e) {
+    console.error('Batch production failed:', e);
+    showToast('생산 등록 중 오류 발생', 'error');
   }
 }
 

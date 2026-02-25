@@ -11548,17 +11548,19 @@ function updateMaterialRequirements() {
     
     return `
       <tr class="${isAvailable ? '' : 'bg-red-50'}">
-        <td class="px-4 py-2 border">
+        <td class="px-3 py-2 border">
           <span class="text-gray-500 text-xs mr-1">${mat.item_code}</span>
           <span class="font-medium">${mat.item_name || ''}</span>
         </td>
-        <td class="px-4 py-2 border text-center">${mat.quantity} ${mat.unit}</td>
-        <td class="px-4 py-2 border text-right font-medium">${formatNumber(required)} ${mat.unit}</td>
-        <td class="px-4 py-2 border text-right">${formatNumber(stock)} kg</td>
-        <td class="px-4 py-2 border text-center">
+        <td class="px-3 py-2 border text-center">${mat.quantity} ${mat.unit}</td>
+        <td class="px-3 py-2 border text-right font-medium">${formatNumber(required)} ${mat.unit}</td>
+        <td class="px-3 py-2 border text-right">${formatNumber(stock)} kg</td>
+        <td class="px-3 py-2 border text-center text-xs">${mat.supplier || '-'}</td>
+        <td class="px-3 py-2 border text-center text-xs">${mat.expiry_date || '-'}</td>
+        <td class="px-3 py-2 border text-center">
           ${isAvailable 
-            ? '<span class="text-green-600"><i class="fas fa-check-circle"></i> 충분</span>' 
-            : '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i> 부족</span>'}
+            ? '<span class="text-green-600"><i class="fas fa-check-circle"></i></span>' 
+            : '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i></span>'}
         </td>
       </tr>
     `;
@@ -11568,11 +11570,13 @@ function updateMaterialRequirements() {
     <table class="w-full text-sm border-collapse">
       <thead class="bg-gray-100">
         <tr>
-          <th class="px-4 py-2 border text-left">원재료</th>
-          <th class="px-4 py-2 border text-center">1개당</th>
-          <th class="px-4 py-2 border text-center">필요량</th>
-          <th class="px-4 py-2 border text-center">현재고</th>
-          <th class="px-4 py-2 border text-center">상태</th>
+          <th class="px-3 py-2 border text-left">원재료</th>
+          <th class="px-3 py-2 border text-center">1개당</th>
+          <th class="px-3 py-2 border text-center">필요량</th>
+          <th class="px-3 py-2 border text-center">현재고</th>
+          <th class="px-3 py-2 border text-center">거래처</th>
+          <th class="px-3 py-2 border text-center">소비기한</th>
+          <th class="px-3 py-2 border text-center">상태</th>
         </tr>
       </thead>
       <tbody>${rows}</tbody>

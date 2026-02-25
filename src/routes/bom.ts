@@ -62,12 +62,14 @@ bomRoutes.get('/product/:product_code', async (c) => {
     SELECT b.* FROM bom b WHERE b.product_code = ? ORDER BY b.sort_order, b.id
   `).bind(productCode).all<any>();
   
-  // 각 BOM 항목에 대해 마스터 정보 조회 (RM/R 코드 모두 시도)
+  // 각 BOM 항목에 대해 마스터 정보 및 거래처 조회 (RM/R 코드 모두 시도)
   const materials: any[] = [];
   for (const item of bomRaw.results || []) {
     let master = await c.env.DB.prepare(`
       SELECT item_name, unit, current_stock FROM master WHERE item_code = ?
     `).bind(item.item_code).first<any>();
+    
+    let actualItemCode = item.item_code;
     
     // 매칭되지 않으면 변환된 코드로 시도
     if (!master) {
@@ -81,6 +83,31 @@ bomRoutes.get('/product/:product_code', async (c) => {
         master = await c.env.DB.prepare(`
           SELECT item_name, unit, current_stock FROM master WHERE item_code = ?
         `).bind(altCode).first<any>();
+        if (master) actualItemCode = altCode;
+      }
+    }
+    
+    // 최근 입고 LOT에서 거래처 정보 조회 (FEFO 순서로 첫번째)
+    let supplierInfo = await c.env.DB.prepare(`
+      SELECT supplier, expiry_date FROM inbound 
+      WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+      ORDER BY expiry_date ASC, inbound_date ASC LIMIT 1
+    `).bind(actualItemCode).first<any>();
+    
+    // 없으면 다른 형식 코드로 시도
+    if (!supplierInfo) {
+      let altCode = '';
+      if (actualItemCode.startsWith('RM')) {
+        altCode = 'R' + actualItemCode.substring(2);
+      } else if (actualItemCode.startsWith('R') && !actualItemCode.startsWith('RM')) {
+        altCode = 'RM' + actualItemCode.substring(1);
+      }
+      if (altCode) {
+        supplierInfo = await c.env.DB.prepare(`
+          SELECT supplier, expiry_date FROM inbound 
+          WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+          ORDER BY expiry_date ASC, inbound_date ASC LIMIT 1
+        `).bind(altCode).first<any>();
       }
     }
     
@@ -88,7 +115,9 @@ bomRoutes.get('/product/:product_code', async (c) => {
       ...item,
       item_name: master?.item_name || null,
       item_unit: master?.unit || item.unit,
-      current_stock: master?.current_stock ?? 0
+      current_stock: master?.current_stock ?? 0,
+      supplier: supplierInfo?.supplier || null,
+      expiry_date: supplierInfo?.expiry_date || null
     });
   }
   

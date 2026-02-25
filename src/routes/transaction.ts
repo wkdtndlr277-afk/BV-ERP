@@ -155,6 +155,10 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
         ORDER BY pm.id
       `).bind(production.id).all<any>();
       
+      // 자체생산 원료 코드 목록 (르방, 탕종, 발효종 등)
+      const selfMadeMaterials = ['RM135', 'RM137', 'RM141', 'RM146', 'RM149', 'RM155', 'RM156'];
+      const selfMadeKeywords = ['르방', '탕종', '발효종'];
+      
       // 각 원료의 입고 정보 (거래처, 입고일, 유통기한) 조회
       for (const mat of materialsRaw.results || []) {
         let inboundInfo = null;
@@ -165,13 +169,17 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
           `).bind(mat.lot_number).first<any>();
         }
         
+        // 자체생산 원료인지 확인 (코드 또는 이름으로)
+        const isSelfMade = selfMadeMaterials.includes(mat.item_code) || 
+          selfMadeKeywords.some(kw => (mat.item_name || '').includes(kw));
+        
         usedMaterials.push({
           item_code: mat.item_code,
           item_name: mat.item_name || mat.item_code,
           lot_number: mat.lot_number || '-',
           actual_qty: mat.actual_qty || mat.planned_qty,
           unit: mat.item_unit || mat.unit || 'g',
-          supplier: inboundInfo?.supplier || '-',
+          supplier: isSelfMade ? '자체제작' : (inboundInfo?.supplier || '-'),
           inbound_date: inboundInfo?.inbound_date || '-',
           expiry_date: inboundInfo?.expiry_date || '-'
         });

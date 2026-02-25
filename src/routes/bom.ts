@@ -87,27 +87,37 @@ bomRoutes.get('/product/:product_code', async (c) => {
       }
     }
     
-    // 최근 입고 LOT에서 거래처 정보 조회 (FEFO 순서로 첫번째)
-    let supplierInfo = await c.env.DB.prepare(`
-      SELECT supplier, expiry_date FROM inbound 
-      WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
-      ORDER BY expiry_date ASC, inbound_date ASC LIMIT 1
-    `).bind(actualItemCode).first<any>();
+    // 자체생산 원료 코드 목록 (르방, 탕종, 발효종 등)
+    const selfMadeMaterials = ['RM135', 'RM137', 'RM141', 'RM146', 'RM149', 'RM155', 'RM156'];
+    const selfMadeKeywords = ['르방', '탕종', '발효종'];
+    const isSelfMade = selfMadeMaterials.includes(actualItemCode) || 
+      selfMadeKeywords.some(kw => (master?.item_name || '').includes(kw));
     
-    // 없으면 다른 형식 코드로 시도
-    if (!supplierInfo) {
-      let altCode = '';
-      if (actualItemCode.startsWith('RM')) {
-        altCode = 'R' + actualItemCode.substring(2);
-      } else if (actualItemCode.startsWith('R') && !actualItemCode.startsWith('RM')) {
-        altCode = 'RM' + actualItemCode.substring(1);
-      }
-      if (altCode) {
-        supplierInfo = await c.env.DB.prepare(`
-          SELECT supplier, expiry_date FROM inbound 
-          WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
-          ORDER BY expiry_date ASC, inbound_date ASC LIMIT 1
-        `).bind(altCode).first<any>();
+    // 자체생산 원료가 아닌 경우에만 입고 정보 조회
+    let supplierInfo: any = null;
+    if (!isSelfMade) {
+      // 최근 입고 LOT에서 거래처 정보 조회 (FEFO 순서로 첫번째)
+      supplierInfo = await c.env.DB.prepare(`
+        SELECT supplier, expiry_date FROM inbound 
+        WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+        ORDER BY expiry_date ASC, inbound_date ASC LIMIT 1
+      `).bind(actualItemCode).first<any>();
+      
+      // 없으면 다른 형식 코드로 시도
+      if (!supplierInfo) {
+        let altCode = '';
+        if (actualItemCode.startsWith('RM')) {
+          altCode = 'R' + actualItemCode.substring(2);
+        } else if (actualItemCode.startsWith('R') && !actualItemCode.startsWith('RM')) {
+          altCode = 'RM' + actualItemCode.substring(1);
+        }
+        if (altCode) {
+          supplierInfo = await c.env.DB.prepare(`
+            SELECT supplier, expiry_date FROM inbound 
+            WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+            ORDER BY expiry_date ASC, inbound_date ASC LIMIT 1
+          `).bind(altCode).first<any>();
+        }
       }
     }
     
@@ -116,7 +126,7 @@ bomRoutes.get('/product/:product_code', async (c) => {
       item_name: master?.item_name || null,
       item_unit: master?.unit || item.unit,
       current_stock: master?.current_stock ?? 0,
-      supplier: supplierInfo?.supplier || null,
+      supplier: isSelfMade ? '자체제작' : (supplierInfo?.supplier || null),
       expiry_date: supplierInfo?.expiry_date || null
     });
   }

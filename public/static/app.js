@@ -11813,6 +11813,7 @@ async function loadProductionHistory() {
             <th class="px-3 py-2 text-left">제품</th>
             <th class="px-3 py-2 text-center">수량</th>
             <th class="px-3 py-2 text-center">상태</th>
+            <th class="px-3 py-2 text-center">관리</th>
           </tr>
         </thead>
         <tbody class="divide-y">
@@ -11823,6 +11824,9 @@ async function loadProductionHistory() {
               <td class="px-3 py-2 text-center">${formatNumber(p.quantity)}</td>
               <td class="px-3 py-2 text-center">
                 <span class="px-2 py-1 rounded text-xs ${p.status === '완료' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${p.status}</span>
+              </td>
+              <td class="px-3 py-2 text-center">
+                <button onclick="deleteSingleProduction(${p.id}, '${(p.product_name || p.product_code).replace(/'/g, "\\'")}'); closeModal(); loadProductionHistory();" class="text-red-500 hover:text-red-700 text-xs"><i class="fas fa-trash"></i> 삭제</button>
               </td>
             </tr>
           `).join('')}

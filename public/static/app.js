@@ -11686,8 +11686,9 @@ async function loadTodayProduction() {
                     ${p.status}
                   </span>
                 </td>
-                <td class="px-3 py-2 text-center">
-                  ${p.status === '완료' ? `<button onclick="cancelProduction(${p.id})" class="text-red-500 hover:text-red-700 text-xs"><i class="fas fa-undo"></i> 취소</button>` : '-'}
+                <td class="px-3 py-2 text-center space-x-2">
+                  ${p.status === '완료' ? `<button onclick="cancelProduction(${p.id})" class="text-orange-500 hover:text-orange-700 text-xs"><i class="fas fa-undo"></i> 취소</button>` : ''}
+                  <button onclick="deleteSingleProduction(${p.id}, '${(p.product_name || p.product_code).replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 text-xs"><i class="fas fa-trash"></i> 삭제</button>
                 </td>
               </tr>
             `).join('')}
@@ -11754,6 +11755,29 @@ async function cancelProduction(id) {
     loadTodayProduction();
   } catch (e) {
     // Error handled
+  }
+}
+
+// 단일 생산 삭제
+async function deleteSingleProduction(id, productName) {
+  if (!confirm(`"${productName}" 생산 기록을 삭제하시겠습니까?\n\n⚠️ 관련 원재료/제품 재고도 함께 복원/차감됩니다.`)) {
+    return;
+  }
+  
+  try {
+    showToast('삭제 중...', 'info');
+    const result = await api(`/production/${id}`, 'DELETE');
+    
+    if (result.success) {
+      showToast('생산 기록이 삭제되었습니다', 'success');
+      await loadMasterData();
+      loadTodayProduction();
+    } else {
+      showToast(result.error || '삭제 실패', 'error');
+    }
+  } catch (e) {
+    console.error('삭제 오류:', e);
+    showToast('삭제 중 오류가 발생했습니다', 'error');
   }
 }
 
@@ -13649,6 +13673,7 @@ window.updateMaterialRequirements = updateMaterialRequirements;
 window.submitProduction = submitProduction;
 window.loadTodayProduction = loadTodayProduction;
 window.cancelProduction = cancelProduction;
+window.deleteSingleProduction = deleteSingleProduction;
 window.deleteAllProduction = deleteAllProduction;
 window.loadProductionHistory = loadProductionHistory;
 window.handleOrderDragOver = handleOrderDragOver;

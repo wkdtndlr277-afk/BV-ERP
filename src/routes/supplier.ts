@@ -7,6 +7,7 @@ interface Supplier {
   supplier_code: string;
   supplier_name: string;
   supplier_type?: string;
+  business_type?: string;   // 업체 구분: 공급업체, 제조업체(직거래)
   contact?: string;
   contact_person?: string;  // 담당자
   address?: string;
@@ -32,6 +33,7 @@ supplierRoutes.get('/migrate', async (c) => {
       { name: 'haccp_certified', type: 'INTEGER DEFAULT 0' },
       { name: 'is_imported', type: 'INTEGER DEFAULT 0' },
       { name: 'business_number', type: 'TEXT' },
+      { name: 'business_type', type: 'TEXT DEFAULT \'공급업체\'' },
       { name: 'email', type: 'TEXT' },
       { name: 'memo', type: 'TEXT' },
       { name: 'updated_at', type: 'DATETIME DEFAULT CURRENT_TIMESTAMP' }
@@ -120,7 +122,8 @@ supplierRoutes.post('/', async (c) => {
   const { 
     supplier_code, 
     supplier_name, 
-    supplier_type, 
+    supplier_type,
+    business_type,
     contact, 
     contact_person,
     address,
@@ -139,14 +142,15 @@ supplierRoutes.post('/', async (c) => {
   try {
     await c.env.DB.prepare(`
       INSERT INTO suppliers (
-        supplier_code, supplier_name, supplier_type, contact, contact_person,
+        supplier_code, supplier_name, supplier_type, business_type, contact, contact_person,
         address, material_name, haccp_certified, is_imported, business_number, email, memo
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       supplier_code,
       supplier_name,
       supplier_type || '입고',
+      business_type || '공급업체',
       contact || null,
       contact_person || null,
       address || null,
@@ -173,7 +177,8 @@ supplierRoutes.put('/:supplier_code', async (c) => {
   const body = await c.req.json<Partial<Supplier>>();
   const { 
     supplier_name, 
-    supplier_type, 
+    supplier_type,
+    business_type,
     contact, 
     contact_person,
     address,
@@ -190,6 +195,7 @@ supplierRoutes.put('/:supplier_code', async (c) => {
     UPDATE suppliers 
     SET supplier_name = COALESCE(?, supplier_name),
         supplier_type = COALESCE(?, supplier_type),
+        business_type = COALESCE(?, business_type),
         contact = COALESCE(?, contact),
         contact_person = COALESCE(?, contact_person),
         address = COALESCE(?, address),
@@ -202,8 +208,8 @@ supplierRoutes.put('/:supplier_code', async (c) => {
         updated_at = CURRENT_TIMESTAMP
   `;
   
-  const params = [
-    supplier_name, supplier_type, contact, contact_person, address,
+  const params: any[] = [
+    supplier_name, supplier_type, business_type, contact, contact_person, address,
     material_name, 
     haccp_certified !== undefined ? (haccp_certified ? 1 : 0) : null,
     is_imported !== undefined ? (is_imported ? 1 : 0) : null,

@@ -7041,6 +7041,7 @@ function renderSuppliersTable(suppliers) {
             <th class="text-left p-3">거래처코드</th>
             <th class="text-left p-3">거래처명</th>
             <th class="text-center p-3">유형</th>
+            <th class="text-center p-3">구분</th>
             <th class="text-left p-3">담당자</th>
             <th class="text-left p-3">연락처</th>
             <th class="text-left p-3">원료명</th>
@@ -7061,14 +7062,20 @@ function renderSuppliersTable(suppliers) {
                   'bg-purple-100 text-purple-700'
                 }">${s.supplier_type || '-'}</span>
               </td>
+              <td class="p-3 text-center">
+                <span class="px-2 py-1 rounded text-xs ${
+                  s.business_type === '제조업체' ? 'bg-orange-100 text-orange-700' :
+                  'bg-gray-100 text-gray-700'
+                }">${s.business_type || '공급업체'}</span>
+              </td>
               <td class="p-3">${s.contact_person || '-'}</td>
               <td class="p-3">${s.contact || '-'}</td>
               <td class="p-3 text-xs">${s.material_name || '-'}</td>
               <td class="p-3 text-center">
-                ${s.haccp_certified ? '<i class="fas fa-check-circle text-green-500"></i>' : '<i class="fas fa-minus-circle text-gray-300"></i>'}
+                ${s.haccp_certified ? '<i class="fas fa-check-circle text-green-500" title="HACCP 인증"></i>' : '<i class="fas fa-times-circle text-gray-300" title="미인증"></i>'}
               </td>
               <td class="p-3 text-center">
-                ${s.is_imported ? '<i class="fas fa-globe text-blue-500"></i>' : '<i class="fas fa-home text-gray-400"></i>'}
+                ${s.is_imported ? '<i class="fas fa-check-circle text-blue-500" title="수입"></i>' : '<i class="fas fa-times-circle text-gray-300" title="국내"></i>'}
               </td>
               <td class="p-3 text-center">
                 <button onclick="viewSupplierDetail(${s.id})" class="text-gray-500 hover:text-gray-700 mr-1" title="상세보기">
@@ -7090,7 +7097,8 @@ function renderSuppliersTable(suppliers) {
       <span>총 ${suppliers.length}개 거래처</span>
       <span class="text-xs">
         HACCP: ${suppliers.filter(s => s.haccp_certified).length}개 | 
-        수입: ${suppliers.filter(s => s.is_imported).length}개
+        수입: ${suppliers.filter(s => s.is_imported).length}개 |
+        제조업체: ${suppliers.filter(s => s.business_type === '제조업체').length}개
       </span>
     </div>
   `;
@@ -7168,7 +7176,7 @@ function showSupplierModal(supplier = null) {
       
       <div class="grid grid-cols-2 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">유형</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">거래 유형</label>
           <select id="supplier-type" class="w-full border rounded-lg px-4 py-2">
             <option value="입고" ${supplier?.supplier_type === '입고' ? 'selected' : ''}>입고 (원료 공급)</option>
             <option value="출고" ${supplier?.supplier_type === '출고' ? 'selected' : ''}>출고 (제품 납품)</option>
@@ -7176,19 +7184,33 @@ function showSupplierModal(supplier = null) {
           </select>
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">담당자</label>
-          <input type="text" id="supplier-contact-person" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact_person || ''}" placeholder="담당자명">
+          <label class="block text-sm font-medium text-gray-700 mb-1">업체 구분</label>
+          <select id="supplier-business-type" class="w-full border rounded-lg px-4 py-2">
+            <option value="공급업체" ${!supplier?.business_type || supplier?.business_type === '공급업체' ? 'selected' : ''}>공급업체</option>
+            <option value="제조업체" ${supplier?.business_type === '제조업체' ? 'selected' : ''}>제조업체 (직거래)</option>
+          </select>
         </div>
       </div>
       
       <div class="grid grid-cols-2 gap-4">
         <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">담당자</label>
+          <input type="text" id="supplier-contact-person" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact_person || ''}" placeholder="담당자명">
+        </div>
+        <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">연락처</label>
           <input type="text" id="supplier-contact" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact || ''}" placeholder="전화번호">
         </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">이메일</label>
           <input type="email" id="supplier-email" class="w-full border rounded-lg px-4 py-2" value="${supplier?.email || ''}" placeholder="이메일 주소">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">사업자번호</label>
+          <input type="text" id="supplier-business-number" class="w-full border rounded-lg px-4 py-2" value="${supplier?.business_number || ''}" placeholder="000-00-00000">
         </div>
       </div>
       
@@ -7197,25 +7219,19 @@ function showSupplierModal(supplier = null) {
         <input type="text" id="supplier-address" class="w-full border rounded-lg px-4 py-2" value="${supplier?.address || ''}" placeholder="사업장 주소">
       </div>
       
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">사업자번호</label>
-          <input type="text" id="supplier-business-number" class="w-full border rounded-lg px-4 py-2" value="${supplier?.business_number || ''}" placeholder="000-00-00000">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">원료명 (취급품목)</label>
-          <input type="text" id="supplier-material-name" class="w-full border rounded-lg px-4 py-2" value="${supplier?.material_name || ''}" placeholder="취급하는 원료/제품명">
-        </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">원료명 (취급품목)</label>
+        <input type="text" id="supplier-material-name" class="w-full border rounded-lg px-4 py-2" value="${supplier?.material_name || ''}" placeholder="취급하는 원료/제품명">
       </div>
       
-      <div class="flex gap-6 pt-2">
+      <div class="flex gap-6 pt-2 border-t">
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" id="supplier-haccp" class="w-5 h-5 accent-green-600" ${supplier?.haccp_certified ? 'checked' : ''}>
-          <span class="text-sm font-medium">HACCP 인증업체</span>
+          <span class="text-sm font-medium"><i class="fas fa-certificate text-green-600 mr-1"></i>HACCP 인증</span>
         </label>
         <label class="flex items-center gap-2 cursor-pointer">
           <input type="checkbox" id="supplier-imported" class="w-5 h-5 accent-blue-600" ${supplier?.is_imported ? 'checked' : ''}>
-          <span class="text-sm font-medium">수입업체</span>
+          <span class="text-sm font-medium"><i class="fas fa-globe text-blue-600 mr-1"></i>수입업체</span>
         </label>
       </div>
       
@@ -7239,6 +7255,7 @@ async function saveSupplier(isEdit, supplierId) {
     supplier_code: document.getElementById('supplier-code').value.trim(),
     supplier_name: document.getElementById('supplier-name').value.trim(),
     supplier_type: document.getElementById('supplier-type').value,
+    business_type: document.getElementById('supplier-business-type').value,
     contact: document.getElementById('supplier-contact').value.trim(),
     contact_person: document.getElementById('supplier-contact-person').value.trim(),
     address: document.getElementById('supplier-address').value.trim(),
@@ -7306,24 +7323,27 @@ async function viewSupplierDetail(supplierId) {
           <div><span class="text-gray-500 text-sm">거래처명:</span><p class="font-bold text-lg">${s.supplier_name}</p></div>
         </div>
         <div class="grid grid-cols-2 gap-4">
-          <div><span class="text-gray-500 text-sm">유형:</span><p>${s.supplier_type || '-'}</p></div>
-          <div><span class="text-gray-500 text-sm">담당자:</span><p>${s.contact_person || '-'}</p></div>
+          <div><span class="text-gray-500 text-sm">거래 유형:</span><p>${s.supplier_type || '-'}</p></div>
+          <div><span class="text-gray-500 text-sm">업체 구분:</span>
+            <p><span class="px-2 py-1 rounded text-xs ${s.business_type === '제조업체' ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-700'}">${s.business_type || '공급업체'}</span></p>
+          </div>
         </div>
         <div class="grid grid-cols-2 gap-4">
+          <div><span class="text-gray-500 text-sm">담당자:</span><p>${s.contact_person || '-'}</p></div>
           <div><span class="text-gray-500 text-sm">연락처:</span><p>${s.contact || '-'}</p></div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
           <div><span class="text-gray-500 text-sm">이메일:</span><p>${s.email || '-'}</p></div>
+          <div><span class="text-gray-500 text-sm">사업자번호:</span><p>${s.business_number || '-'}</p></div>
         </div>
         <div><span class="text-gray-500 text-sm">주소:</span><p>${s.address || '-'}</p></div>
-        <div class="grid grid-cols-2 gap-4">
-          <div><span class="text-gray-500 text-sm">사업자번호:</span><p>${s.business_number || '-'}</p></div>
-          <div><span class="text-gray-500 text-sm">원료명:</span><p>${s.material_name || '-'}</p></div>
-        </div>
+        <div><span class="text-gray-500 text-sm">원료명 (취급품목):</span><p>${s.material_name || '-'}</p></div>
         <div class="flex gap-6 pt-2 border-t">
           <div class="flex items-center gap-2">
             ${s.haccp_certified ? '<i class="fas fa-check-circle text-green-500"></i> HACCP 인증' : '<i class="fas fa-times-circle text-gray-400"></i> HACCP 미인증'}
           </div>
           <div class="flex items-center gap-2">
-            ${s.is_imported ? '<i class="fas fa-globe text-blue-500"></i> 수입업체' : '<i class="fas fa-home text-gray-500"></i> 국내업체'}
+            ${s.is_imported ? '<i class="fas fa-check-circle text-blue-500"></i> 수입업체' : '<i class="fas fa-times-circle text-gray-400"></i> 국내업체'}
           </div>
         </div>
         ${s.memo ? `<div class="pt-2 border-t"><span class="text-gray-500 text-sm">메모:</span><p class="text-sm">${s.memo}</p></div>` : ''}
@@ -7372,18 +7392,20 @@ function printSupplierList() {
       <title>거래처 목록</title>
       <style>
         @page { size: A4 landscape; margin: 10mm; }
-        body { font-family: 'Malgun Gothic', sans-serif; font-size: 10px; }
+        body { font-family: 'Malgun Gothic', sans-serif; font-size: 9px; }
         h1 { text-align: center; margin-bottom: 10px; font-size: 16px; }
         .info { text-align: right; margin-bottom: 10px; font-size: 9px; color: #666; }
         table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #333; padding: 4px 6px; text-align: left; }
+        th, td { border: 1px solid #333; padding: 3px 5px; text-align: left; }
         th { background: #f5f5f5; font-weight: bold; }
         .center { text-align: center; }
         .badge { padding: 1px 4px; border-radius: 3px; font-size: 8px; }
         .badge-blue { background: #dbeafe; color: #1e40af; }
         .badge-green { background: #dcfce7; color: #166534; }
         .badge-purple { background: #f3e8ff; color: #7c3aed; }
-        .check { color: green; }
+        .badge-orange { background: #ffedd5; color: #c2410c; }
+        .badge-gray { background: #f3f4f6; color: #374151; }
+        .check { color: green; font-weight: bold; }
         .no { color: #ccc; }
         @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
       </style>
@@ -7399,15 +7421,16 @@ function printSupplierList() {
       <table>
         <thead>
           <tr>
-            <th style="width:8%">거래처코드</th>
-            <th style="width:15%">거래처명</th>
-            <th class="center" style="width:6%">유형</th>
-            <th style="width:8%">담당자</th>
-            <th style="width:10%">연락처</th>
-            <th style="width:20%">주소</th>
-            <th style="width:15%">원료명</th>
-            <th class="center" style="width:6%">HACCP</th>
-            <th class="center" style="width:6%">수입</th>
+            <th style="width:7%">거래처코드</th>
+            <th style="width:14%">거래처명</th>
+            <th class="center" style="width:5%">유형</th>
+            <th class="center" style="width:6%">구분</th>
+            <th style="width:7%">담당자</th>
+            <th style="width:9%">연락처</th>
+            <th style="width:18%">주소</th>
+            <th style="width:14%">원료명</th>
+            <th class="center" style="width:5%">HACCP</th>
+            <th class="center" style="width:5%">수입</th>
           </tr>
         </thead>
         <tbody>
@@ -7417,6 +7440,9 @@ function printSupplierList() {
               <td>${s.supplier_name}</td>
               <td class="center">
                 <span class="badge ${s.supplier_type === '입고' ? 'badge-blue' : s.supplier_type === '출고' ? 'badge-green' : 'badge-purple'}">${s.supplier_type || '-'}</span>
+              </td>
+              <td class="center">
+                <span class="badge ${s.business_type === '제조업체' ? 'badge-orange' : 'badge-gray'}">${s.business_type || '공급'}</span>
               </td>
               <td>${s.contact_person || '-'}</td>
               <td>${s.contact || '-'}</td>

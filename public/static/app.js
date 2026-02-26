@@ -7637,6 +7637,90 @@ function printSupplierList() {
   
   const today = new Date().toLocaleDateString('ko-KR');
   
+  // 전체 제조사/원료 수 계산
+  let totalManufacturers = 0;
+  let totalMaterials = 0;
+  filtered.forEach(s => {
+    totalManufacturers += s.manufacturer_count || 0;
+    totalMaterials += s.materials_count || 0;
+  });
+  
+  // 공급업체별 계층 구조 HTML 생성
+  const tableRows = filtered.map(s => {
+    const materials = s.materials || [];
+    
+    // 제조사별로 그룹핑
+    const grouped = {};
+    materials.forEach(m => {
+      const mfr = m.manufacturer || '(제조사 미지정)';
+      if (!grouped[mfr]) {
+        grouped[mfr] = {
+          materials: [],
+          haccp_certified: m.haccp_certified,
+          is_imported: m.is_imported,
+          origin_country: m.origin_country,
+          manufacturer_address: m.manufacturer_address
+        };
+      }
+      grouped[mfr].materials.push(m);
+    });
+    
+    const manufacturerCount = Object.keys(grouped).length;
+    const hasDetails = manufacturerCount > 0;
+    
+    // 공급업체 메인 행
+    let rows = `
+      <tr class="supplier-row">
+        <td rowspan="${hasDetails ? 1 : 1}">${s.supplier_code}</td>
+        <td><strong>${s.supplier_name}</strong>${hasDetails ? ` <span style="color:#666;font-size:8px;">(제조사 ${manufacturerCount}, 원료 ${materials.length})</span>` : ''}</td>
+        <td class="center"><span class="badge ${s.supplier_type === '입고' ? 'badge-blue' : s.supplier_type === '출고' ? 'badge-green' : 'badge-purple'}">${s.supplier_type || '-'}</span></td>
+        <td class="center"><span class="badge ${s.business_type === '제조업체' ? 'badge-orange' : 'badge-gray'}">${s.business_type || '공급'}</span></td>
+        <td>${s.contact_person || '-'}</td>
+        <td>${s.contact || '-'}</td>
+        <td class="center">${s.haccp_certified ? '<span class="check">O</span>' : '<span class="no">-</span>'}</td>
+        <td class="center">${s.is_imported ? '<span class="check">O</span>' : '<span class="no">-</span>'}</td>
+      </tr>
+    `;
+    
+    // 제조사/원료 상세 행
+    if (hasDetails) {
+      Object.entries(grouped).forEach(([mfr, data]) => {
+        // 제조사 행
+        rows += `
+          <tr class="manufacturer-row">
+            <td colspan="2" style="padding-left:20px;">
+              <span style="color:#ea580c;">▸ ${mfr}</span>
+              ${data.haccp_certified ? ' <span class="badge badge-green" style="font-size:7px;">HACCP</span>' : ''}
+              ${data.is_imported ? ' <span class="badge badge-blue" style="font-size:7px;">수입</span>' : ''}
+              ${data.origin_country ? ` <span style="color:#666;font-size:7px;">(${data.origin_country})</span>` : ''}
+            </td>
+            <td colspan="4" style="font-size:8px;color:#666;">${data.manufacturer_address || ''}</td>
+            <td class="center">${data.haccp_certified ? '<span class="check">O</span>' : ''}</td>
+            <td class="center">${data.is_imported ? '<span class="check">O</span>' : ''}</td>
+          </tr>
+        `;
+        
+        // 원료 행들
+        data.materials.forEach(m => {
+          rows += `
+            <tr class="material-row">
+              <td colspan="2" style="padding-left:40px;font-size:8px;">
+                └ ${m.material_name}${m.item_code ? ` <span style="color:#999;">(${m.item_code})</span>` : ''}
+              </td>
+              <td colspan="4" style="font-size:8px;color:#666;">
+                ${m.origin_country ? `원산지: ${m.origin_country}` : ''}
+              </td>
+              <td class="center" style="font-size:8px;">${m.haccp_certified ? '<span class="check">O</span>' : ''}</td>
+              <td class="center" style="font-size:8px;">${m.is_imported ? '<span class="check">O</span>' : ''}</td>
+            </tr>
+          `;
+        });
+      });
+    }
+    
+    return rows;
+  }).join('');
+  
   const printHtml = `
     <!DOCTYPE html>
     <html>
@@ -7647,11 +7731,12 @@ function printSupplierList() {
         body { font-family: 'Malgun Gothic', sans-serif; font-size: 9px; }
         h1 { text-align: center; margin-bottom: 10px; font-size: 16px; }
         .info { text-align: right; margin-bottom: 10px; font-size: 9px; color: #666; }
+        .summary { margin-bottom: 10px; padding: 8px; background: #f5f5f5; border-radius: 4px; font-size: 9px; }
         table { width: 100%; border-collapse: collapse; }
         th, td { border: 1px solid #333; padding: 3px 5px; text-align: left; }
         th { background: #f5f5f5; font-weight: bold; }
         .center { text-align: center; }
-        .badge { padding: 1px 4px; border-radius: 3px; font-size: 8px; }
+        .badge { padding: 1px 4px; border-radius: 3px; font-size: 8px; display: inline-block; }
         .badge-blue { background: #dbeafe; color: #1e40af; }
         .badge-green { background: #dcfce7; color: #166534; }
         .badge-purple { background: #f3e8ff; color: #7c3aed; }
@@ -7659,6 +7744,12 @@ function printSupplierList() {
         .badge-gray { background: #f3f4f6; color: #374151; }
         .check { color: green; font-weight: bold; }
         .no { color: #ccc; }
+        .supplier-row { background: #fff; }
+        .supplier-row td { border-bottom: 2px solid #333; }
+        .manufacturer-row { background: #fff7ed; }
+        .manufacturer-row td { border-bottom: 1px solid #fed7aa; }
+        .material-row { background: #f0fdf4; }
+        .material-row td { border-bottom: 1px solid #bbf7d0; }
         @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
       </style>
     </head>
@@ -7670,40 +7761,27 @@ function printSupplierList() {
         ${haccpOnly ? ' | HACCP 인증만' : ''}
         ${importedOnly ? ' | 수입업체만' : ''}
       </div>
+      <div class="summary">
+        <strong>요약:</strong> 
+        거래처 ${filtered.length}개 | 
+        제조사 ${totalManufacturers}개 | 
+        원료 ${totalMaterials}건
+      </div>
       <table>
         <thead>
           <tr>
-            <th style="width:7%">거래처코드</th>
-            <th style="width:14%">거래처명</th>
+            <th style="width:8%">거래처코드</th>
+            <th style="width:20%">거래처명 / 제조사 / 원료</th>
             <th class="center" style="width:5%">유형</th>
             <th class="center" style="width:6%">구분</th>
             <th style="width:7%">담당자</th>
             <th style="width:9%">연락처</th>
-            <th style="width:18%">주소</th>
-            <th style="width:14%">원료명</th>
             <th class="center" style="width:5%">HACCP</th>
             <th class="center" style="width:5%">수입</th>
           </tr>
         </thead>
         <tbody>
-          ${filtered.map(s => `
-            <tr>
-              <td>${s.supplier_code}</td>
-              <td>${s.supplier_name}</td>
-              <td class="center">
-                <span class="badge ${s.supplier_type === '입고' ? 'badge-blue' : s.supplier_type === '출고' ? 'badge-green' : 'badge-purple'}">${s.supplier_type || '-'}</span>
-              </td>
-              <td class="center">
-                <span class="badge ${s.business_type === '제조업체' ? 'badge-orange' : 'badge-gray'}">${s.business_type || '공급'}</span>
-              </td>
-              <td>${s.contact_person || '-'}</td>
-              <td>${s.contact || '-'}</td>
-              <td>${s.address || '-'}</td>
-              <td>${s.material_name || '-'}</td>
-              <td class="center">${s.haccp_certified ? '<span class="check">O</span>' : '<span class="no">-</span>'}</td>
-              <td class="center">${s.is_imported ? '<span class="check">O</span>' : '<span class="no">-</span>'}</td>
-            </tr>
-          `).join('')}
+          ${tableRows}
         </tbody>
       </table>
     </body>

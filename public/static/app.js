@@ -7033,6 +7033,136 @@ function renderSuppliersTable(suppliers) {
     return;
   }
   
+  // 각 공급업체의 제조사별 원료를 그룹핑
+  const suppliersHtml = suppliers.map(s => {
+    // 제조사별로 그룹핑
+    const materials = s.materials || [];
+    const grouped = {};
+    materials.forEach(m => {
+      const mfr = m.manufacturer || '(제조사 미지정)';
+      if (!grouped[mfr]) {
+        grouped[mfr] = {
+          materials: [],
+          haccp_certified: m.haccp_certified,
+          is_imported: m.is_imported
+        };
+      }
+      grouped[mfr].materials.push(m);
+    });
+    
+    const manufacturerCount = Object.keys(grouped).length;
+    const hasDetails = manufacturerCount > 0;
+    
+    // 제조사/원료 상세 행 생성
+    let detailRows = '';
+    if (hasDetails) {
+      Object.entries(grouped).forEach(([mfr, data], idx) => {
+        // 제조사 행
+        detailRows += `
+          <tr class="supplier-detail-row supplier-${s.id} ${idx === 0 ? '' : ''} bg-orange-50 border-b border-orange-100" style="display:none;">
+            <td class="p-2 pl-8 text-xs" colspan="2">
+              <i class="fas fa-industry text-orange-500 mr-1"></i>
+              <span class="font-semibold text-orange-700">${mfr}</span>
+              ${data.haccp_certified ? '<span class="ml-1 px-1 py-0.5 bg-green-100 text-green-700 text-xs rounded">HACCP</span>' : ''}
+              ${data.is_imported ? '<span class="ml-1 px-1 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">수입</span>' : ''}
+            </td>
+            <td class="p-2 text-xs text-gray-500" colspan="5">
+              원료 ${data.materials.length}건
+            </td>
+            <td class="p-2" colspan="3"></td>
+          </tr>
+        `;
+        
+        // 원료 행들
+        data.materials.forEach(m => {
+          detailRows += `
+            <tr class="supplier-detail-row supplier-${s.id} bg-green-50 border-b border-green-100 hover:bg-green-100" style="display:none;">
+              <td class="p-2 pl-12 text-xs" colspan="2">
+                <i class="fas fa-box text-green-600 mr-1"></i>
+                <span class="text-gray-700">${m.material_name}</span>
+                ${m.item_code ? `<span class="ml-1 text-gray-400">(${m.item_code})</span>` : ''}
+              </td>
+              <td class="p-2 text-xs text-gray-500" colspan="5">
+                ${m.origin_country ? `원산지: ${m.origin_country}` : ''}
+              </td>
+              <td class="p-2 text-center text-xs">
+                ${m.haccp_certified ? '<i class="fas fa-check text-green-500"></i>' : '-'}
+              </td>
+              <td class="p-2 text-center text-xs">
+                ${m.is_imported ? '<i class="fas fa-check text-blue-500"></i>' : '-'}
+              </td>
+              <td class="p-2 text-center">
+                <button onclick="editSupplierMaterial(${s.id}, ${m.id})" class="text-blue-400 hover:text-blue-600 text-xs" title="수정">
+                  <i class="fas fa-edit"></i>
+                </button>
+              </td>
+            </tr>
+          `;
+        });
+      });
+    }
+    
+    return `
+      <tr class="border-b hover:bg-gray-50 supplier-main-row" data-supplier-id="${s.id}">
+        <td class="p-3 font-mono text-xs">
+          ${hasDetails ? `
+            <button onclick="toggleSupplierDetails(${s.id})" class="mr-1 text-gray-400 hover:text-gray-600 supplier-toggle-${s.id}">
+              <i class="fas fa-chevron-right"></i>
+            </button>
+          ` : '<span class="mr-4"></span>'}
+          ${s.supplier_code}
+        </td>
+        <td class="p-3 font-medium">
+          ${s.supplier_name}
+          ${hasDetails ? `<span class="ml-1 text-xs text-gray-400">(제조사 ${manufacturerCount}, 원료 ${materials.length})</span>` : ''}
+        </td>
+        <td class="p-3 text-center">
+          <span class="px-2 py-1 rounded text-xs ${
+            s.supplier_type === '입고' ? 'bg-blue-100 text-blue-700' :
+            s.supplier_type === '출고' ? 'bg-green-100 text-green-700' :
+            'bg-purple-100 text-purple-700'
+          }">${s.supplier_type || '-'}</span>
+        </td>
+        <td class="p-3 text-center">
+          <span class="px-2 py-1 rounded text-xs ${
+            s.business_type === '제조업체' ? 'bg-orange-100 text-orange-700' :
+            'bg-gray-100 text-gray-700'
+          }">${s.business_type || '공급업체'}</span>
+        </td>
+        <td class="p-3 text-sm">${s.contact_person || '-'}</td>
+        <td class="p-3 text-sm">${s.contact || '-'}</td>
+        <td class="p-3 text-xs max-w-xs">
+          ${hasDetails ? `
+            <button onclick="toggleSupplierDetails(${s.id})" class="text-left hover:text-blue-600">
+              ${Object.entries(grouped).slice(0, 2).map(([mfr, data]) => 
+                `<span class="text-orange-600">${mfr}</span>(${data.materials.slice(0,2).map(m=>m.material_name).join(', ')}${data.materials.length > 2 ? '...' : ''})`
+              ).join(', ')}
+              ${manufacturerCount > 2 ? ` <span class="text-gray-400">외 ${manufacturerCount - 2}개</span>` : ''}
+            </button>
+          ` : (s.material_name || '<span class="text-gray-300">-</span>')}
+        </td>
+        <td class="p-3 text-center">
+          ${s.haccp_certified ? '<i class="fas fa-check-circle text-green-500" title="HACCP 인증"></i>' : '<i class="fas fa-times-circle text-gray-300" title="미인증"></i>'}
+        </td>
+        <td class="p-3 text-center">
+          ${s.is_imported ? '<i class="fas fa-check-circle text-blue-500" title="수입"></i>' : '<i class="fas fa-times-circle text-gray-300" title="국내"></i>'}
+        </td>
+        <td class="p-3 text-center">
+          <button onclick="viewSupplierDetail(${s.id})" class="text-gray-500 hover:text-gray-700 mr-1" title="상세보기">
+            <i class="fas fa-eye"></i>
+          </button>
+          <button onclick="editSupplier(${s.id})" class="text-blue-500 hover:text-blue-700 mr-1" title="수정">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="deleteSupplier(${s.id})" class="text-red-500 hover:text-red-700" title="삭제">
+            <i class="fas fa-trash"></i>
+          </button>
+        </td>
+      </tr>
+      ${detailRows}
+    `;
+  }).join('');
+  
   container.innerHTML = `
     <div class="overflow-x-auto">
       <table class="w-full text-sm data-table">
@@ -7044,69 +7174,70 @@ function renderSuppliersTable(suppliers) {
             <th class="text-center p-3">구분</th>
             <th class="text-left p-3">담당자</th>
             <th class="text-left p-3">연락처</th>
-            <th class="text-left p-3" style="min-width:250px;">제조사/원료</th>
+            <th class="text-left p-3" style="min-width:200px;">제조사/원료</th>
             <th class="text-center p-3">HACCP</th>
             <th class="text-center p-3">수입</th>
             <th class="text-center p-3">관리</th>
           </tr>
         </thead>
         <tbody>
-          ${suppliers.map(s => `
-            <tr class="border-b hover:bg-gray-50">
-              <td class="p-3 font-mono text-xs">${s.supplier_code}</td>
-              <td class="p-3 font-medium">${s.supplier_name}</td>
-              <td class="p-3 text-center">
-                <span class="px-2 py-1 rounded text-xs ${
-                  s.supplier_type === '입고' ? 'bg-blue-100 text-blue-700' :
-                  s.supplier_type === '출고' ? 'bg-green-100 text-green-700' :
-                  'bg-purple-100 text-purple-700'
-                }">${s.supplier_type || '-'}</span>
-              </td>
-              <td class="p-3 text-center">
-                <span class="px-2 py-1 rounded text-xs ${
-                  s.business_type === '제조업체' ? 'bg-orange-100 text-orange-700' :
-                  'bg-gray-100 text-gray-700'
-                }">${s.business_type || '공급업체'}</span>
-              </td>
-              <td class="p-3">${s.contact_person || '-'}</td>
-              <td class="p-3">${s.contact || '-'}</td>
-              <td class="p-3 text-xs">
-                ${s.materials_summary ? `
-                  <div class="leading-relaxed">${s.materials_summary}</div>
-                  <div class="text-gray-400 mt-1">제조사 ${s.manufacturer_count || 0}개, 원료 ${s.materials_count || 0}건</div>
-                ` : (s.material_name || '<span class="text-gray-300">-</span>')}
-              </td>
-              <td class="p-3 text-center">
-                ${s.haccp_certified ? '<i class="fas fa-check-circle text-green-500" title="HACCP 인증"></i>' : '<i class="fas fa-times-circle text-gray-300" title="미인증"></i>'}
-              </td>
-              <td class="p-3 text-center">
-                ${s.is_imported ? '<i class="fas fa-check-circle text-blue-500" title="수입"></i>' : '<i class="fas fa-times-circle text-gray-300" title="국내"></i>'}
-              </td>
-              <td class="p-3 text-center">
-                <button onclick="viewSupplierDetail(${s.id})" class="text-gray-500 hover:text-gray-700 mr-1" title="상세보기">
-                  <i class="fas fa-eye"></i>
-                </button>
-                <button onclick="editSupplier(${s.id})" class="text-blue-500 hover:text-blue-700 mr-1" title="수정">
-                  <i class="fas fa-edit"></i>
-                </button>
-                <button onclick="deleteSupplier(${s.id})" class="text-red-500 hover:text-red-700" title="삭제">
-                  <i class="fas fa-trash"></i>
-                </button>
-              </td>
-            </tr>
-          `).join('')}
+          ${suppliersHtml}
         </tbody>
       </table>
     </div>
     <div class="p-3 bg-gray-50 border-t text-sm text-gray-500 flex justify-between items-center">
       <span>총 ${suppliers.length}개 거래처</span>
-      <span class="text-xs">
-        HACCP: ${suppliers.filter(s => s.haccp_certified).length}개 | 
-        수입: ${suppliers.filter(s => s.is_imported).length}개 |
-        제조업체: ${suppliers.filter(s => s.business_type === '제조업체').length}개
-      </span>
+      <div class="flex items-center gap-4">
+        <button onclick="expandAllSuppliers()" class="text-xs text-blue-600 hover:text-blue-800">
+          <i class="fas fa-expand-alt mr-1"></i>모두 펼치기
+        </button>
+        <button onclick="collapseAllSuppliers()" class="text-xs text-gray-600 hover:text-gray-800">
+          <i class="fas fa-compress-alt mr-1"></i>모두 접기
+        </button>
+        <span class="text-xs">
+          HACCP: ${suppliers.filter(s => s.haccp_certified).length}개 | 
+          수입: ${suppliers.filter(s => s.is_imported).length}개 |
+          제조업체: ${suppliers.filter(s => s.business_type === '제조업체').length}개
+        </span>
+      </div>
     </div>
   `;
+}
+
+// 공급업체 상세 펼치기/접기
+function toggleSupplierDetails(supplierId) {
+  const rows = document.querySelectorAll(`.supplier-detail-row.supplier-${supplierId}`);
+  const toggleBtn = document.querySelector(`.supplier-toggle-${supplierId} i`);
+  
+  const isHidden = rows[0]?.style.display === 'none';
+  
+  rows.forEach(row => {
+    row.style.display = isHidden ? 'table-row' : 'none';
+  });
+  
+  if (toggleBtn) {
+    toggleBtn.className = isHidden ? 'fas fa-chevron-down' : 'fas fa-chevron-right';
+  }
+}
+
+// 모두 펼치기
+function expandAllSuppliers() {
+  document.querySelectorAll('.supplier-detail-row').forEach(row => {
+    row.style.display = 'table-row';
+  });
+  document.querySelectorAll('[class*="supplier-toggle-"] i').forEach(icon => {
+    icon.className = 'fas fa-chevron-down';
+  });
+}
+
+// 모두 접기
+function collapseAllSuppliers() {
+  document.querySelectorAll('.supplier-detail-row').forEach(row => {
+    row.style.display = 'none';
+  });
+  document.querySelectorAll('[class*="supplier-toggle-"] i').forEach(icon => {
+    icon.className = 'fas fa-chevron-right';
+  });
 }
 
 // 거래처 검색 필터
@@ -10753,6 +10884,9 @@ window.switchProductTab = switchProductTab;
 window.filterSuppliers = filterSuppliers;
 window.filterSuppliersByType = filterSuppliersByType;
 window.renderSuppliersTable = renderSuppliersTable;
+window.toggleSupplierDetails = toggleSupplierDetails;
+window.expandAllSuppliers = expandAllSuppliers;
+window.collapseAllSuppliers = collapseAllSuppliers;
 window.viewSupplierDetail = viewSupplierDetail;
 window.printSupplierList = printSupplierList;
 window.showAddMaterialModal = showAddMaterialModal;

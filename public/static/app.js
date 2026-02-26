@@ -6915,16 +6915,24 @@ async function deleteMaster(itemCode) {
   }
 }
 
-// Supplier Management - with search
+// Supplier Management - with search, filter, print
 async function renderSuppliers() {
   const content = document.getElementById('page-content');
   
   try {
+    // DB 마이그레이션 (새 컬럼 추가) - 한 번만 실행
+    try { await api('/suppliers/migrate'); } catch(e) {}
+    
     const result = await api('/suppliers');
     const suppliers = result.data || [];
     
     // 전역 저장
     window.allSuppliers = suppliers;
+    
+    // 통계 계산
+    const totalCount = suppliers.length;
+    const haccpCount = suppliers.filter(s => s.haccp_certified).length;
+    const importedCount = suppliers.filter(s => s.is_imported).length;
     
     content.innerHTML = `
       <div class="space-y-6">
@@ -6933,28 +6941,63 @@ async function renderSuppliers() {
             <i class="fas fa-building mr-2 text-haccp-primary"></i>
             거래처 관리
           </h2>
-          <button onclick="showSupplierModal()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
-            <i class="fas fa-plus mr-1"></i> 거래처 등록
-          </button>
+          <div class="flex gap-2">
+            <button onclick="printSupplierList()" class="bg-gray-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-600">
+              <i class="fas fa-print mr-1"></i> 인쇄
+            </button>
+            <button onclick="showSupplierModal()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700">
+              <i class="fas fa-plus mr-1"></i> 거래처 등록
+            </button>
+          </div>
+        </div>
+        
+        <!-- 통계 카드 -->
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <div class="bg-white rounded-xl shadow p-4">
+            <div class="text-sm text-gray-500">전체 거래처</div>
+            <div class="text-2xl font-bold text-gray-800">${totalCount}개</div>
+          </div>
+          <div class="bg-white rounded-xl shadow p-4">
+            <div class="text-sm text-gray-500">HACCP 인증</div>
+            <div class="text-2xl font-bold text-green-600">${haccpCount}개</div>
+          </div>
+          <div class="bg-white rounded-xl shadow p-4">
+            <div class="text-sm text-gray-500">수입업체</div>
+            <div class="text-2xl font-bold text-blue-600">${importedCount}개</div>
+          </div>
+          <div class="bg-white rounded-xl shadow p-4">
+            <div class="text-sm text-gray-500">국내업체</div>
+            <div class="text-2xl font-bold text-purple-600">${totalCount - importedCount}개</div>
+          </div>
         </div>
         
         <!-- 검색 및 필터 -->
         <div class="bg-white rounded-xl shadow p-4">
           <div class="flex flex-wrap gap-4 items-center">
-            <div class="flex-1 min-w-[200px]">
+            <div class="flex-1 min-w-[250px]">
               <div class="relative">
                 <input type="text" id="supplier-search" 
                        class="w-full border rounded-lg pl-10 pr-4 py-2" 
-                       placeholder="거래처명 또는 코드 검색..."
+                       placeholder="거래처명, 코드, 담당자, 원료명 검색..."
                        oninput="filterSuppliers()">
                 <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
               </div>
             </div>
-            <div class="flex gap-2">
+            <div class="flex gap-2 flex-wrap">
               <button onclick="filterSuppliersByType('')" class="supplier-type-filter px-4 py-2 rounded-lg bg-haccp-primary text-white" data-type="">전체</button>
               <button onclick="filterSuppliersByType('입고')" class="supplier-type-filter px-4 py-2 rounded-lg bg-gray-200" data-type="입고">입고</button>
               <button onclick="filterSuppliersByType('출고')" class="supplier-type-filter px-4 py-2 rounded-lg bg-gray-200" data-type="출고">출고</button>
               <button onclick="filterSuppliersByType('양방향')" class="supplier-type-filter px-4 py-2 rounded-lg bg-gray-200" data-type="양방향">양방향</button>
+            </div>
+            <div class="flex gap-2 border-l pl-4">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="filter-haccp" onchange="filterSuppliers()" class="w-4 h-4 accent-green-600">
+                <span class="text-sm">HACCP 인증만</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" id="filter-imported" onchange="filterSuppliers()" class="w-4 h-4 accent-blue-600">
+                <span class="text-sm">수입업체만</span>
+              </label>
             </div>
           </div>
         </div>
@@ -6971,6 +7014,7 @@ async function renderSuppliers() {
     // 초기 렌더링
     renderSuppliersTable(suppliers);
   } catch (e) {
+    console.error('Supplier load error:', e);
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
   }
 }
@@ -6997,30 +7041,43 @@ function renderSuppliersTable(suppliers) {
             <th class="text-left p-3">거래처코드</th>
             <th class="text-left p-3">거래처명</th>
             <th class="text-center p-3">유형</th>
+            <th class="text-left p-3">담당자</th>
             <th class="text-left p-3">연락처</th>
-            <th class="text-left p-3">주소</th>
+            <th class="text-left p-3">원료명</th>
+            <th class="text-center p-3">HACCP</th>
+            <th class="text-center p-3">수입</th>
             <th class="text-center p-3">관리</th>
           </tr>
         </thead>
         <tbody>
           ${suppliers.map(s => `
             <tr class="border-b hover:bg-gray-50">
-              <td class="p-3 font-mono">${s.supplier_code}</td>
+              <td class="p-3 font-mono text-xs">${s.supplier_code}</td>
               <td class="p-3 font-medium">${s.supplier_name}</td>
               <td class="p-3 text-center">
                 <span class="px-2 py-1 rounded text-xs ${
                   s.supplier_type === '입고' ? 'bg-blue-100 text-blue-700' :
                   s.supplier_type === '출고' ? 'bg-green-100 text-green-700' :
                   'bg-purple-100 text-purple-700'
-                }">${s.supplier_type}</span>
+                }">${s.supplier_type || '-'}</span>
               </td>
+              <td class="p-3">${s.contact_person || '-'}</td>
               <td class="p-3">${s.contact || '-'}</td>
-              <td class="p-3">${s.address || '-'}</td>
+              <td class="p-3 text-xs">${s.material_name || '-'}</td>
               <td class="p-3 text-center">
-                <button onclick="editSupplier('${s.supplier_code}')" class="text-blue-500 hover:text-blue-700 mr-2">
+                ${s.haccp_certified ? '<i class="fas fa-check-circle text-green-500"></i>' : '<i class="fas fa-minus-circle text-gray-300"></i>'}
+              </td>
+              <td class="p-3 text-center">
+                ${s.is_imported ? '<i class="fas fa-globe text-blue-500"></i>' : '<i class="fas fa-home text-gray-400"></i>'}
+              </td>
+              <td class="p-3 text-center">
+                <button onclick="viewSupplierDetail(${s.id})" class="text-gray-500 hover:text-gray-700 mr-1" title="상세보기">
+                  <i class="fas fa-eye"></i>
+                </button>
+                <button onclick="editSupplier(${s.id})" class="text-blue-500 hover:text-blue-700 mr-1" title="수정">
                   <i class="fas fa-edit"></i>
                 </button>
-                <button onclick="deleteSupplier('${s.supplier_code}')" class="text-red-500 hover:text-red-700">
+                <button onclick="deleteSupplier(${s.id})" class="text-red-500 hover:text-red-700" title="삭제">
                   <i class="fas fa-trash"></i>
                 </button>
               </td>
@@ -7029,8 +7086,12 @@ function renderSuppliersTable(suppliers) {
         </tbody>
       </table>
     </div>
-    <div class="p-3 bg-gray-50 border-t text-sm text-gray-500">
-      총 ${suppliers.length}개 거래처
+    <div class="p-3 bg-gray-50 border-t text-sm text-gray-500 flex justify-between items-center">
+      <span>총 ${suppliers.length}개 거래처</span>
+      <span class="text-xs">
+        HACCP: ${suppliers.filter(s => s.haccp_certified).length}개 | 
+        수입: ${suppliers.filter(s => s.is_imported).length}개
+      </span>
     </div>
   `;
 }
@@ -7039,20 +7100,34 @@ function renderSuppliersTable(suppliers) {
 function filterSuppliers() {
   const searchTerm = document.getElementById('supplier-search').value.toLowerCase().trim();
   const typeFilter = window.supplierFilterType || '';
+  const haccpOnly = document.getElementById('filter-haccp')?.checked;
+  const importedOnly = document.getElementById('filter-imported')?.checked;
   
   let filtered = window.allSuppliers || [];
   
-  // 검색어 필터
+  // 검색어 필터 (거래처명, 코드, 담당자, 원료명)
   if (searchTerm) {
     filtered = filtered.filter(s => 
-      s.supplier_name.toLowerCase().includes(searchTerm) ||
-      s.supplier_code.toLowerCase().includes(searchTerm)
+      (s.supplier_name || '').toLowerCase().includes(searchTerm) ||
+      (s.supplier_code || '').toLowerCase().includes(searchTerm) ||
+      (s.contact_person || '').toLowerCase().includes(searchTerm) ||
+      (s.material_name || '').toLowerCase().includes(searchTerm)
     );
   }
   
   // 유형 필터
   if (typeFilter) {
     filtered = filtered.filter(s => s.supplier_type === typeFilter);
+  }
+  
+  // HACCP 인증 필터
+  if (haccpOnly) {
+    filtered = filtered.filter(s => s.haccp_certified);
+  }
+  
+  // 수입 여부 필터
+  if (importedOnly) {
+    filtered = filtered.filter(s => s.is_imported);
   }
   
   renderSuppliersTable(filtered);
@@ -7079,54 +7154,110 @@ function showSupplierModal(supplier = null) {
   const isEdit = !!supplier;
   
   const content = `
-    <form id="supplier-form" class="space-y-4">
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">거래처코드 <span class="text-red-500">*</span></label>
-        <input type="text" id="supplier-code" class="w-full border rounded-lg px-4 py-2" value="${supplier?.supplier_code || ''}" ${isEdit ? 'readonly' : ''} required>
+    <form id="supplier-form" class="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">거래처코드 <span class="text-red-500">*</span></label>
+          <input type="text" id="supplier-code" class="w-full border rounded-lg px-4 py-2" value="${supplier?.supplier_code || ''}" ${isEdit ? 'readonly class="bg-gray-100"' : ''} required placeholder="예: SUP001">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">거래처명 <span class="text-red-500">*</span></label>
+          <input type="text" id="supplier-name" class="w-full border rounded-lg px-4 py-2" value="${supplier?.supplier_name || ''}" required placeholder="회사명">
+        </div>
       </div>
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">거래처명 <span class="text-red-500">*</span></label>
-        <input type="text" id="supplier-name" class="w-full border rounded-lg px-4 py-2" value="${supplier?.supplier_name || ''}" required>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">유형</label>
+          <select id="supplier-type" class="w-full border rounded-lg px-4 py-2">
+            <option value="입고" ${supplier?.supplier_type === '입고' ? 'selected' : ''}>입고 (원료 공급)</option>
+            <option value="출고" ${supplier?.supplier_type === '출고' ? 'selected' : ''}>출고 (제품 납품)</option>
+            <option value="양방향" ${supplier?.supplier_type === '양방향' ? 'selected' : ''}>양방향</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">담당자</label>
+          <input type="text" id="supplier-contact-person" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact_person || ''}" placeholder="담당자명">
+        </div>
       </div>
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">유형</label>
-        <select id="supplier-type" class="w-full border rounded-lg px-4 py-2">
-          <option value="입고" ${supplier?.supplier_type === '입고' ? 'selected' : ''}>입고</option>
-          <option value="출고" ${supplier?.supplier_type === '출고' ? 'selected' : ''}>출고</option>
-          <option value="양방향" ${supplier?.supplier_type === '양방향' ? 'selected' : ''}>양방향</option>
-        </select>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">연락처</label>
+          <input type="text" id="supplier-contact" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact || ''}" placeholder="전화번호">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">이메일</label>
+          <input type="email" id="supplier-email" class="w-full border rounded-lg px-4 py-2" value="${supplier?.email || ''}" placeholder="이메일 주소">
+        </div>
       </div>
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">연락처</label>
-        <input type="text" id="supplier-contact" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact || ''}">
-      </div>
+      
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">주소</label>
-        <input type="text" id="supplier-address" class="w-full border rounded-lg px-4 py-2" value="${supplier?.address || ''}">
+        <input type="text" id="supplier-address" class="w-full border rounded-lg px-4 py-2" value="${supplier?.address || ''}" placeholder="사업장 주소">
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">사업자번호</label>
+          <input type="text" id="supplier-business-number" class="w-full border rounded-lg px-4 py-2" value="${supplier?.business_number || ''}" placeholder="000-00-00000">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">원료명 (취급품목)</label>
+          <input type="text" id="supplier-material-name" class="w-full border rounded-lg px-4 py-2" value="${supplier?.material_name || ''}" placeholder="취급하는 원료/제품명">
+        </div>
+      </div>
+      
+      <div class="flex gap-6 pt-2">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="supplier-haccp" class="w-5 h-5 accent-green-600" ${supplier?.haccp_certified ? 'checked' : ''}>
+          <span class="text-sm font-medium">HACCP 인증업체</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="supplier-imported" class="w-5 h-5 accent-blue-600" ${supplier?.is_imported ? 'checked' : ''}>
+          <span class="text-sm font-medium">수입업체</span>
+        </label>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+        <textarea id="supplier-memo" class="w-full border rounded-lg px-4 py-2 h-20" placeholder="추가 메모">${supplier?.memo || ''}</textarea>
       </div>
     </form>
   `;
   
   const actions = `
     <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
-    <button onclick="saveSupplier(${isEdit})" class="px-4 py-2 bg-haccp-primary text-white rounded-lg hover:bg-blue-700">${isEdit ? '수정' : '등록'}</button>
+    <button onclick="saveSupplier(${isEdit}, ${supplier?.id || 'null'})" class="px-4 py-2 bg-haccp-primary text-white rounded-lg hover:bg-blue-700">${isEdit ? '수정' : '등록'}</button>
   `;
   
   showModal(isEdit ? '거래처 수정' : '거래처 등록', content, actions);
 }
 
-async function saveSupplier(isEdit) {
+async function saveSupplier(isEdit, supplierId) {
   const data = {
-    supplier_code: document.getElementById('supplier-code').value,
-    supplier_name: document.getElementById('supplier-name').value,
+    supplier_code: document.getElementById('supplier-code').value.trim(),
+    supplier_name: document.getElementById('supplier-name').value.trim(),
     supplier_type: document.getElementById('supplier-type').value,
-    contact: document.getElementById('supplier-contact').value,
-    address: document.getElementById('supplier-address').value
+    contact: document.getElementById('supplier-contact').value.trim(),
+    contact_person: document.getElementById('supplier-contact-person').value.trim(),
+    address: document.getElementById('supplier-address').value.trim(),
+    email: document.getElementById('supplier-email').value.trim(),
+    business_number: document.getElementById('supplier-business-number').value.trim(),
+    material_name: document.getElementById('supplier-material-name').value.trim(),
+    haccp_certified: document.getElementById('supplier-haccp').checked ? 1 : 0,
+    is_imported: document.getElementById('supplier-imported').checked ? 1 : 0,
+    memo: document.getElementById('supplier-memo').value.trim()
   };
   
+  if (!data.supplier_code || !data.supplier_name) {
+    showToast('거래처코드와 거래처명은 필수입니다.', 'warning');
+    return;
+  }
+  
   try {
-    if (isEdit) {
-      await api(`/suppliers/${data.supplier_code}`, 'PUT', data);
+    if (isEdit && supplierId) {
+      await api(`/suppliers/${supplierId}`, 'PUT', data);
       showToast('거래처가 수정되었습니다.', 'success');
     } else {
       await api('/suppliers', 'POST', data);
@@ -7140,26 +7271,172 @@ async function saveSupplier(isEdit) {
   }
 }
 
-async function editSupplier(supplierCode) {
+async function editSupplier(supplierId) {
   try {
-    const result = await api(`/suppliers/${supplierCode}`);
+    const result = await api(`/suppliers/${supplierId}`);
     showSupplierModal(result.data);
   } catch (e) {
-    // Error handled
+    showToast('거래처 정보를 불러올 수 없습니다.', 'error');
   }
 }
 
-async function deleteSupplier(supplierCode) {
+async function deleteSupplier(supplierId) {
   if (!confirm('정말 삭제하시겠습니까?')) return;
   
   try {
-    await api(`/suppliers/${supplierCode}`, 'DELETE');
+    await api(`/suppliers/${supplierId}`, 'DELETE');
     showToast('거래처가 삭제되었습니다.', 'success');
     await loadMasterData();
     renderSuppliers();
   } catch (e) {
     // Error handled
   }
+}
+
+// 거래처 상세보기
+async function viewSupplierDetail(supplierId) {
+  try {
+    const result = await api(`/suppliers/${supplierId}`);
+    const s = result.data;
+    
+    const content = `
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div><span class="text-gray-500 text-sm">거래처코드:</span><p class="font-mono font-bold">${s.supplier_code}</p></div>
+          <div><span class="text-gray-500 text-sm">거래처명:</span><p class="font-bold text-lg">${s.supplier_name}</p></div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div><span class="text-gray-500 text-sm">유형:</span><p>${s.supplier_type || '-'}</p></div>
+          <div><span class="text-gray-500 text-sm">담당자:</span><p>${s.contact_person || '-'}</p></div>
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div><span class="text-gray-500 text-sm">연락처:</span><p>${s.contact || '-'}</p></div>
+          <div><span class="text-gray-500 text-sm">이메일:</span><p>${s.email || '-'}</p></div>
+        </div>
+        <div><span class="text-gray-500 text-sm">주소:</span><p>${s.address || '-'}</p></div>
+        <div class="grid grid-cols-2 gap-4">
+          <div><span class="text-gray-500 text-sm">사업자번호:</span><p>${s.business_number || '-'}</p></div>
+          <div><span class="text-gray-500 text-sm">원료명:</span><p>${s.material_name || '-'}</p></div>
+        </div>
+        <div class="flex gap-6 pt-2 border-t">
+          <div class="flex items-center gap-2">
+            ${s.haccp_certified ? '<i class="fas fa-check-circle text-green-500"></i> HACCP 인증' : '<i class="fas fa-times-circle text-gray-400"></i> HACCP 미인증'}
+          </div>
+          <div class="flex items-center gap-2">
+            ${s.is_imported ? '<i class="fas fa-globe text-blue-500"></i> 수입업체' : '<i class="fas fa-home text-gray-500"></i> 국내업체'}
+          </div>
+        </div>
+        ${s.memo ? `<div class="pt-2 border-t"><span class="text-gray-500 text-sm">메모:</span><p class="text-sm">${s.memo}</p></div>` : ''}
+      </div>
+    `;
+    
+    const actions = `
+      <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+      <button onclick="closeModal(); editSupplier(${supplierId})" class="px-4 py-2 bg-haccp-primary text-white rounded-lg hover:bg-blue-700">수정</button>
+    `;
+    
+    showModal('거래처 상세정보', content, actions);
+  } catch (e) {
+    showToast('거래처 정보를 불러올 수 없습니다.', 'error');
+  }
+}
+
+// 거래처 목록 인쇄
+function printSupplierList() {
+  const suppliers = window.allSuppliers || [];
+  const searchTerm = document.getElementById('supplier-search')?.value || '';
+  const haccpOnly = document.getElementById('filter-haccp')?.checked;
+  const importedOnly = document.getElementById('filter-imported')?.checked;
+  const typeFilter = window.supplierFilterType || '';
+  
+  // 현재 필터링된 데이터 사용
+  let filtered = suppliers;
+  if (searchTerm) {
+    filtered = filtered.filter(s => 
+      (s.supplier_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.supplier_code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.contact_person || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.material_name || '').toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }
+  if (typeFilter) filtered = filtered.filter(s => s.supplier_type === typeFilter);
+  if (haccpOnly) filtered = filtered.filter(s => s.haccp_certified);
+  if (importedOnly) filtered = filtered.filter(s => s.is_imported);
+  
+  const today = new Date().toLocaleDateString('ko-KR');
+  
+  const printHtml = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>거래처 목록</title>
+      <style>
+        @page { size: A4 landscape; margin: 10mm; }
+        body { font-family: 'Malgun Gothic', sans-serif; font-size: 10px; }
+        h1 { text-align: center; margin-bottom: 10px; font-size: 16px; }
+        .info { text-align: right; margin-bottom: 10px; font-size: 9px; color: #666; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #333; padding: 4px 6px; text-align: left; }
+        th { background: #f5f5f5; font-weight: bold; }
+        .center { text-align: center; }
+        .badge { padding: 1px 4px; border-radius: 3px; font-size: 8px; }
+        .badge-blue { background: #dbeafe; color: #1e40af; }
+        .badge-green { background: #dcfce7; color: #166534; }
+        .badge-purple { background: #f3e8ff; color: #7c3aed; }
+        .check { color: green; }
+        .no { color: #ccc; }
+        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+      </style>
+    </head>
+    <body>
+      <h1>(주)본비반트 거래처 목록</h1>
+      <div class="info">
+        출력일: ${today} | 총 ${filtered.length}개 거래처
+        ${typeFilter ? ` | 유형: ${typeFilter}` : ''}
+        ${haccpOnly ? ' | HACCP 인증만' : ''}
+        ${importedOnly ? ' | 수입업체만' : ''}
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:8%">거래처코드</th>
+            <th style="width:15%">거래처명</th>
+            <th class="center" style="width:6%">유형</th>
+            <th style="width:8%">담당자</th>
+            <th style="width:10%">연락처</th>
+            <th style="width:20%">주소</th>
+            <th style="width:15%">원료명</th>
+            <th class="center" style="width:6%">HACCP</th>
+            <th class="center" style="width:6%">수입</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filtered.map(s => `
+            <tr>
+              <td>${s.supplier_code}</td>
+              <td>${s.supplier_name}</td>
+              <td class="center">
+                <span class="badge ${s.supplier_type === '입고' ? 'badge-blue' : s.supplier_type === '출고' ? 'badge-green' : 'badge-purple'}">${s.supplier_type || '-'}</span>
+              </td>
+              <td>${s.contact_person || '-'}</td>
+              <td>${s.contact || '-'}</td>
+              <td>${s.address || '-'}</td>
+              <td>${s.material_name || '-'}</td>
+              <td class="center">${s.haccp_certified ? '<span class="check">O</span>' : '<span class="no">-</span>'}</td>
+              <td class="center">${s.is_imported ? '<span class="check">O</span>' : '<span class="no">-</span>'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </body>
+    </html>
+  `;
+  
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(printHtml);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => printWindow.print(), 500);
 }
 
 // Print function
@@ -9612,6 +9889,8 @@ window.switchProductTab = switchProductTab;
 window.filterSuppliers = filterSuppliers;
 window.filterSuppliersByType = filterSuppliersByType;
 window.renderSuppliersTable = renderSuppliersTable;
+window.viewSupplierDetail = viewSupplierDetail;
+window.printSupplierList = printSupplierList;
 window.goBack = goBack;
 
 // ========== 제품검사 ==========

@@ -7044,7 +7044,7 @@ function renderSuppliersTable(suppliers) {
             <th class="text-center p-3">구분</th>
             <th class="text-left p-3">담당자</th>
             <th class="text-left p-3">연락처</th>
-            <th class="text-left p-3">원료명</th>
+            <th class="text-left p-3" style="min-width:250px;">제조사/원료</th>
             <th class="text-center p-3">HACCP</th>
             <th class="text-center p-3">수입</th>
             <th class="text-center p-3">관리</th>
@@ -7070,7 +7070,12 @@ function renderSuppliersTable(suppliers) {
               </td>
               <td class="p-3">${s.contact_person || '-'}</td>
               <td class="p-3">${s.contact || '-'}</td>
-              <td class="p-3 text-xs">${s.material_name || '-'}</td>
+              <td class="p-3 text-xs">
+                ${s.materials_summary ? `
+                  <div class="leading-relaxed">${s.materials_summary}</div>
+                  <div class="text-gray-400 mt-1">제조사 ${s.manufacturer_count || 0}개, 원료 ${s.materials_count || 0}건</div>
+                ` : (s.material_name || '<span class="text-gray-300">-</span>')}
+              </td>
               <td class="p-3 text-center">
                 ${s.haccp_certified ? '<i class="fas fa-check-circle text-green-500" title="HACCP 인증"></i>' : '<i class="fas fa-times-circle text-gray-300" title="미인증"></i>'}
               </td>

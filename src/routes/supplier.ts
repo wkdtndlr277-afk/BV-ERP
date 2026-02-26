@@ -123,7 +123,53 @@ supplierRoutes.get('/', async (c) => {
   query += ' ORDER BY supplier_name';
   
   const result = await c.env.DB.prepare(query).bind(...params).all();
-  return c.json({ success: true, data: result.results });
+  const suppliers = result.results as any[];
+  
+  // 각 공급업체의 제조사/원료 정보 가져오기
+  const supplierIds = suppliers.map(s => s.id);
+  if (supplierIds.length > 0) {
+    const materialsResult = await c.env.DB.prepare(`
+      SELECT supplier_id, manufacturer, material_name, item_code, haccp_certified, is_imported
+      FROM supplier_materials 
+      WHERE supplier_id IN (${supplierIds.map(() => '?').join(',')})
+      ORDER BY manufacturer, material_name
+    `).bind(...supplierIds).all();
+    
+    // 제조사/원료를 공급업체별로 그룹핑
+    const materialsBySupplier: { [key: number]: any[] } = {};
+    (materialsResult.results || []).forEach((m: any) => {
+      if (!materialsBySupplier[m.supplier_id]) {
+        materialsBySupplier[m.supplier_id] = [];
+      }
+      materialsBySupplier[m.supplier_id].push(m);
+    });
+    
+    // 공급업체 데이터에 제조사/원료 정보 추가
+    suppliers.forEach(s => {
+      const materials = materialsBySupplier[s.id] || [];
+      s.materials = materials;
+      
+      // 제조사별로 그룹핑해서 요약 생성
+      const grouped: { [key: string]: string[] } = {};
+      materials.forEach((m: any) => {
+        const mfr = m.manufacturer || '(미지정)';
+        if (!grouped[mfr]) grouped[mfr] = [];
+        grouped[mfr].push(m.material_name);
+      });
+      
+      // 요약 문자열 생성: "제조사1(원료1,원료2), 제조사2(원료3)"
+      const summaryParts = Object.entries(grouped).map(([mfr, items]) => {
+        const itemList = items.slice(0, 3).join(', ') + (items.length > 3 ? ` 외 ${items.length - 3}건` : '');
+        return `<span class="text-orange-600 font-medium">${mfr}</span>(${itemList})`;
+      });
+      
+      s.materials_summary = summaryParts.length > 0 ? summaryParts.join(' / ') : '';
+      s.materials_count = materials.length;
+      s.manufacturer_count = Object.keys(grouped).length;
+    });
+  }
+  
+  return c.json({ success: true, data: suppliers });
 });
 
 // 거래처 상세 조회

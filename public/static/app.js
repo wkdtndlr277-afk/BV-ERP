@@ -313,11 +313,11 @@ function showToast(message, type = 'success') {
   setTimeout(() => toast.remove(), 3000);
 }
 
-function showModal(title, content, actions = '') {
+function showModal(title, content, actions = '', maxWidth = 'max-w-lg') {
   const container = document.getElementById('modal-container');
   container.innerHTML = `
     <div class="modal active fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-hidden">
+      <div class="bg-white rounded-xl shadow-2xl ${maxWidth} w-full max-h-[90vh] overflow-hidden">
         <div class="flex items-center justify-between p-4 border-b bg-gray-50">
           <h3 class="text-lg font-bold text-gray-800">${title}</h3>
           <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">
@@ -7316,6 +7316,88 @@ async function viewSupplierDetail(supplierId) {
     const result = await api(`/suppliers/${supplierId}`);
     const s = result.data;
     
+    // 거래처의 원료 목록도 함께 조회
+    let materialsHtml = '';
+    try {
+      const matResult = await api(`/suppliers/${s.id}/materials`);
+      const materials = matResult.data || [];
+      
+      if (materials.length > 0) {
+        materialsHtml = `
+          <div class="mt-4 pt-4 border-t">
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-gray-500 text-sm font-semibold"><i class="fas fa-boxes mr-1"></i> 취급 원료 목록 (${materials.length}건)</span>
+              <button onclick="showAddMaterialModal(${s.id}, '${s.supplier_name}')" class="text-xs px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600">
+                <i class="fas fa-plus mr-1"></i>원료 추가
+              </button>
+            </div>
+            <div class="max-h-48 overflow-y-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-50 sticky top-0">
+                  <tr>
+                    <th class="text-left p-2">원료명</th>
+                    <th class="text-left p-2">제조사</th>
+                    <th class="text-center p-2">HACCP</th>
+                    <th class="text-center p-2">수입</th>
+                    <th class="text-center p-2">관리</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${materials.map(m => `
+                    <tr class="border-b hover:bg-gray-50">
+                      <td class="p-2">
+                        <span class="font-medium">${m.material_name}</span>
+                        ${m.item_code ? `<span class="text-xs text-gray-500 ml-1">(${m.item_code})</span>` : ''}
+                      </td>
+                      <td class="p-2 text-gray-600">${m.manufacturer || '-'}</td>
+                      <td class="p-2 text-center">
+                        ${m.haccp_certified ? '<i class="fas fa-check text-green-500"></i>' : '<i class="fas fa-minus text-gray-300"></i>'}
+                      </td>
+                      <td class="p-2 text-center">
+                        ${m.is_imported ? '<i class="fas fa-check text-blue-500"></i>' : '<i class="fas fa-minus text-gray-300"></i>'}
+                      </td>
+                      <td class="p-2 text-center">
+                        <button onclick="editSupplierMaterial(${s.id}, ${m.id})" class="text-blue-500 hover:text-blue-700 mr-2" title="수정">
+                          <i class="fas fa-edit"></i>
+                        </button>
+                        <button onclick="deleteSupplierMaterial(${s.id}, ${m.id}, '${m.material_name}')" class="text-red-500 hover:text-red-700" title="삭제">
+                          <i class="fas fa-trash"></i>
+                        </button>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      } else {
+        materialsHtml = `
+          <div class="mt-4 pt-4 border-t">
+            <div class="flex justify-between items-center mb-2">
+              <span class="text-gray-500 text-sm font-semibold"><i class="fas fa-boxes mr-1"></i> 취급 원료 목록</span>
+              <button onclick="showAddMaterialModal(${s.id}, '${s.supplier_name}')" class="text-xs px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600">
+                <i class="fas fa-plus mr-1"></i>원료 추가
+              </button>
+            </div>
+            <p class="text-gray-400 text-sm text-center py-4">등록된 원료가 없습니다. 원료를 추가해주세요.</p>
+          </div>
+        `;
+      }
+    } catch (e) {
+      materialsHtml = `
+        <div class="mt-4 pt-4 border-t">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-gray-500 text-sm font-semibold"><i class="fas fa-boxes mr-1"></i> 취급 원료 목록</span>
+            <button onclick="showAddMaterialModal(${s.id}, '${s.supplier_name}')" class="text-xs px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600">
+              <i class="fas fa-plus mr-1"></i>원료 추가
+            </button>
+          </div>
+          <p class="text-gray-400 text-sm text-center py-4">원료 목록을 불러올 수 없습니다.</p>
+        </div>
+      `;
+    }
+    
     const content = `
       <div class="space-y-4">
         <div class="grid grid-cols-2 gap-4">
@@ -7337,7 +7419,6 @@ async function viewSupplierDetail(supplierId) {
           <div><span class="text-gray-500 text-sm">사업자번호:</span><p>${s.business_number || '-'}</p></div>
         </div>
         <div><span class="text-gray-500 text-sm">주소:</span><p>${s.address || '-'}</p></div>
-        <div><span class="text-gray-500 text-sm">원료명 (취급품목):</span><p>${s.material_name || '-'}</p></div>
         <div class="flex gap-6 pt-2 border-t">
           <div class="flex items-center gap-2">
             ${s.haccp_certified ? '<i class="fas fa-check-circle text-green-500"></i> HACCP 인증' : '<i class="fas fa-times-circle text-gray-400"></i> HACCP 미인증'}
@@ -7347,6 +7428,7 @@ async function viewSupplierDetail(supplierId) {
           </div>
         </div>
         ${s.memo ? `<div class="pt-2 border-t"><span class="text-gray-500 text-sm">메모:</span><p class="text-sm">${s.memo}</p></div>` : ''}
+        ${materialsHtml}
       </div>
     `;
     
@@ -7355,7 +7437,7 @@ async function viewSupplierDetail(supplierId) {
       <button onclick="closeModal(); editSupplier(${supplierId})" class="px-4 py-2 bg-haccp-primary text-white rounded-lg hover:bg-blue-700">수정</button>
     `;
     
-    showModal('거래처 상세정보', content, actions);
+    showModal('거래처 상세정보', content, actions, 'max-w-2xl');
   } catch (e) {
     showToast('거래처 정보를 불러올 수 없습니다.', 'error');
   }
@@ -7463,6 +7545,202 @@ function printSupplierList() {
   printWindow.document.close();
   printWindow.focus();
   setTimeout(() => printWindow.print(), 500);
+}
+
+// ========== 거래처-원료 관리 함수 ==========
+
+// 원료 추가 모달 표시
+function showAddMaterialModal(supplierId, supplierName) {
+  const content = `
+    <form id="material-form" class="space-y-4">
+      <input type="hidden" id="mat-supplier-id" value="${supplierId}">
+      <input type="hidden" id="mat-id" value="">
+      
+      <div class="p-3 bg-blue-50 rounded-lg">
+        <span class="text-sm text-blue-700"><i class="fas fa-building mr-1"></i> 거래처: <strong>${supplierName}</strong></span>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">원료 코드 (선택)</label>
+          <input type="text" id="mat-item-code" class="w-full border rounded-lg px-3 py-2" placeholder="예: R001, RM135">
+          <p class="text-xs text-gray-500 mt-1">마스터 테이블과 연동 시 입력</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">원료명 <span class="text-red-500">*</span></label>
+          <input type="text" id="mat-material-name" class="w-full border rounded-lg px-3 py-2" placeholder="예: 밀가루, 설탕" required>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">제조사</label>
+          <input type="text" id="mat-manufacturer" class="w-full border rounded-lg px-3 py-2" placeholder="예: 대한제분, CJ제일제당">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">원산지</label>
+          <input type="text" id="mat-origin-country" class="w-full border rounded-lg px-3 py-2" placeholder="예: 국내, 미국, 호주">
+        </div>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제조사 주소</label>
+        <input type="text" id="mat-manufacturer-address" class="w-full border rounded-lg px-3 py-2" placeholder="제조사 주소">
+      </div>
+      
+      <div class="flex gap-6 pt-2">
+        <label class="flex items-center gap-2">
+          <input type="checkbox" id="mat-haccp" class="w-4 h-4 text-green-600">
+          <span class="text-sm">HACCP 인증</span>
+        </label>
+        <label class="flex items-center gap-2">
+          <input type="checkbox" id="mat-imported" class="w-4 h-4 text-blue-600">
+          <span class="text-sm">수입 원료</span>
+        </label>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+        <textarea id="mat-memo" class="w-full border rounded-lg px-3 py-2" rows="2" placeholder="추가 메모"></textarea>
+      </div>
+    </form>
+  `;
+  
+  const actions = `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveSupplierMaterial()" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600">저장</button>
+  `;
+  
+  showModal('원료 추가', content, actions);
+}
+
+// 원료 수정
+async function editSupplierMaterial(supplierId, materialId) {
+  try {
+    const result = await api(`/suppliers/${supplierId}/materials`);
+    const material = result.data.find(m => m.id === materialId);
+    
+    if (!material) {
+      showToast('원료 정보를 찾을 수 없습니다.', 'error');
+      return;
+    }
+    
+    const content = `
+      <form id="material-form" class="space-y-4">
+        <input type="hidden" id="mat-supplier-id" value="${supplierId}">
+        <input type="hidden" id="mat-id" value="${materialId}">
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">원료 코드 (선택)</label>
+            <input type="text" id="mat-item-code" class="w-full border rounded-lg px-3 py-2" value="${material.item_code || ''}" placeholder="예: R001, RM135">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">원료명 <span class="text-red-500">*</span></label>
+            <input type="text" id="mat-material-name" class="w-full border rounded-lg px-3 py-2" value="${material.material_name || ''}" required>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">제조사</label>
+            <input type="text" id="mat-manufacturer" class="w-full border rounded-lg px-3 py-2" value="${material.manufacturer || ''}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">원산지</label>
+            <input type="text" id="mat-origin-country" class="w-full border rounded-lg px-3 py-2" value="${material.origin_country || ''}">
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">제조사 주소</label>
+          <input type="text" id="mat-manufacturer-address" class="w-full border rounded-lg px-3 py-2" value="${material.manufacturer_address || ''}">
+        </div>
+        
+        <div class="flex gap-6 pt-2">
+          <label class="flex items-center gap-2">
+            <input type="checkbox" id="mat-haccp" class="w-4 h-4 text-green-600" ${material.haccp_certified ? 'checked' : ''}>
+            <span class="text-sm">HACCP 인증</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="checkbox" id="mat-imported" class="w-4 h-4 text-blue-600" ${material.is_imported ? 'checked' : ''}>
+            <span class="text-sm">수입 원료</span>
+          </label>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+          <textarea id="mat-memo" class="w-full border rounded-lg px-3 py-2" rows="2">${material.memo || ''}</textarea>
+        </div>
+      </form>
+    `;
+    
+    const actions = `
+      <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+      <button onclick="saveSupplierMaterial()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">수정</button>
+    `;
+    
+    showModal('원료 수정', content, actions);
+  } catch (e) {
+    showToast('원료 정보를 불러올 수 없습니다.', 'error');
+  }
+}
+
+// 원료 저장 (추가/수정)
+async function saveSupplierMaterial() {
+  const supplierId = document.getElementById('mat-supplier-id').value;
+  const materialId = document.getElementById('mat-id').value;
+  const materialName = document.getElementById('mat-material-name').value.trim();
+  
+  if (!materialName) {
+    showToast('원료명을 입력해주세요.', 'warning');
+    return;
+  }
+  
+  const data = {
+    item_code: document.getElementById('mat-item-code').value.trim() || null,
+    material_name: materialName,
+    manufacturer: document.getElementById('mat-manufacturer').value.trim() || null,
+    manufacturer_address: document.getElementById('mat-manufacturer-address').value.trim() || null,
+    origin_country: document.getElementById('mat-origin-country').value.trim() || null,
+    haccp_certified: document.getElementById('mat-haccp').checked,
+    is_imported: document.getElementById('mat-imported').checked,
+    memo: document.getElementById('mat-memo').value.trim() || null
+  };
+  
+  try {
+    if (materialId) {
+      // 수정
+      await api(`/suppliers/${supplierId}/materials/${materialId}`, 'PUT', data);
+      showToast('원료 정보가 수정되었습니다.', 'success');
+    } else {
+      // 추가
+      await api(`/suppliers/${supplierId}/materials`, 'POST', data);
+      showToast('원료가 추가되었습니다.', 'success');
+    }
+    
+    closeModal();
+    // 거래처 상세 화면 다시 열기
+    viewSupplierDetail(supplierId);
+  } catch (e) {
+    showToast('저장 중 오류가 발생했습니다.', 'error');
+  }
+}
+
+// 원료 삭제
+async function deleteSupplierMaterial(supplierId, materialId, materialName) {
+  if (!confirm(`"${materialName}" 원료를 삭제하시겠습니까?`)) {
+    return;
+  }
+  
+  try {
+    await api(`/suppliers/${supplierId}/materials/${materialId}`, 'DELETE');
+    showToast('원료가 삭제되었습니다.', 'success');
+    // 거래처 상세 화면 다시 열기
+    viewSupplierDetail(supplierId);
+  } catch (e) {
+    showToast('삭제 중 오류가 발생했습니다.', 'error');
+  }
 }
 
 // Print function
@@ -9917,6 +10195,10 @@ window.filterSuppliersByType = filterSuppliersByType;
 window.renderSuppliersTable = renderSuppliersTable;
 window.viewSupplierDetail = viewSupplierDetail;
 window.printSupplierList = printSupplierList;
+window.showAddMaterialModal = showAddMaterialModal;
+window.editSupplierMaterial = editSupplierMaterial;
+window.saveSupplierMaterial = saveSupplierMaterial;
+window.deleteSupplierMaterial = deleteSupplierMaterial;
 window.goBack = goBack;
 
 // ========== 제품검사 ==========

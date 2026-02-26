@@ -11,7 +11,6 @@ interface Supplier {
   contact?: string;
   contact_person?: string;  // 담당자
   address?: string;
-  material_name?: string;   // 원료명
   haccp_certified?: number; // HACCP 인증 여부 (0/1)
   is_imported?: number;     // 수입 여부 (0/1)
   business_number?: string; // 사업자번호
@@ -21,15 +20,28 @@ interface Supplier {
   updated_at?: string;
 }
 
+// 거래처-원료 관계
+interface SupplierMaterial {
+  id?: number;
+  supplier_id: number;
+  item_code?: string;       // master 테이블의 원료 코드 (연동 시)
+  material_name: string;    // 원료명
+  manufacturer?: string;    // 제조사 (직거래 업체명)
+  manufacturer_address?: string; // 제조사 주소
+  haccp_certified?: number; // 해당 원료 HACCP 인증 여부
+  is_imported?: number;     // 해당 원료 수입 여부
+  origin_country?: string;  // 원산지
+  memo?: string;
+}
+
 const supplierRoutes = new Hono<{ Bindings: Bindings }>();
 
-// 거래처 테이블 확장 (컬럼 추가)
+// 거래처 테이블 확장 (컬럼 추가) + 거래처-원료 관계 테이블 생성
 supplierRoutes.get('/migrate', async (c) => {
   try {
-    // 새 컬럼들 추가 (이미 있으면 무시)
+    // suppliers 테이블 컬럼 추가
     const columns = [
       { name: 'contact_person', type: 'TEXT' },
-      { name: 'material_name', type: 'TEXT' },
       { name: 'haccp_certified', type: 'INTEGER DEFAULT 0' },
       { name: 'is_imported', type: 'INTEGER DEFAULT 0' },
       { name: 'business_number', type: 'TEXT' },
@@ -44,13 +56,33 @@ supplierRoutes.get('/migrate', async (c) => {
         await c.env.DB.prepare(`ALTER TABLE suppliers ADD COLUMN ${col.name} ${col.type}`).run();
       } catch (e: any) {
         // 이미 존재하는 컬럼이면 무시
-        if (!e.message?.includes('duplicate column')) {
-          console.log(`Column ${col.name} may already exist`);
-        }
       }
     }
     
-    return c.json({ success: true, message: '거래처 테이블 마이그레이션 완료' });
+    // 거래처-원료 관계 테이블 생성
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS supplier_materials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        supplier_id INTEGER NOT NULL,
+        item_code TEXT,
+        material_name TEXT NOT NULL,
+        manufacturer TEXT,
+        manufacturer_address TEXT,
+        haccp_certified INTEGER DEFAULT 0,
+        is_imported INTEGER DEFAULT 0,
+        origin_country TEXT,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE
+      )
+    `).run();
+    
+    // 인덱스 생성
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_supplier_materials_supplier ON supplier_materials(supplier_id)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_supplier_materials_item ON supplier_materials(item_code)`).run();
+    
+    return c.json({ success: true, message: '거래처 테이블 마이그레이션 완료 (원료 관계 테이블 포함)' });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }
@@ -267,6 +299,147 @@ supplierRoutes.get('/stats/summary', async (c) => {
       imported: imported?.count || 0
     }
   });
+});
+
+// ==================== 거래처-원료 관계 API ====================
+
+// 거래처별 원료 목록 조회
+supplierRoutes.get('/:supplier_id/materials', async (c) => {
+  const supplier_id = c.req.param('supplier_id');
+  
+  const materials = await c.env.DB.prepare(`
+    SELECT sm.*, m.item_name as master_item_name, m.unit
+    FROM supplier_materials sm
+    LEFT JOIN master m ON sm.item_code = m.item_code
+    WHERE sm.supplier_id = ?
+    ORDER BY sm.material_name
+  `).bind(supplier_id).all();
+  
+  return c.json({ success: true, data: materials.results });
+});
+
+// 거래처에 원료 추가
+supplierRoutes.post('/:supplier_id/materials', async (c) => {
+  const supplier_id = c.req.param('supplier_id');
+  const body = await c.req.json<Partial<SupplierMaterial>>();
+  const { 
+    item_code, 
+    material_name, 
+    manufacturer, 
+    manufacturer_address,
+    haccp_certified, 
+    is_imported, 
+    origin_country,
+    memo 
+  } = body;
+  
+  if (!material_name) {
+    return c.json({ success: false, error: '원료명은 필수입니다.' }, 400);
+  }
+  
+  await c.env.DB.prepare(`
+    INSERT INTO supplier_materials (
+      supplier_id, item_code, material_name, manufacturer, manufacturer_address,
+      haccp_certified, is_imported, origin_country, memo
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    supplier_id,
+    item_code || null,
+    material_name,
+    manufacturer || null,
+    manufacturer_address || null,
+    haccp_certified ? 1 : 0,
+    is_imported ? 1 : 0,
+    origin_country || null,
+    memo || null
+  ).run();
+  
+  return c.json({ success: true, message: '원료가 추가되었습니다.' });
+});
+
+// 원료 정보 수정
+supplierRoutes.put('/:supplier_id/materials/:material_id', async (c) => {
+  const material_id = c.req.param('material_id');
+  const body = await c.req.json<Partial<SupplierMaterial>>();
+  const { 
+    item_code, 
+    material_name, 
+    manufacturer, 
+    manufacturer_address,
+    haccp_certified, 
+    is_imported, 
+    origin_country,
+    memo 
+  } = body;
+  
+  const result = await c.env.DB.prepare(`
+    UPDATE supplier_materials 
+    SET item_code = COALESCE(?, item_code),
+        material_name = COALESCE(?, material_name),
+        manufacturer = COALESCE(?, manufacturer),
+        manufacturer_address = COALESCE(?, manufacturer_address),
+        haccp_certified = ?,
+        is_imported = ?,
+        origin_country = COALESCE(?, origin_country),
+        memo = COALESCE(?, memo),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(
+    item_code,
+    material_name,
+    manufacturer,
+    manufacturer_address,
+    haccp_certified !== undefined ? (haccp_certified ? 1 : 0) : null,
+    is_imported !== undefined ? (is_imported ? 1 : 0) : null,
+    origin_country,
+    memo,
+    material_id
+  ).run();
+  
+  if (result.meta.changes === 0) {
+    return c.json({ success: false, error: '원료를 찾을 수 없습니다.' }, 404);
+  }
+  return c.json({ success: true, message: '원료 정보가 수정되었습니다.' });
+});
+
+// 원료 삭제
+supplierRoutes.delete('/:supplier_id/materials/:material_id', async (c) => {
+  const material_id = c.req.param('material_id');
+  
+  const result = await c.env.DB.prepare(
+    'DELETE FROM supplier_materials WHERE id = ?'
+  ).bind(material_id).run();
+  
+  if (result.meta.changes === 0) {
+    return c.json({ success: false, error: '원료를 찾을 수 없습니다.' }, 404);
+  }
+  return c.json({ success: true, message: '원료가 삭제되었습니다.' });
+});
+
+// 원료코드로 거래처/제조사 조회 (입고 시 사용)
+supplierRoutes.get('/by-material/:item_code', async (c) => {
+  const item_code = c.req.param('item_code');
+  
+  const result = await c.env.DB.prepare(`
+    SELECT 
+      s.id as supplier_id,
+      s.supplier_code,
+      s.supplier_name,
+      s.business_type,
+      sm.id as material_id,
+      sm.material_name,
+      sm.manufacturer,
+      sm.manufacturer_address,
+      sm.haccp_certified,
+      sm.is_imported,
+      sm.origin_country
+    FROM supplier_materials sm
+    JOIN suppliers s ON sm.supplier_id = s.id
+    WHERE sm.item_code = ?
+    ORDER BY s.supplier_name
+  `).bind(item_code).all();
+  
+  return c.json({ success: true, data: result.results });
 });
 
 export default supplierRoutes;

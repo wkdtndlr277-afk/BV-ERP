@@ -7781,6 +7781,11 @@ async function deleteSupplierMaterial(supplierId, materialId, materialName) {
 
 // 제조사 추가 모달
 function showAddManufacturerModal(supplierId, supplierName) {
+  // 원료 목록 (원료만 필터링)
+  const rawMaterials = (state.masterItems || []).filter(item => 
+    item.category === '원료' || item.item_code?.startsWith('R') || item.item_code?.startsWith('RM')
+  );
+  
   const content = `
     <form id="manufacturer-form" class="space-y-4">
       <input type="hidden" id="mfr-supplier-id" value="${supplierId}">
@@ -7825,15 +7830,35 @@ function showAddManufacturerModal(supplierId, supplierName) {
       <div class="p-4 bg-green-50 rounded-lg border border-green-200">
         <p class="text-sm text-green-700 mb-3"><i class="fas fa-box mr-1"></i> 이 제조사에서 공급받는 첫 번째 원료를 입력하세요.</p>
         
-        <div class="grid grid-cols-2 gap-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">원료 코드 (선택)</label>
-            <input type="text" id="mfr-item-code" class="w-full border rounded-lg px-3 py-2" placeholder="예: R001, RM135">
+        <div class="space-y-3">
+          <div class="relative">
+            <label class="block text-sm font-medium text-gray-700 mb-1">원료 검색 <span class="text-red-500">*</span></label>
+            <input type="text" id="mfr-material-search" class="w-full border rounded-lg px-3 py-2" 
+              placeholder="원료코드 또는 원료명으로 검색..." autocomplete="off"
+              oninput="filterMfrMaterialList(this.value)">
+            <div id="mfr-material-dropdown" class="absolute z-50 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto hidden">
+            </div>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">원료명 <span class="text-red-500">*</span></label>
-            <input type="text" id="mfr-material-name" class="w-full border rounded-lg px-3 py-2" placeholder="예: 밀가루, 설탕" required>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">원료 코드</label>
+              <input type="text" id="mfr-item-code" class="w-full border rounded-lg px-3 py-2 bg-gray-50" readonly>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">원료명</label>
+              <input type="text" id="mfr-material-name" class="w-full border rounded-lg px-3 py-2 bg-gray-50" readonly>
+            </div>
           </div>
+          
+          <p class="text-xs text-gray-500">
+            <i class="fas fa-info-circle mr-1"></i> 
+            검색창에서 원료를 선택하면 자동으로 입력됩니다. 
+            ERP에 없는 원료는 직접 입력할 수 있습니다.
+          </p>
+          <button type="button" onclick="enableManualMaterialInput()" class="text-xs text-blue-600 hover:text-blue-800">
+            <i class="fas fa-edit mr-1"></i>직접 입력하기
+          </button>
         </div>
       </div>
     </form>
@@ -7847,6 +7872,85 @@ function showAddManufacturerModal(supplierId, supplierName) {
   `;
   
   showModal('제조사 추가', content, actions);
+  
+  // 원료 목록 저장 (검색용)
+  window.mfrRawMaterials = rawMaterials;
+}
+
+// 제조사 추가 - 원료 검색 필터링
+function filterMfrMaterialList(searchTerm) {
+  const dropdown = document.getElementById('mfr-material-dropdown');
+  const materials = window.mfrRawMaterials || [];
+  
+  if (!searchTerm || searchTerm.length < 1) {
+    dropdown.classList.add('hidden');
+    return;
+  }
+  
+  const term = searchTerm.toLowerCase();
+  const filtered = materials.filter(item => 
+    item.item_code?.toLowerCase().includes(term) || 
+    item.item_name?.toLowerCase().includes(term)
+  ).slice(0, 15); // 최대 15개
+  
+  if (filtered.length === 0) {
+    dropdown.innerHTML = `
+      <div class="p-3 text-gray-500 text-sm text-center">
+        검색 결과가 없습니다.
+        <button type="button" onclick="enableManualMaterialInput()" class="block w-full mt-2 text-blue-600 hover:text-blue-800">
+          <i class="fas fa-edit mr-1"></i>직접 입력하기
+        </button>
+      </div>
+    `;
+    dropdown.classList.remove('hidden');
+    return;
+  }
+  
+  dropdown.innerHTML = filtered.map(item => `
+    <div class="p-2 hover:bg-blue-50 cursor-pointer border-b last:border-b-0"
+         onclick="selectMfrMaterial('${item.item_code}', '${item.item_name.replace(/'/g, "\\'")}')">
+      <div class="flex justify-between items-center">
+        <span class="font-medium text-gray-800">${item.item_name}</span>
+        <span class="text-xs text-gray-500 font-mono">${item.item_code}</span>
+      </div>
+      ${item.current_stock !== undefined ? `<div class="text-xs text-gray-400">재고: ${formatNumber(item.current_stock)} ${item.unit || 'kg'}</div>` : ''}
+    </div>
+  `).join('');
+  
+  dropdown.classList.remove('hidden');
+}
+
+// 제조사 추가 - 원료 선택
+function selectMfrMaterial(itemCode, itemName) {
+  document.getElementById('mfr-item-code').value = itemCode;
+  document.getElementById('mfr-material-name').value = itemName;
+  document.getElementById('mfr-material-search').value = `${itemName} (${itemCode})`;
+  document.getElementById('mfr-material-dropdown').classList.add('hidden');
+}
+
+// 직접 입력 모드 활성화
+function enableManualMaterialInput() {
+  const itemCodeInput = document.getElementById('mfr-item-code');
+  const materialNameInput = document.getElementById('mfr-material-name');
+  const searchInput = document.getElementById('mfr-material-search');
+  
+  itemCodeInput.readOnly = false;
+  itemCodeInput.classList.remove('bg-gray-50');
+  itemCodeInput.placeholder = '예: R001, RM135';
+  
+  materialNameInput.readOnly = false;
+  materialNameInput.classList.remove('bg-gray-50');
+  materialNameInput.placeholder = '예: 밀가루, 설탕';
+  
+  searchInput.value = '';
+  searchInput.placeholder = '직접 입력 모드 - 아래에 직접 입력하세요';
+  searchInput.disabled = true;
+  searchInput.classList.add('bg-gray-100');
+  
+  document.getElementById('mfr-material-dropdown').classList.add('hidden');
+  
+  materialNameInput.focus();
+  showToast('직접 입력 모드로 전환되었습니다.', 'info');
 }
 
 // 제조사 및 원료 저장
@@ -7887,6 +7991,12 @@ async function saveManufacturerWithMaterial() {
 
 // 특정 제조사에 원료 추가
 function showAddMaterialToManufacturer(supplierId, supplierName, manufacturerName) {
+  // 원료 목록 (원료만 필터링)
+  const rawMaterials = (state.masterItems || []).filter(item => 
+    item.category === '원료' || item.item_code?.startsWith('R') || item.item_code?.startsWith('RM')
+  );
+  window.matRawMaterials = rawMaterials;
+  
   const content = `
     <form id="material-form" class="space-y-4">
       <input type="hidden" id="mat-supplier-id" value="${supplierId}">
@@ -7901,16 +8011,30 @@ function showAddMaterialToManufacturer(supplierId, supplierName, manufacturerNam
         <span class="text-sm text-orange-700"><i class="fas fa-building mr-1"></i> 제조사: <strong>${manufacturerName}</strong></span>
       </div>
       
-      <div class="grid grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">원료 코드 (선택)</label>
-          <input type="text" id="mat-item-code" class="w-full border rounded-lg px-3 py-2" placeholder="예: R001, RM135">
-          <p class="text-xs text-gray-500 mt-1">마스터 테이블과 연동 시 입력</p>
+      <div class="space-y-3">
+        <div class="relative">
+          <label class="block text-sm font-medium text-gray-700 mb-1">원료 검색 <span class="text-red-500">*</span></label>
+          <input type="text" id="mat-material-search" class="w-full border rounded-lg px-3 py-2" 
+            placeholder="원료코드 또는 원료명으로 검색..." autocomplete="off"
+            oninput="filterMatMaterialList(this.value)">
+          <div id="mat-material-dropdown" class="absolute z-50 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto hidden">
+          </div>
         </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">원료명 <span class="text-red-500">*</span></label>
-          <input type="text" id="mat-material-name" class="w-full border rounded-lg px-3 py-2" placeholder="예: 밀가루, 설탕" required>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">원료 코드</label>
+            <input type="text" id="mat-item-code" class="w-full border rounded-lg px-3 py-2 bg-gray-50" readonly>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">원료명</label>
+            <input type="text" id="mat-material-name" class="w-full border rounded-lg px-3 py-2 bg-gray-50" readonly>
+          </div>
         </div>
+        
+        <button type="button" onclick="enableMatManualInput()" class="text-xs text-blue-600 hover:text-blue-800">
+          <i class="fas fa-edit mr-1"></i>직접 입력하기
+        </button>
       </div>
       
       <div>
@@ -7926,6 +8050,82 @@ function showAddMaterialToManufacturer(supplierId, supplierName, manufacturerNam
   `;
   
   showModal(`${manufacturerName} - 원료 추가`, content, actions);
+}
+
+// 제조사에 원료 추가 - 검색 필터링
+function filterMatMaterialList(searchTerm) {
+  const dropdown = document.getElementById('mat-material-dropdown');
+  const materials = window.matRawMaterials || [];
+  
+  if (!searchTerm || searchTerm.length < 1) {
+    dropdown.classList.add('hidden');
+    return;
+  }
+  
+  const term = searchTerm.toLowerCase();
+  const filtered = materials.filter(item => 
+    item.item_code?.toLowerCase().includes(term) || 
+    item.item_name?.toLowerCase().includes(term)
+  ).slice(0, 15);
+  
+  if (filtered.length === 0) {
+    dropdown.innerHTML = `
+      <div class="p-3 text-gray-500 text-sm text-center">
+        검색 결과가 없습니다.
+        <button type="button" onclick="enableMatManualInput()" class="block w-full mt-2 text-blue-600 hover:text-blue-800">
+          <i class="fas fa-edit mr-1"></i>직접 입력하기
+        </button>
+      </div>
+    `;
+    dropdown.classList.remove('hidden');
+    return;
+  }
+  
+  dropdown.innerHTML = filtered.map(item => `
+    <div class="p-2 hover:bg-blue-50 cursor-pointer border-b last:border-b-0"
+         onclick="selectMatMaterial('${item.item_code}', '${item.item_name.replace(/'/g, "\\'")}')">
+      <div class="flex justify-between items-center">
+        <span class="font-medium text-gray-800">${item.item_name}</span>
+        <span class="text-xs text-gray-500 font-mono">${item.item_code}</span>
+      </div>
+      ${item.current_stock !== undefined ? `<div class="text-xs text-gray-400">재고: ${formatNumber(item.current_stock)} ${item.unit || 'kg'}</div>` : ''}
+    </div>
+  `).join('');
+  
+  dropdown.classList.remove('hidden');
+}
+
+// 제조사에 원료 추가 - 원료 선택
+function selectMatMaterial(itemCode, itemName) {
+  document.getElementById('mat-item-code').value = itemCode;
+  document.getElementById('mat-material-name').value = itemName;
+  document.getElementById('mat-material-search').value = `${itemName} (${itemCode})`;
+  document.getElementById('mat-material-dropdown').classList.add('hidden');
+}
+
+// 제조사에 원료 추가 - 직접 입력 모드
+function enableMatManualInput() {
+  const itemCodeInput = document.getElementById('mat-item-code');
+  const materialNameInput = document.getElementById('mat-material-name');
+  const searchInput = document.getElementById('mat-material-search');
+  
+  itemCodeInput.readOnly = false;
+  itemCodeInput.classList.remove('bg-gray-50');
+  itemCodeInput.placeholder = '예: R001, RM135';
+  
+  materialNameInput.readOnly = false;
+  materialNameInput.classList.remove('bg-gray-50');
+  materialNameInput.placeholder = '예: 밀가루, 설탕';
+  
+  searchInput.value = '';
+  searchInput.placeholder = '직접 입력 모드 - 아래에 직접 입력하세요';
+  searchInput.disabled = true;
+  searchInput.classList.add('bg-gray-100');
+  
+  document.getElementById('mat-material-dropdown').classList.add('hidden');
+  
+  materialNameInput.focus();
+  showToast('직접 입력 모드로 전환되었습니다.', 'info');
 }
 
 // 제조사에 원료 저장
@@ -10561,6 +10761,12 @@ window.saveMaterialToManufacturer = saveMaterialToManufacturer;
 window.editManufacturerInfo = editManufacturerInfo;
 window.updateManufacturerInfo = updateManufacturerInfo;
 window.deleteManufacturer = deleteManufacturer;
+window.filterMfrMaterialList = filterMfrMaterialList;
+window.selectMfrMaterial = selectMfrMaterial;
+window.enableManualMaterialInput = enableManualMaterialInput;
+window.filterMatMaterialList = filterMatMaterialList;
+window.selectMatMaterial = selectMatMaterial;
+window.enableMatManualInput = enableMatManualInput;
 window.goBack = goBack;
 
 // ========== 제품검사 ==========

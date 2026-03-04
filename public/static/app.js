@@ -21729,24 +21729,57 @@ async function parseUsageExcel() {
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
     
-    // 파싱된 데이터 처리
+    console.log('엑셀 총 행 수:', jsonData.length);
+    
+    // 파싱된 데이터 처리 - A열(인덱스 0): 제품명, C열(인덱스 2): 사용량
     const items = [];
+    
     for (let i = 0; i < jsonData.length; i++) {
       const row = jsonData[i];
-      if (!row || row.length < 2) continue;
+      if (!row) continue;
       
+      // A열 (인덱스 0): 제품명
       const itemName = String(row[0] || '').trim();
-      const quantity = parseFloat(row[1]);
       
-      if (itemName && !isNaN(quantity) && quantity > 0) {
-        items.push({ item_name: itemName, quantity });
+      // C열 (인덱스 2): 사용량
+      let quantity = 0;
+      const qtyValue = row[2];
+      
+      if (typeof qtyValue === 'number') {
+        quantity = qtyValue;
+      } else if (typeof qtyValue === 'string') {
+        quantity = parseFloat(qtyValue.replace(/,/g, ''));
+      }
+      
+      // 유효한 데이터인지 확인
+      // - 제품명이 있어야 함
+      // - True, NaN, 날짜 형식 등 제외
+      // - 수량이 0보다 커야 함
+      if (!itemName) continue;
+      if (itemName === 'True' || itemName === 'true' || itemName === 'FALSE' || itemName === 'false') continue;
+      if (itemName.toLowerCase().includes('합계') || itemName.toLowerCase().includes('total')) continue;
+      if (/^\d{4}-\d{2}-\d{2}/.test(itemName)) continue; // 날짜 형식 제외
+      if (isNaN(quantity) || quantity <= 0) continue;
+      
+      // 단위 제거 (예: "밀가루 (kg)" -> "밀가루")
+      const cleanName = itemName.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      
+      if (cleanName) {
+        items.push({ item_name: cleanName, quantity: Math.round(quantity * 100) / 100 });
       }
     }
     
+    console.log(`파싱된 품목 수: ${items.length}`);
+    if (items.length > 0) {
+      console.log('샘플 데이터:', items.slice(0, 10));
+    }
+    
     if (items.length === 0) {
-      showToast('유효한 데이터가 없습니다.', 'warning');
+      showToast('유효한 데이터가 없습니다. A열: 제품명, C열: 사용량 형식이어야 합니다.', 'warning');
       return;
     }
+    
+    showToast(`${items.length}건의 데이터를 파싱했습니다.`, 'success');
     
     // 미리보기 표시
     renderUsagePreview(items);
@@ -21797,11 +21830,18 @@ function renderUsagePreview(items) {
   window.usagePreviewItems = items;
   
   tableContainer.innerHTML = `
+    <div class="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+      <label class="flex items-center gap-2">
+        <input type="checkbox" id="auto-adjust-stock" class="w-4 h-4">
+        <span class="text-sm font-medium text-yellow-800">재고 부족 시 자동 차감 (LOT 없이 사용 처리)</span>
+      </label>
+      <p class="text-xs text-yellow-600 mt-1 ml-6">* 체크하면 재고가 부족해도 전량 사용 처리됩니다</p>
+    </div>
     <table class="w-full text-sm">
       <thead class="bg-gray-100">
         <tr>
           <th class="px-3 py-2 text-left">#</th>
-          <th class="px-3 py-2 text-left">품목명</th>
+          <th class="px-3 py-2 text-left">품목명 (입력값)</th>
           <th class="px-3 py-2 text-right">수량</th>
           <th class="px-3 py-2 text-center">상태</th>
         </tr>
@@ -21827,6 +21867,7 @@ function renderUsagePreview(items) {
 async function submitBulkUsage() {
   const items = window.usagePreviewItems;
   const usageDate = document.getElementById('upload-usage-date').value;
+  const autoAdjust = document.getElementById('auto-adjust-stock')?.checked || false;
   
   if (!items || items.length === 0) {
     showToast('등록할 데이터가 없습니다.', 'warning');
@@ -21838,14 +21879,19 @@ async function submitBulkUsage() {
     return;
   }
   
-  if (!confirm(`${items.length}건의 사용량을 ${usageDate}일자로 등록하시겠습니까?`)) {
+  const confirmMsg = autoAdjust 
+    ? `${items.length}건의 사용량을 ${usageDate}일자로 등록하시겠습니까?\n(재고 부족 시 자동 차감됩니다)`
+    : `${items.length}건의 사용량을 ${usageDate}일자로 등록하시겠습니까?`;
+  
+  if (!confirm(confirmMsg)) {
     return;
   }
   
   try {
     const result = await api('/transactions/bulk-usage', 'POST', {
       usage_date: usageDate,
-      items: items
+      items: items,
+      auto_adjust: autoAdjust
     });
     
     showToast(result.message, 'success');
@@ -21854,41 +21900,59 @@ async function submitBulkUsage() {
     const resultData = result.data;
     const tableContainer = document.getElementById('usage-preview-table');
     
+    const completeCount = resultData.results.filter(r => r.status === 'complete').length;
+    const partialCount = resultData.results.filter(r => r.status === 'partial').length;
+    
     tableContainer.innerHTML = `
       <div class="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
-        <p class="font-bold text-green-800">등록 완료: ${resultData.total_processed}건 성공 / ${resultData.total_errors}건 오류</p>
+        <p class="font-bold text-green-800">등록 완료: ${completeCount}건 성공 / ${partialCount}건 부분처리 / ${resultData.total_errors}건 오류</p>
       </div>
       <table class="w-full text-sm">
         <thead class="bg-gray-100">
           <tr>
-            <th class="px-3 py-2 text-left">품목코드</th>
-            <th class="px-3 py-2 text-left">품목명</th>
-            <th class="px-3 py-2 text-right">요청수량</th>
-            <th class="px-3 py-2 text-right">사용수량</th>
+            <th class="px-3 py-2 text-left">입력명</th>
+            <th class="px-3 py-2 text-left">매칭된 품목</th>
+            <th class="px-3 py-2 text-center">매칭방식</th>
+            <th class="px-3 py-2 text-right">요청</th>
+            <th class="px-3 py-2 text-right">처리</th>
             <th class="px-3 py-2 text-center">상태</th>
           </tr>
         </thead>
         <tbody>
           ${resultData.results.map(r => `
-            <tr class="border-b">
-              <td class="px-3 py-2 text-gray-600">${r.item_code}</td>
-              <td class="px-3 py-2 font-medium">${r.item_name}</td>
+            <tr class="border-b ${r.status === 'partial' ? 'bg-yellow-50' : ''}">
+              <td class="px-3 py-2 text-gray-600 text-xs">${r.input_name}</td>
+              <td class="px-3 py-2 font-medium">${r.item_name} <span class="text-gray-400 text-xs">(${r.item_code})</span></td>
+              <td class="px-3 py-2 text-center">
+                <span class="px-1.5 py-0.5 rounded text-xs ${
+                  r.match_type === 'exact' || r.match_type === 'code' ? 'bg-green-100 text-green-700' :
+                  r.match_type === 'contains' || r.match_type === 'normalized' ? 'bg-blue-100 text-blue-700' :
+                  'bg-yellow-100 text-yellow-700'
+                }">${
+                  r.match_type === 'exact' ? '정확' :
+                  r.match_type === 'code' ? '코드' :
+                  r.match_type === 'case-insensitive' ? '대소문자' :
+                  r.match_type === 'normalized' ? '정규화' :
+                  r.match_type === 'contains' ? '포함' :
+                  r.match_type === 'prefix' ? '접두어' :
+                  r.match_type === 'similar' ? '유사' : r.match_type
+                }</span>
+              </td>
               <td class="px-3 py-2 text-right">${formatNumber(r.requested_qty)}</td>
-              <td class="px-3 py-2 text-right">${formatNumber(r.used_qty)}</td>
+              <td class="px-3 py-2 text-right font-medium">${formatNumber(r.used_qty)}</td>
               <td class="px-3 py-2 text-center">
                 <span class="px-2 py-1 rounded text-xs ${r.status === 'complete' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}">
-                  ${r.status === 'complete' ? '완료' : '부분처리'}
+                  ${r.status === 'complete' ? '완료' : '부분'}
                 </span>
+                ${r.status_note ? `<div class="text-xs text-gray-500 mt-1">${r.status_note}</div>` : ''}
               </td>
             </tr>
           `).join('')}
           ${resultData.errors.map(e => `
             <tr class="border-b bg-red-50">
-              <td class="px-3 py-2 text-red-600">-</td>
-              <td class="px-3 py-2 font-medium text-red-600">${e.item}</td>
-              <td class="px-3 py-2 text-right">-</td>
-              <td class="px-3 py-2 text-right">-</td>
-              <td class="px-3 py-2 text-center">
+              <td class="px-3 py-2 text-red-600">${e.item}</td>
+              <td class="px-3 py-2 text-red-600" colspan="3">-</td>
+              <td class="px-3 py-2 text-center" colspan="2">
                 <span class="px-2 py-1 rounded text-xs bg-red-100 text-red-700">${e.error}</span>
               </td>
             </tr>

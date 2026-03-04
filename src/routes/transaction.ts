@@ -1287,7 +1287,7 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   }
 });
 
-// 사용량 일괄 등록 (엑셀 업로드용)
+// 사용량 일괄 등록 (엑셀 업로드용) - 유사 매칭 지원
 transactionRoutes.post('/bulk-usage', async (c) => {
   const body = await c.req.json<{
     usage_date: string;
@@ -1298,13 +1298,77 @@ transactionRoutes.post('/bulk-usage', async (c) => {
       unit?: string;
       memo?: string;
     }>;
+    auto_adjust?: boolean; // 재고 부족 시 자동 조정 여부
   }>();
   
-  const { usage_date, items } = body;
+  const { usage_date, items, auto_adjust = false } = body;
   
   if (!usage_date || !items || !Array.isArray(items) || items.length === 0) {
     return c.json({ success: false, error: '사용일과 품목 목록을 입력해주세요.' }, 400);
   }
+  
+  // 모든 마스터 데이터 조회 (유사 매칭용)
+  const allMasters = await c.env.DB.prepare('SELECT * FROM master').all();
+  const masterList = (allMasters.results || []) as any[];
+  
+  // 유사 매칭 함수
+  const findBestMatch = (searchName: string): any => {
+    const normalized = searchName.toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[.\-_]/g, '')
+      .replace(/\(.*?\)/g, '');
+    
+    // 1. 정확히 일치
+    let match = masterList.find(m => m.item_name === searchName);
+    if (match) return { master: match, matchType: 'exact' };
+    
+    // 2. 대소문자 무시 일치
+    match = masterList.find(m => m.item_name.toLowerCase() === searchName.toLowerCase());
+    if (match) return { master: match, matchType: 'case-insensitive' };
+    
+    // 3. 공백/특수문자 제거 후 일치
+    match = masterList.find(m => {
+      const mNorm = m.item_name.toLowerCase().replace(/\s+/g, '').replace(/[.\-_]/g, '').replace(/\(.*?\)/g, '');
+      return mNorm === normalized;
+    });
+    if (match) return { master: match, matchType: 'normalized' };
+    
+    // 4. 포함 관계 (검색어가 DB명에 포함되거나 DB명이 검색어에 포함)
+    match = masterList.find(m => {
+      const mNorm = m.item_name.toLowerCase().replace(/\s+/g, '');
+      return mNorm.includes(normalized) || normalized.includes(mNorm);
+    });
+    if (match) return { master: match, matchType: 'contains' };
+    
+    // 5. 부분 일치 (앞 2글자 이상 일치)
+    if (normalized.length >= 2) {
+      match = masterList.find(m => {
+        const mNorm = m.item_name.toLowerCase().replace(/\s+/g, '');
+        return mNorm.startsWith(normalized.substring(0, 2)) || normalized.startsWith(mNorm.substring(0, 2));
+      });
+      if (match) return { master: match, matchType: 'prefix' };
+    }
+    
+    // 6. 유사도 기반 (Levenshtein distance 간소화)
+    let bestScore = 0;
+    let bestMatch = null;
+    for (const m of masterList) {
+      const mNorm = m.item_name.toLowerCase().replace(/\s+/g, '');
+      // 공통 문자 수 계산
+      let commonChars = 0;
+      for (const char of normalized) {
+        if (mNorm.includes(char)) commonChars++;
+      }
+      const score = commonChars / Math.max(normalized.length, mNorm.length);
+      if (score > 0.6 && score > bestScore) {
+        bestScore = score;
+        bestMatch = m;
+      }
+    }
+    if (bestMatch) return { master: bestMatch, matchType: 'similar', score: bestScore };
+    
+    return null;
+  };
   
   const results: any[] = [];
   const errors: any[] = [];
@@ -1313,23 +1377,26 @@ transactionRoutes.post('/bulk-usage', async (c) => {
     try {
       // 품목 코드 또는 이름으로 마스터 조회
       let master: any = null;
+      let matchType = '';
       
       if (item.item_code) {
-        master = await c.env.DB.prepare(
-          'SELECT * FROM master WHERE item_code = ?'
-        ).bind(item.item_code).first();
+        master = masterList.find(m => m.item_code === item.item_code);
+        if (master) matchType = 'code';
       }
       
       if (!master && item.item_name) {
-        master = await c.env.DB.prepare(
-          'SELECT * FROM master WHERE item_name = ? OR item_name LIKE ?'
-        ).bind(item.item_name, `%${item.item_name}%`).first();
+        const matchResult = findBestMatch(item.item_name);
+        if (matchResult) {
+          master = matchResult.master;
+          matchType = matchResult.matchType;
+        }
       }
       
       if (!master) {
         errors.push({
           item: item.item_name || item.item_code,
-          error: '등록되지 않은 품목입니다.'
+          error: '등록되지 않은 품목입니다.',
+          suggestion: '품목 관리에서 먼저 등록해주세요.'
         });
         continue;
       }
@@ -1382,14 +1449,47 @@ transactionRoutes.post('/bulk-usage', async (c) => {
         `).bind(totalUsed, master.item_code).run();
       }
       
+      // 재고 부족 시 처리
+      let status = 'complete';
+      let statusNote = '';
+      
+      if (remainingQty > 0) {
+        if (auto_adjust) {
+          // 자동 조정: 부족분을 재고조정으로 처리 (음수 재고 허용)
+          await c.env.DB.prepare(`
+            INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+            VALUES (?, ?, '사용', ?, ?)
+          `).bind(
+            usage_date,
+            master.item_code,
+            -remainingQty,
+            '일괄등록 - LOT 없이 사용 처리'
+          ).run();
+          
+          await c.env.DB.prepare(`
+            UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
+            WHERE item_code = ?
+          `).bind(remainingQty, master.item_code).run();
+          
+          status = 'complete';
+          statusNote = `LOT 부족분 ${remainingQty.toFixed(2)} 자동 차감`;
+        } else {
+          status = 'partial';
+          statusNote = `재고 부족: ${remainingQty.toFixed(2)} 미처리`;
+        }
+      }
+      
       results.push({
+        input_name: item.item_name,
         item_code: master.item_code,
         item_name: master.item_name,
+        match_type: matchType,
         requested_qty: item.quantity,
-        used_qty: totalUsed,
-        remaining_qty: remainingQty,
+        used_qty: auto_adjust ? item.quantity : totalUsed,
+        remaining_qty: auto_adjust ? 0 : remainingQty,
         used_lots: usedLots,
-        status: remainingQty > 0 ? 'partial' : 'complete'
+        status,
+        status_note: statusNote
       });
       
     } catch (err: any) {

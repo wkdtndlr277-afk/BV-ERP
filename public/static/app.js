@@ -21417,7 +21417,8 @@ async function renderStockLedger() {
             <ul class="text-sm text-blue-700 space-y-1">
               <li>• 엑셀 파일 또는 텍스트 데이터로 일일 사용량을 일괄 등록합니다.</li>
               <li>• 품목명이 기준정보에 등록되어 있어야 합니다.</li>
-              <li>• 형식: 품목명 [탭/쉼표] 수량 (한 줄에 하나씩)</li>
+              <li>• 형식: A열=품목명, C열=사용량 (엑셀) 또는 품목명,수량 (텍스트)</li>
+              <li>• <strong class="text-red-600">엑셀 데이터가 g 단위인 경우 아래에서 'g (그램)' 선택하세요!</strong></li>
               <li>• FIFO 방식으로 자동 LOT 차감됩니다.</li>
             </ul>
           </div>
@@ -21431,9 +21432,17 @@ async function renderStockLedger() {
                 <input type="date" id="upload-usage-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
               </div>
               <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">엑셀 데이터 단위 <span class="text-red-500">*</span></label>
+                <select id="usage-excel-unit" class="w-full border rounded-lg px-3 py-2 bg-yellow-50">
+                  <option value="g" selected>g (그램) → kg 자동 변환</option>
+                  <option value="kg">kg (킬로그램) - 변환 없음</option>
+                </select>
+                <p class="text-xs text-red-500 mt-1">* 일일 총 원료 사용량 파일은 보통 g 단위입니다!</p>
+              </div>
+              <div class="mb-4">
                 <label class="block text-sm font-medium text-gray-700 mb-1">엑셀 파일 선택</label>
                 <input type="file" id="usage-excel-file" accept=".xlsx,.xls,.csv" class="w-full border rounded-lg px-3 py-2">
-                <p class="text-xs text-gray-500 mt-1">* 첫 번째 열: 품목명, 두 번째 열: 수량</p>
+                <p class="text-xs text-gray-500 mt-1">* A열: 품목명, C열: 사용량</p>
               </div>
               <button onclick="parseUsageExcel()" class="w-full bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
                 <i class="fas fa-upload mr-2"></i>파일 파싱
@@ -21906,6 +21915,11 @@ async function parseUsageExcel() {
     return;
   }
   
+  // 단위 선택 확인
+  const unitSelect = document.getElementById('usage-excel-unit');
+  const unit = unitSelect ? unitSelect.value : 'g';
+  const conversionFactor = (unit === 'g') ? 0.001 : 1; // g → kg 변환
+  
   try {
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data, { type: 'array' });
@@ -21913,6 +21927,7 @@ async function parseUsageExcel() {
     const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
     
     console.log('엑셀 총 행 수:', jsonData.length);
+    console.log('선택한 단위:', unit, '변환 계수:', conversionFactor);
     
     // 파싱된 데이터 처리 - A열(인덱스 0): 제품명, C열(인덱스 2): 사용량
     const items = [];
@@ -21947,8 +21962,16 @@ async function parseUsageExcel() {
       // 단위 제거 (예: "밀가루 (kg)" -> "밀가루")
       const cleanName = itemName.replace(/\s*\([^)]*\)\s*$/, '').trim();
       
+      // 단위 변환 적용 (g → kg)
+      const convertedQty = quantity * conversionFactor;
+      
       if (cleanName) {
-        items.push({ item_name: cleanName, quantity: Math.round(quantity * 100) / 100 });
+        items.push({ 
+          item_name: cleanName, 
+          quantity: Math.round(convertedQty * 1000) / 1000, // 소수점 3자리
+          original_qty: quantity,
+          unit: unit
+        });
       }
     }
     
@@ -22012,7 +22035,16 @@ function renderUsagePreview(items) {
   
   window.usagePreviewItems = items;
   
+  // 단위 변환 여부 확인
+  const hasConversion = items.length > 0 && items[0].unit === 'g';
+  
   tableContainer.innerHTML = `
+    ${hasConversion ? `
+      <div class="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+        <p class="text-sm font-medium text-green-800"><i class="fas fa-exchange-alt mr-2"></i>g → kg 단위 변환이 적용되었습니다</p>
+        <p class="text-xs text-green-600 mt-1">* 원본 데이터(g)가 kg으로 변환되어 등록됩니다</p>
+      </div>
+    ` : ''}
     <div class="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
       <label class="flex items-center gap-2">
         <input type="checkbox" id="auto-adjust-stock" class="w-4 h-4">
@@ -22025,7 +22057,8 @@ function renderUsagePreview(items) {
         <tr>
           <th class="px-3 py-2 text-left">#</th>
           <th class="px-3 py-2 text-left">품목명 (입력값)</th>
-          <th class="px-3 py-2 text-right">수량</th>
+          ${hasConversion ? '<th class="px-3 py-2 text-right text-gray-500">원본(g)</th>' : ''}
+          <th class="px-3 py-2 text-right">수량(kg)</th>
           <th class="px-3 py-2 text-center">상태</th>
         </tr>
       </thead>
@@ -22034,7 +22067,8 @@ function renderUsagePreview(items) {
           <tr class="border-b">
             <td class="px-3 py-2 text-gray-500">${idx + 1}</td>
             <td class="px-3 py-2 font-medium">${item.item_name}</td>
-            <td class="px-3 py-2 text-right">${formatNumber(item.quantity)}</td>
+            ${hasConversion ? `<td class="px-3 py-2 text-right text-gray-400">${formatNumber(item.original_qty)}</td>` : ''}
+            <td class="px-3 py-2 text-right font-medium text-blue-600">${formatNumber(item.quantity)}</td>
             <td class="px-3 py-2 text-center"><span class="text-blue-600">대기</span></td>
           </tr>
         `).join('')}

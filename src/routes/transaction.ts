@@ -1513,4 +1513,124 @@ transactionRoutes.post('/bulk-usage', async (c) => {
   });
 });
 
+// 사용량 일괄 삭제 (날짜별) - 재고 원복
+transactionRoutes.delete('/bulk-usage', async (c) => {
+  const usage_date = c.req.query('usage_date');
+  const memo_filter = c.req.query('memo') || '일괄'; // 메모에 포함된 문자열로 필터
+  
+  if (!usage_date) {
+    return c.json({ success: false, error: '삭제할 날짜를 지정해주세요.' }, 400);
+  }
+  
+  try {
+    // 해당 날짜의 일괄 등록된 사용 트랜잭션 조회
+    const transactions = await c.env.DB.prepare(`
+      SELECT t.*, m.item_name
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE t.trans_date = ? 
+        AND t.trans_type = '사용' 
+        AND (t.memo LIKE ? OR t.memo LIKE '%일괄%')
+      ORDER BY t.id DESC
+    `).bind(usage_date, `%${memo_filter}%`).all();
+    
+    const transToDelete = (transactions.results || []) as any[];
+    
+    if (transToDelete.length === 0) {
+      return c.json({ 
+        success: false, 
+        error: `${usage_date} 날짜에 일괄 등록된 사용량 데이터가 없습니다.` 
+      }, 404);
+    }
+    
+    const results: any[] = [];
+    const errors: any[] = [];
+    
+    for (const trans of transToDelete) {
+      try {
+        const qty = Math.abs(trans.quantity); // 사용량은 음수로 저장되어 있음
+        
+        // 1. LOT 잔량 원복 (LOT이 있는 경우)
+        if (trans.lot_number) {
+          await c.env.DB.prepare(`
+            UPDATE inbound 
+            SET remain_qty = remain_qty + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE lot_number = ?
+          `).bind(qty, trans.lot_number).run();
+        }
+        
+        // 2. 마스터 재고 원복
+        await c.env.DB.prepare(`
+          UPDATE master 
+          SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
+          WHERE item_code = ?
+        `).bind(qty, trans.item_code).run();
+        
+        // 3. 트랜잭션 삭제
+        await c.env.DB.prepare(`
+          DELETE FROM transactions WHERE id = ?
+        `).bind(trans.id).run();
+        
+        results.push({
+          id: trans.id,
+          item_code: trans.item_code,
+          item_name: trans.item_name,
+          quantity: qty,
+          lot_number: trans.lot_number || '-',
+          status: 'deleted'
+        });
+        
+      } catch (err: any) {
+        errors.push({
+          id: trans.id,
+          item_code: trans.item_code,
+          error: err.message
+        });
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${results.length}건 삭제 완료, ${errors.length}건 오류`,
+      data: {
+        results,
+        errors,
+        total_found: transToDelete.length,
+        total_deleted: results.length,
+        total_errors: errors.length,
+        deleted_date: usage_date
+      }
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 특정 날짜의 일괄 등록 사용량 조회 (삭제 전 확인용)
+transactionRoutes.get('/bulk-usage', async (c) => {
+  const usage_date = c.req.query('usage_date');
+  
+  if (!usage_date) {
+    return c.json({ success: false, error: '조회할 날짜를 지정해주세요.' }, 400);
+  }
+  
+  const transactions = await c.env.DB.prepare(`
+    SELECT t.*, m.item_name
+    FROM transactions t
+    LEFT JOIN master m ON t.item_code = m.item_code
+    WHERE t.trans_date = ? 
+      AND t.trans_type = '사용' 
+      AND (t.memo LIKE '%일괄%')
+    ORDER BY t.id DESC
+  `).bind(usage_date).all();
+  
+  return c.json({
+    success: true,
+    data: transactions.results,
+    count: (transactions.results || []).length,
+    date: usage_date
+  });
+});
+
 export default transactionRoutes;

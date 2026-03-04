@@ -21358,6 +21358,9 @@ async function renderStockLedger() {
           <button onclick="switchStockLedgerTab('upload')" class="stock-ledger-tab px-6 py-3 font-medium text-gray-600 hover:text-haccp-primary" data-tab="upload">
             <i class="fas fa-upload mr-2"></i>사용량 일괄 등록
           </button>
+          <button onclick="switchStockLedgerTab('delete')" class="stock-ledger-tab px-6 py-3 font-medium text-gray-600 hover:text-haccp-primary" data-tab="delete">
+            <i class="fas fa-trash-alt mr-2"></i>사용량 일괄 삭제
+          </button>
         </div>
         
         <!-- 수불부 조회 탭 -->
@@ -21466,6 +21469,43 @@ async function renderStockLedger() {
             </div>
           </div>
         </div>
+        
+        <!-- 사용량 일괄 삭제 탭 -->
+        <div id="stock-ledger-tab-delete" class="p-6 hidden">
+          <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+            <h4 class="font-bold text-red-800 mb-2"><i class="fas fa-exclamation-triangle mr-2"></i>사용량 일괄 삭제 안내</h4>
+            <ul class="text-sm text-red-700 space-y-1">
+              <li>• 특정 날짜에 일괄 등록된 사용량 데이터를 삭제합니다.</li>
+              <li>• 삭제 시 LOT 잔량과 마스터 재고가 자동으로 원복됩니다.</li>
+              <li>• <strong>삭제된 데이터는 복구할 수 없습니다.</strong></li>
+            </ul>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">삭제할 날짜 <span class="text-red-500">*</span></label>
+              <input type="date" id="delete-usage-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
+            </div>
+            <div class="flex items-end gap-2">
+              <button onclick="loadBulkUsageForDelete()" class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                <i class="fas fa-search mr-2"></i>조회
+              </button>
+              <button onclick="deleteBulkUsage()" id="btn-delete-bulk" class="flex-1 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:bg-gray-400" disabled>
+                <i class="fas fa-trash-alt mr-2"></i>일괄 삭제
+              </button>
+            </div>
+          </div>
+          
+          <!-- 삭제 대상 미리보기 -->
+          <div id="delete-preview" class="bg-white border rounded-lg">
+            <div class="p-4 border-b">
+              <h4 class="font-bold text-gray-800"><i class="fas fa-list mr-2"></i>삭제 대상 목록</h4>
+            </div>
+            <div id="delete-preview-table" class="overflow-x-auto max-h-96 p-4">
+              <p class="text-gray-500 text-center py-4">날짜를 선택하고 조회 버튼을 클릭하세요</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -21489,6 +21529,149 @@ function switchStockLedgerTab(tab) {
   // 탭 컨텐츠
   document.getElementById('stock-ledger-tab-ledger').classList.toggle('hidden', tab !== 'ledger');
   document.getElementById('stock-ledger-tab-upload').classList.toggle('hidden', tab !== 'upload');
+  document.getElementById('stock-ledger-tab-delete').classList.toggle('hidden', tab !== 'delete');
+}
+
+// 삭제 대상 조회
+async function loadBulkUsageForDelete() {
+  const deleteDate = document.getElementById('delete-usage-date').value;
+  
+  if (!deleteDate) {
+    showToast('삭제할 날짜를 선택해주세요.', 'warning');
+    return;
+  }
+  
+  try {
+    const result = await api(`/transactions/bulk-usage?usage_date=${deleteDate}`);
+    const items = result.data || [];
+    
+    window.deleteTargetItems = items;
+    
+    const tableContainer = document.getElementById('delete-preview-table');
+    const deleteBtn = document.getElementById('btn-delete-bulk');
+    
+    if (items.length === 0) {
+      tableContainer.innerHTML = `
+        <div class="text-center py-8">
+          <i class="fas fa-check-circle text-4xl text-green-500 mb-3"></i>
+          <p class="text-gray-600">${deleteDate} 날짜에 일괄 등록된 사용량 데이터가 없습니다.</p>
+        </div>
+      `;
+      deleteBtn.disabled = true;
+      return;
+    }
+    
+    deleteBtn.disabled = false;
+    
+    tableContainer.innerHTML = `
+      <div class="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+        <p class="font-medium text-yellow-800"><i class="fas fa-exclamation-triangle mr-2"></i>${items.length}건의 데이터가 삭제됩니다.</p>
+      </div>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="px-3 py-2 text-left">ID</th>
+            <th class="px-3 py-2 text-left">품목코드</th>
+            <th class="px-3 py-2 text-left">품목명</th>
+            <th class="px-3 py-2 text-right">수량</th>
+            <th class="px-3 py-2 text-left">LOT번호</th>
+            <th class="px-3 py-2 text-left">메모</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(item => `
+            <tr class="border-b hover:bg-red-50">
+              <td class="px-3 py-2 text-gray-500">${item.id}</td>
+              <td class="px-3 py-2">${item.item_code}</td>
+              <td class="px-3 py-2 font-medium">${item.item_name || '-'}</td>
+              <td class="px-3 py-2 text-right text-red-600">${formatNumber(Math.abs(item.quantity))}</td>
+              <td class="px-3 py-2 font-mono text-xs">${item.lot_number || '-'}</td>
+              <td class="px-3 py-2 text-gray-500 text-xs">${item.memo || '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    
+  } catch (err) {
+    showToast('조회 실패: ' + err.message, 'error');
+  }
+}
+
+// 일괄 삭제 실행
+async function deleteBulkUsage() {
+  const deleteDate = document.getElementById('delete-usage-date').value;
+  const items = window.deleteTargetItems || [];
+  
+  if (!deleteDate) {
+    showToast('삭제할 날짜를 선택해주세요.', 'warning');
+    return;
+  }
+  
+  if (items.length === 0) {
+    showToast('삭제할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  if (!confirm(`정말로 ${deleteDate} 날짜의 ${items.length}건 사용량 데이터를 삭제하시겠습니까?\n\n⚠️ 삭제된 데이터는 복구할 수 없습니다.\n✅ LOT 잔량과 마스터 재고는 자동으로 원복됩니다.`)) {
+    return;
+  }
+  
+  try {
+    const result = await api(`/transactions/bulk-usage?usage_date=${deleteDate}`, 'DELETE');
+    
+    showToast(result.message, 'success');
+    
+    const tableContainer = document.getElementById('delete-preview-table');
+    const resultData = result.data;
+    
+    tableContainer.innerHTML = `
+      <div class="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
+        <p class="font-bold text-green-800"><i class="fas fa-check-circle mr-2"></i>삭제 완료: ${resultData.total_deleted}건 / 오류: ${resultData.total_errors}건</p>
+        <p class="text-sm text-green-600 mt-1">LOT 잔량과 마스터 재고가 원복되었습니다.</p>
+      </div>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="px-3 py-2 text-left">품목코드</th>
+            <th class="px-3 py-2 text-left">품목명</th>
+            <th class="px-3 py-2 text-right">원복 수량</th>
+            <th class="px-3 py-2 text-left">LOT번호</th>
+            <th class="px-3 py-2 text-center">상태</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${resultData.results.map(r => `
+            <tr class="border-b">
+              <td class="px-3 py-2">${r.item_code}</td>
+              <td class="px-3 py-2 font-medium">${r.item_name || '-'}</td>
+              <td class="px-3 py-2 text-right text-green-600">+${formatNumber(r.quantity)}</td>
+              <td class="px-3 py-2 font-mono text-xs">${r.lot_number}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="px-2 py-1 rounded text-xs bg-green-100 text-green-700">삭제완료</span>
+              </td>
+            </tr>
+          `).join('')}
+          ${resultData.errors.map(e => `
+            <tr class="border-b bg-red-50">
+              <td class="px-3 py-2">${e.item_code}</td>
+              <td class="px-3 py-2" colspan="3">-</td>
+              <td class="px-3 py-2 text-center">
+                <span class="px-2 py-1 rounded text-xs bg-red-100 text-red-700">${e.error}</span>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    
+    // 삭제 버튼 비활성화
+    document.getElementById('btn-delete-bulk').disabled = true;
+    window.deleteTargetItems = [];
+    
+  } catch (err) {
+    showToast('삭제 실패: ' + err.message, 'error');
+  }
 }
 
 async function loadStockLedger() {
@@ -21981,3 +22164,5 @@ window.printStockLedger = printStockLedger;
 window.parseUsageExcel = parseUsageExcel;
 window.parseUsageText = parseUsageText;
 window.submitBulkUsage = submitBulkUsage;
+window.loadBulkUsageForDelete = loadBulkUsageForDelete;
+window.deleteBulkUsage = deleteBulkUsage;

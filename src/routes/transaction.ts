@@ -1287,6 +1287,166 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   }
 });
 
+// 매칭 확인 API (사전 검증용)
+transactionRoutes.post('/check-matching', async (c) => {
+  const body = await c.req.json<{
+    items: Array<{
+      item_name: string;
+      quantity: number;
+      original_qty?: number;
+      unit?: string;
+    }>;
+  }>();
+  
+  const { items } = body;
+  
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return c.json({ success: false, error: '품목 목록을 입력해주세요.' }, 400);
+  }
+  
+  // 모든 마스터 데이터 조회
+  const allMasters = await c.env.DB.prepare('SELECT item_code, item_name, category, unit FROM master ORDER BY item_name').all();
+  const masterList = (allMasters.results || []) as any[];
+  
+  // 한글 발음 유사성 매핑
+  const similarChars: { [key: string]: string[] } = {
+    '페': ['피', '패', '뻬'],
+    '피': ['페', '패', '삐'],
+    '뇨': ['뇨', '녀'],
+    '라': ['라', '나'],
+    '할': ['할', '갈'],
+    '칸': ['칸', '깐', '간'],
+    '간': ['간', '칸', '깐'],
+  };
+  
+  const normalizeForMatch = (str: string): string => {
+    return str.toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[.\-_(),]/g, '')
+      .replace(/^(간|썬|다진|으깬|갈은|슬라이스|분쇄|분말)\s*/g, '')
+      .trim();
+  };
+  
+  const isSimilarPronunciation = (a: string, b: string): boolean => {
+    const aNorm = normalizeForMatch(a);
+    const bNorm = normalizeForMatch(b);
+    if (Math.abs(aNorm.length - bNorm.length) > 2) return false;
+    
+    let matches = 0;
+    const shorter = aNorm.length <= bNorm.length ? aNorm : bNorm;
+    const longer = aNorm.length > bNorm.length ? aNorm : bNorm;
+    
+    for (let i = 0; i < shorter.length; i++) {
+      const charA = shorter[i];
+      const charB = longer[i] || '';
+      if (charA === charB) {
+        matches++;
+      } else if (similarChars[charA]?.includes(charB) || similarChars[charB]?.includes(charA)) {
+        matches++;
+      }
+    }
+    return matches / Math.max(shorter.length, longer.length) >= 0.7;
+  };
+  
+  const findBestMatch = (searchName: string): any => {
+    const normalized = normalizeForMatch(searchName);
+    const searchCore = searchName.toLowerCase()
+      .replace(/^(간|썬|다진|으깬|갈은|슬라이스|분쇄|분말)\s*/g, '')
+      .replace(/\s+/g, '')
+      .trim();
+    
+    let match = masterList.find(m => m.item_name === searchName);
+    if (match) return { master: match, matchType: 'exact' };
+    
+    match = masterList.find(m => m.item_name.toLowerCase() === searchName.toLowerCase());
+    if (match) return { master: match, matchType: 'case-insensitive' };
+    
+    match = masterList.find(m => {
+      const mNorm = normalizeForMatch(m.item_name);
+      return mNorm === normalized || mNorm === searchCore;
+    });
+    if (match) return { master: match, matchType: 'normalized' };
+    
+    match = masterList.find(m => isSimilarPronunciation(searchName, m.item_name));
+    if (match) return { master: match, matchType: 'pronunciation' };
+    
+    match = masterList.find(m => {
+      const mNorm = normalizeForMatch(m.item_name);
+      return mNorm.includes(normalized) || normalized.includes(mNorm) ||
+             mNorm.includes(searchCore) || searchCore.includes(mNorm);
+    });
+    if (match) return { master: match, matchType: 'contains' };
+    
+    if (searchCore.length >= 2) {
+      match = masterList.find(m => {
+        const mNorm = normalizeForMatch(m.item_name);
+        const coreChars = searchCore.substring(0, 3);
+        return mNorm.includes(coreChars) || coreChars.includes(mNorm.substring(0, 3));
+      });
+      if (match) return { master: match, matchType: 'partial' };
+    }
+    
+    let bestScore = 0;
+    let bestMatch = null;
+    for (const m of masterList) {
+      const mNorm = normalizeForMatch(m.item_name);
+      let commonChars = 0;
+      for (const char of normalized) {
+        if (mNorm.includes(char)) commonChars++;
+      }
+      const score = commonChars / Math.max(normalized.length, mNorm.length);
+      if (score > 0.6 && score > bestScore) {
+        bestScore = score;
+        bestMatch = m;
+      }
+    }
+    if (bestMatch) return { master: bestMatch, matchType: 'similar' };
+    
+    return null;
+  };
+  
+  // 각 아이템에 대해 매칭 확인
+  const matchResults = items.map(item => {
+    const matchResult = findBestMatch(item.item_name);
+    
+    if (matchResult) {
+      return {
+        input_name: item.item_name,
+        quantity: item.quantity,
+        original_qty: item.original_qty,
+        matched: true,
+        matched_code: matchResult.master.item_code,
+        matched_name: matchResult.master.item_name,
+        match_type: matchResult.matchType
+      };
+    } else {
+      return {
+        input_name: item.item_name,
+        quantity: item.quantity,
+        original_qty: item.original_qty,
+        matched: false,
+        matched_code: null,
+        matched_name: null,
+        match_type: null
+      };
+    }
+  });
+  
+  const matchedCount = matchResults.filter(r => r.matched).length;
+  const unmatchedCount = matchResults.filter(r => !r.matched).length;
+  
+  return c.json({
+    success: true,
+    data: matchResults,
+    masters: masterList,
+    summary: {
+      total: items.length,
+      matched: matchedCount,
+      unmatched: unmatchedCount
+    }
+  });
+});
+
 // 사용량 일괄 등록 (엑셀 업로드용) - 유사 매칭 지원
 transactionRoutes.post('/bulk-usage', async (c) => {
   const body = await c.req.json<{

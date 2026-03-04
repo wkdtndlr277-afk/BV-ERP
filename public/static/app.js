@@ -22045,6 +22045,12 @@ function renderUsagePreview(items) {
         <p class="text-xs text-green-600 mt-1">* 원본 데이터(g)가 kg으로 변환되어 등록됩니다</p>
       </div>
     ` : ''}
+    <div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+      <button onclick="checkBulkMatching()" class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+        <i class="fas fa-search mr-2"></i>매칭 확인 (수동 매칭 필요 시 먼저 클릭)
+      </button>
+      <p class="text-xs text-blue-600 mt-2 text-center">* 클릭하면 ERP 원료와 자동 매칭을 확인하고, 매칭 안 된 항목은 수동 선택할 수 있습니다</p>
+    </div>
     <div class="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
       <label class="flex items-center gap-2">
         <input type="checkbox" id="auto-adjust-stock" class="w-4 h-4">
@@ -22078,6 +22084,144 @@ function renderUsagePreview(items) {
   `;
   
   container.classList.remove('hidden');
+}
+
+// 매칭 확인 및 수동 매칭 UI
+async function checkBulkMatching() {
+  const items = window.usagePreviewItems;
+  if (!items || items.length === 0) {
+    showToast('파싱된 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  try {
+    // 서버에 매칭 확인 요청
+    const result = await api('/transactions/check-matching', 'POST', { items });
+    
+    window.matchingResults = result.data;
+    window.masterList = result.masters;
+    
+    renderMatchingPreview(result.data, result.masters);
+    
+  } catch (err) {
+    showToast('매칭 확인 실패: ' + err.message, 'error');
+  }
+}
+
+// 매칭 결과 미리보기 렌더링
+function renderMatchingPreview(matchResults, masters) {
+  const tableContainer = document.getElementById('usage-preview-table');
+  const hasConversion = window.usagePreviewItems.length > 0 && window.usagePreviewItems[0].unit === 'g';
+  
+  const matchedCount = matchResults.filter(r => r.matched).length;
+  const unmatchedCount = matchResults.filter(r => !r.matched).length;
+  
+  // 마스터 목록을 원료만 필터링하고 정렬
+  const rawMaterials = masters.filter(m => m.category === '원료').sort((a, b) => a.item_name.localeCompare(b.item_name));
+  
+  tableContainer.innerHTML = `
+    ${hasConversion ? `
+      <div class="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+        <p class="text-sm font-medium text-green-800"><i class="fas fa-exchange-alt mr-2"></i>g → kg 단위 변환이 적용되었습니다</p>
+      </div>
+    ` : ''}
+    <div class="mb-4 p-3 ${unmatchedCount > 0 ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'} border rounded-lg">
+      <p class="font-medium ${unmatchedCount > 0 ? 'text-red-800' : 'text-green-800'}">
+        <i class="fas ${unmatchedCount > 0 ? 'fa-exclamation-triangle' : 'fa-check-circle'} mr-2"></i>
+        매칭 결과: ${matchedCount}건 성공, <span class="${unmatchedCount > 0 ? 'text-red-600 font-bold' : ''}">${unmatchedCount}건 미매칭</span>
+      </p>
+      ${unmatchedCount > 0 ? '<p class="text-xs text-red-600 mt-1">* 미매칭 항목은 아래에서 수동으로 원료를 선택하세요</p>' : ''}
+    </div>
+    <div class="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+      <label class="flex items-center gap-2">
+        <input type="checkbox" id="auto-adjust-stock" class="w-4 h-4">
+        <span class="text-sm font-medium text-yellow-800">재고 부족 시 자동 차감</span>
+      </label>
+    </div>
+    <div class="overflow-x-auto max-h-96">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100 sticky top-0">
+          <tr>
+            <th class="px-2 py-2 text-left text-xs">#</th>
+            <th class="px-2 py-2 text-left text-xs">입력명</th>
+            <th class="px-2 py-2 text-left text-xs">매칭 원료</th>
+            <th class="px-2 py-2 text-right text-xs">수량</th>
+            <th class="px-2 py-2 text-center text-xs">상태</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${matchResults.map((r, idx) => `
+            <tr class="border-b ${!r.matched ? 'bg-red-50' : ''}" id="match-row-${idx}">
+              <td class="px-2 py-2 text-gray-500 text-xs">${idx + 1}</td>
+              <td class="px-2 py-2 text-xs">
+                <div class="font-medium">${r.input_name}</div>
+                ${hasConversion ? `<div class="text-gray-400 text-xs">${formatNumber(r.original_qty || 0)}g</div>` : ''}
+              </td>
+              <td class="px-2 py-2">
+                ${r.matched ? `
+                  <div class="text-green-700 font-medium text-xs">${r.matched_name}</div>
+                  <div class="text-gray-400 text-xs">${r.matched_code} (${r.match_type})</div>
+                ` : `
+                  <select onchange="manualMatch(${idx}, this.value)" class="w-full border border-red-300 rounded px-2 py-1 text-xs bg-white">
+                    <option value="">-- 원료 선택 --</option>
+                    ${rawMaterials.map(m => `<option value="${m.item_code}">${m.item_name} (${m.item_code})</option>`).join('')}
+                  </select>
+                `}
+              </td>
+              <td class="px-2 py-2 text-right font-medium text-blue-600 text-xs">${formatNumber(r.quantity)}</td>
+              <td class="px-2 py-2 text-center">
+                ${r.matched ? 
+                  '<span class="px-2 py-0.5 rounded text-xs bg-green-100 text-green-700">매칭</span>' : 
+                  '<span class="px-2 py-0.5 rounded text-xs bg-red-100 text-red-700" id="status-' + idx + '">미매칭</span>'
+                }
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    <p class="text-sm text-gray-600 mt-3 text-center">총 ${matchResults.length}건</p>
+  `;
+}
+
+// 수동 매칭 처리
+function manualMatch(idx, itemCode) {
+  if (!itemCode) return;
+  
+  const masters = window.masterList;
+  const master = masters.find(m => m.item_code === itemCode);
+  
+  if (!master) return;
+  
+  // 매칭 결과 업데이트
+  window.matchingResults[idx].matched = true;
+  window.matchingResults[idx].matched_code = master.item_code;
+  window.matchingResults[idx].matched_name = master.item_name;
+  window.matchingResults[idx].match_type = 'manual';
+  
+  // usagePreviewItems도 업데이트
+  window.usagePreviewItems[idx].item_code = master.item_code;
+  window.usagePreviewItems[idx].matched_name = master.item_name;
+  
+  // UI 업데이트
+  const row = document.getElementById('match-row-' + idx);
+  if (row) {
+    row.classList.remove('bg-red-50');
+    const selectCell = row.querySelector('td:nth-child(3)');
+    if (selectCell) {
+      selectCell.innerHTML = `
+        <div class="text-blue-700 font-medium text-xs">${master.item_name}</div>
+        <div class="text-gray-400 text-xs">${master.item_code} (수동)</div>
+      `;
+    }
+    const statusCell = document.getElementById('status-' + idx);
+    if (statusCell) {
+      statusCell.className = 'px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-700';
+      statusCell.textContent = '수동';
+    }
+  }
+  
+  showToast(`${window.matchingResults[idx].input_name} → ${master.item_name} 매칭 완료`, 'success');
 }
 
 // 일괄 등록 실행
@@ -22198,5 +22342,7 @@ window.printStockLedger = printStockLedger;
 window.parseUsageExcel = parseUsageExcel;
 window.parseUsageText = parseUsageText;
 window.submitBulkUsage = submitBulkUsage;
+window.checkBulkMatching = checkBulkMatching;
+window.manualMatch = manualMatch;
 window.loadBulkUsageForDelete = loadBulkUsageForDelete;
 window.deleteBulkUsage = deleteBulkUsage;

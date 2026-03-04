@@ -22430,8 +22430,10 @@ function renderMatchingPreview(matchResults, masters) {
   const matchedCount = matchResults.filter(r => r.matched).length;
   const unmatchedCount = matchResults.filter(r => !r.matched).length;
   
-  // 마스터 목록을 원료만 필터링하고 정렬
-  const rawMaterials = masters.filter(m => m.category === '원료').sort((a, b) => a.item_name.localeCompare(b.item_name));
+  // 마스터 목록을 원료/부자재 필터링하고 정렬
+  const rawMaterials = masters.filter(m => m.category === '원료' || m.category === '부자재').sort((a, b) => a.item_name.localeCompare(b.item_name));
+  // 전역 변수로 저장 (검색에서 사용)
+  window.rawMaterialsForMatch = rawMaterials;
   
   tableContainer.innerHTML = `
     ${hasConversion ? `
@@ -22481,7 +22483,8 @@ function renderMatchingPreview(matchResults, masters) {
                       id="search-input-${idx}"
                       class="w-full border border-red-300 rounded px-2 py-1 text-xs bg-white"
                       placeholder="원료 검색..."
-                      onfocus="showMaterialDropdown(${idx})"
+                      value="${r.input_name}"
+                      onfocus="showMaterialDropdownWithFilter(${idx})"
                       oninput="filterMaterialDropdown(${idx}, this.value)"
                     >
                     <div id="dropdown-${idx}" class="absolute z-50 w-full bg-white border rounded shadow-lg max-h-48 overflow-y-auto hidden mt-1">
@@ -22554,6 +22557,26 @@ function manualMatch(idx, itemCode) {
   showToast(`${window.matchingResults[idx].input_name} → ${master.item_name} 매칭 완료`, 'success');
 }
 
+// 드롭다운 표시 (필터 포함)
+function showMaterialDropdownWithFilter(idx) {
+  // 다른 열린 드롭다운 닫기
+  document.querySelectorAll('[id^="dropdown-"]').forEach(dd => {
+    if (dd.id !== 'dropdown-' + idx) {
+      dd.classList.add('hidden');
+    }
+  });
+  
+  const input = document.getElementById('search-input-' + idx);
+  const searchText = input ? input.value : '';
+  
+  // 입력값이 있으면 필터링, 없으면 전체 표시
+  if (searchText) {
+    filterMaterialDropdown(idx, searchText);
+  } else {
+    showMaterialDropdown(idx);
+  }
+}
+
 // 드롭다운 표시
 function showMaterialDropdown(idx) {
   // 다른 열린 드롭다운 닫기
@@ -22581,16 +22604,46 @@ function filterMaterialDropdown(idx, searchText) {
   dropdown.classList.remove('hidden');
   const search = searchText.toLowerCase().trim();
   
+  let visibleCount = 0;
   dropdown.querySelectorAll('.material-option').forEach(opt => {
     const name = opt.dataset.name.toLowerCase();
     const code = opt.dataset.code.toLowerCase();
     
     if (!search || name.includes(search) || code.includes(search)) {
       opt.style.display = 'block';
+      visibleCount++;
     } else {
       opt.style.display = 'none';
     }
   });
+  
+  // 검색 결과 없음 메시지 처리
+  let noResultMsg = dropdown.querySelector('.no-result-msg');
+  if (visibleCount === 0 && search) {
+    if (!noResultMsg) {
+      noResultMsg = document.createElement('div');
+      noResultMsg.className = 'no-result-msg px-2 py-3 text-xs text-center text-gray-500';
+      dropdown.insertBefore(noResultMsg, dropdown.firstChild);
+    }
+    noResultMsg.innerHTML = `<i class="fas fa-search mr-1"></i>"${searchText}" 검색 결과 없음`;
+    noResultMsg.style.display = 'block';
+  } else if (noResultMsg) {
+    noResultMsg.style.display = 'none';
+  }
+  
+  // 검색 결과 카운트 표시
+  let countMsg = dropdown.querySelector('.result-count-msg');
+  if (search && visibleCount > 0) {
+    if (!countMsg) {
+      countMsg = document.createElement('div');
+      countMsg.className = 'result-count-msg px-2 py-1 text-xs text-center text-blue-600 bg-blue-50 border-b';
+      dropdown.insertBefore(countMsg, dropdown.firstChild);
+    }
+    countMsg.textContent = `${visibleCount}건 검색됨`;
+    countMsg.style.display = 'block';
+  } else if (countMsg) {
+    countMsg.style.display = 'none';
+  }
 }
 
 // 원료 선택
@@ -22741,6 +22794,7 @@ window.submitBulkUsage = submitBulkUsage;
 window.checkBulkMatching = checkBulkMatching;
 window.manualMatch = manualMatch;
 window.showMaterialDropdown = showMaterialDropdown;
+window.showMaterialDropdownWithFilter = showMaterialDropdownWithFilter;
 window.filterMaterialDropdown = filterMaterialDropdown;
 window.selectMaterial = selectMaterial;
 window.loadBulkUsageForDelete = loadBulkUsageForDelete;

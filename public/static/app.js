@@ -22038,13 +22038,13 @@ function renderLedgerSummary(summary) {
       <p class="text-xs text-orange-600">기간 사용</p>
       <p class="text-lg font-bold text-orange-800">${formatNumber(summary.total_usage)}</p>
     </div>
-    <div class="bg-purple-50 rounded-lg p-3 border border-purple-200">
-      <p class="text-xs text-purple-600">계산 잔량</p>
-      <p class="text-lg font-bold text-purple-800">${formatNumber(summary.total_calc_remain)}</p>
+    <div class="bg-teal-50 rounded-lg p-3 border border-teal-200">
+      <p class="text-xs text-teal-600">LOT 잔량</p>
+      <p class="text-lg font-bold text-teal-800">${formatNumber(summary.total_lot_remain || 0)}</p>
     </div>
     <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
-      <p class="text-xs text-gray-600">품목 수 / 차이</p>
-      <p class="text-lg font-bold text-gray-800">${summary.item_count}종 <span class="text-sm ${summary.diff_count > 0 ? 'text-red-600' : 'text-green-600'}">(${summary.diff_count}건 차이)</span></p>
+      <p class="text-xs text-gray-600">품목 수 / 불일치</p>
+      <p class="text-lg font-bold text-gray-800">${summary.item_count}종 <span class="text-sm ${summary.diff_count > 0 ? 'text-red-600' : 'text-green-600'}">(${summary.diff_count}건)</span></p>
     </div>
   `;
 }
@@ -22070,6 +22070,7 @@ function renderLedgerTable(data) {
           <th class="px-3 py-2 text-right text-red-600">출고</th>
           <th class="px-3 py-2 text-right text-purple-600">조정</th>
           <th class="px-3 py-2 text-right font-bold">계산잔량</th>
+          <th class="px-3 py-2 text-right text-green-600">LOT잔량</th>
           <th class="px-3 py-2 text-right">현재고</th>
           <th class="px-3 py-2 text-right">차이</th>
           <th class="px-3 py-2 text-center">단위</th>
@@ -22091,6 +22092,7 @@ function renderLedgerTable(data) {
               <td class="px-3 py-2 text-right text-red-600">${formatNumber(row.period_outbound)}</td>
               <td class="px-3 py-2 text-right text-purple-600">${formatNumber(row.period_adjustment)}</td>
               <td class="px-3 py-2 text-right font-bold">${formatNumber(row.calc_remain)}</td>
+              <td class="px-3 py-2 text-right text-green-600 font-medium">${formatNumber(row.lot_remain_total || 0)}</td>
               <td class="px-3 py-2 text-right">${formatNumber(row.current_stock)}</td>
               <td class="px-3 py-2 text-right ${diffClass}">${row.diff > 0 ? '+' : ''}${formatNumber(row.diff)}</td>
               <td class="px-3 py-2 text-center text-gray-500">${row.unit}</td>

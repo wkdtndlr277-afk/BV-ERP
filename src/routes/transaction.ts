@@ -1113,6 +1113,7 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   const dateEnd = end_date || today;
   
   // 한 번의 쿼리로 모든 데이터 조회 (성능 최적화)
+  // LOT 잔량 합계를 기준으로 현재고와 비교
   let query = `
     SELECT 
       m.item_code,
@@ -1135,6 +1136,7 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     WHERE (
       m.current_stock > 0
       OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ?)
+      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
     )
   `;
   const params: any[] = [dateStart, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd];
@@ -1154,12 +1156,15 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     const result = await c.env.DB.prepare(query).bind(...params).all();
     
     // 계산 잔량과 차이 추가
+    // 원료는 LOT 잔량 기준, 제품은 트랜잭션 기준
     const ledgerData = (result.results || []).map((item: any) => {
       const calcRemain = item.carry_over + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
+      // 원료/부자재는 LOT 잔량을, 제품은 계산 잔량을 기준으로 비교
+      const baseStock = item.category === '제품' ? calcRemain : item.lot_remain_total;
       return {
         ...item,
         calc_remain: calcRemain,
-        diff: item.current_stock - calcRemain
+        diff: item.current_stock - baseStock
       };
     });
     
@@ -1172,6 +1177,7 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       acc.total_adjustment += item.period_adjustment;
       acc.total_calc_remain += item.calc_remain;
       acc.total_current_stock += item.current_stock;
+      acc.total_lot_remain += item.lot_remain_total;
       acc.item_count++;
       if (Math.abs(item.diff) > 0.01) acc.diff_count++;
       return acc;
@@ -1183,6 +1189,7 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       total_adjustment: 0,
       total_calc_remain: 0,
       total_current_stock: 0,
+      total_lot_remain: 0,
       item_count: 0,
       diff_count: 0
     });
@@ -1895,80 +1902,140 @@ transactionRoutes.delete('/adjustments', async (c) => {
   }
 });
 
-// 재고 재계산 API (마스터 current_stock을 트랜잭션 기반으로 재계산)
+// 재고 재계산 API (마스터 current_stock을 LOT 잔량 기준으로 재계산) - 최적화 버전
 transactionRoutes.post('/recalculate-stock', async (c) => {
-  const body = await c.req.json<{ item_code?: string }>();
+  const body = await c.req.json<{ item_code?: string; method?: string }>();
   const item_code = body.item_code;
+  const method = body.method || 'lot'; // 'lot' = LOT 잔량 기준
   
   try {
-    let items: any[];
-    
-    if (item_code) {
-      // 특정 품목만
-      const result = await c.env.DB.prepare(`SELECT item_code, item_name FROM master WHERE item_code = ?`).bind(item_code).first();
-      items = result ? [result] : [];
-    } else {
-      // 전체 품목
-      const result = await c.env.DB.prepare(`SELECT item_code, item_name FROM master`).all();
-      items = (result.results || []) as any[];
-    }
-    
-    const results = [];
-    let updatedCount = 0;
-    
-    for (const item of items) {
-      // 트랜잭션 기반 재고 계산
-      const stockResult = await c.env.DB.prepare(`
-        SELECT COALESCE(SUM(
-          CASE 
-            WHEN trans_type = '입고' THEN quantity
-            WHEN trans_type IN ('사용', '출고') THEN -ABS(quantity)
-            WHEN trans_type = '재고조정' THEN quantity
-            ELSE 0
-          END
-        ), 0) as calculated_stock
-        FROM transactions
-        WHERE item_code = ?
-      `).bind(item.item_code).first() as any;
+    if (method === 'lot') {
+      // 단일 쿼리로 모든 원료/부자재의 LOT 잔량 조회
+      const lotStockResult = await c.env.DB.prepare(`
+        SELECT 
+          m.item_code, 
+          m.item_name, 
+          m.category,
+          m.current_stock,
+          COALESCE(SUM(i.remain_qty), 0) as lot_total
+        FROM master m
+        LEFT JOIN inbound i ON m.item_code = i.item_code AND i.quality_status = '합격'
+        WHERE m.category IN ('원료', '부자재')
+        ${item_code ? 'AND m.item_code = ?' : ''}
+        GROUP BY m.item_code, m.item_name, m.category, m.current_stock
+        HAVING ABS(m.current_stock - COALESCE(SUM(i.remain_qty), 0)) > 0.01
+      `).bind(...(item_code ? [item_code] : [])).all();
       
-      const calculatedStock = stockResult?.calculated_stock || 0;
+      const toUpdate = (lotStockResult.results || []) as any[];
       
-      // 현재 마스터 재고 조회
-      const masterResult = await c.env.DB.prepare(`
-        SELECT current_stock FROM master WHERE item_code = ?
-      `).bind(item.item_code).first() as any;
+      if (toUpdate.length === 0) {
+        return c.json({
+          success: true,
+          message: '모든 재고가 이미 동기화되어 있습니다.',
+          updated_count: 0,
+          total_checked: 0,
+          results: []
+        });
+      }
       
-      const currentStock = masterResult?.current_stock || 0;
-      const diff = Math.abs(currentStock - calculatedStock);
+      // 배치 업데이트
+      const results = [];
+      let updatedCount = 0;
       
-      if (diff > 0.01) {
-        // 재고 업데이트
+      for (const item of toUpdate) {
         await c.env.DB.prepare(`
-          UPDATE master 
-          SET current_stock = ?,
-              updated_at = datetime('now')
-          WHERE item_code = ?
-        `).bind(calculatedStock, item.item_code).run();
+          UPDATE master SET current_stock = ?, updated_at = datetime('now') WHERE item_code = ?
+        `).bind(item.lot_total, item.item_code).run();
         
         results.push({
           item_code: item.item_code,
           item_name: item.item_name,
-          before: currentStock,
-          after: calculatedStock,
-          diff: currentStock - calculatedStock,
+          category: item.category,
+          before: item.current_stock,
+          after: item.lot_total,
+          diff: item.current_stock - item.lot_total,
           status: 'updated'
         });
         updatedCount++;
       }
+      
+      return c.json({
+        success: true,
+        message: `${updatedCount}개 품목의 재고가 LOT 잔량 기준으로 동기화되었습니다.`,
+        updated_count: updatedCount,
+        total_checked: toUpdate.length,
+        results: results.slice(0, 100)
+      });
+    } else {
+      // 트랜잭션 기반 계산 (단일 쿼리 최적화)
+      const transStockResult = await c.env.DB.prepare(`
+        SELECT 
+          m.item_code, 
+          m.item_name, 
+          m.category,
+          m.current_stock,
+          COALESCE(SUM(
+            CASE 
+              WHEN t.trans_type = '입고' THEN t.quantity
+              WHEN t.trans_type IN ('사용', '출고') THEN -ABS(t.quantity)
+              WHEN t.trans_type = '재고조정' THEN t.quantity
+              ELSE 0
+            END
+          ), 0) as calc_total
+        FROM master m
+        LEFT JOIN transactions t ON m.item_code = t.item_code
+        ${item_code ? 'WHERE m.item_code = ?' : ''}
+        GROUP BY m.item_code, m.item_name, m.category, m.current_stock
+        HAVING ABS(m.current_stock - COALESCE(SUM(
+          CASE 
+            WHEN t.trans_type = '입고' THEN t.quantity
+            WHEN t.trans_type IN ('사용', '출고') THEN -ABS(t.quantity)
+            WHEN t.trans_type = '재고조정' THEN t.quantity
+            ELSE 0
+          END
+        ), 0)) > 0.01
+      `).bind(...(item_code ? [item_code] : [])).all();
+      
+      const toUpdate = (transStockResult.results || []) as any[];
+      
+      if (toUpdate.length === 0) {
+        return c.json({
+          success: true,
+          message: '모든 재고가 이미 동기화되어 있습니다.',
+          updated_count: 0,
+          total_checked: 0,
+          results: []
+        });
+      }
+      
+      const results = [];
+      let updatedCount = 0;
+      
+      for (const item of toUpdate) {
+        await c.env.DB.prepare(`
+          UPDATE master SET current_stock = ?, updated_at = datetime('now') WHERE item_code = ?
+        `).bind(item.calc_total, item.item_code).run();
+        
+        results.push({
+          item_code: item.item_code,
+          item_name: item.item_name,
+          category: item.category,
+          before: item.current_stock,
+          after: item.calc_total,
+          diff: item.current_stock - item.calc_total,
+          status: 'updated'
+        });
+        updatedCount++;
+      }
+      
+      return c.json({
+        success: true,
+        message: `${updatedCount}개 품목의 재고가 트랜잭션 기준으로 동기화되었습니다.`,
+        updated_count: updatedCount,
+        total_checked: toUpdate.length,
+        results: results.slice(0, 100)
+      });
     }
-    
-    return c.json({
-      success: true,
-      message: `${updatedCount}개 품목의 재고가 재계산되었습니다.`,
-      updated_count: updatedCount,
-      total_checked: items.length,
-      results: results.slice(0, 100) // 최대 100건만 반환
-    });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }

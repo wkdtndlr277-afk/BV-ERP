@@ -1311,12 +1311,60 @@ transactionRoutes.post('/bulk-usage', async (c) => {
   const allMasters = await c.env.DB.prepare('SELECT * FROM master').all();
   const masterList = (allMasters.results || []) as any[];
   
+  // 한글 발음 유사성 매핑 (ㅔ↔ㅣ, 뇨↔뇨 등)
+  const similarChars: { [key: string]: string[] } = {
+    '페': ['피', '패', '뻬'],
+    '피': ['페', '패', '삐'],
+    '뇨': ['뇨', '녀'],
+    '라': ['라', '나'],
+    '할': ['할', '갈'],
+    '칸': ['칸', '깐', '간'],
+    '간': ['간', '칸', '깐'],
+  };
+  
+  // 문자열 정규화 (접두어 제거, 공백/특수문자 제거)
+  const normalizeForMatch = (str: string): string => {
+    return str.toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[.\-_(),]/g, '')
+      .replace(/^(간|썬|다진|으깬|갈은|슬라이스|분쇄|분말)\s*/g, '') // 조리법 접두어 제거
+      .trim();
+  };
+  
+  // 발음 유사성 검사
+  const isSimilarPronunciation = (a: string, b: string): boolean => {
+    const aNorm = normalizeForMatch(a);
+    const bNorm = normalizeForMatch(b);
+    
+    // 길이가 너무 다르면 false
+    if (Math.abs(aNorm.length - bNorm.length) > 2) return false;
+    
+    // 각 위치에서 유사 문자 허용하여 비교
+    let matches = 0;
+    const shorter = aNorm.length <= bNorm.length ? aNorm : bNorm;
+    const longer = aNorm.length > bNorm.length ? aNorm : bNorm;
+    
+    for (let i = 0; i < shorter.length; i++) {
+      const charA = shorter[i];
+      const charB = longer[i] || '';
+      
+      if (charA === charB) {
+        matches++;
+      } else if (similarChars[charA]?.includes(charB) || similarChars[charB]?.includes(charA)) {
+        matches++;
+      }
+    }
+    
+    return matches / Math.max(shorter.length, longer.length) >= 0.7;
+  };
+  
   // 유사 매칭 함수
   const findBestMatch = (searchName: string): any => {
-    const normalized = searchName.toLowerCase()
+    const normalized = normalizeForMatch(searchName);
+    const searchCore = searchName.toLowerCase()
+      .replace(/^(간|썬|다진|으깬|갈은|슬라이스|분쇄|분말)\s*/g, '')
       .replace(/\s+/g, '')
-      .replace(/[.\-_]/g, '')
-      .replace(/\(.*?\)/g, '');
+      .trim();
     
     // 1. 정확히 일치
     let match = masterList.find(m => m.item_name === searchName);
@@ -1326,34 +1374,40 @@ transactionRoutes.post('/bulk-usage', async (c) => {
     match = masterList.find(m => m.item_name.toLowerCase() === searchName.toLowerCase());
     if (match) return { master: match, matchType: 'case-insensitive' };
     
-    // 3. 공백/특수문자 제거 후 일치
+    // 3. 공백/특수문자/접두어 제거 후 일치
     match = masterList.find(m => {
-      const mNorm = m.item_name.toLowerCase().replace(/\s+/g, '').replace(/[.\-_]/g, '').replace(/\(.*?\)/g, '');
-      return mNorm === normalized;
+      const mNorm = normalizeForMatch(m.item_name);
+      return mNorm === normalized || mNorm === searchCore;
     });
     if (match) return { master: match, matchType: 'normalized' };
     
-    // 4. 포함 관계 (검색어가 DB명에 포함되거나 DB명이 검색어에 포함)
+    // 4. 발음 유사성 검사 (할라피뇨 ↔ 할라페뇨)
+    match = masterList.find(m => isSimilarPronunciation(searchName, m.item_name));
+    if (match) return { master: match, matchType: 'pronunciation' };
+    
+    // 5. 포함 관계 (검색어가 DB명에 포함되거나 DB명이 검색어에 포함)
     match = masterList.find(m => {
-      const mNorm = m.item_name.toLowerCase().replace(/\s+/g, '');
-      return mNorm.includes(normalized) || normalized.includes(mNorm);
+      const mNorm = normalizeForMatch(m.item_name);
+      return mNorm.includes(normalized) || normalized.includes(mNorm) ||
+             mNorm.includes(searchCore) || searchCore.includes(mNorm);
     });
     if (match) return { master: match, matchType: 'contains' };
     
-    // 5. 부분 일치 (앞 2글자 이상 일치)
-    if (normalized.length >= 2) {
+    // 6. 부분 일치 (핵심 2글자 이상 일치)
+    if (searchCore.length >= 2) {
       match = masterList.find(m => {
-        const mNorm = m.item_name.toLowerCase().replace(/\s+/g, '');
-        return mNorm.startsWith(normalized.substring(0, 2)) || normalized.startsWith(mNorm.substring(0, 2));
+        const mNorm = normalizeForMatch(m.item_name);
+        const coreChars = searchCore.substring(0, 3);
+        return mNorm.includes(coreChars) || coreChars.includes(mNorm.substring(0, 3));
       });
-      if (match) return { master: match, matchType: 'prefix' };
+      if (match) return { master: match, matchType: 'partial' };
     }
     
-    // 6. 유사도 기반 (Levenshtein distance 간소화)
+    // 7. 유사도 기반 (공통 문자 비율)
     let bestScore = 0;
     let bestMatch = null;
     for (const m of masterList) {
-      const mNorm = m.item_name.toLowerCase().replace(/\s+/g, '');
+      const mNorm = normalizeForMatch(m.item_name);
       // 공통 문자 수 계산
       let commonChars = 0;
       for (const char of normalized) {

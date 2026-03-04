@@ -10,6 +10,133 @@ function generateLotNumber(itemCode: string, date: string, sequence: number): st
   return `${dateStr}-${itemCode}-${String(sequence).padStart(3, '0')}`;
 }
 
+// 입고 일별/월별 조회 (통계 포함)
+inboundRoutes.get('/query', async (c) => {
+  const view_type = c.req.query('view_type') || 'daily'; // daily, monthly
+  const date = c.req.query('date'); // YYYY-MM-DD (daily) or YYYY-MM (monthly)
+  const item_code = c.req.query('item_code');
+  const supplier = c.req.query('supplier');
+  const category = c.req.query('category'); // 원료, 부자재, 전체
+  
+  let dateFilter = '';
+  const params: any[] = [];
+  
+  if (view_type === 'daily' && date) {
+    dateFilter = 'AND i.inbound_date = ?';
+    params.push(date);
+  } else if (view_type === 'monthly' && date) {
+    dateFilter = 'AND i.inbound_date LIKE ?';
+    params.push(date + '%');
+  }
+  
+  if (item_code) {
+    dateFilter += ' AND i.item_code = ?';
+    params.push(item_code);
+  }
+  
+  if (supplier) {
+    dateFilter += ' AND i.supplier LIKE ?';
+    params.push('%' + supplier + '%');
+  }
+  
+  if (category && category !== '전체') {
+    dateFilter += ' AND m.category = ?';
+    params.push(category);
+  }
+  
+  // 상세 데이터 조회
+  const detailQuery = `
+    SELECT i.*, m.item_name, m.category, m.unit,
+           DATE(i.inbound_date) as date_group
+    FROM inbound i 
+    JOIN master m ON i.item_code = m.item_code
+    WHERE 1=1 ${dateFilter}
+    ORDER BY i.inbound_date DESC, i.id DESC
+  `;
+  const detailResult = await c.env.DB.prepare(detailQuery).bind(...params).all();
+  
+  // 통계 조회
+  let summaryQuery = '';
+  if (view_type === 'daily') {
+    summaryQuery = `
+      SELECT 
+        COUNT(*) as total_count,
+        SUM(i.origin_qty) as total_qty,
+        COUNT(DISTINCT i.item_code) as item_count,
+        COUNT(DISTINCT i.supplier) as supplier_count,
+        SUM(CASE WHEN i.quality_status = '합격' THEN 1 ELSE 0 END) as passed_count,
+        SUM(CASE WHEN i.quality_status = '불합격' THEN 1 ELSE 0 END) as failed_count,
+        SUM(CASE WHEN i.quality_status = '검사중' THEN 1 ELSE 0 END) as pending_count
+      FROM inbound i
+      JOIN master m ON i.item_code = m.item_code
+      WHERE 1=1 ${dateFilter}
+    `;
+  } else {
+    // 월별인 경우 일자별 그룹핑
+    summaryQuery = `
+      SELECT 
+        DATE(i.inbound_date) as date,
+        COUNT(*) as count,
+        SUM(i.origin_qty) as total_qty,
+        COUNT(DISTINCT i.item_code) as item_count
+      FROM inbound i
+      JOIN master m ON i.item_code = m.item_code
+      WHERE 1=1 ${dateFilter}
+      GROUP BY DATE(i.inbound_date)
+      ORDER BY DATE(i.inbound_date) DESC
+    `;
+  }
+  
+  const summaryResult = await c.env.DB.prepare(summaryQuery).bind(...params).all();
+  
+  // 품목별 합계 (상위 10개)
+  const itemSummaryQuery = `
+    SELECT 
+      i.item_code,
+      m.item_name,
+      m.category,
+      m.unit,
+      COUNT(*) as inbound_count,
+      SUM(i.origin_qty) as total_qty,
+      COUNT(DISTINCT i.supplier) as supplier_count
+    FROM inbound i
+    JOIN master m ON i.item_code = m.item_code
+    WHERE 1=1 ${dateFilter}
+    GROUP BY i.item_code, m.item_name, m.category, m.unit
+    ORDER BY SUM(i.origin_qty) DESC
+    LIMIT 10
+  `;
+  const itemSummaryResult = await c.env.DB.prepare(itemSummaryQuery).bind(...params).all();
+  
+  // 거래처별 합계
+  const supplierSummaryQuery = `
+    SELECT 
+      i.supplier,
+      COUNT(*) as inbound_count,
+      SUM(i.origin_qty) as total_qty,
+      COUNT(DISTINCT i.item_code) as item_count
+    FROM inbound i
+    JOIN master m ON i.item_code = m.item_code
+    WHERE i.supplier IS NOT NULL AND i.supplier != '' ${dateFilter.replace('AND', 'AND')}
+    GROUP BY i.supplier
+    ORDER BY SUM(i.origin_qty) DESC
+    LIMIT 10
+  `;
+  const supplierSummaryResult = await c.env.DB.prepare(supplierSummaryQuery).bind(...params).all();
+  
+  return c.json({ 
+    success: true, 
+    data: {
+      details: detailResult.results,
+      summary: view_type === 'daily' ? (summaryResult.results[0] || {}) : summaryResult.results,
+      itemSummary: itemSummaryResult.results,
+      supplierSummary: supplierSummaryResult.results,
+      view_type,
+      date
+    }
+  });
+});
+
 // 입고 목록 조회
 inboundRoutes.get('/', async (c) => {
   const item_code = c.req.query('item_code');

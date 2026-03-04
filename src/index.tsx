@@ -367,6 +367,11 @@ app.get('/*', (c) => {
                     <span>입고 등록</span>
                 </a>
                 
+                <a href="#inbound-query" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="inbound-query">
+                    <i class="fas fa-clipboard-list w-5"></i>
+                    <span>입고 조회</span>
+                </a>
+                
                 <a href="#usage" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="usage">
                     <i class="fas fa-mortar-pestle w-5"></i>
                     <span>사용량 입력</span>
@@ -413,6 +418,11 @@ app.get('/*', (c) => {
                 <a href="#inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="inventory">
                     <i class="fas fa-boxes w-5"></i>
                     <span>재고 현황</span>
+                </a>
+                
+                <a href="#stock-ledger" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="stock-ledger">
+                    <i class="fas fa-book w-5"></i>
+                    <span>재고 수불부</span>
                 </a>
                 
                 <a href="#transaction-search" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="transaction-search">

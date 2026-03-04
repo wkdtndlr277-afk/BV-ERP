@@ -1189,4 +1189,228 @@ transactionRoutes.get('/lot-fifo-status', async (c) => {
   });
 });
 
+// 재고 수불부 - 입고/사용량 기반 자동 계산 (최적화 버전)
+transactionRoutes.get('/stock-ledger', async (c) => {
+  const start_date = c.req.query('start_date');
+  const end_date = c.req.query('end_date');
+  const category = c.req.query('category');
+  const search = c.req.query('search');
+  
+  // 날짜 기본값 설정
+  const today = new Date().toISOString().split('T')[0];
+  const dateStart = start_date || today;
+  const dateEnd = end_date || today;
+  
+  // 한 번의 쿼리로 모든 데이터 조회 (성능 최적화)
+  let query = `
+    SELECT 
+      m.item_code,
+      m.item_name,
+      m.category,
+      m.unit,
+      m.current_stock,
+      COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
+      COALESCE((SELECT SUM(CASE 
+        WHEN t.trans_type = '입고' THEN t.quantity
+        WHEN t.trans_type IN ('사용', '출고') THEN -ABS(t.quantity)
+        WHEN t.trans_type = '재고조정' THEN t.quantity
+        ELSE 0
+      END) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date < ?), 0) as carry_over,
+      COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '입고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_inbound,
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
+      COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
+    FROM master m
+    WHERE (
+      m.current_stock > 0
+      OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ?)
+    )
+  `;
+  const params: any[] = [dateStart, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd];
+  
+  if (category && category !== '전체') {
+    query += ' AND m.category = ?';
+    params.push(category);
+  }
+  if (search) {
+    query += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  
+  query += ' ORDER BY m.category, m.item_name';
+  
+  try {
+    const result = await c.env.DB.prepare(query).bind(...params).all();
+    
+    // 계산 잔량과 차이 추가
+    const ledgerData = (result.results || []).map((item: any) => {
+      const calcRemain = item.carry_over + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
+      return {
+        ...item,
+        calc_remain: calcRemain,
+        diff: item.current_stock - calcRemain
+      };
+    });
+    
+    // 요약 통계
+    const summary = ledgerData.reduce((acc: any, item: any) => {
+      acc.total_carry_over += item.carry_over;
+      acc.total_inbound += item.period_inbound;
+      acc.total_usage += item.period_usage;
+      acc.total_outbound += item.period_outbound;
+      acc.total_adjustment += item.period_adjustment;
+      acc.total_calc_remain += item.calc_remain;
+      acc.total_current_stock += item.current_stock;
+      acc.item_count++;
+      if (Math.abs(item.diff) > 0.01) acc.diff_count++;
+      return acc;
+    }, {
+      total_carry_over: 0,
+      total_inbound: 0,
+      total_usage: 0,
+      total_outbound: 0,
+      total_adjustment: 0,
+      total_calc_remain: 0,
+      total_current_stock: 0,
+      item_count: 0,
+      diff_count: 0
+    });
+    
+    return c.json({
+      success: true,
+      data: ledgerData,
+      summary,
+      period: { start_date: dateStart, end_date: dateEnd }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 사용량 일괄 등록 (엑셀 업로드용)
+transactionRoutes.post('/bulk-usage', async (c) => {
+  const body = await c.req.json<{
+    usage_date: string;
+    items: Array<{
+      item_code?: string;
+      item_name: string;
+      quantity: number;
+      unit?: string;
+      memo?: string;
+    }>;
+  }>();
+  
+  const { usage_date, items } = body;
+  
+  if (!usage_date || !items || !Array.isArray(items) || items.length === 0) {
+    return c.json({ success: false, error: '사용일과 품목 목록을 입력해주세요.' }, 400);
+  }
+  
+  const results: any[] = [];
+  const errors: any[] = [];
+  
+  for (const item of items) {
+    try {
+      // 품목 코드 또는 이름으로 마스터 조회
+      let master: any = null;
+      
+      if (item.item_code) {
+        master = await c.env.DB.prepare(
+          'SELECT * FROM master WHERE item_code = ?'
+        ).bind(item.item_code).first();
+      }
+      
+      if (!master && item.item_name) {
+        master = await c.env.DB.prepare(
+          'SELECT * FROM master WHERE item_name = ? OR item_name LIKE ?'
+        ).bind(item.item_name, `%${item.item_name}%`).first();
+      }
+      
+      if (!master) {
+        errors.push({
+          item: item.item_name || item.item_code,
+          error: '등록되지 않은 품목입니다.'
+        });
+        continue;
+      }
+      
+      // FIFO로 사용할 LOT 찾기
+      const availableLots = await c.env.DB.prepare(`
+        SELECT lot_number, remain_qty 
+        FROM inbound 
+        WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+        ORDER BY expiry_date ASC, inbound_date ASC
+      `).bind(master.item_code).all();
+      
+      let remainingQty = item.quantity;
+      const usedLots: any[] = [];
+      
+      for (const lot of (availableLots.results || []) as any[]) {
+        if (remainingQty <= 0) break;
+        
+        const useQty = Math.min(remainingQty, lot.remain_qty);
+        
+        // LOT 잔량 차감
+        await c.env.DB.prepare(`
+          UPDATE inbound SET remain_qty = remain_qty - ?, updated_at = CURRENT_TIMESTAMP
+          WHERE lot_number = ?
+        `).bind(useQty, lot.lot_number).run();
+        
+        // 트랜잭션 기록
+        await c.env.DB.prepare(`
+          INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, memo)
+          VALUES (?, ?, '사용', ?, ?, ?, ?)
+        `).bind(
+          usage_date,
+          master.item_code,
+          -useQty,
+          lot.lot_number,
+          lot.remain_qty - useQty,
+          item.memo || '일괄 사용량 등록'
+        ).run();
+        
+        usedLots.push({ lot_number: lot.lot_number, quantity: useQty });
+        remainingQty -= useQty;
+      }
+      
+      // 마스터 재고 차감
+      const totalUsed = item.quantity - remainingQty;
+      if (totalUsed > 0) {
+        await c.env.DB.prepare(`
+          UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
+          WHERE item_code = ?
+        `).bind(totalUsed, master.item_code).run();
+      }
+      
+      results.push({
+        item_code: master.item_code,
+        item_name: master.item_name,
+        requested_qty: item.quantity,
+        used_qty: totalUsed,
+        remaining_qty: remainingQty,
+        used_lots: usedLots,
+        status: remainingQty > 0 ? 'partial' : 'complete'
+      });
+      
+    } catch (err: any) {
+      errors.push({
+        item: item.item_name || item.item_code,
+        error: err.message
+      });
+    }
+  }
+  
+  return c.json({
+    success: true,
+    message: `${results.length}건 처리 완료, ${errors.length}건 오류`,
+    data: {
+      results,
+      errors,
+      total_requested: items.length,
+      total_processed: results.length,
+      total_errors: errors.length
+    }
+  });
+});
+
 export default transactionRoutes;

@@ -809,6 +809,7 @@ function renderPage(page) {
   switch(page) {
     case 'dashboard': renderDashboard(); break;
     case 'inbound': renderInbound(); break;
+    case 'inbound-query': renderInboundQuery(); break;
     case 'usage': renderUsage(); break;
     case 'outbound': renderOutbound(); break;
     case 'quick-stock': renderQuickStock(); break;
@@ -818,6 +819,7 @@ function renderPage(page) {
     case 'product-outbound': renderProductOutbound(); break;
     case 'cost-calc': renderCostCalc(); break;
     case 'inventory': renderInventory(); break;
+    case 'stock-ledger': renderStockLedger(); break;
     case 'transaction-search': renderTransactionSearch(); break;
     case 'lot-history': renderLotHistory(); break;
     case 'daily-report': renderDailyReport(); break;
@@ -20943,3 +20945,975 @@ window.createCostSheetFromBOM = createCostSheetFromBOM;
 window.showManualCostSheetModal = showManualCostSheetModal;
 window.createManualCostSheet = createManualCostSheet;
 window.exportCostSheetExcel = exportCostSheetExcel;
+
+// ==================== 입고 조회 (일별/월별) ====================
+
+async function renderInboundQuery() {
+  const content = document.getElementById('page-content');
+  const today = new Date().toISOString().split('T')[0];
+  const currentMonth = today.substring(0, 7);
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-clipboard-list mr-2 text-haccp-primary"></i>
+          입고 조회
+        </h2>
+      </div>
+      
+      <!-- 검색 조건 -->
+      <div class="bg-white rounded-xl shadow p-6">
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">조회 유형</label>
+            <select id="inbound-query-type" class="w-full border rounded-lg px-3 py-2" onchange="changeInboundQueryType()">
+              <option value="daily">일별 조회</option>
+              <option value="monthly">월별 조회</option>
+            </select>
+          </div>
+          <div id="inbound-date-field">
+            <label class="block text-sm font-medium text-gray-700 mb-1">조회일</label>
+            <input type="date" id="inbound-query-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
+          </div>
+          <div id="inbound-month-field" style="display:none;">
+            <label class="block text-sm font-medium text-gray-700 mb-1">조회월</label>
+            <input type="month" id="inbound-query-month" class="w-full border rounded-lg px-3 py-2" value="${currentMonth}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">품목 분류</label>
+            <select id="inbound-query-category" class="w-full border rounded-lg px-3 py-2">
+              <option value="전체">전체</option>
+              <option value="원료">원료</option>
+              <option value="부자재">부자재</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">거래처</label>
+            <input type="text" id="inbound-query-supplier" class="w-full border rounded-lg px-3 py-2" placeholder="거래처명 검색">
+          </div>
+          <div class="flex items-end gap-2">
+            <button onclick="loadInboundQuery()" class="flex-1 bg-haccp-primary text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+              <i class="fas fa-search mr-1"></i> 조회
+            </button>
+            <button onclick="downloadInboundQuery()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+              <i class="fas fa-file-excel mr-1"></i> 엑셀
+            </button>
+            <button onclick="printInboundQuery()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700">
+              <i class="fas fa-print mr-1"></i> 인쇄
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 요약 통계 -->
+      <div id="inbound-query-summary" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <!-- 동적 로드 -->
+      </div>
+      
+      <!-- 품목별/거래처별 요약 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-white rounded-xl shadow p-4">
+          <h4 class="font-bold text-gray-800 mb-3"><i class="fas fa-box mr-2"></i>품목별 입고 현황 (상위 10)</h4>
+          <div id="inbound-item-summary" class="max-h-64 overflow-y-auto">
+            <p class="text-gray-500 text-center py-4">조회 버튼을 클릭하세요</p>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <h4 class="font-bold text-gray-800 mb-3"><i class="fas fa-building mr-2"></i>거래처별 입고 현황 (상위 10)</h4>
+          <div id="inbound-supplier-summary" class="max-h-64 overflow-y-auto">
+            <p class="text-gray-500 text-center py-4">조회 버튼을 클릭하세요</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 상세 데이터 테이블 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="p-4 border-b">
+          <h4 class="font-bold text-gray-800"><i class="fas fa-list mr-2"></i>입고 상세 내역</h4>
+        </div>
+        <div id="inbound-query-table" class="overflow-x-auto" style="max-height: 500px; overflow-y: auto;">
+          <p class="text-gray-500 text-center py-8">조회 버튼을 클릭하세요</p>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 초기 로드
+  loadInboundQuery();
+}
+
+function changeInboundQueryType() {
+  const type = document.getElementById('inbound-query-type').value;
+  document.getElementById('inbound-date-field').style.display = type === 'daily' ? 'block' : 'none';
+  document.getElementById('inbound-month-field').style.display = type === 'monthly' ? 'block' : 'none';
+}
+
+async function loadInboundQuery() {
+  const viewType = document.getElementById('inbound-query-type').value;
+  const date = viewType === 'daily' 
+    ? document.getElementById('inbound-query-date').value
+    : document.getElementById('inbound-query-month').value;
+  const category = document.getElementById('inbound-query-category').value;
+  const supplier = document.getElementById('inbound-query-supplier').value;
+  
+  try {
+    const params = new URLSearchParams({ view_type: viewType, date });
+    if (category && category !== '전체') params.append('category', category);
+    if (supplier) params.append('supplier', supplier);
+    
+    const result = await api(`/inbound/query?${params}`);
+    const data = result.data;
+    
+    // 요약 통계 표시
+    renderInboundQuerySummary(data, viewType);
+    
+    // 품목별 요약
+    renderInboundItemSummary(data.itemSummary);
+    
+    // 거래처별 요약
+    renderInboundSupplierSummary(data.supplierSummary);
+    
+    // 상세 테이블
+    renderInboundQueryTable(data.details, viewType);
+    
+    // 전역 변수에 저장 (엑셀/인쇄용)
+    window.inboundQueryData = data;
+    
+  } catch (err) {
+    showToast('입고 조회 실패: ' + err.message, 'error');
+  }
+}
+
+function renderInboundQuerySummary(data, viewType) {
+  const container = document.getElementById('inbound-query-summary');
+  
+  if (viewType === 'daily') {
+    const s = data.summary || {};
+    container.innerHTML = `
+      <div class="bg-blue-50 rounded-xl p-4 border border-blue-200">
+        <p class="text-sm text-blue-600">총 입고 건수</p>
+        <p class="text-2xl font-bold text-blue-800">${formatNumber(s.total_count || 0)}건</p>
+      </div>
+      <div class="bg-green-50 rounded-xl p-4 border border-green-200">
+        <p class="text-sm text-green-600">입고 품목 수</p>
+        <p class="text-2xl font-bold text-green-800">${formatNumber(s.item_count || 0)}종</p>
+      </div>
+      <div class="bg-purple-50 rounded-xl p-4 border border-purple-200">
+        <p class="text-sm text-purple-600">합격</p>
+        <p class="text-2xl font-bold text-purple-800">${formatNumber(s.passed_count || 0)}건</p>
+      </div>
+      <div class="bg-red-50 rounded-xl p-4 border border-red-200">
+        <p class="text-sm text-red-600">불합격/검사중</p>
+        <p class="text-2xl font-bold text-red-800">${formatNumber((s.failed_count || 0) + (s.pending_count || 0))}건</p>
+      </div>
+    `;
+  } else {
+    // 월별인 경우 일자별 차트형 표시
+    const dailyData = data.summary || [];
+    container.innerHTML = `
+      <div class="col-span-4 bg-white rounded-xl p-4 border">
+        <h4 class="font-bold text-gray-700 mb-3">일자별 입고 추이</h4>
+        <div class="flex gap-1 items-end h-32">
+          ${dailyData.slice(0, 31).reverse().map(d => {
+            const height = Math.max(10, Math.min(100, d.count * 20));
+            return `
+              <div class="flex-1 flex flex-col items-center">
+                <div class="bg-blue-500 w-full rounded-t" style="height: ${height}px;" title="${d.date}: ${d.count}건"></div>
+                <span class="text-xs text-gray-400 mt-1">${d.date?.substring(8) || ''}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        <p class="text-sm text-gray-500 mt-2 text-center">총 ${dailyData.reduce((s, d) => s + d.count, 0)}건 / ${dailyData.length}일</p>
+      </div>
+    `;
+  }
+}
+
+function renderInboundItemSummary(items) {
+  const container = document.getElementById('inbound-item-summary');
+  
+  if (!items || items.length === 0) {
+    container.innerHTML = '<p class="text-gray-500 text-center py-4">데이터 없음</p>';
+    return;
+  }
+  
+  container.innerHTML = `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-2 py-1 text-left">품목코드</th>
+          <th class="px-2 py-1 text-left">품목명</th>
+          <th class="px-2 py-1 text-right">입고량</th>
+          <th class="px-2 py-1 text-right">건수</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map(item => `
+          <tr class="border-b hover:bg-gray-50">
+            <td class="px-2 py-1 text-gray-600">${item.item_code}</td>
+            <td class="px-2 py-1">${item.item_name}</td>
+            <td class="px-2 py-1 text-right font-medium">${formatNumber(item.total_qty)} ${item.unit}</td>
+            <td class="px-2 py-1 text-right text-gray-600">${item.inbound_count}건</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderInboundSupplierSummary(suppliers) {
+  const container = document.getElementById('inbound-supplier-summary');
+  
+  if (!suppliers || suppliers.length === 0) {
+    container.innerHTML = '<p class="text-gray-500 text-center py-4">데이터 없음</p>';
+    return;
+  }
+  
+  container.innerHTML = `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-2 py-1 text-left">거래처</th>
+          <th class="px-2 py-1 text-right">품목수</th>
+          <th class="px-2 py-1 text-right">건수</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${suppliers.map(sup => `
+          <tr class="border-b hover:bg-gray-50">
+            <td class="px-2 py-1">${sup.supplier || '미지정'}</td>
+            <td class="px-2 py-1 text-right">${sup.item_count}종</td>
+            <td class="px-2 py-1 text-right font-medium">${sup.inbound_count}건</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderInboundQueryTable(details, viewType) {
+  const container = document.getElementById('inbound-query-table');
+  
+  if (!details || details.length === 0) {
+    container.innerHTML = '<p class="text-gray-500 text-center py-8">입고 데이터가 없습니다.</p>';
+    return;
+  }
+  
+  container.innerHTML = `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-100 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">입고일</th>
+          <th class="px-3 py-2 text-left">LOT번호</th>
+          <th class="px-3 py-2 text-left">품목코드</th>
+          <th class="px-3 py-2 text-left">품목명</th>
+          <th class="px-3 py-2 text-center">분류</th>
+          <th class="px-3 py-2 text-right">입고량</th>
+          <th class="px-3 py-2 text-right">잔량</th>
+          <th class="px-3 py-2 text-center">유통기한</th>
+          <th class="px-3 py-2 text-center">검사상태</th>
+          <th class="px-3 py-2 text-left">거래처</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${details.map(row => {
+          const statusColor = row.quality_status === '합격' ? 'bg-green-100 text-green-700' :
+                              row.quality_status === '불합격' ? 'bg-red-100 text-red-700' : 
+                              'bg-yellow-100 text-yellow-700';
+          return `
+            <tr class="border-b hover:bg-blue-50">
+              <td class="px-3 py-2">${row.inbound_date}</td>
+              <td class="px-3 py-2 font-mono text-xs text-blue-600">${row.lot_number}</td>
+              <td class="px-3 py-2 text-gray-600">${row.item_code}</td>
+              <td class="px-3 py-2 font-medium">${row.item_name}</td>
+              <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 bg-gray-100 rounded text-xs">${row.category}</span></td>
+              <td class="px-3 py-2 text-right font-medium text-blue-600">${formatNumber(row.origin_qty)} ${row.unit}</td>
+              <td class="px-3 py-2 text-right">${formatNumber(row.remain_qty)} ${row.unit}</td>
+              <td class="px-3 py-2 text-center">${row.expiry_date || '-'}</td>
+              <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 rounded text-xs ${statusColor}">${row.quality_status}</span></td>
+              <td class="px-3 py-2 text-gray-600">${row.supplier || '-'}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function downloadInboundQuery() {
+  const data = window.inboundQueryData;
+  if (!data || !data.details || data.details.length === 0) {
+    showToast('다운로드할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const viewType = document.getElementById('inbound-query-type').value;
+  const date = viewType === 'daily' 
+    ? document.getElementById('inbound-query-date').value
+    : document.getElementById('inbound-query-month').value;
+  
+  const rows = data.details.map(r => [
+    r.inbound_date, r.lot_number, r.item_code, r.item_name, r.category,
+    r.origin_qty, r.remain_qty, r.unit, r.expiry_date || '', r.quality_status, r.supplier || ''
+  ]);
+  
+  downloadExcel(
+    `입고조회_${date}`,
+    '(주)본비반트',
+    ['입고일', 'LOT번호', '품목코드', '품목명', '분류', '입고량', '잔량', '단위', '유통기한', '검사상태', '거래처'],
+    rows,
+    `입고 조회 (${date})`
+  );
+}
+
+function printInboundQuery() {
+  const data = window.inboundQueryData;
+  if (!data || !data.details || data.details.length === 0) {
+    showToast('인쇄할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const viewType = document.getElementById('inbound-query-type').value;
+  const date = viewType === 'daily' 
+    ? document.getElementById('inbound-query-date').value
+    : document.getElementById('inbound-query-month').value;
+  
+  const printContent = `
+    <html>
+    <head>
+      <title>입고 조회 - ${date}</title>
+      <style>
+        body { font-family: 'Malgun Gothic', sans-serif; padding: 20px; }
+        h1 { text-align: center; font-size: 18px; margin-bottom: 10px; }
+        .info { text-align: center; color: #666; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; font-size: 10px; }
+        th, td { border: 1px solid #ddd; padding: 4px; }
+        th { background: #f5f5f5; }
+        .right { text-align: right; }
+        .center { text-align: center; }
+        @media print { body { padding: 0; } }
+      </style>
+    </head>
+    <body>
+      <h1>(주)본비반트 입고 조회</h1>
+      <p class="info">조회 기간: ${date} / 총 ${data.details.length}건</p>
+      <table>
+        <thead>
+          <tr>
+            <th>입고일</th><th>LOT번호</th><th>품목코드</th><th>품목명</th>
+            <th>분류</th><th>입고량</th><th>잔량</th><th>유통기한</th><th>검사상태</th><th>거래처</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.details.map(r => `
+            <tr>
+              <td>${r.inbound_date}</td>
+              <td>${r.lot_number}</td>
+              <td>${r.item_code}</td>
+              <td>${r.item_name}</td>
+              <td class="center">${r.category}</td>
+              <td class="right">${formatNumber(r.origin_qty)} ${r.unit}</td>
+              <td class="right">${formatNumber(r.remain_qty)}</td>
+              <td class="center">${r.expiry_date || '-'}</td>
+              <td class="center">${r.quality_status}</td>
+              <td>${r.supplier || '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </body>
+    </html>
+  `;
+  
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(printContent);
+  printWindow.document.close();
+  printWindow.print();
+}
+
+// ==================== 재고 수불부 ====================
+
+async function renderStockLedger() {
+  const content = document.getElementById('page-content');
+  const today = new Date().toISOString().split('T')[0];
+  const monthStart = today.substring(0, 8) + '01';
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-book mr-2 text-haccp-primary"></i>
+          재고 수불부
+        </h2>
+      </div>
+      
+      <!-- 탭 메뉴 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="flex border-b">
+          <button onclick="switchStockLedgerTab('ledger')" class="stock-ledger-tab px-6 py-3 font-medium text-haccp-primary border-b-2 border-haccp-primary" data-tab="ledger">
+            <i class="fas fa-book mr-2"></i>수불부 조회
+          </button>
+          <button onclick="switchStockLedgerTab('upload')" class="stock-ledger-tab px-6 py-3 font-medium text-gray-600 hover:text-haccp-primary" data-tab="upload">
+            <i class="fas fa-upload mr-2"></i>사용량 일괄 등록
+          </button>
+        </div>
+        
+        <!-- 수불부 조회 탭 -->
+        <div id="stock-ledger-tab-ledger" class="p-6">
+          <div class="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">시작일</label>
+              <input type="date" id="ledger-start-date" class="w-full border rounded-lg px-3 py-2" value="${monthStart}">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">종료일</label>
+              <input type="date" id="ledger-end-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">품목 분류</label>
+              <select id="ledger-category" class="w-full border rounded-lg px-3 py-2">
+                <option value="전체">전체</option>
+                <option value="원료">원료</option>
+                <option value="부자재">부자재</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">품목 검색</label>
+              <input type="text" id="ledger-search" class="w-full border rounded-lg px-3 py-2" placeholder="품목명 검색">
+            </div>
+            <div class="flex items-end gap-2 col-span-2">
+              <button onclick="loadStockLedger()" class="flex-1 bg-haccp-primary text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                <i class="fas fa-search mr-1"></i> 조회
+              </button>
+              <button onclick="downloadStockLedger()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+                <i class="fas fa-file-excel mr-1"></i> 엑셀
+              </button>
+              <button onclick="printStockLedger()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700">
+                <i class="fas fa-print mr-1"></i> 인쇄
+              </button>
+            </div>
+          </div>
+          
+          <!-- 요약 통계 -->
+          <div id="ledger-summary" class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <!-- 동적 로드 -->
+          </div>
+          
+          <!-- 수불부 테이블 -->
+          <div id="ledger-table" class="overflow-x-auto border rounded-lg" style="max-height: 600px; overflow-y: auto;">
+            <p class="text-gray-500 text-center py-8">조회 버튼을 클릭하세요</p>
+          </div>
+        </div>
+        
+        <!-- 사용량 일괄 등록 탭 -->
+        <div id="stock-ledger-tab-upload" class="p-6 hidden">
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+            <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-2"></i>사용량 일괄 등록 안내</h4>
+            <ul class="text-sm text-blue-700 space-y-1">
+              <li>• 엑셀 파일 또는 텍스트 데이터로 일일 사용량을 일괄 등록합니다.</li>
+              <li>• 품목명이 기준정보에 등록되어 있어야 합니다.</li>
+              <li>• 형식: 품목명 [탭/쉼표] 수량 (한 줄에 하나씩)</li>
+              <li>• FIFO 방식으로 자동 LOT 차감됩니다.</li>
+            </ul>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- 파일 업로드 -->
+            <div class="bg-white border rounded-lg p-4">
+              <h4 class="font-bold text-gray-800 mb-4"><i class="fas fa-file-excel mr-2 text-green-600"></i>엑셀 파일 업로드</h4>
+              <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">사용일</label>
+                <input type="date" id="upload-usage-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
+              </div>
+              <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">엑셀 파일 선택</label>
+                <input type="file" id="usage-excel-file" accept=".xlsx,.xls,.csv" class="w-full border rounded-lg px-3 py-2">
+                <p class="text-xs text-gray-500 mt-1">* 첫 번째 열: 품목명, 두 번째 열: 수량</p>
+              </div>
+              <button onclick="parseUsageExcel()" class="w-full bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+                <i class="fas fa-upload mr-2"></i>파일 파싱
+              </button>
+            </div>
+            
+            <!-- 텍스트 입력 -->
+            <div class="bg-white border rounded-lg p-4">
+              <h4 class="font-bold text-gray-800 mb-4"><i class="fas fa-keyboard mr-2 text-blue-600"></i>텍스트 직접 입력</h4>
+              <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">사용량 데이터</label>
+                <textarea id="usage-text-input" rows="8" class="w-full border rounded-lg px-3 py-2 font-mono text-sm" 
+                  placeholder="품목명,수량&#10;밀가루,5000&#10;설탕,2000&#10;소금,500"></textarea>
+              </div>
+              <button onclick="parseUsageText()" class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                <i class="fas fa-check mr-2"></i>데이터 파싱
+              </button>
+            </div>
+          </div>
+          
+          <!-- 파싱 결과 미리보기 -->
+          <div id="usage-preview" class="mt-6 hidden">
+            <div class="bg-white border rounded-lg p-4">
+              <div class="flex justify-between items-center mb-4">
+                <h4 class="font-bold text-gray-800"><i class="fas fa-eye mr-2"></i>등록 미리보기</h4>
+                <button onclick="submitBulkUsage()" class="bg-haccp-primary text-white px-6 py-2 rounded-lg hover:bg-blue-700">
+                  <i class="fas fa-save mr-2"></i>일괄 등록
+                </button>
+              </div>
+              <div id="usage-preview-table" class="overflow-x-auto max-h-96">
+                <!-- 동적 로드 -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 초기 로드
+  loadStockLedger();
+}
+
+function switchStockLedgerTab(tab) {
+  // 탭 버튼 스타일
+  document.querySelectorAll('.stock-ledger-tab').forEach(btn => {
+    if (btn.dataset.tab === tab) {
+      btn.classList.add('text-haccp-primary', 'border-b-2', 'border-haccp-primary');
+      btn.classList.remove('text-gray-600');
+    } else {
+      btn.classList.remove('text-haccp-primary', 'border-b-2', 'border-haccp-primary');
+      btn.classList.add('text-gray-600');
+    }
+  });
+  
+  // 탭 컨텐츠
+  document.getElementById('stock-ledger-tab-ledger').classList.toggle('hidden', tab !== 'ledger');
+  document.getElementById('stock-ledger-tab-upload').classList.toggle('hidden', tab !== 'upload');
+}
+
+async function loadStockLedger() {
+  const startDate = document.getElementById('ledger-start-date').value;
+  const endDate = document.getElementById('ledger-end-date').value;
+  const category = document.getElementById('ledger-category').value;
+  const search = document.getElementById('ledger-search').value;
+  
+  try {
+    const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
+    if (category && category !== '전체') params.append('category', category);
+    if (search) params.append('search', search);
+    
+    const result = await api(`/transactions/stock-ledger?${params}`);
+    
+    // 요약 표시
+    renderLedgerSummary(result.summary);
+    
+    // 테이블 표시
+    renderLedgerTable(result.data);
+    
+    // 전역 변수 저장
+    window.stockLedgerData = result;
+    
+  } catch (err) {
+    showToast('수불부 조회 실패: ' + err.message, 'error');
+  }
+}
+
+function renderLedgerSummary(summary) {
+  const container = document.getElementById('ledger-summary');
+  
+  container.innerHTML = `
+    <div class="bg-blue-50 rounded-lg p-3 border border-blue-200">
+      <p class="text-xs text-blue-600">이월 재고</p>
+      <p class="text-lg font-bold text-blue-800">${formatNumber(summary.total_carry_over)}</p>
+    </div>
+    <div class="bg-green-50 rounded-lg p-3 border border-green-200">
+      <p class="text-xs text-green-600">기간 입고</p>
+      <p class="text-lg font-bold text-green-800">${formatNumber(summary.total_inbound)}</p>
+    </div>
+    <div class="bg-orange-50 rounded-lg p-3 border border-orange-200">
+      <p class="text-xs text-orange-600">기간 사용</p>
+      <p class="text-lg font-bold text-orange-800">${formatNumber(summary.total_usage)}</p>
+    </div>
+    <div class="bg-purple-50 rounded-lg p-3 border border-purple-200">
+      <p class="text-xs text-purple-600">계산 잔량</p>
+      <p class="text-lg font-bold text-purple-800">${formatNumber(summary.total_calc_remain)}</p>
+    </div>
+    <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
+      <p class="text-xs text-gray-600">품목 수 / 차이</p>
+      <p class="text-lg font-bold text-gray-800">${summary.item_count}종 <span class="text-sm ${summary.diff_count > 0 ? 'text-red-600' : 'text-green-600'}">(${summary.diff_count}건 차이)</span></p>
+    </div>
+  `;
+}
+
+function renderLedgerTable(data) {
+  const container = document.getElementById('ledger-table');
+  
+  if (!data || data.length === 0) {
+    container.innerHTML = '<p class="text-gray-500 text-center py-8">데이터가 없습니다.</p>';
+    return;
+  }
+  
+  container.innerHTML = `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-100 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">품목코드</th>
+          <th class="px-3 py-2 text-left">품목명</th>
+          <th class="px-3 py-2 text-center">분류</th>
+          <th class="px-3 py-2 text-right">이월</th>
+          <th class="px-3 py-2 text-right text-blue-600">입고</th>
+          <th class="px-3 py-2 text-right text-orange-600">사용</th>
+          <th class="px-3 py-2 text-right text-red-600">출고</th>
+          <th class="px-3 py-2 text-right text-purple-600">조정</th>
+          <th class="px-3 py-2 text-right font-bold">계산잔량</th>
+          <th class="px-3 py-2 text-right">현재고</th>
+          <th class="px-3 py-2 text-right">차이</th>
+          <th class="px-3 py-2 text-center">단위</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.map(row => {
+          const diffClass = Math.abs(row.diff) > 0.01 
+            ? (row.diff > 0 ? 'text-blue-600' : 'text-red-600')
+            : 'text-gray-400';
+          return `
+            <tr class="border-b hover:bg-blue-50">
+              <td class="px-3 py-2 text-gray-600">${row.item_code}</td>
+              <td class="px-3 py-2 font-medium">${row.item_name}</td>
+              <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 bg-gray-100 rounded text-xs">${row.category}</span></td>
+              <td class="px-3 py-2 text-right">${formatNumber(row.carry_over)}</td>
+              <td class="px-3 py-2 text-right text-blue-600 font-medium">${formatNumber(row.period_inbound)}</td>
+              <td class="px-3 py-2 text-right text-orange-600 font-medium">${formatNumber(row.period_usage)}</td>
+              <td class="px-3 py-2 text-right text-red-600">${formatNumber(row.period_outbound)}</td>
+              <td class="px-3 py-2 text-right text-purple-600">${formatNumber(row.period_adjustment)}</td>
+              <td class="px-3 py-2 text-right font-bold">${formatNumber(row.calc_remain)}</td>
+              <td class="px-3 py-2 text-right">${formatNumber(row.current_stock)}</td>
+              <td class="px-3 py-2 text-right ${diffClass}">${row.diff > 0 ? '+' : ''}${formatNumber(row.diff)}</td>
+              <td class="px-3 py-2 text-center text-gray-500">${row.unit}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function downloadStockLedger() {
+  const data = window.stockLedgerData;
+  if (!data || !data.data || data.data.length === 0) {
+    showToast('다운로드할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const startDate = document.getElementById('ledger-start-date').value;
+  const endDate = document.getElementById('ledger-end-date').value;
+  
+  const rows = data.data.map(r => [
+    r.item_code, r.item_name, r.category,
+    r.carry_over, r.period_inbound, r.period_usage, r.period_outbound, r.period_adjustment,
+    r.calc_remain, r.current_stock, r.diff, r.unit
+  ]);
+  
+  // 합계 행 추가
+  const s = data.summary;
+  rows.push([
+    '', '합계', '',
+    s.total_carry_over, s.total_inbound, s.total_usage, s.total_outbound, s.total_adjustment,
+    s.total_calc_remain, s.total_current_stock, '', ''
+  ]);
+  
+  downloadExcel(
+    `재고수불부_${startDate}_${endDate}`,
+    '(주)본비반트',
+    ['품목코드', '품목명', '분류', '이월', '입고', '사용', '출고', '조정', '계산잔량', '현재고', '차이', '단위'],
+    rows,
+    `재고 수불부 (${startDate} ~ ${endDate})`
+  );
+}
+
+function printStockLedger() {
+  const data = window.stockLedgerData;
+  if (!data || !data.data || data.data.length === 0) {
+    showToast('인쇄할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const startDate = document.getElementById('ledger-start-date').value;
+  const endDate = document.getElementById('ledger-end-date').value;
+  const s = data.summary;
+  
+  const printContent = `
+    <html>
+    <head>
+      <title>재고 수불부</title>
+      <style>
+        body { font-family: 'Malgun Gothic', sans-serif; padding: 20px; font-size: 9px; }
+        h1 { text-align: center; font-size: 16px; margin-bottom: 5px; }
+        .info { text-align: center; color: #666; margin-bottom: 15px; font-size: 10px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 3px 5px; }
+        th { background: #f5f5f5; font-size: 8px; }
+        .right { text-align: right; }
+        .center { text-align: center; }
+        .total { background: #f0f0f0; font-weight: bold; }
+        .blue { color: #2563eb; }
+        .orange { color: #ea580c; }
+        .red { color: #dc2626; }
+        @media print { body { padding: 0; } @page { size: A4 landscape; margin: 10mm; } }
+      </style>
+    </head>
+    <body>
+      <h1>(주)본비반트 재고 수불부</h1>
+      <p class="info">기간: ${startDate} ~ ${endDate} / 품목 수: ${s.item_count}종</p>
+      <table>
+        <thead>
+          <tr>
+            <th>품목코드</th><th>품목명</th><th>분류</th>
+            <th>이월</th><th class="blue">입고</th><th class="orange">사용</th><th class="red">출고</th><th>조정</th>
+            <th>계산잔량</th><th>현재고</th><th>차이</th><th>단위</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.data.map(r => `
+            <tr>
+              <td>${r.item_code}</td>
+              <td>${r.item_name}</td>
+              <td class="center">${r.category}</td>
+              <td class="right">${formatNumber(r.carry_over)}</td>
+              <td class="right blue">${formatNumber(r.period_inbound)}</td>
+              <td class="right orange">${formatNumber(r.period_usage)}</td>
+              <td class="right red">${formatNumber(r.period_outbound)}</td>
+              <td class="right">${formatNumber(r.period_adjustment)}</td>
+              <td class="right" style="font-weight:bold">${formatNumber(r.calc_remain)}</td>
+              <td class="right">${formatNumber(r.current_stock)}</td>
+              <td class="right" style="color:${Math.abs(r.diff) > 0.01 ? '#dc2626' : '#999'}">${formatNumber(r.diff)}</td>
+              <td class="center">${r.unit}</td>
+            </tr>
+          `).join('')}
+          <tr class="total">
+            <td></td><td>합계</td><td></td>
+            <td class="right">${formatNumber(s.total_carry_over)}</td>
+            <td class="right">${formatNumber(s.total_inbound)}</td>
+            <td class="right">${formatNumber(s.total_usage)}</td>
+            <td class="right">${formatNumber(s.total_outbound)}</td>
+            <td class="right">${formatNumber(s.total_adjustment)}</td>
+            <td class="right">${formatNumber(s.total_calc_remain)}</td>
+            <td class="right">${formatNumber(s.total_current_stock)}</td>
+            <td></td><td></td>
+          </tr>
+        </tbody>
+      </table>
+    </body>
+    </html>
+  `;
+  
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(printContent);
+  printWindow.document.close();
+  printWindow.print();
+}
+
+// 엑셀 파일 파싱
+async function parseUsageExcel() {
+  const fileInput = document.getElementById('usage-excel-file');
+  const file = fileInput.files[0];
+  
+  if (!file) {
+    showToast('파일을 선택해주세요.', 'warning');
+    return;
+  }
+  
+  try {
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data, { type: 'array' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    
+    // 파싱된 데이터 처리
+    const items = [];
+    for (let i = 0; i < jsonData.length; i++) {
+      const row = jsonData[i];
+      if (!row || row.length < 2) continue;
+      
+      const itemName = String(row[0] || '').trim();
+      const quantity = parseFloat(row[1]);
+      
+      if (itemName && !isNaN(quantity) && quantity > 0) {
+        items.push({ item_name: itemName, quantity });
+      }
+    }
+    
+    if (items.length === 0) {
+      showToast('유효한 데이터가 없습니다.', 'warning');
+      return;
+    }
+    
+    // 미리보기 표시
+    renderUsagePreview(items);
+    
+  } catch (err) {
+    showToast('파일 파싱 실패: ' + err.message, 'error');
+  }
+}
+
+// 텍스트 파싱
+function parseUsageText() {
+  const text = document.getElementById('usage-text-input').value.trim();
+  
+  if (!text) {
+    showToast('데이터를 입력해주세요.', 'warning');
+    return;
+  }
+  
+  const lines = text.split('\n');
+  const items = [];
+  
+  for (const line of lines) {
+    const parts = line.split(/[,\t]+/);
+    if (parts.length < 2) continue;
+    
+    const itemName = parts[0].trim();
+    const quantity = parseFloat(parts[1]);
+    
+    if (itemName && !isNaN(quantity) && quantity > 0) {
+      items.push({ item_name: itemName, quantity });
+    }
+  }
+  
+  if (items.length === 0) {
+    showToast('유효한 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  // 미리보기 표시
+  renderUsagePreview(items);
+}
+
+// 미리보기 렌더링
+function renderUsagePreview(items) {
+  const container = document.getElementById('usage-preview');
+  const tableContainer = document.getElementById('usage-preview-table');
+  
+  window.usagePreviewItems = items;
+  
+  tableContainer.innerHTML = `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-100">
+        <tr>
+          <th class="px-3 py-2 text-left">#</th>
+          <th class="px-3 py-2 text-left">품목명</th>
+          <th class="px-3 py-2 text-right">수량</th>
+          <th class="px-3 py-2 text-center">상태</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items.map((item, idx) => `
+          <tr class="border-b">
+            <td class="px-3 py-2 text-gray-500">${idx + 1}</td>
+            <td class="px-3 py-2 font-medium">${item.item_name}</td>
+            <td class="px-3 py-2 text-right">${formatNumber(item.quantity)}</td>
+            <td class="px-3 py-2 text-center"><span class="text-blue-600">대기</span></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <p class="text-sm text-gray-600 mt-3 text-center">총 ${items.length}건</p>
+  `;
+  
+  container.classList.remove('hidden');
+}
+
+// 일괄 등록 실행
+async function submitBulkUsage() {
+  const items = window.usagePreviewItems;
+  const usageDate = document.getElementById('upload-usage-date').value;
+  
+  if (!items || items.length === 0) {
+    showToast('등록할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  if (!usageDate) {
+    showToast('사용일을 선택해주세요.', 'warning');
+    return;
+  }
+  
+  if (!confirm(`${items.length}건의 사용량을 ${usageDate}일자로 등록하시겠습니까?`)) {
+    return;
+  }
+  
+  try {
+    const result = await api('/transactions/bulk-usage', 'POST', {
+      usage_date: usageDate,
+      items: items
+    });
+    
+    showToast(result.message, 'success');
+    
+    // 결과 표시
+    const resultData = result.data;
+    const tableContainer = document.getElementById('usage-preview-table');
+    
+    tableContainer.innerHTML = `
+      <div class="p-4 bg-green-50 border border-green-200 rounded-lg mb-4">
+        <p class="font-bold text-green-800">등록 완료: ${resultData.total_processed}건 성공 / ${resultData.total_errors}건 오류</p>
+      </div>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="px-3 py-2 text-left">품목코드</th>
+            <th class="px-3 py-2 text-left">품목명</th>
+            <th class="px-3 py-2 text-right">요청수량</th>
+            <th class="px-3 py-2 text-right">사용수량</th>
+            <th class="px-3 py-2 text-center">상태</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${resultData.results.map(r => `
+            <tr class="border-b">
+              <td class="px-3 py-2 text-gray-600">${r.item_code}</td>
+              <td class="px-3 py-2 font-medium">${r.item_name}</td>
+              <td class="px-3 py-2 text-right">${formatNumber(r.requested_qty)}</td>
+              <td class="px-3 py-2 text-right">${formatNumber(r.used_qty)}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="px-2 py-1 rounded text-xs ${r.status === 'complete' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}">
+                  ${r.status === 'complete' ? '완료' : '부분처리'}
+                </span>
+              </td>
+            </tr>
+          `).join('')}
+          ${resultData.errors.map(e => `
+            <tr class="border-b bg-red-50">
+              <td class="px-3 py-2 text-red-600">-</td>
+              <td class="px-3 py-2 font-medium text-red-600">${e.item}</td>
+              <td class="px-3 py-2 text-right">-</td>
+              <td class="px-3 py-2 text-right">-</td>
+              <td class="px-3 py-2 text-center">
+                <span class="px-2 py-1 rounded text-xs bg-red-100 text-red-700">${e.error}</span>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    
+  } catch (err) {
+    showToast('등록 실패: ' + err.message, 'error');
+  }
+}
+
+// Window 함수 등록
+window.renderInboundQuery = renderInboundQuery;
+window.changeInboundQueryType = changeInboundQueryType;
+window.loadInboundQuery = loadInboundQuery;
+window.downloadInboundQuery = downloadInboundQuery;
+window.printInboundQuery = printInboundQuery;
+
+window.renderStockLedger = renderStockLedger;
+window.switchStockLedgerTab = switchStockLedgerTab;
+window.loadStockLedger = loadStockLedger;
+window.downloadStockLedger = downloadStockLedger;
+window.printStockLedger = printStockLedger;
+window.parseUsageExcel = parseUsageExcel;
+window.parseUsageText = parseUsageText;
+window.submitBulkUsage = submitBulkUsage;

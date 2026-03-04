@@ -22474,10 +22474,26 @@ function renderMatchingPreview(matchResults, masters) {
                   <div class="text-green-700 font-medium text-xs">${r.matched_name}</div>
                   <div class="text-gray-400 text-xs">${r.matched_code} (${r.match_type})</div>
                 ` : `
-                  <select onchange="manualMatch(${idx}, this.value)" class="w-full border border-red-300 rounded px-2 py-1 text-xs bg-white">
-                    <option value="">-- 원료 선택 --</option>
-                    ${rawMaterials.map(m => `<option value="${m.item_code}">${m.item_name} (${m.item_code})</option>`).join('')}
-                  </select>
+                  <div class="relative">
+                    <input type="text" 
+                      id="search-input-${idx}"
+                      class="w-full border border-red-300 rounded px-2 py-1 text-xs bg-white"
+                      placeholder="원료 검색..."
+                      onfocus="showMaterialDropdown(${idx})"
+                      oninput="filterMaterialDropdown(${idx}, this.value)"
+                    >
+                    <div id="dropdown-${idx}" class="absolute z-50 w-full bg-white border rounded shadow-lg max-h-48 overflow-y-auto hidden mt-1">
+                      ${rawMaterials.map(m => `
+                        <div class="px-2 py-1 text-xs hover:bg-blue-50 cursor-pointer material-option" 
+                             data-code="${m.item_code}" 
+                             data-name="${m.item_name}"
+                             onclick="selectMaterial(${idx}, '${m.item_code}', '${m.item_name.replace(/'/g, "\\'")}')">
+                          <span class="font-medium">${m.item_name}</span>
+                          <span class="text-gray-400 ml-1">(${m.item_code})</span>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>
                 `}
               </td>
               <td class="px-2 py-2 text-right font-medium text-blue-600 text-xs">${formatNumber(r.quantity)}</td>
@@ -22535,6 +22551,72 @@ function manualMatch(idx, itemCode) {
   
   showToast(`${window.matchingResults[idx].input_name} → ${master.item_name} 매칭 완료`, 'success');
 }
+
+// 드롭다운 표시
+function showMaterialDropdown(idx) {
+  // 다른 열린 드롭다운 닫기
+  document.querySelectorAll('[id^="dropdown-"]').forEach(dd => {
+    if (dd.id !== 'dropdown-' + idx) {
+      dd.classList.add('hidden');
+    }
+  });
+  
+  const dropdown = document.getElementById('dropdown-' + idx);
+  if (dropdown) {
+    dropdown.classList.remove('hidden');
+    // 모든 옵션 표시
+    dropdown.querySelectorAll('.material-option').forEach(opt => {
+      opt.style.display = 'block';
+    });
+  }
+}
+
+// 드롭다운 필터링
+function filterMaterialDropdown(idx, searchText) {
+  const dropdown = document.getElementById('dropdown-' + idx);
+  if (!dropdown) return;
+  
+  dropdown.classList.remove('hidden');
+  const search = searchText.toLowerCase().trim();
+  
+  dropdown.querySelectorAll('.material-option').forEach(opt => {
+    const name = opt.dataset.name.toLowerCase();
+    const code = opt.dataset.code.toLowerCase();
+    
+    if (!search || name.includes(search) || code.includes(search)) {
+      opt.style.display = 'block';
+    } else {
+      opt.style.display = 'none';
+    }
+  });
+}
+
+// 원료 선택
+function selectMaterial(idx, itemCode, itemName) {
+  // 입력 필드 업데이트
+  const input = document.getElementById('search-input-' + idx);
+  if (input) {
+    input.value = itemName;
+  }
+  
+  // 드롭다운 닫기
+  const dropdown = document.getElementById('dropdown-' + idx);
+  if (dropdown) {
+    dropdown.classList.add('hidden');
+  }
+  
+  // 매칭 처리
+  manualMatch(idx, itemCode);
+}
+
+// 드롭다운 외부 클릭 시 닫기
+document.addEventListener('click', function(e) {
+  if (!e.target.closest('[id^="search-input-"]') && !e.target.closest('[id^="dropdown-"]')) {
+    document.querySelectorAll('[id^="dropdown-"]').forEach(dd => {
+      dd.classList.add('hidden');
+    });
+  }
+});
 
 // 일괄 등록 실행
 async function submitBulkUsage() {
@@ -22656,6 +22738,9 @@ window.parseUsageText = parseUsageText;
 window.submitBulkUsage = submitBulkUsage;
 window.checkBulkMatching = checkBulkMatching;
 window.manualMatch = manualMatch;
+window.showMaterialDropdown = showMaterialDropdown;
+window.filterMaterialDropdown = filterMaterialDropdown;
+window.selectMaterial = selectMaterial;
 window.loadBulkUsageForDelete = loadBulkUsageForDelete;
 window.deleteBulkUsage = deleteBulkUsage;
 window.loadAdjustmentsForDelete = loadAdjustmentsForDelete;

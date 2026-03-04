@@ -21361,6 +21361,9 @@ async function renderStockLedger() {
           <button onclick="switchStockLedgerTab('delete')" class="stock-ledger-tab px-6 py-3 font-medium text-gray-600 hover:text-haccp-primary" data-tab="delete">
             <i class="fas fa-trash-alt mr-2"></i>사용량 일괄 삭제
           </button>
+          <button onclick="switchStockLedgerTab('adjustment')" class="stock-ledger-tab px-6 py-3 font-medium text-gray-600 hover:text-haccp-primary" data-tab="adjustment">
+            <i class="fas fa-balance-scale mr-2"></i>재고조정 관리
+          </button>
         </div>
         
         <!-- 수불부 조회 탭 -->
@@ -21515,6 +21518,55 @@ async function renderStockLedger() {
             </div>
           </div>
         </div>
+        
+        <!-- 재고조정 관리 탭 -->
+        <div id="stock-ledger-tab-adjustment" class="p-6 hidden">
+          <div class="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
+            <h4 class="font-bold text-orange-800 mb-2"><i class="fas fa-exclamation-triangle mr-2"></i>재고조정 관리 안내</h4>
+            <ul class="text-sm text-orange-700 space-y-1">
+              <li>• 잘못 입력된 재고조정 데이터를 조회하고 삭제합니다.</li>
+              <li>• 삭제 시 마스터 재고가 자동으로 원복됩니다.</li>
+              <li>• <strong>큰 음수 조정(-1000 이하)은 주의해서 검토하세요.</strong></li>
+              <li>• 재고 재계산 기능으로 트랜잭션 기준 재고 동기화가 가능합니다.</li>
+            </ul>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">조회 날짜 <span class="text-red-500">*</span></label>
+              <input type="date" id="adj-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">임계값 (이하만)</label>
+              <input type="number" id="adj-threshold" class="w-full border rounded-lg px-3 py-2" value="-1000" placeholder="-1000">
+            </div>
+            <div class="flex items-end gap-2 col-span-2">
+              <button onclick="loadAdjustmentsForDelete()" class="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+                <i class="fas fa-search mr-2"></i>조회
+              </button>
+              <button onclick="deleteSelectedAdjustments()" id="btn-delete-adj" class="flex-1 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 disabled:bg-gray-400" disabled>
+                <i class="fas fa-trash-alt mr-2"></i>선택 삭제
+              </button>
+              <button onclick="recalculateStock()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+                <i class="fas fa-sync-alt mr-2"></i>재고 재계산
+              </button>
+            </div>
+          </div>
+          
+          <!-- 재고조정 목록 -->
+          <div id="adj-preview" class="bg-white border rounded-lg">
+            <div class="p-4 border-b flex justify-between items-center">
+              <h4 class="font-bold text-gray-800"><i class="fas fa-list mr-2"></i>재고조정 목록</h4>
+              <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" id="adj-select-all" onchange="toggleAllAdjustments()" class="rounded">
+                <span>전체 선택</span>
+              </label>
+            </div>
+            <div id="adj-preview-table" class="overflow-x-auto max-h-96 p-4">
+              <p class="text-gray-500 text-center py-4">날짜를 선택하고 조회 버튼을 클릭하세요</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -21539,6 +21591,7 @@ function switchStockLedgerTab(tab) {
   document.getElementById('stock-ledger-tab-ledger').classList.toggle('hidden', tab !== 'ledger');
   document.getElementById('stock-ledger-tab-upload').classList.toggle('hidden', tab !== 'upload');
   document.getElementById('stock-ledger-tab-delete').classList.toggle('hidden', tab !== 'delete');
+  document.getElementById('stock-ledger-tab-adjustment').classList.toggle('hidden', tab !== 'adjustment');
 }
 
 // 삭제 대상 조회
@@ -21682,6 +21735,265 @@ async function deleteBulkUsage() {
     showToast('삭제 실패: ' + err.message, 'error');
   }
 }
+
+// ========== 재고조정 관리 기능 ==========
+
+// 재고조정 조회
+async function loadAdjustmentsForDelete() {
+  const date = document.getElementById('adj-date').value;
+  const threshold = document.getElementById('adj-threshold').value || -1000;
+  
+  if (!date) {
+    showToast('조회할 날짜를 선택해주세요.', 'warning');
+    return;
+  }
+  
+  try {
+    // 해당 날짜의 모든 트랜잭션 조회
+    const result = await api(`/transactions/search?start_date=${date}&end_date=${date}`);
+    const allTrans = result.data || [];
+    
+    // 재고조정만 필터 + 임계값 이하만
+    const adjustments = allTrans.filter(t => 
+      t.trans_type === '재고조정' && t.quantity < parseFloat(threshold)
+    ).sort((a, b) => a.quantity - b.quantity);
+    
+    window.adjustmentTargets = adjustments;
+    
+    const tableContainer = document.getElementById('adj-preview-table');
+    const deleteBtn = document.getElementById('btn-delete-adj');
+    
+    if (adjustments.length === 0) {
+      tableContainer.innerHTML = `
+        <div class="text-center py-8">
+          <i class="fas fa-check-circle text-4xl text-green-500 mb-3"></i>
+          <p class="text-gray-600">${date}에 ${threshold} 이하의 재고조정이 없습니다.</p>
+        </div>
+      `;
+      deleteBtn.disabled = true;
+      return;
+    }
+    
+    deleteBtn.disabled = false;
+    
+    const totalAmount = adjustments.reduce((sum, t) => sum + t.quantity, 0);
+    
+    tableContainer.innerHTML = `
+      <div class="mb-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+        <p class="font-medium text-yellow-800">
+          <i class="fas fa-exclamation-triangle mr-2"></i>
+          ${adjustments.length}건의 재고조정 발견 (합계: ${formatNumber(totalAmount)})
+        </p>
+      </div>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100 sticky top-0">
+          <tr>
+            <th class="px-3 py-2 text-center w-10">
+              <input type="checkbox" id="adj-select-all-inner" onchange="toggleAllAdjustments()" checked>
+            </th>
+            <th class="px-3 py-2 text-left">ID</th>
+            <th class="px-3 py-2 text-left">품목코드</th>
+            <th class="px-3 py-2 text-left">품목명</th>
+            <th class="px-3 py-2 text-right">조정량</th>
+            <th class="px-3 py-2 text-left">LOT번호</th>
+            <th class="px-3 py-2 text-left">메모</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${adjustments.map(item => `
+            <tr class="border-b hover:bg-red-50">
+              <td class="px-3 py-2 text-center">
+                <input type="checkbox" class="adj-checkbox" data-id="${item.id}" checked>
+              </td>
+              <td class="px-3 py-2 text-gray-500">${item.id}</td>
+              <td class="px-3 py-2">${item.item_code}</td>
+              <td class="px-3 py-2 font-medium">${item.item_name || '-'}</td>
+              <td class="px-3 py-2 text-right text-red-600 font-bold">${formatNumber(item.quantity)}</td>
+              <td class="px-3 py-2 font-mono text-xs">${item.lot_number || '-'}</td>
+              <td class="px-3 py-2 text-gray-500 text-xs">${item.memo || '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    
+  } catch (err) {
+    showToast('조회 실패: ' + err.message, 'error');
+  }
+}
+
+// 전체 선택/해제
+function toggleAllAdjustments() {
+  const selectAll = document.getElementById('adj-select-all-inner') || document.getElementById('adj-select-all');
+  const checkboxes = document.querySelectorAll('.adj-checkbox');
+  checkboxes.forEach(cb => cb.checked = selectAll.checked);
+}
+
+// 선택된 재고조정 삭제
+async function deleteSelectedAdjustments() {
+  const checkboxes = document.querySelectorAll('.adj-checkbox:checked');
+  const selectedIds = Array.from(checkboxes).map(cb => cb.dataset.id);
+  
+  if (selectedIds.length === 0) {
+    showToast('삭제할 항목을 선택해주세요.', 'warning');
+    return;
+  }
+  
+  const date = document.getElementById('adj-date').value;
+  const items = (window.adjustmentTargets || []).filter(t => selectedIds.includes(String(t.id)));
+  const totalAmount = items.reduce((sum, t) => sum + t.quantity, 0);
+  
+  if (!confirm(`정말로 ${selectedIds.length}건의 재고조정을 삭제하시겠습니까?\n\n날짜: ${date}\n총 조정량: ${formatNumber(totalAmount)}\n\n⚠️ 삭제 시 마스터 재고가 자동으로 원복됩니다.`)) {
+    return;
+  }
+  
+  try {
+    let successCount = 0;
+    let errorCount = 0;
+    const results = [];
+    
+    for (const id of selectedIds) {
+      try {
+        const result = await api(`/transactions/adjustment/${id}`, { method: 'DELETE' });
+        if (result.success) {
+          successCount++;
+          results.push({ ...result.deleted, status: 'success' });
+        } else {
+          errorCount++;
+          results.push({ id, status: 'error', error: result.error });
+        }
+      } catch (err) {
+        errorCount++;
+        results.push({ id, status: 'error', error: err.message });
+      }
+    }
+    
+    showToast(`${successCount}건 삭제 완료${errorCount > 0 ? `, ${errorCount}건 실패` : ''}`, 
+              errorCount > 0 ? 'warning' : 'success');
+    
+    // 결과 표시
+    const tableContainer = document.getElementById('adj-preview-table');
+    tableContainer.innerHTML = `
+      <div class="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <h4 class="font-bold text-green-800 mb-2">
+          <i class="fas fa-check-circle mr-2"></i>삭제 완료
+        </h4>
+        <p class="text-sm text-green-700">
+          성공: ${successCount}건 / 실패: ${errorCount}건
+        </p>
+      </div>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="px-3 py-2 text-left">품목코드</th>
+            <th class="px-3 py-2 text-left">품목명</th>
+            <th class="px-3 py-2 text-right">원복 수량</th>
+            <th class="px-3 py-2 text-center">상태</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${results.map(r => `
+            <tr class="border-b ${r.status === 'error' ? 'bg-red-50' : ''}">
+              <td class="px-3 py-2">${r.item_code || r.id}</td>
+              <td class="px-3 py-2 font-medium">${r.item_name || '-'}</td>
+              <td class="px-3 py-2 text-right ${r.status === 'success' ? 'text-green-600' : 'text-red-600'}">
+                ${r.status === 'success' ? '+' + formatNumber(-r.quantity) : '-'}
+              </td>
+              <td class="px-3 py-2 text-center">
+                <span class="px-2 py-1 rounded text-xs ${r.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+                  ${r.status === 'success' ? '삭제완료' : r.error || '실패'}
+                </span>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    
+    document.getElementById('btn-delete-adj').disabled = true;
+    window.adjustmentTargets = [];
+    
+  } catch (err) {
+    showToast('삭제 실패: ' + err.message, 'error');
+  }
+}
+
+// 재고 재계산
+async function recalculateStock() {
+  if (!confirm('모든 품목의 재고를 트랜잭션 기준으로 재계산하시겠습니까?\n\n이 작업은 마스터 재고(current_stock)를 트랜잭션 합계로 업데이트합니다.')) {
+    return;
+  }
+  
+  try {
+    showToast('재고 재계산 중...', 'info');
+    
+    const result = await api('/transactions/recalculate-stock', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    
+    if (result.success) {
+      showToast(`${result.updated_count}개 품목 재고가 재계산되었습니다.`, 'success');
+      
+      // 결과 표시
+      if (result.results && result.results.length > 0) {
+        const tableContainer = document.getElementById('adj-preview-table');
+        tableContainer.innerHTML = `
+          <div class="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <h4 class="font-bold text-blue-800 mb-2">
+              <i class="fas fa-sync-alt mr-2"></i>재고 재계산 완료
+            </h4>
+            <p class="text-sm text-blue-700">
+              총 ${result.total_checked}개 품목 확인, ${result.updated_count}개 품목 업데이트
+            </p>
+          </div>
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-3 py-2 text-left">품목코드</th>
+                <th class="px-3 py-2 text-left">품목명</th>
+                <th class="px-3 py-2 text-right">이전 재고</th>
+                <th class="px-3 py-2 text-right">변경 재고</th>
+                <th class="px-3 py-2 text-right">차이</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${result.results.slice(0, 50).map(r => `
+                <tr class="border-b">
+                  <td class="px-3 py-2">${r.item_code}</td>
+                  <td class="px-3 py-2 font-medium">${r.item_name}</td>
+                  <td class="px-3 py-2 text-right text-gray-500">${formatNumber(r.before)}</td>
+                  <td class="px-3 py-2 text-right text-blue-600 font-bold">${formatNumber(r.after)}</td>
+                  <td class="px-3 py-2 text-right ${r.diff > 0 ? 'text-red-600' : 'text-green-600'}">
+                    ${r.diff > 0 ? '+' : ''}${formatNumber(r.diff)}
+                  </td>
+                </tr>
+              `).join('')}
+              ${result.results.length > 50 ? `
+                <tr class="bg-gray-50">
+                  <td colspan="5" class="px-3 py-2 text-center text-gray-500">
+                    ... 외 ${result.results.length - 50}건 더 있음
+                  </td>
+                </tr>
+              ` : ''}
+            </tbody>
+          </table>
+        `;
+      }
+      
+      // 수불부 새로고침
+      loadStockLedger();
+    } else {
+      showToast('재계산 실패: ' + result.error, 'error');
+    }
+    
+  } catch (err) {
+    showToast('재계산 실패: ' + err.message, 'error');
+  }
+}
+
+// ========== 재고조정 관리 기능 끝 ==========
 
 async function loadStockLedger() {
   const startDate = document.getElementById('ledger-start-date').value;
@@ -22346,3 +22658,7 @@ window.checkBulkMatching = checkBulkMatching;
 window.manualMatch = manualMatch;
 window.loadBulkUsageForDelete = loadBulkUsageForDelete;
 window.deleteBulkUsage = deleteBulkUsage;
+window.loadAdjustmentsForDelete = loadAdjustmentsForDelete;
+window.toggleAllAdjustments = toggleAllAdjustments;
+window.deleteSelectedAdjustments = deleteSelectedAdjustments;
+window.recalculateStock = recalculateStock;

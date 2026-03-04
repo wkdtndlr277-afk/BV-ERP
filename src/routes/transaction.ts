@@ -1222,20 +1222,11 @@ transactionRoutes.post('/check-matching', async (c) => {
     return c.json({ success: false, error: '품목 목록을 입력해주세요.' }, 400);
   }
   
-  // 모든 마스터 데이터 조회
-  const allMasters = await c.env.DB.prepare('SELECT item_code, item_name, category, unit FROM master ORDER BY item_name').all();
+  // 모든 마스터 데이터 조회 - 원료/부자재만 (제품 제외)
+  const allMasters = await c.env.DB.prepare(
+    "SELECT item_code, item_name, category, unit FROM master WHERE category IN ('원료', '부자재') ORDER BY item_name"
+  ).all();
   const masterList = (allMasters.results || []) as any[];
-  
-  // 한글 발음 유사성 매핑
-  const similarChars: { [key: string]: string[] } = {
-    '페': ['피', '패', '뻬'],
-    '피': ['페', '패', '삐'],
-    '뇨': ['뇨', '녀'],
-    '라': ['라', '나'],
-    '할': ['할', '갈'],
-    '칸': ['칸', '깐', '간'],
-    '간': ['간', '칸', '깐'],
-  };
   
   const normalizeForMatch = (str: string): string => {
     return str.toLowerCase()
@@ -1245,80 +1236,46 @@ transactionRoutes.post('/check-matching', async (c) => {
       .trim();
   };
   
-  const isSimilarPronunciation = (a: string, b: string): boolean => {
-    const aNorm = normalizeForMatch(a);
-    const bNorm = normalizeForMatch(b);
-    if (Math.abs(aNorm.length - bNorm.length) > 2) return false;
-    
-    let matches = 0;
-    const shorter = aNorm.length <= bNorm.length ? aNorm : bNorm;
-    const longer = aNorm.length > bNorm.length ? aNorm : bNorm;
-    
-    for (let i = 0; i < shorter.length; i++) {
-      const charA = shorter[i];
-      const charB = longer[i] || '';
-      if (charA === charB) {
-        matches++;
-      } else if (similarChars[charA]?.includes(charB) || similarChars[charB]?.includes(charA)) {
-        matches++;
-      }
-    }
-    return matches / Math.max(shorter.length, longer.length) >= 0.7;
-  };
-  
   const findBestMatch = (searchName: string): any => {
     const normalized = normalizeForMatch(searchName);
-    const searchCore = searchName.toLowerCase()
-      .replace(/^(간|썬|다진|으깬|갈은|슬라이스|분쇄|분말)\s*/g, '')
-      .replace(/\s+/g, '')
-      .trim();
+    const searchLower = searchName.toLowerCase().trim();
     
+    // 1. 정확히 일치
     let match = masterList.find(m => m.item_name === searchName);
     if (match) return { master: match, matchType: 'exact' };
     
-    match = masterList.find(m => m.item_name.toLowerCase() === searchName.toLowerCase());
+    // 2. 대소문자 무시하여 일치
+    match = masterList.find(m => m.item_name.toLowerCase() === searchLower);
     if (match) return { master: match, matchType: 'case-insensitive' };
     
+    // 3. 정규화 후 일치 (공백/특수문자 제거)
     match = masterList.find(m => {
       const mNorm = normalizeForMatch(m.item_name);
-      return mNorm === normalized || mNorm === searchCore;
+      return mNorm === normalized;
     });
     if (match) return { master: match, matchType: 'normalized' };
     
-    match = masterList.find(m => isSimilarPronunciation(searchName, m.item_name));
-    if (match) return { master: match, matchType: 'pronunciation' };
-    
-    match = masterList.find(m => {
-      const mNorm = normalizeForMatch(m.item_name);
-      return mNorm.includes(normalized) || normalized.includes(mNorm) ||
-             mNorm.includes(searchCore) || searchCore.includes(mNorm);
-    });
-    if (match) return { master: match, matchType: 'contains' };
-    
-    if (searchCore.length >= 2) {
+    // 4. 마스터 이름이 검색어로 "시작"하는 경우 (예: 검색어 "마늘" → "마늘" 매칭, "마늘바게트"는 X)
+    //    검색어가 2글자 이상일 때만 적용
+    if (searchLower.length >= 2) {
       match = masterList.find(m => {
-        const mNorm = normalizeForMatch(m.item_name);
-        const coreChars = searchCore.substring(0, 3);
-        return mNorm.includes(coreChars) || coreChars.includes(mNorm.substring(0, 3));
+        const mLower = m.item_name.toLowerCase();
+        // 마스터 이름이 검색어로 시작하고, 길이 차이가 2자 이내
+        return mLower.startsWith(searchLower) && (mLower.length - searchLower.length) <= 2;
       });
-      if (match) return { master: match, matchType: 'partial' };
+      if (match) return { master: match, matchType: 'prefix' };
     }
     
-    let bestScore = 0;
-    let bestMatch = null;
-    for (const m of masterList) {
-      const mNorm = normalizeForMatch(m.item_name);
-      let commonChars = 0;
-      for (const char of normalized) {
-        if (mNorm.includes(char)) commonChars++;
-      }
-      const score = commonChars / Math.max(normalized.length, mNorm.length);
-      if (score > 0.6 && score > bestScore) {
-        bestScore = score;
-        bestMatch = m;
-      }
+    // 5. 검색어가 마스터 이름으로 "시작"하는 경우 (예: 검색어 "마늘분말" → "마늘" 매칭)
+    if (searchLower.length >= 2) {
+      match = masterList.find(m => {
+        const mLower = m.item_name.toLowerCase();
+        return searchLower.startsWith(mLower) && (searchLower.length - mLower.length) <= 3;
+      });
+      if (match) return { master: match, matchType: 'suffix' };
     }
-    if (bestMatch) return { master: bestMatch, matchType: 'similar' };
+    
+    // ⚠️ 느슨한 매칭(contains, partial, similar)은 제거 - 정확하지 않으면 수동 매칭으로 처리
     
     return null;
   };

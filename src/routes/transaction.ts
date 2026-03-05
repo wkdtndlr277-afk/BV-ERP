@@ -1113,7 +1113,8 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   const dateEnd = end_date || today;
   
   // 한 번의 쿼리로 모든 데이터 조회 (성능 최적화)
-  // LOT 잔량 합계를 기준으로 현재고와 비교
+  // 이월 재고 = 현재 LOT 잔량 + 기간 내 사용/출고 - 기간 내 입고
+  // 즉, LOT 잔량에서 역산하여 시작일 기준 재고를 계산
   let query = `
     SELECT 
       m.item_code,
@@ -1122,24 +1123,20 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       m.unit,
       m.current_stock,
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
-      COALESCE((SELECT SUM(CASE 
-        WHEN t.trans_type = '입고' THEN t.quantity
-        WHEN t.trans_type IN ('사용', '출고') THEN -ABS(t.quantity)
-        WHEN t.trans_type = '재고조정' THEN t.quantity
-        ELSE 0
-      END) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date < ?), 0) as carry_over,
-      COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '입고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_inbound,
+      -- 기간 내 입고 (inbound 테이블 기준)
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) as period_inbound,
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
     FROM master m
     WHERE (
       m.current_stock > 0
+      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ?)
       OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ?)
       OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
     )
   `;
-  const params: any[] = [dateStart, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd];
+  const params: any[] = [dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd];
   
   if (category && category !== '전체') {
     query += ' AND m.category = ?';
@@ -1156,13 +1153,24 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     const result = await c.env.DB.prepare(query).bind(...params).all();
     
     // 계산 잔량과 차이 추가
-    // 원료는 LOT 잔량 기준, 제품은 트랜잭션 기준
+    // 이월 재고 = 현재 LOT 잔량 + 기간 내 (사용+출고) - 기간 내 입고 - 기간 내 조정
+    // 즉, 현재 잔량에서 역산하여 시작일 기준 재고를 계산
     const ledgerData = (result.results || []).map((item: any) => {
-      const calcRemain = item.carry_over + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
+      // 역산 방식: carry_over = lot_remain_total + usage + outbound - inbound - adjustment
+      const carryOver = item.lot_remain_total 
+        + item.period_usage 
+        + item.period_outbound 
+        - item.period_inbound 
+        - item.period_adjustment;
+      
+      // 계산 잔량: carry_over + inbound - usage - outbound + adjustment = lot_remain_total
+      const calcRemain = carryOver + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
+      
       // 원료/부자재는 LOT 잔량을, 제품은 계산 잔량을 기준으로 비교
       const baseStock = item.category === '제품' ? calcRemain : item.lot_remain_total;
       return {
         ...item,
+        carry_over: carryOver,
         calc_remain: calcRemain,
         diff: item.current_stock - baseStock
       };

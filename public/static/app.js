@@ -291,8 +291,13 @@ function formatDate(date) {
   return dayjs(date).format('YYYY-MM-DD');
 }
 
-function formatNumber(num) {
-  return Number(num || 0).toLocaleString('ko-KR');
+function formatNumber(num, decimals = 2) {
+  const n = Number(num || 0);
+  // 정수인 경우 소수점 없이, 소수인 경우 소수점 포함
+  if (Number.isInteger(n)) {
+    return n.toLocaleString('ko-KR');
+  }
+  return n.toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
 }
 
 function showToast(message, type = 'success') {

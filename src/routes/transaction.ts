@@ -1859,6 +1859,124 @@ transactionRoutes.delete('/adjustments', async (c) => {
   }
 });
 
+// 비정상 재고조정 일괄 삭제 API (ID 목록 또는 임계값 기준)
+transactionRoutes.delete('/abnormal-adjustments', async (c) => {
+  const body = await c.req.json<{ 
+    ids?: number[];           // 삭제할 트랜잭션 ID 목록
+    threshold?: number;       // |수량| 이상인 재고조정 삭제
+    dry_run?: boolean;        // true면 삭제하지 않고 대상만 조회
+  }>();
+  
+  const { ids, threshold = 500, dry_run = false } = body;
+  
+  try {
+    let toDelete: any[] = [];
+    
+    if (ids && ids.length > 0) {
+      // ID 목록으로 삭제 대상 조회
+      const placeholders = ids.map(() => '?').join(',');
+      const result = await c.env.DB.prepare(`
+        SELECT t.*, m.item_name 
+        FROM transactions t
+        LEFT JOIN master m ON t.item_code = m.item_code
+        WHERE t.id IN (${placeholders})
+          AND t.trans_type = '재고조정'
+        ORDER BY t.quantity ASC
+      `).bind(...ids).all();
+      toDelete = (result.results || []) as any[];
+    } else {
+      // 임계값으로 삭제 대상 조회 (|수량| >= threshold)
+      const result = await c.env.DB.prepare(`
+        SELECT t.*, m.item_name 
+        FROM transactions t
+        LEFT JOIN master m ON t.item_code = m.item_code
+        WHERE t.trans_type = '재고조정'
+          AND (t.quantity <= -? OR t.quantity >= ?)
+        ORDER BY t.quantity ASC
+      `).bind(threshold, threshold).all();
+      toDelete = (result.results || []) as any[];
+    }
+    
+    if (toDelete.length === 0) {
+      return c.json({ 
+        success: false, 
+        error: '삭제 대상 트랜잭션이 없습니다.',
+        criteria: ids ? { ids } : { threshold }
+      }, 404);
+    }
+    
+    // dry_run이면 대상만 반환
+    if (dry_run) {
+      return c.json({
+        success: true,
+        dry_run: true,
+        message: `${toDelete.length}건의 삭제 대상이 있습니다.`,
+        count: toDelete.length,
+        total_amount: toDelete.reduce((sum, t) => sum + (t.quantity || 0), 0),
+        targets: toDelete.map(t => ({
+          id: t.id,
+          date: t.trans_date,
+          item_code: t.item_code,
+          item_name: t.item_name,
+          quantity: t.quantity,
+          memo: t.memo
+        }))
+      });
+    }
+    
+    // 실제 삭제 수행
+    const results = [];
+    let deletedCount = 0;
+    let errorCount = 0;
+    
+    for (const trans of toDelete) {
+      try {
+        // 마스터 재고 원복 (음수였으면 양수로 복원)
+        await c.env.DB.prepare(`
+          UPDATE master 
+          SET current_stock = current_stock - ?,
+              updated_at = datetime('now')
+          WHERE item_code = ?
+        `).bind(trans.quantity, trans.item_code).run();
+        
+        // 트랜잭션 삭제
+        await c.env.DB.prepare(`DELETE FROM transactions WHERE id = ?`).bind(trans.id).run();
+        
+        results.push({
+          id: trans.id,
+          item_code: trans.item_code,
+          item_name: trans.item_name,
+          quantity: trans.quantity,
+          restored_amount: -trans.quantity,
+          status: 'deleted'
+        });
+        deletedCount++;
+      } catch (err: any) {
+        results.push({
+          id: trans.id,
+          item_code: trans.item_code,
+          item_name: trans.item_name,
+          quantity: trans.quantity,
+          status: 'error',
+          error: err.message
+        });
+        errorCount++;
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${deletedCount}건의 비정상 재고조정이 삭제되었습니다.`,
+      deleted_count: deletedCount,
+      error_count: errorCount,
+      criteria: ids ? { ids: ids.length } : { threshold },
+      results
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 재고 재계산 API (마스터 current_stock을 LOT 잔량 기준으로 재계산) - 최적화 버전
 transactionRoutes.post('/recalculate-stock', async (c) => {
   const body = await c.req.json<{ item_code?: string; method?: string }>();

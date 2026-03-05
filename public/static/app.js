@@ -22062,7 +22062,13 @@ function renderLedgerTable(data) {
     return;
   }
   
+  // 원료/부자재: LOT잔량 기준 / 제품: 계산잔량 기준
   container.innerHTML = `
+    <div class="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+      <i class="fas fa-info-circle mr-1"></i>
+      <strong>원료/부자재</strong>는 LOT 잔량이 실제 재고입니다. 
+      <strong>제품</strong>은 트랜잭션 계산 잔량 기준입니다.
+    </div>
     <table class="w-full text-sm">
       <thead class="bg-gray-100 sticky top-0">
         <tr>
@@ -22074,8 +22080,7 @@ function renderLedgerTable(data) {
           <th class="px-3 py-2 text-right text-orange-600">사용</th>
           <th class="px-3 py-2 text-right text-red-600">출고</th>
           <th class="px-3 py-2 text-right text-purple-600">조정</th>
-          <th class="px-3 py-2 text-right font-bold">계산잔량</th>
-          <th class="px-3 py-2 text-right text-green-600">LOT잔량</th>
+          <th class="px-3 py-2 text-right text-teal-600 font-bold">실재고</th>
           <th class="px-3 py-2 text-right">현재고</th>
           <th class="px-3 py-2 text-right">차이</th>
           <th class="px-3 py-2 text-center">단위</th>
@@ -22083,23 +22088,28 @@ function renderLedgerTable(data) {
       </thead>
       <tbody>
         ${data.map(row => {
-          const diffClass = Math.abs(row.diff) > 0.01 
-            ? (row.diff > 0 ? 'text-blue-600' : 'text-red-600')
+          // 원료/부자재: LOT잔량이 실재고, 제품: 계산잔량이 실재고
+          const isRawMaterial = row.category === '원료' || row.category === '부자재';
+          const actualStock = isRawMaterial ? (row.lot_remain_total || 0) : row.calc_remain;
+          const stockDiff = row.current_stock - actualStock;
+          
+          const diffClass = Math.abs(stockDiff) > 0.01 
+            ? (stockDiff > 0 ? 'text-blue-600' : 'text-red-600')
             : 'text-gray-400';
+          
           return `
             <tr class="border-b hover:bg-blue-50">
               <td class="px-3 py-2 text-gray-600">${row.item_code}</td>
               <td class="px-3 py-2 font-medium">${row.item_name}</td>
-              <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 bg-gray-100 rounded text-xs">${row.category}</span></td>
+              <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 ${isRawMaterial ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'} rounded text-xs">${row.category}</span></td>
               <td class="px-3 py-2 text-right">${formatNumber(row.carry_over)}</td>
               <td class="px-3 py-2 text-right text-blue-600 font-medium">${formatNumber(row.period_inbound)}</td>
               <td class="px-3 py-2 text-right text-orange-600 font-medium">${formatNumber(row.period_usage)}</td>
               <td class="px-3 py-2 text-right text-red-600">${formatNumber(row.period_outbound)}</td>
               <td class="px-3 py-2 text-right text-purple-600">${formatNumber(row.period_adjustment)}</td>
-              <td class="px-3 py-2 text-right font-bold">${formatNumber(row.calc_remain)}</td>
-              <td class="px-3 py-2 text-right text-green-600 font-medium">${formatNumber(row.lot_remain_total || 0)}</td>
+              <td class="px-3 py-2 text-right text-teal-600 font-bold">${formatNumber(actualStock)}</td>
               <td class="px-3 py-2 text-right">${formatNumber(row.current_stock)}</td>
-              <td class="px-3 py-2 text-right ${diffClass}">${row.diff > 0 ? '+' : ''}${formatNumber(row.diff)}</td>
+              <td class="px-3 py-2 text-right ${diffClass}">${stockDiff > 0 ? '+' : ''}${formatNumber(stockDiff)}</td>
               <td class="px-3 py-2 text-center text-gray-500">${row.unit}</td>
             </tr>
           `;
@@ -22119,24 +22129,29 @@ function downloadStockLedger() {
   const startDate = document.getElementById('ledger-start-date').value;
   const endDate = document.getElementById('ledger-end-date').value;
   
-  const rows = data.data.map(r => [
-    r.item_code, r.item_name, r.category,
-    r.carry_over, r.period_inbound, r.period_usage, r.period_outbound, r.period_adjustment,
-    r.calc_remain, r.current_stock, r.diff, r.unit
-  ]);
+  const rows = data.data.map(r => {
+    const isRawMaterial = r.category === '원료' || r.category === '부자재';
+    const actualStock = isRawMaterial ? (r.lot_remain_total || 0) : r.calc_remain;
+    const stockDiff = r.current_stock - actualStock;
+    return [
+      r.item_code, r.item_name, r.category,
+      r.carry_over, r.period_inbound, r.period_usage, r.period_outbound, r.period_adjustment,
+      actualStock, r.current_stock, stockDiff, r.unit
+    ];
+  });
   
   // 합계 행 추가
   const s = data.summary;
   rows.push([
     '', '합계', '',
     s.total_carry_over, s.total_inbound, s.total_usage, s.total_outbound, s.total_adjustment,
-    s.total_calc_remain, s.total_current_stock, '', ''
+    s.total_lot_remain || s.total_calc_remain, s.total_current_stock, '', ''
   ]);
   
   downloadExcel(
     `재고수불부_${startDate}_${endDate}`,
     '(주)본비반트',
-    ['품목코드', '품목명', '분류', '이월', '입고', '사용', '출고', '조정', '계산잔량', '현재고', '차이', '단위'],
+    ['품목코드', '품목명', '분류', '이월', '입고', '사용', '출고', '조정', '실재고', '현재고', '차이', '단위'],
     rows,
     `재고 수불부 (${startDate} ~ ${endDate})`
   );
@@ -22161,6 +22176,7 @@ function printStockLedger() {
         body { font-family: 'Malgun Gothic', sans-serif; padding: 20px; font-size: 9px; }
         h1 { text-align: center; font-size: 16px; margin-bottom: 5px; }
         .info { text-align: center; color: #666; margin-bottom: 15px; font-size: 10px; }
+        .note { text-align: center; color: #b45309; margin-bottom: 10px; font-size: 9px; background: #fef3c7; padding: 5px; border-radius: 4px; }
         table { width: 100%; border-collapse: collapse; }
         th, td { border: 1px solid #ddd; padding: 3px 5px; }
         th { background: #f5f5f5; font-size: 8px; }
@@ -22170,22 +22186,28 @@ function printStockLedger() {
         .blue { color: #2563eb; }
         .orange { color: #ea580c; }
         .red { color: #dc2626; }
+        .teal { color: #0d9488; font-weight: bold; }
         @media print { body { padding: 0; } @page { size: A4 landscape; margin: 10mm; } }
       </style>
     </head>
     <body>
       <h1>(주)본비반트 재고 수불부</h1>
       <p class="info">기간: ${startDate} ~ ${endDate} / 품목 수: ${s.item_count}종</p>
+      <p class="note">※ 원료/부자재는 LOT 잔량이 실재고입니다. 제품은 트랜잭션 계산 잔량 기준입니다.</p>
       <table>
         <thead>
           <tr>
             <th>품목코드</th><th>품목명</th><th>분류</th>
             <th>이월</th><th class="blue">입고</th><th class="orange">사용</th><th class="red">출고</th><th>조정</th>
-            <th>계산잔량</th><th>현재고</th><th>차이</th><th>단위</th>
+            <th class="teal">실재고</th><th>현재고</th><th>차이</th><th>단위</th>
           </tr>
         </thead>
         <tbody>
-          ${data.data.map(r => `
+          ${data.data.map(r => {
+            const isRawMaterial = r.category === '원료' || r.category === '부자재';
+            const actualStock = isRawMaterial ? (r.lot_remain_total || 0) : r.calc_remain;
+            const stockDiff = r.current_stock - actualStock;
+            return `
             <tr>
               <td>${r.item_code}</td>
               <td>${r.item_name}</td>
@@ -22195,12 +22217,12 @@ function printStockLedger() {
               <td class="right orange">${formatNumber(r.period_usage)}</td>
               <td class="right red">${formatNumber(r.period_outbound)}</td>
               <td class="right">${formatNumber(r.period_adjustment)}</td>
-              <td class="right" style="font-weight:bold">${formatNumber(r.calc_remain)}</td>
+              <td class="right teal">${formatNumber(actualStock)}</td>
               <td class="right">${formatNumber(r.current_stock)}</td>
-              <td class="right" style="color:${Math.abs(r.diff) > 0.01 ? '#dc2626' : '#999'}">${formatNumber(r.diff)}</td>
+              <td class="right" style="color:${Math.abs(stockDiff) > 0.01 ? '#dc2626' : '#999'}">${formatNumber(stockDiff)}</td>
               <td class="center">${r.unit}</td>
             </tr>
-          `).join('')}
+          `}).join('')}
           <tr class="total">
             <td></td><td>합계</td><td></td>
             <td class="right">${formatNumber(s.total_carry_over)}</td>
@@ -22208,7 +22230,7 @@ function printStockLedger() {
             <td class="right">${formatNumber(s.total_usage)}</td>
             <td class="right">${formatNumber(s.total_outbound)}</td>
             <td class="right">${formatNumber(s.total_adjustment)}</td>
-            <td class="right">${formatNumber(s.total_calc_remain)}</td>
+            <td class="right">${formatNumber(s.total_lot_remain || s.total_calc_remain)}</td>
             <td class="right">${formatNumber(s.total_current_stock)}</td>
             <td></td><td></td>
           </tr>

@@ -22323,6 +22323,11 @@ function parseUsageText() {
     return;
   }
   
+  // 단위 선택 확인 (엑셀과 동일한 설정 사용)
+  const unitSelect = document.getElementById('usage-excel-unit');
+  const unit = unitSelect ? unitSelect.value : 'g';
+  const conversionFactor = (unit === 'g') ? 0.001 : 1; // g → kg 변환
+  
   const lines = text.split('\n');
   const items = [];
   
@@ -22331,10 +22336,16 @@ function parseUsageText() {
     if (parts.length < 2) continue;
     
     const itemName = parts[0].trim();
-    const quantity = parseFloat(parts[1]);
+    const rawQuantity = parseFloat(parts[1].replace(/,/g, ''));
     
-    if (itemName && !isNaN(quantity) && quantity > 0) {
-      items.push({ item_name: itemName, quantity });
+    if (itemName && !isNaN(rawQuantity) && rawQuantity > 0) {
+      const convertedQty = rawQuantity * conversionFactor;
+      items.push({ 
+        item_name: itemName, 
+        quantity: Math.round(convertedQty * 1000) / 1000, // 소수점 3자리
+        original_qty: rawQuantity,
+        unit: unit
+      });
     }
   }
   
@@ -22342,6 +22353,8 @@ function parseUsageText() {
     showToast('유효한 데이터가 없습니다.', 'warning');
     return;
   }
+  
+  showToast(`${items.length}건의 데이터를 파싱했습니다.`, 'success');
   
   // 미리보기 표시
   renderUsagePreview(items);

@@ -22332,11 +22332,26 @@ function parseUsageText() {
   const items = [];
   
   for (const line of lines) {
-    const parts = line.split(/[,\t]+/);
-    if (parts.length < 2) continue;
+    const trimmedLine = line.trim();
+    if (!trimmedLine) continue;
+    
+    // 탭으로 먼저 분리 시도
+    let parts = trimmedLine.split('\t');
+    
+    // 탭이 없으면 마지막 숫자(쉼표 포함)를 수량으로 인식
+    if (parts.length < 2) {
+      // "품목명 123,456" 또는 "품목명	123,456" 형식 처리
+      const match = trimmedLine.match(/^(.+?)\s+([\d,.-]+)\s*$/);
+      if (match) {
+        parts = [match[1], match[2]];
+      } else {
+        continue;
+      }
+    }
     
     const itemName = parts[0].trim();
-    const rawQuantity = parseFloat(parts[1].replace(/,/g, ''));
+    // 숫자에서 쉼표 제거 후 파싱
+    const rawQuantity = parseFloat(parts[parts.length - 1].replace(/,/g, ''));
     
     if (itemName && !isNaN(rawQuantity) && rawQuantity > 0) {
       const convertedQty = rawQuantity * conversionFactor;

@@ -22129,32 +22129,60 @@ function downloadStockLedger() {
   const startDate = document.getElementById('ledger-start-date').value;
   const endDate = document.getElementById('ledger-end-date').value;
   
-  const rows = data.data.map(r => {
+  // 엑셀용 데이터 변환
+  const excelData = data.data.map(r => {
     const isRawMaterial = r.category === '원료' || r.category === '부자재';
     const actualStock = isRawMaterial ? (r.lot_remain_total || 0) : r.calc_remain;
     const stockDiff = r.current_stock - actualStock;
-    return [
-      r.item_code, r.item_name, r.category,
-      r.carry_over, r.period_inbound, r.period_usage, r.period_outbound,
-      actualStock, r.current_stock, stockDiff, r.unit
-    ];
+    return {
+      품목코드: r.item_code,
+      품목명: r.item_name,
+      분류: r.category,
+      이월: r.carry_over,
+      '입고(+조정)': r.period_inbound,
+      사용: r.period_usage,
+      '출고(-조정)': r.period_outbound,
+      실재고: actualStock,
+      현재고: r.current_stock,
+      차이: stockDiff,
+      단위: r.unit
+    };
   });
   
   // 합계 행 추가
   const s = data.summary;
-  rows.push([
-    '', '합계', '',
-    s.total_carry_over, s.total_inbound, s.total_usage, s.total_outbound,
-    s.total_lot_remain || s.total_calc_remain, s.total_current_stock, '', ''
-  ]);
+  excelData.push({
+    품목코드: '',
+    품목명: '합계',
+    분류: '',
+    이월: s.total_carry_over,
+    '입고(+조정)': s.total_inbound,
+    사용: s.total_usage,
+    '출고(-조정)': s.total_outbound,
+    실재고: s.total_lot_remain || s.total_calc_remain,
+    현재고: s.total_current_stock,
+    차이: '',
+    단위: ''
+  });
   
-  downloadExcel(
-    `재고수불부_${startDate}_${endDate}`,
-    '(주)본비반트',
-    ['품목코드', '품목명', '분류', '이월', '입고(+조정)', '사용', '출고(-조정)', '실재고', '현재고', '차이', '단위'],
-    rows,
-    `재고 수불부 (${startDate} ~ ${endDate})`
-  );
+  const columns = [
+    { key: '품목코드', label: '품목코드' },
+    { key: '품목명', label: '품목명' },
+    { key: '분류', label: '분류', type: 'center' },
+    { key: '이월', label: '이월', type: 'number' },
+    { key: '입고(+조정)', label: '입고(+조정)', type: 'number' },
+    { key: '사용', label: '사용', type: 'number' },
+    { key: '출고(-조정)', label: '출고(-조정)', type: 'number' },
+    { key: '실재고', label: '실재고', type: 'number' },
+    { key: '현재고', label: '현재고', type: 'number' },
+    { key: '차이', label: '차이', type: 'number' },
+    { key: '단위', label: '단위', type: 'center' }
+  ];
+  
+  downloadExcel(excelData, columns, `재고수불부_${startDate}_${endDate}`, {
+    title: `재고 수불부 (${startDate} ~ ${endDate})`,
+    company: '(주)본비반트'
+  });
 }
 
 function printStockLedger() {

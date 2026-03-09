@@ -22221,22 +22221,42 @@ function printStockLedger() {
     <head>
       <title>재고 수불부</title>
       <style>
-        body { font-family: 'Malgun Gothic', sans-serif; padding: 20px; font-size: 9px; }
-        h1 { text-align: center; font-size: 16px; margin-bottom: 5px; }
-        .info { text-align: center; color: #666; margin-bottom: 15px; font-size: 10px; }
-        .note { text-align: center; color: #b45309; margin-bottom: 10px; font-size: 9px; background: #fef3c7; padding: 5px; border-radius: 4px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid #ddd; padding: 3px 5px; }
-        th { background: #f5f5f5; font-size: 8px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Malgun Gothic', sans-serif; padding: 5mm; font-size: 6.5px; line-height: 1.2; }
+        h1 { text-align: center; font-size: 11px; margin-bottom: 2px; font-weight: bold; }
+        .info { text-align: center; color: #666; margin-bottom: 4px; font-size: 7px; }
+        .note { text-align: center; color: #b45309; margin-bottom: 4px; font-size: 6px; background: #fef3c7; padding: 2px 4px; border-radius: 2px; }
+        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+        th, td { border: 1px solid #ccc; padding: 1px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        th { background: #f0f0f0; font-size: 6px; font-weight: bold; }
+        td { font-size: 6px; }
         .right { text-align: right; }
         .center { text-align: center; }
-        .total { background: #f0f0f0; font-weight: bold; }
+        .total { background: #e5e5e5; font-weight: bold; }
         .blue { color: #2563eb; }
         .orange { color: #ea580c; }
         .red { color: #dc2626; }
         .teal { color: #0d9488; font-weight: bold; }
         .expiry-warn { color: #dc2626; font-weight: bold; }
-        @media print { body { padding: 0; } @page { size: A4 landscape; margin: 10mm; } }
+        /* 컬럼 너비 최적화 */
+        th:nth-child(1), td:nth-child(1) { width: 6%; } /* 품목코드 */
+        th:nth-child(2), td:nth-child(2) { width: 18%; } /* 품목명 */
+        th:nth-child(3), td:nth-child(3) { width: 5%; } /* 분류 */
+        th:nth-child(4), td:nth-child(4) { width: 7%; } /* 이월 */
+        th:nth-child(5), td:nth-child(5) { width: 7%; } /* 입고 */
+        th:nth-child(6), td:nth-child(6) { width: 7%; } /* 사용 */
+        th:nth-child(7), td:nth-child(7) { width: 7%; } /* 출고 */
+        th:nth-child(8), td:nth-child(8) { width: 8%; } /* 실재고 */
+        th:nth-child(9), td:nth-child(9) { width: 8%; } /* 현재고 */
+        th:nth-child(10), td:nth-child(10) { width: 6%; } /* 차이 */
+        th:nth-child(11), td:nth-child(11) { width: 9%; } /* 소비기한 */
+        th:nth-child(12), td:nth-child(12) { width: 4%; } /* 단위 */
+        @media print { 
+          body { padding: 0; } 
+          @page { size: A4 landscape; margin: 5mm; } 
+          table { page-break-inside: auto; }
+          tr { page-break-inside: avoid; page-break-after: auto; }
+        }
       </style>
     </head>
     <body>
@@ -22265,7 +22285,7 @@ function printStockLedger() {
             return `
             <tr>
               <td>${r.item_code}</td>
-              <td>${r.item_name}</td>
+              <td title="${r.item_name}">${r.item_name}</td>
               <td class="center">${r.category}</td>
               <td class="right">${formatNumber(r.carry_over)}</td>
               <td class="right blue">${formatNumber(r.period_inbound)}</td>
@@ -22273,7 +22293,7 @@ function printStockLedger() {
               <td class="right red">${formatNumber(r.period_outbound)}</td>
               <td class="right teal">${formatNumber(actualStock)}</td>
               <td class="right">${formatNumber(r.current_stock)}</td>
-              <td class="right" style="color:${Math.abs(stockDiff) > 0.01 ? '#dc2626' : '#999'}">${formatNumber(stockDiff)}</td>
+              <td class="right" style="color:${Math.abs(stockDiff) > 0.01 ? '#dc2626' : '#888'}">${formatNumber(stockDiff)}</td>
               <td class="center ${expiryClass}">${r.nearest_expiry || '-'}</td>
               <td class="center">${r.unit}</td>
             </tr>

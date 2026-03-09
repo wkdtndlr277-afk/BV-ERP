@@ -1126,6 +1126,8 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       m.unit,
       m.current_stock,
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
+      -- 가장 빠른 소비기한 (잔량이 있는 LOT 중)
+      (SELECT MIN(i.expiry_date) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0) as nearest_expiry,
       -- 기간 내 입고 (inbound 테이블 기준) + 양수 재고조정
       COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) 
         + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_inbound,

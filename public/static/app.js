@@ -875,7 +875,7 @@ async function renderDashboard() {
           <div class="bg-white rounded-xl shadow p-5 border-l-4 ${data.alerts.expiringLots.length > 0 ? 'border-yellow-500' : 'border-green-500'}">
             <div class="flex items-center justify-between">
               <div>
-                <p class="text-sm text-gray-500">유통기한 임박 LOT</p>
+                <p class="text-sm text-gray-500">소비기한 임박 LOT</p>
                 <p class="text-3xl font-bold ${data.alerts.expiringLots.length > 0 ? 'text-yellow-600' : 'text-green-600'}">${data.alerts.expiringLots.length}</p>
               </div>
               <div class="w-12 h-12 ${data.alerts.expiringLots.length > 0 ? 'bg-yellow-100' : 'bg-green-100'} rounded-full flex items-center justify-center">
@@ -1002,7 +1002,7 @@ async function renderDashboard() {
         ${data.alerts.expiringLots.length > 0 ? `
         <div class="bg-white rounded-xl shadow">
           <div class="p-4 border-b bg-yellow-50">
-            <h3 class="font-bold text-yellow-800"><i class="fas fa-clock mr-2"></i>유통기한 임박 LOT (30일 이내)</h3>
+            <h3 class="font-bold text-yellow-800"><i class="fas fa-clock mr-2"></i>소비기한 임박 LOT (30일 이내)</h3>
           </div>
           <div class="overflow-x-auto">
             <table class="w-full text-sm data-table">
@@ -1010,7 +1010,7 @@ async function renderDashboard() {
                 <tr class="text-gray-500 border-b">
                   <th class="text-left p-3">LOT번호</th>
                   <th class="text-left p-3">품목</th>
-                  <th class="text-left p-3">유통기한</th>
+                  <th class="text-left p-3">소비기한</th>
                   <th class="text-right p-3">잔여일</th>
                   <th class="text-right p-3">잔량</th>
                 </tr>
@@ -1105,7 +1105,7 @@ async function renderInbound() {
           
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">유통기한 <span class="text-red-500">*</span></label>
+              <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 <span class="text-red-500">*</span></label>
               <input type="text" id="inbound-expiry" class="w-full border rounded-lg px-4 py-2" placeholder="YYYY-MM-DD" maxlength="10" required>
             </div>
             
@@ -1259,7 +1259,7 @@ async function renderInbound() {
       return;
     }
     if (!dateRegex.test(expiryDate)) {
-      showToast('유통기한 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
+      showToast('소비기한 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
       return;
     }
     
@@ -1342,7 +1342,7 @@ function showNewItemModal(searchTerm = '') {
                  class="w-full px-3 py-2 border rounded-lg">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">유통기한(일)</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">소비기한(일)</label>
           <input type="number" id="new-item-expiry" value="365" min="1"
                  class="w-full px-3 py-2 border rounded-lg">
         </div>
@@ -1394,7 +1394,7 @@ function showInboundUploadModal() {
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 업로드 형식</h4>
         <p class="text-sm text-blue-700 mb-2">CSV 또는 엑셀 데이터를 붙여넣기 하세요.</p>
-        <p class="text-xs text-blue-600">형식: 품목코드, 품목명, 단위, 안전재고, 유통기한(일)</p>
+        <p class="text-xs text-blue-600">형식: 품목코드, 품목명, 단위, 안전재고, 소비기한(일)</p>
         <p class="text-xs text-green-600 mt-1"><i class="fas fa-magic mr-1"></i> 품목명만 입력해도 코드가 자동 생성됩니다!</p>
       </div>
       
@@ -1467,7 +1467,7 @@ async function processInboundUpload() {
     const parts = line.split(/[,\t]/).map(p => p.trim()).filter(p => p);
     
     if (parts.length >= 2) {
-      // 형식: 품목코드, 품목명, 단위, 안전재고, 유통기한
+      // 형식: 품목코드, 품목명, 단위, 안전재고, 소비기한
       items.push({
         item_code: parts[0],
         item_name: parts[1],
@@ -1573,7 +1573,7 @@ function showProductMasterModal() {
                    class="w-full px-3 py-2 border rounded-lg">
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">유통기한(일)</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">소비기한(일)</label>
             <input type="number" id="new-product-expiry" value="30" min="1"
                    class="w-full px-3 py-2 border rounded-lg">
           </div>
@@ -1591,7 +1591,7 @@ function showProductMasterModal() {
         <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 업로드 형식</h4>
           <p class="text-sm text-blue-700 mb-2">CSV 또는 엑셀 데이터를 붙여넣기 하세요.</p>
-          <p class="text-xs text-blue-600">형식: 제품코드, 제품명, 단위, 안전재고, 유통기한(일)</p>
+          <p class="text-xs text-blue-600">형식: 제품코드, 제품명, 단위, 안전재고, 소비기한(일)</p>
           <p class="text-xs text-green-600 mt-1"><i class="fas fa-magic mr-1"></i> 제품명만 입력해도 코드가 자동 생성됩니다!</p>
         </div>
         
@@ -1714,7 +1714,7 @@ async function processProductUpload() {
     const parts = line.split(/[,\t]/).map(p => p.trim()).filter(p => p);
     
     if (parts.length >= 2) {
-      // 형식: 제품코드, 제품명, 단위, 안전재고, 유통기한
+      // 형식: 제품코드, 제품명, 단위, 안전재고, 소비기한
       items.push({
         item_code: parts[0],
         item_name: parts[1],
@@ -1762,7 +1762,7 @@ async function processProductUpload() {
 
 // 제품 템플릿 다운로드
 function downloadProductTemplate() {
-  const template = `제품코드,제품명,단위,안전재고,유통기한(일)
+  const template = `제품코드,제품명,단위,안전재고,소비기한(일)
 PD001,식빵,ea,20,7
 PD002,바게트,ea,10,3
 PD003,크루아상,ea,30,5
@@ -1800,7 +1800,7 @@ function selectInboundItem(code, name, unit, expiryDays, isNew = false) {
   // 단위 업데이트
   document.getElementById('inbound-unit').textContent = unit || '-';
   
-  // 유통기한 자동 계산
+  // 소비기한 자동 계산
   const days = parseInt(expiryDays) || 365;
   const inboundDate = new Date(document.getElementById('inbound-date').value);
   inboundDate.setDate(inboundDate.getDate() + days);
@@ -1871,7 +1871,7 @@ async function renderUsage() {
         
         <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> FEFO 자동 적용</h4>
-          <p class="text-sm text-blue-700">유통기한이 빠른 LOT부터 자동으로 차감됩니다. (선입선출)</p>
+          <p class="text-sm text-blue-700">소비기한이 빠른 LOT부터 자동으로 차감됩니다. (선입선출)</p>
         </div>
       </div>
     `;
@@ -2586,7 +2586,7 @@ async function renderTransactionSearch() {
         endDate: document.getElementById('search-end').value
       };
       
-      // Show results with LOT 정보 (입고일, 유통기한, 입고량, 사용량, 재고량)
+      // Show results with LOT 정보 (입고일, 소비기한, 입고량, 사용량, 재고량)
       document.getElementById('search-results').innerHTML = data.length > 0 ? `
         <div class="p-3 bg-gray-50 border-b flex justify-end gap-2">
           <button onclick="downloadTransactionSearch()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
@@ -2604,7 +2604,7 @@ async function renderTransactionSearch() {
                 <th class="text-left p-3">LOT 번호</th>
                 <th class="text-left p-3">품목</th>
                 <th class="text-center p-3">입고일</th>
-                <th class="text-center p-3">유통기한</th>
+                <th class="text-center p-3">소비기한</th>
                 <th class="text-center p-3">구분</th>
                 <th class="text-right p-3">입고량</th>
                 <th class="text-right p-3">사용량</th>
@@ -2711,7 +2711,7 @@ async function renderLotHistory() {
                   <th class="text-right p-3">사용량</th>
                   <th class="text-left p-3">거래처</th>
                   <th class="text-center p-3">입고일</th>
-                  <th class="text-center p-3">유통기한</th>
+                  <th class="text-center p-3">소비기한</th>
                 </tr>
               </thead>
               <tbody>
@@ -2759,7 +2759,7 @@ async function renderLotHistory() {
               <p class="font-medium">${lot.inbound_date}</p>
             </div>
             <div>
-              <p class="text-sm text-gray-500">유통기한</p>
+              <p class="text-sm text-gray-500">소비기한</p>
               <p class="font-medium">${lot.expiry_date}</p>
             </div>
             <div>
@@ -2862,7 +2862,7 @@ function printLotHistoryFromSearch() {
             <th class="text-right">사용량</th>
             <th>거래처</th>
             <th class="text-center">입고일</th>
-            <th class="text-center">유통기한</th>
+            <th class="text-center">소비기한</th>
           </tr>
         </thead>
         <tbody>
@@ -2932,7 +2932,7 @@ function printLotHistoryFromSearch() {
             <span>${lot.inbound_date}</span>
           </div>
           <div class="info-item">
-            <label>유통기한</label>
+            <label>소비기한</label>
             <span>${lot.expiry_date}</span>
           </div>
           <div class="info-item">
@@ -3307,7 +3307,7 @@ function renderDailyLotDetail(result, date) {
                           <th class="p-2 text-center w-10">순서</th>
                           <th class="p-2 text-left">LOT 번호</th>
                           <th class="p-2 text-center">입고일</th>
-                          <th class="p-2 text-center">유통기한</th>
+                          <th class="p-2 text-center">소비기한</th>
                           <th class="p-2 text-center">납품처</th>
                           <th class="p-2 text-right text-purple-600">전일</th>
                           <th class="p-2 text-right text-blue-600">입고</th>
@@ -3410,7 +3410,7 @@ function renderFifoStatus(result, date) {
                   <th class="p-1 text-center w-12">사용순서</th>
                   <th class="p-1 text-left">LOT 번호</th>
                   <th class="p-1 text-center">입고일</th>
-                  <th class="p-1 text-center">유통기한</th>
+                  <th class="p-1 text-center">소비기한</th>
                   <th class="p-1 text-center">D-Day</th>
                   <th class="p-1 text-right">입고량</th>
                   <th class="p-1 text-right font-bold">잔량</th>
@@ -3503,7 +3503,7 @@ function downloadDailyLedger() {
       '단위': item.unit || '',
       'LOT번호': '',
       '입고일': '',
-      '유통기한': '',
+      '소비기한': '',
       '납품처': '',
       '전일재고': item.summary.carry_over || 0,
       '입고': item.summary.period_inbound || 0,
@@ -3522,7 +3522,7 @@ function downloadDailyLedger() {
           '단위': '',
           'LOT번호': lot.lot_number || '',
           '입고일': lot.inbound_date || '',
-          '유통기한': lot.expiry_date || '',
+          '소비기한': lot.expiry_date || '',
           '납품처': lot.supplier || '',
           '전일재고': lot.carry_over || 0,
           '입고': lot.period_inbound || 0,
@@ -3542,7 +3542,7 @@ function downloadDailyLedger() {
     { key: '단위', label: '단위' },
     { key: 'LOT번호', label: 'LOT번호' },
     { key: '입고일', label: '입고일' },
-    { key: '유통기한', label: '유통기한' },
+    { key: '소비기한', label: '소비기한' },
     { key: '납품처', label: '납품처' },
     { key: '전일재고', label: '전일재고', type: 'number' },
     { key: '입고', label: '입고', type: 'number' },
@@ -3651,7 +3651,7 @@ function downloadMonthlyLedger() {
       '단위': item.unit || '',
       'LOT번호': '',
       '입고일': '',
-      '유통기한': '',
+      '소비기한': '',
       '납품처': '',
       '월초재고': item.summary?.carry_over || item.opening_stock || 0,
       '입고': item.summary?.period_inbound || item.monthly_total?.inbound || 0,
@@ -3671,7 +3671,7 @@ function downloadMonthlyLedger() {
           '단위': '',
           'LOT번호': lot.lot_number || '',
           '입고일': lot.inbound_date || '',
-          '유통기한': lot.expiry_date || '',
+          '소비기한': lot.expiry_date || '',
           '납품처': lot.supplier || '',
           '월초재고': lot.carry_over || 0,
           '입고': lot.period_inbound || 0,
@@ -3693,7 +3693,7 @@ function downloadMonthlyLedger() {
     { key: '단위', label: '단위' },
     { key: 'LOT번호', label: 'LOT번호' },
     { key: '입고일', label: '입고일' },
-    { key: '유통기한', label: '유통기한' },
+    { key: '소비기한', label: '소비기한' },
     { key: '납품처', label: '납품처' },
     { key: '월초재고', label: '월초재고', type: 'number' },
     { key: '입고', label: '입고', type: 'number' },
@@ -4120,7 +4120,7 @@ function renderMonthlyLotView(result) {
                           <th class="p-2 text-center w-10">순서</th>
                           <th class="p-2 text-left">LOT</th>
                           <th class="p-2 text-center">입고일</th>
-                          <th class="p-2 text-center">유통기한</th>
+                          <th class="p-2 text-center">소비기한</th>
                           <th class="p-2 text-center">납품처</th>
                           <th class="p-2 text-right text-purple-600">이월</th>
                           <th class="p-2 text-right text-blue-600">입고</th>
@@ -4267,7 +4267,7 @@ async function loadMonthlyReport() {
   await loadMonthlyLedger();
 }
 
-// 유통기한 임박 체크 (30일 이내)
+// 소비기한 임박 체크 (30일 이내)
 function isExpiringSoon(expiryDate) {
   if (!expiryDate) return false;
   const expiry = new Date(expiryDate);
@@ -6623,7 +6623,7 @@ function showUploadModal() {
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 업로드 형식</h4>
         <p class="text-sm text-blue-700 mb-2">CSV 또는 엑셀 데이터를 붙여넣기 하세요.</p>
-        <p class="text-xs text-blue-600">형식: 품목코드, 품목명, 단위, 안전재고, 유통기한(일)</p>
+        <p class="text-xs text-blue-600">형식: 품목코드, 품목명, 단위, 안전재고, 소비기한(일)</p>
         <p class="text-xs text-green-600 mt-1"><i class="fas fa-magic mr-1"></i> 품목명만 입력해도 코드가 자동 생성됩니다!</p>
       </div>
       
@@ -6651,7 +6651,7 @@ RM002, 담금질, kg, 20, 365"></textarea>
 강력분</pre>
           </div>
           <div>
-            <p class="text-xs text-blue-600 font-medium">상세 (코드,품목,단위,안전재고,유통기한)</p>
+            <p class="text-xs text-blue-600 font-medium">상세 (코드,품목,단위,안전재고,소비기한)</p>
             <pre class="bg-gray-100 p-2 rounded text-xs">RM001, 올리브, kg, 10, 365
 RM002, 담금질, kg, 20, 60</pre>
           </div>
@@ -6699,7 +6699,7 @@ async function processUpload() {
     const parts = line.split(/[,\t]/).map(p => p.trim()).filter(p => p);
     
     if (parts.length >= 3) {
-      // 형식: 품목코드, 품목명, 단위, 안전재고, 유통기한(일)
+      // 형식: 품목코드, 품목명, 단위, 안전재고, 소비기한(일)
       items.push({
         item_code: parts[0],
         item_name: parts[1],
@@ -6783,7 +6783,7 @@ async function loadMasterList(category) {
               <th class="text-center p-3">단위</th>
               <th class="text-right p-3">현재고</th>
               <th class="text-right p-3">안전재고</th>
-              <th class="text-center p-3">유통기한(일)</th>
+              <th class="text-center p-3">소비기한(일)</th>
               <th class="text-center p-3">관리</th>
             </tr>
           </thead>
@@ -6860,7 +6860,7 @@ function showMasterModal(item = null) {
         </div>
       </div>
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">유통기한 기준(일)</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 기준(일)</label>
         <input type="number" id="master-expiry" class="w-full border rounded-lg px-4 py-2" value="${item?.expiry_days || 365}" min="1">
       </div>
     </form>
@@ -8937,7 +8937,7 @@ async function loadAdminInbound() {
                 <th class="px-3 py-2 text-left">LOT 번호</th>
                 <th class="px-3 py-2 text-left">품목</th>
                 <th class="px-3 py-2 text-left">입고일</th>
-                <th class="px-3 py-2 text-left">유통기한</th>
+                <th class="px-3 py-2 text-left">소비기한</th>
                 <th class="px-3 py-2 text-right">입고량</th>
                 <th class="px-3 py-2 text-right">잔량</th>
                 <th class="px-3 py-2 text-center">품질</th>
@@ -9022,7 +9022,7 @@ async function editAdminInbound(id) {
         
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">유통기한</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">소비기한</label>
             <input type="date" id="edit-expiry-date" value="${item.expiry_date}"
                    class="w-full px-3 py-2 border rounded-lg">
           </div>
@@ -9476,7 +9476,7 @@ async function editAdminMaster(itemCode) {
         </div>
         
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">유통기한(일)</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">소비기한(일)</label>
           <input type="number" id="edit-master-expiry" value="${item.expiry_days || 365}"
                  class="w-full px-3 py-2 border rounded-lg">
         </div>
@@ -12170,7 +12170,7 @@ function downloadDailyReport() {
     { key: 'item_name', label: '품목명' },
     { key: 'item_code', label: '품목코드' },
     { key: 'inbound_date', label: '입고일' },
-    { key: 'expiry_date', label: '유통기한' },
+    { key: 'expiry_date', label: '소비기한' },
     { key: 'trans_type', label: '구분', type: 'center' },
     { key: 'inbound_qty', label: '입고량', type: 'number' },
     { key: 'usage_qty', label: '사용량', type: 'number' },
@@ -12203,7 +12203,7 @@ function printDailyReport() {
     { key: 'lot_number', label: 'LOT번호' },
     { key: 'item_name', label: '품목명' },
     { key: 'inbound_date', label: '입고일', type: 'center' },
-    { key: 'expiry_date', label: '유통기한', type: 'center' },
+    { key: 'expiry_date', label: '소비기한', type: 'center' },
     { key: 'trans_type', label: '구분', type: 'center', format: (v) => {
       const colors = { '입고': 'badge-blue', '사용': 'badge-orange', '재고조정': 'badge-yellow' };
       return `<span class="badge ${colors[v] || ''}">${v}</span>`;
@@ -12234,7 +12234,7 @@ function downloadMonthlyReport() {
     { key: 'item_name', label: '품목명' },
     { key: 'item_code', label: '품목코드' },
     { key: 'inbound_date', label: '입고일' },
-    { key: 'expiry_date', label: '유통기한' },
+    { key: 'expiry_date', label: '소비기한' },
     { key: 'carry_over', label: '이월', type: 'number' },
     { key: 'month_inbound', label: '입고', type: 'number' },
     { key: 'month_usage', label: '사용', type: 'number' },
@@ -12268,7 +12268,7 @@ function printMonthlyReport() {
     { key: 'lot_number', label: 'LOT번호' },
     { key: 'item_name', label: '품목명' },
     { key: 'inbound_date', label: '입고일', type: 'center' },
-    { key: 'expiry_date', label: '유통기한', type: 'center' },
+    { key: 'expiry_date', label: '소비기한', type: 'center' },
     { key: 'carry_over', label: '이월', type: 'number', format: (v) => v > 0 ? formatNumber(v) : '-' },
     { key: 'month_inbound', label: '입고', type: 'number', format: (v) => v > 0 ? '+' + formatNumber(v) : '-' },
     { key: 'month_usage', label: '사용', type: 'number', format: (v) => v > 0 ? '-' + formatNumber(v) : '-' },
@@ -12422,7 +12422,7 @@ function downloadMasterList() {
     { key: 'unit', label: '단위' },
     { key: 'current_stock', label: '현재고' },
     { key: 'safety_stock', label: '안전재고' },
-    { key: 'expiry_days', label: '유통기한(일)' }
+    { key: 'expiry_days', label: '소비기한(일)' }
   ];
   
   downloadExcel(data, columns, '품목마스터');
@@ -12440,7 +12440,7 @@ function printMasterList() {
     { key: 'unit', label: '단위', type: 'center' },
     { key: 'current_stock', label: '현재고', type: 'number' },
     { key: 'safety_stock', label: '안전재고', type: 'number' },
-    { key: 'expiry_days', label: '유통기한(일)', type: 'center' }
+    { key: 'expiry_days', label: '소비기한(일)', type: 'center' }
   ];
   
   const tableHtml = tableToHtml(data, columns);
@@ -12459,7 +12459,7 @@ function downloadTransactionSearch() {
     { key: 'item_name', label: '품목명' },
     { key: 'item_code', label: '품목코드' },
     { key: 'inbound_date', label: '입고일' },
-    { key: 'expiry_date', label: '유통기한' },
+    { key: 'expiry_date', label: '소비기한' },
     { key: 'trans_type', label: '구분', type: 'center' },
     { key: 'inbound_qty', label: '입고량', type: 'number' },
     { key: 'usage_qty', label: '사용량', type: 'number' },
@@ -12493,7 +12493,7 @@ function printTransactionSearch() {
     { key: 'lot_number', label: 'LOT번호' },
     { key: 'item_name', label: '품목명' },
     { key: 'inbound_date', label: '입고일', type: 'center' },
-    { key: 'expiry_date', label: '유통기한', type: 'center' },
+    { key: 'expiry_date', label: '소비기한', type: 'center' },
     { key: 'trans_type', label: '구분', type: 'center', format: (v) => {
       const colors = { '입고': 'badge-blue', '사용': 'badge-orange', '재고조정': 'badge-yellow' };
       return `<span class="badge ${colors[v] || ''}">${v}</span>`;
@@ -17015,7 +17015,7 @@ async function loadProductLots() {
           <tr>
             <th class="px-3 py-2 text-left">LOT</th>
             <th class="px-3 py-2 text-center">입고일</th>
-            <th class="px-3 py-2 text-center">유통기한</th>
+            <th class="px-3 py-2 text-center">소비기한</th>
             <th class="px-3 py-2 text-center">잔량</th>
           </tr>
         </thead>
@@ -17361,7 +17361,7 @@ async function searchProductionLot() {
                     <th class="px-3 py-2 text-right">사용량</th>
                     <th class="px-3 py-2 text-left">거래처</th>
                     <th class="px-3 py-2 text-center">입고일</th>
-                    <th class="px-3 py-2 text-center">유통기한</th>
+                    <th class="px-3 py-2 text-center">소비기한</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y">
@@ -17491,7 +17491,7 @@ function printLotHistory() {
                 <th class="text-right">사용량</th>
                 <th>거래처</th>
                 <th class="text-center">입고일</th>
-                <th class="text-center">유통기한</th>
+                <th class="text-center">소비기한</th>
               </tr>
             </thead>
             <tbody>
@@ -21217,7 +21217,7 @@ function renderInboundQueryTable(details, viewType) {
           <th class="px-3 py-2 text-center">분류</th>
           <th class="px-3 py-2 text-right">입고량</th>
           <th class="px-3 py-2 text-right">잔량</th>
-          <th class="px-3 py-2 text-center">유통기한</th>
+          <th class="px-3 py-2 text-center">소비기한</th>
           <th class="px-3 py-2 text-center">검사상태</th>
           <th class="px-3 py-2 text-left">거래처</th>
         </tr>
@@ -21267,7 +21267,7 @@ function downloadInboundQuery() {
   downloadExcel(
     `입고조회_${date}`,
     '(주)본비반트',
-    ['입고일', 'LOT번호', '품목코드', '품목명', '분류', '입고량', '잔량', '단위', '유통기한', '검사상태', '거래처'],
+    ['입고일', 'LOT번호', '품목코드', '품목명', '분류', '입고량', '잔량', '단위', '소비기한', '검사상태', '거래처'],
     rows,
     `입고 조회 (${date})`
   );
@@ -21308,7 +21308,7 @@ function printInboundQuery() {
         <thead>
           <tr>
             <th>입고일</th><th>LOT번호</th><th>품목코드</th><th>품목명</th>
-            <th>분류</th><th>입고량</th><th>잔량</th><th>유통기한</th><th>검사상태</th><th>거래처</th>
+            <th>분류</th><th>입고량</th><th>잔량</th><th>소비기한</th><th>검사상태</th><th>거래처</th>
           </tr>
         </thead>
         <tbody>
@@ -22062,6 +22062,8 @@ function renderLedgerTable(data) {
     return;
   }
   
+  const today = new Date().toISOString().split('T')[0];
+  
   // 원료/부자재: LOT잔량 기준 / 제품: 계산잔량 기준
   // 재고조정(+)는 입고에, 재고조정(-)는 출고에 이미 통합됨
   container.innerHTML = `
@@ -22084,6 +22086,7 @@ function renderLedgerTable(data) {
           <th class="px-3 py-2 text-right text-teal-600 font-bold">실재고</th>
           <th class="px-3 py-2 text-right">현재고</th>
           <th class="px-3 py-2 text-right">차이</th>
+          <th class="px-3 py-2 text-center">소비기한</th>
           <th class="px-3 py-2 text-center">단위</th>
         </tr>
       </thead>
@@ -22098,6 +22101,19 @@ function renderLedgerTable(data) {
             ? (stockDiff > 0 ? 'text-blue-600' : 'text-red-600')
             : 'text-gray-400';
           
+          // 소비기한 표시 (임박 시 빨간색)
+          let expiryDisplay = '-';
+          let expiryClass = 'text-gray-500';
+          if (row.nearest_expiry) {
+            expiryDisplay = row.nearest_expiry;
+            const daysUntil = Math.floor((new Date(row.nearest_expiry) - new Date(today)) / (1000 * 60 * 60 * 24));
+            if (daysUntil <= 7) {
+              expiryClass = 'text-red-600 font-bold';
+            } else if (daysUntil <= 30) {
+              expiryClass = 'text-yellow-600';
+            }
+          }
+          
           return `
             <tr class="border-b hover:bg-blue-50">
               <td class="px-3 py-2 text-gray-600">${row.item_code}</td>
@@ -22110,6 +22126,7 @@ function renderLedgerTable(data) {
               <td class="px-3 py-2 text-right text-teal-600 font-bold">${formatNumber(actualStock)}</td>
               <td class="px-3 py-2 text-right">${formatNumber(row.current_stock)}</td>
               <td class="px-3 py-2 text-right ${diffClass}">${stockDiff > 0 ? '+' : ''}${formatNumber(stockDiff)}</td>
+              <td class="px-3 py-2 text-center ${expiryClass}">${expiryDisplay}</td>
               <td class="px-3 py-2 text-center text-gray-500">${row.unit}</td>
             </tr>
           `;
@@ -22145,6 +22162,7 @@ function downloadStockLedger() {
       실재고: actualStock,
       현재고: r.current_stock,
       차이: stockDiff,
+      소비기한: r.nearest_expiry || '',
       단위: r.unit
     };
   });
@@ -22162,6 +22180,7 @@ function downloadStockLedger() {
     실재고: s.total_lot_remain || s.total_calc_remain,
     현재고: s.total_current_stock,
     차이: '',
+    소비기한: '',
     단위: ''
   });
   
@@ -22176,6 +22195,7 @@ function downloadStockLedger() {
     { key: '실재고', label: '실재고', type: 'number' },
     { key: '현재고', label: '현재고', type: 'number' },
     { key: '차이', label: '차이', type: 'number' },
+    { key: '소비기한', label: '소비기한', type: 'center' },
     { key: '단위', label: '단위', type: 'center' }
   ];
   
@@ -22215,6 +22235,7 @@ function printStockLedger() {
         .orange { color: #ea580c; }
         .red { color: #dc2626; }
         .teal { color: #0d9488; font-weight: bold; }
+        .expiry-warn { color: #dc2626; font-weight: bold; }
         @media print { body { padding: 0; } @page { size: A4 landscape; margin: 10mm; } }
       </style>
     </head>
@@ -22227,7 +22248,7 @@ function printStockLedger() {
           <tr>
             <th>품목코드</th><th>품목명</th><th>분류</th>
             <th>이월</th><th class="blue">입고(+조정)</th><th class="orange">사용</th><th class="red">출고(-조정)</th>
-            <th class="teal">실재고</th><th>현재고</th><th>차이</th><th>단위</th>
+            <th class="teal">실재고</th><th>현재고</th><th>차이</th><th>소비기한</th><th>단위</th>
           </tr>
         </thead>
         <tbody>
@@ -22235,6 +22256,12 @@ function printStockLedger() {
             const isRawMaterial = r.category === '원료' || r.category === '부자재';
             const actualStock = isRawMaterial ? (r.lot_remain_total || 0) : r.calc_remain;
             const stockDiff = r.current_stock - actualStock;
+            const today = new Date().toISOString().split('T')[0];
+            let expiryClass = '';
+            if (r.nearest_expiry) {
+              const daysUntil = Math.floor((new Date(r.nearest_expiry) - new Date(today)) / (1000 * 60 * 60 * 24));
+              if (daysUntil <= 7) expiryClass = 'expiry-warn';
+            }
             return `
             <tr>
               <td>${r.item_code}</td>
@@ -22247,6 +22274,7 @@ function printStockLedger() {
               <td class="right teal">${formatNumber(actualStock)}</td>
               <td class="right">${formatNumber(r.current_stock)}</td>
               <td class="right" style="color:${Math.abs(stockDiff) > 0.01 ? '#dc2626' : '#999'}">${formatNumber(stockDiff)}</td>
+              <td class="center ${expiryClass}">${r.nearest_expiry || '-'}</td>
               <td class="center">${r.unit}</td>
             </tr>
           `}).join('')}
@@ -22258,7 +22286,7 @@ function printStockLedger() {
             <td class="right">${formatNumber(s.total_outbound)}</td>
             <td class="right">${formatNumber(s.total_lot_remain || s.total_calc_remain)}</td>
             <td class="right">${formatNumber(s.total_current_stock)}</td>
-            <td></td><td></td>
+            <td></td><td></td><td></td>
           </tr>
         </tbody>
       </table>

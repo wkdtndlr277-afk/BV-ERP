@@ -996,7 +996,7 @@ admin.delete('/super/production/:id', async (c) => {
   }
 })
 
-// BOM 일괄 삭제 (최고관리자 전용)
+// BOM 일괄 삭제 (최고관리자 전용) - 제품 마스터도 함께 삭제
 admin.delete('/super/bom-all', async (c) => {
   const token = c.req.header('Authorization')?.replace('Bearer ', '')
   const { product_code, reason } = await c.req.json()
@@ -1007,27 +1007,49 @@ admin.delete('/super/bom-all', async (c) => {
   }
   
   try {
-    let query = 'DELETE FROM bom'
-    let countQuery = 'SELECT COUNT(*) as count FROM bom'
-    const params: any[] = []
+    let bomCount = 0
+    let masterCount = 0
     
     if (product_code) {
-      query += ' WHERE product_code = ?'
-      countQuery += ' WHERE product_code = ?'
-      params.push(product_code)
+      // 특정 제품만 삭제
+      const bomCountResult = await env.DB.prepare('SELECT COUNT(*) as count FROM bom WHERE product_code = ?').bind(product_code).first()
+      bomCount = bomCountResult?.count || 0
+      
+      // BOM 삭제
+      await env.DB.prepare('DELETE FROM bom WHERE product_code = ?').bind(product_code).run()
+      
+      // 제품 마스터 삭제 (카테고리가 '제품'인 경우만)
+      const masterResult = await env.DB.prepare('DELETE FROM master WHERE item_code = ? AND category = ?').bind(product_code, '제품').run()
+      masterCount = masterResult.meta.changes || 0
+    } else {
+      // 전체 삭제
+      const bomCountResult = await env.DB.prepare('SELECT COUNT(*) as count FROM bom').first()
+      bomCount = bomCountResult?.count || 0
+      
+      const masterCountResult = await env.DB.prepare("SELECT COUNT(*) as count FROM master WHERE category = '제품'").first()
+      masterCount = masterCountResult?.count || 0
+      
+      // BOM 전체 삭제
+      await env.DB.prepare('DELETE FROM bom').run()
+      
+      // 제품 마스터 전체 삭제
+      await env.DB.prepare("DELETE FROM master WHERE category = '제품'").run()
     }
-    
-    const countResult = await env.DB.prepare(countQuery).bind(...params).first()
-    const count = countResult?.count || 0
-    
-    await env.DB.prepare(query).bind(...params).run()
     
     await env.DB.prepare(`
       INSERT INTO admin_logs (action_type, target_table, before_data, reason)
       VALUES (?, ?, ?, ?)
-    `).bind('BOM삭제', 'bom', JSON.stringify({ product_code: product_code || '전체', deleted_count: count }), `[최고관리자] ${reason || 'BOM 삭제'}`).run()
+    `).bind('BOM+제품삭제', 'bom,master', JSON.stringify({ 
+      product_code: product_code || '전체', 
+      bom_deleted: bomCount,
+      master_deleted: masterCount 
+    }), `[최고관리자] ${reason || 'BOM 및 제품 삭제'}`).run()
     
-    return c.json({ success: true, message: `BOM ${count}건이 삭제되었습니다`, deleted: count })
+    return c.json({ 
+      success: true, 
+      message: `BOM ${bomCount}건, 제품 마스터 ${masterCount}건이 삭제되었습니다`, 
+      deleted: { bom: bomCount, master: masterCount }
+    })
   } catch (error: any) {
     return c.json({ success: false, message: `삭제 실패: ${error.message}` }, 500)
   }

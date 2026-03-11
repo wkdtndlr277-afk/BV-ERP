@@ -1294,8 +1294,11 @@ async function renderInbound() {
 }
 
 // 신규 원료 등록 모달
-function showNewItemModal(searchTerm = '') {
+async function showNewItemModal(searchTerm = '') {
   document.getElementById('inbound-search-results').classList.add('hidden');
+  
+  // 최신 마스터 데이터 로드
+  await loadMasterItems();
   
   // 품목코드 자동 생성 (RM + 3자리 숫자)
   const existingCodes = state.masterItems
@@ -1512,7 +1515,10 @@ async function processInboundUpload() {
 // ========== 제품 마스터 등록 ==========
 
 // 제품 마스터 등록 모달 표시
-function showProductMasterModal() {
+async function showProductMasterModal() {
+  // 최신 마스터 데이터 로드
+  await loadMasterItems();
+  
   // 기존 제품 코드 조회해서 다음 번호 계산
   const existingCodes = state.masterItems
     .filter(i => i.item_code.startsWith('PD') || i.category === '제품')

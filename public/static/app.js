@@ -865,7 +865,12 @@ async function renderDashboard() {
             <i class="fas fa-tachometer-alt mr-2 text-haccp-primary"></i>
             대시보드
           </h2>
-          <span class="text-gray-500">${data.date}</span>
+          <div class="flex items-center gap-4">
+            <span class="text-gray-500">${data.date}</span>
+            <button onclick="printDashboard()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
+              <i class="fas fa-print mr-1"></i> 인쇄
+            </button>
+          </div>
         </div>
         
         <!-- Alert Cards -->
@@ -1046,6 +1051,298 @@ async function renderDashboard() {
     `;
   } catch (e) {
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 대시보드 인쇄 함수
+async function printDashboard() {
+  try {
+    const result = await api('/dashboard');
+    const data = result.data;
+    
+    // 재고 요약 데이터 추출
+    const rawMaterialStock = data.summary.stock.find(s => s.category === '원료') || { item_count: 0, total_stock: 0, low_stock_count: 0 };
+    const productStock = data.summary.stock.find(s => s.category === '제품') || { item_count: 0, total_stock: 0, low_stock_count: 0 };
+    
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>대시보드 - ${data.date}</title>
+        <style>
+          @page { margin: 10mm; size: A4; }
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body {
+            font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;
+            font-size: 9px;
+            line-height: 1.3;
+            color: #333;
+            padding: 10px;
+          }
+          .header {
+            text-align: center;
+            border-bottom: 2px solid #333;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+          }
+          .header h1 { font-size: 16px; margin-bottom: 3px; }
+          .header .date { font-size: 11px; color: #666; }
+          
+          .section { margin-bottom: 12px; }
+          .section-title {
+            font-size: 11px;
+            font-weight: bold;
+            padding: 5px 8px;
+            margin-bottom: 6px;
+            border-left: 3px solid #333;
+            background: #f5f5f5;
+          }
+          .section-title.red { border-left-color: #dc2626; background: #fef2f2; color: #dc2626; }
+          .section-title.yellow { border-left-color: #d97706; background: #fffbeb; color: #d97706; }
+          .section-title.blue { border-left-color: #2563eb; background: #eff6ff; color: #2563eb; }
+          .section-title.green { border-left-color: #16a34a; background: #f0fdf4; color: #16a34a; }
+          
+          .alert-cards {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+          }
+          .alert-card {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+            border-radius: 4px;
+          }
+          .alert-card.red { border-color: #dc2626; background: #fef2f2; }
+          .alert-card.yellow { border-color: #d97706; background: #fffbeb; }
+          .alert-card.green { border-color: #16a34a; background: #f0fdf4; }
+          .alert-card.orange { border-color: #ea580c; background: #fff7ed; }
+          .alert-card .label { font-size: 8px; color: #666; margin-bottom: 2px; }
+          .alert-card .value { font-size: 14px; font-weight: bold; }
+          .alert-card .value.red { color: #dc2626; }
+          .alert-card .value.yellow { color: #d97706; }
+          .alert-card .value.green { color: #16a34a; }
+          .alert-card .value.orange { color: #ea580c; }
+          
+          .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+          }
+          .summary-box {
+            border: 1px solid #ddd;
+            padding: 8px;
+            border-radius: 4px;
+          }
+          .summary-box .title { font-size: 9px; font-weight: bold; margin-bottom: 4px; color: #333; }
+          .summary-box .row { display: flex; justify-content: space-between; font-size: 8px; margin-bottom: 2px; }
+          .summary-box .row .highlight { font-weight: bold; color: #dc2626; }
+          
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 8px;
+          }
+          th, td {
+            border: 1px solid #ddd;
+            padding: 4px 6px;
+            text-align: left;
+          }
+          th {
+            background: #f5f5f5;
+            font-weight: bold;
+            white-space: nowrap;
+          }
+          .text-right { text-align: right; }
+          .text-center { text-align: center; }
+          .text-red { color: #dc2626; font-weight: bold; }
+          .text-yellow { color: #d97706; }
+          .badge {
+            display: inline-block;
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-size: 7px;
+          }
+          .badge-blue { background: #dbeafe; color: #1d4ed8; }
+          .badge-green { background: #dcfce7; color: #16a34a; }
+          
+          .two-columns {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+          }
+          
+          .no-data { text-align: center; padding: 15px; color: #999; font-style: italic; }
+          
+          @media print {
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>📊 재고관리 대시보드</h1>
+          <div class="date">${data.date} 기준</div>
+        </div>
+        
+        <!-- Alert Cards -->
+        <div class="alert-cards">
+          <div class="alert-card ${data.alerts.lowStockItems.length > 0 ? 'red' : 'green'}">
+            <div class="label">안전재고 미만</div>
+            <div class="value ${data.alerts.lowStockItems.length > 0 ? 'red' : 'green'}">${data.alerts.lowStockCount || data.alerts.lowStockItems.length}</div>
+          </div>
+          <div class="alert-card ${data.alerts.expiringLots.length > 0 ? 'yellow' : 'green'}">
+            <div class="label">소비기한 임박 LOT</div>
+            <div class="value ${data.alerts.expiringLots.length > 0 ? 'yellow' : 'green'}">${data.alerts.expiringCount || data.alerts.expiringLots.length}</div>
+          </div>
+          <div class="alert-card ${data.alerts.kpiAlerts.nonCompliantCount > 0 ? 'red' : 'green'}">
+            <div class="label">품질 KPI 부적합</div>
+            <div class="value ${data.alerts.kpiAlerts.nonCompliantCount > 0 ? 'red' : 'green'}">${data.alerts.kpiAlerts.nonCompliantCount}</div>
+          </div>
+          <div class="alert-card ${data.alerts.kpiAlerts.unregisteredToday ? 'orange' : 'green'}">
+            <div class="label">오늘 KPI 등록</div>
+            <div class="value ${data.alerts.kpiAlerts.unregisteredToday ? 'orange' : 'green'}">${data.alerts.kpiAlerts.unregisteredToday ? '미등록' : '완료'}</div>
+          </div>
+        </div>
+        
+        <!-- 재고 현황 요약 -->
+        <div class="summary-grid">
+          <div class="summary-box">
+            <div class="title">📦 원료 재고 현황</div>
+            <div class="row"><span>품목 수</span><span>${rawMaterialStock.item_count}개</span></div>
+            <div class="row"><span>총 재고</span><span>${formatNumber(rawMaterialStock.total_stock)}</span></div>
+            <div class="row"><span>안전재고 미만</span><span class="highlight">${rawMaterialStock.low_stock_count}개</span></div>
+          </div>
+          <div class="summary-box">
+            <div class="title">🏭 제품 재고 현황</div>
+            <div class="row"><span>품목 수</span><span>${productStock.item_count}개</span></div>
+            <div class="row"><span>총 재고</span><span>${formatNumber(productStock.total_stock)}</span></div>
+            <div class="row"><span>안전재고 미만</span><span class="highlight">${productStock.low_stock_count}개</span></div>
+          </div>
+        </div>
+        
+        <!-- 안전재고 미만 품목 -->
+        ${data.alerts.lowStockItems.length > 0 ? `
+        <div class="section">
+          <div class="section-title red">⚠️ 안전재고 미만 품목 (${data.alerts.lowStockCount || data.alerts.lowStockItems.length}개)</div>
+          <table>
+            <thead>
+              <tr>
+                <th>품목코드</th>
+                <th>품목명</th>
+                <th>구분</th>
+                <th class="text-right">현재고</th>
+                <th class="text-right">안전재고</th>
+                <th class="text-right">부족량</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.alerts.lowStockItems.map(item => `
+                <tr>
+                  <td>${item.item_code}</td>
+                  <td>${item.item_name}</td>
+                  <td><span class="badge ${item.category === '원료' ? 'badge-blue' : 'badge-green'}">${item.category}</span></td>
+                  <td class="text-right text-red">${formatNumber(item.current_stock)} ${item.unit || ''}</td>
+                  <td class="text-right">${formatNumber(item.safety_stock)} ${item.unit || ''}</td>
+                  <td class="text-right text-red">${formatNumber(item.shortage)} ${item.unit || ''}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+        ` : '<div class="section"><div class="section-title green">✅ 안전재고 미만 품목 없음</div></div>'}
+        
+        <!-- 소비기한 임박 LOT -->
+        ${data.alerts.expiringLots.length > 0 ? `
+        <div class="section">
+          <div class="section-title yellow">⏰ 소비기한 임박 LOT - 30일 이내 (${data.alerts.expiringCount || data.alerts.expiringLots.length}개)</div>
+          <table>
+            <thead>
+              <tr>
+                <th>LOT번호</th>
+                <th>품목명</th>
+                <th>소비기한</th>
+                <th class="text-right">잔여일</th>
+                <th class="text-right">잔량</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.alerts.expiringLots.map(lot => `
+                <tr>
+                  <td>${lot.lot_number}</td>
+                  <td>${lot.item_name}</td>
+                  <td>${lot.expiry_date}</td>
+                  <td class="text-right ${lot.days_until_expiry <= 7 ? 'text-red' : 'text-yellow'}">${lot.days_until_expiry}일</td>
+                  <td class="text-right">${formatNumber(lot.remain_qty)} ${lot.unit}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+        ` : '<div class="section"><div class="section-title green">✅ 소비기한 임박 LOT 없음</div></div>'}
+        
+        <!-- 오늘 사용/출고 현황 -->
+        <div class="two-columns">
+          <div class="section">
+            <div class="section-title blue">📋 오늘 원료 사용량 TOP 10</div>
+            ${data.today.usage.length > 0 ? `
+            <table>
+              <thead>
+                <tr><th>품목</th><th class="text-right">사용량</th></tr>
+              </thead>
+              <tbody>
+                ${data.today.usage.slice(0, 10).map(item => `
+                  <tr>
+                    <td>${item.item_name}</td>
+                    <td class="text-right">${formatNumber(item.total_qty)} ${item.unit}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            ` : '<div class="no-data">오늘 사용 내역 없음</div>'}
+          </div>
+          
+          <div class="section">
+            <div class="section-title blue">📤 오늘 제품 출고량 TOP 10</div>
+            ${data.today.outbound.length > 0 ? `
+            <table>
+              <thead>
+                <tr><th>품목</th><th class="text-right">출고량</th></tr>
+              </thead>
+              <tbody>
+                ${data.today.outbound.slice(0, 10).map(item => `
+                  <tr>
+                    <td>${item.item_name}</td>
+                    <td class="text-right">${formatNumber(item.total_qty)} ${item.unit}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            ` : '<div class="no-data">오늘 출고 내역 없음</div>'}
+          </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 15px; font-size: 8px; color: #999;">
+          출력일시: ${new Date().toLocaleString('ko-KR')}
+        </div>
+      </body>
+      </html>
+    `);
+    
+    printWindow.document.close();
+    printWindow.focus();
+    
+    setTimeout(() => {
+      printWindow.print();
+    }, 300);
+    
+  } catch (e) {
+    console.error('대시보드 인쇄 오류:', e);
+    showToast('인쇄 데이터를 불러오는데 실패했습니다.', 'error');
   }
 }
 

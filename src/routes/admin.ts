@@ -1065,28 +1065,52 @@ admin.delete('/super/products-all', async (c) => {
   }
   
   try {
-    // 제품 수 조회
-    const countResult = await env.DB.prepare("SELECT COUNT(*) as count FROM master WHERE category = '제품'").first()
-    const count = countResult?.count || 0
+    // 제품 코드 목록 조회
+    const products = await env.DB.prepare("SELECT item_code FROM master WHERE category = '제품'").all()
+    const productCodes = products.results?.map((p: any) => p.item_code) || []
+    const count = productCodes.length
     
     if (count === 0) {
       return c.json({ success: true, message: '삭제할 제품이 없습니다', deleted: 0 })
     }
     
-    // 제품 관련 데이터 삭제 (production, transactions 등)
+    // 외래키 제약 조건 임시 해제
+    await env.DB.prepare('PRAGMA foreign_keys = OFF').run()
+    
+    // 관련 테이블 순서대로 삭제 (자식 테이블 먼저)
+    // 1. production_materials (production의 자식)
+    const prodIds = await env.DB.prepare("SELECT id FROM production WHERE product_code IN (SELECT item_code FROM master WHERE category = '제품')").all()
+    for (const p of (prodIds.results || []) as any[]) {
+      await env.DB.prepare('DELETE FROM production_materials WHERE production_id = ?').bind(p.id).run()
+    }
+    
+    // 2. production
     await env.DB.prepare("DELETE FROM production WHERE product_code IN (SELECT item_code FROM master WHERE category = '제품')").run()
+    
+    // 3. transactions
     await env.DB.prepare("DELETE FROM transactions WHERE item_code IN (SELECT item_code FROM master WHERE category = '제품')").run()
     
-    // 제품 마스터 삭제
+    // 4. bom (혹시 남아있는 것)
+    await env.DB.prepare("DELETE FROM bom WHERE product_code IN (SELECT item_code FROM master WHERE category = '제품')").run()
+    
+    // 5. inbound (제품 입고가 있다면)
+    await env.DB.prepare("DELETE FROM inbound WHERE item_code IN (SELECT item_code FROM master WHERE category = '제품')").run()
+    
+    // 6. 마지막으로 master 삭제
     await env.DB.prepare("DELETE FROM master WHERE category = '제품'").run()
+    
+    // 외래키 제약 조건 다시 활성화
+    await env.DB.prepare('PRAGMA foreign_keys = ON').run()
     
     await env.DB.prepare(`
       INSERT INTO admin_logs (action_type, target_table, before_data, reason)
       VALUES (?, ?, ?, ?)
     `).bind('제품전체삭제', 'master', JSON.stringify({ deleted_count: count }), '[최고관리자] 제품 마스터 전체 삭제').run()
     
-    return c.json({ success: true, message: `제품 마스터 ${count}건이 삭제되었습니다`, deleted: count })
+    return c.json({ success: true, message: `제품 마스터 ${count}건 및 관련 데이터가 삭제되었습니다`, deleted: count })
   } catch (error: any) {
+    // 에러 발생 시에도 외래키 제약 조건 복구
+    await env.DB.prepare('PRAGMA foreign_keys = ON').run()
     return c.json({ success: false, message: `삭제 실패: ${error.message}` }, 500)
   }
 })

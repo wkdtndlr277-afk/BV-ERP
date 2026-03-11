@@ -8,12 +8,14 @@ const dashboardRoutes = new Hono<{ Bindings: Bindings }>();
 dashboardRoutes.get('/', async (c) => {
   const today = new Date().toISOString().split('T')[0];
   
-  // 안전재고 미만 품목 (단위 포함)
+  // 안전재고 미만 원료 품목 (원료만 표시)
   const lowStockItems = await c.env.DB.prepare(`
     SELECT m.item_code, m.item_name, m.category, m.unit, m.current_stock, m.safety_stock,
            (m.safety_stock - m.current_stock) as shortage
     FROM master m
     WHERE m.current_stock < m.safety_stock
+      AND m.safety_stock > 0
+      AND m.category = '원료'
     ORDER BY shortage DESC
     LIMIT 10
   `).all();
@@ -70,7 +72,7 @@ dashboardRoutes.get('/', async (c) => {
       category,
       COUNT(*) as item_count,
       SUM(current_stock) as total_stock,
-      SUM(CASE WHEN current_stock < safety_stock THEN 1 ELSE 0 END) as low_stock_count
+      SUM(CASE WHEN current_stock < safety_stock AND safety_stock > 0 THEN 1 ELSE 0 END) as low_stock_count
     FROM master
     GROUP BY category
   `).all();
@@ -122,8 +124,12 @@ dashboardRoutes.get('/', async (c) => {
 dashboardRoutes.get('/alerts/count', async (c) => {
   const today = new Date().toISOString().split('T')[0];
   
+  // 원료만 안전재고 미만 카운트 (safety_stock > 0인 것만)
   const lowStock = await c.env.DB.prepare(`
-    SELECT COUNT(*) as count FROM master WHERE current_stock < safety_stock
+    SELECT COUNT(*) as count FROM master 
+    WHERE current_stock < safety_stock 
+      AND safety_stock > 0
+      AND category = '원료'
   `).first<{ count: number }>();
   
   const expiring = await c.env.DB.prepare(`

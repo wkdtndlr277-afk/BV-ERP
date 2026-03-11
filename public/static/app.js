@@ -703,10 +703,20 @@ async function api(endpoint, method = 'GET', data = null) {
       url: `${API_BASE}${endpoint}`,
       ...options
     });
+    
+    // API 응답이 success: false인 경우 에러 처리
+    if (response.data && response.data.success === false) {
+      const message = response.data.error || '요청 처리 중 오류가 발생했습니다.';
+      showToast(message, 'error');
+      throw new Error(message);
+    }
+    
     return response.data;
   } catch (error) {
     const message = error.response?.data?.error || error.message || '오류가 발생했습니다.';
-    showToast(message, 'error');
+    if (!error.message?.includes(message)) {
+      showToast(message, 'error');
+    }
     throw error;
   }
 }
@@ -1386,7 +1396,8 @@ async function saveNewItemAndSelect() {
     // 새로 등록한 품목 선택
     selectInboundItem(data.item_code, data.item_name, data.unit, data.expiry_days, true);
   } catch (e) {
-    // Error handled
+    console.error('원료 등록 실패:', e);
+    showToast(`등록 실패: ${e.message || '알 수 없는 오류'}`, 'error');
   }
 }
 

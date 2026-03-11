@@ -1298,7 +1298,7 @@ async function showNewItemModal(searchTerm = '') {
   document.getElementById('inbound-search-results').classList.add('hidden');
   
   // 최신 마스터 데이터 로드
-  await loadMasterItems();
+  await loadMasterData();
   
   // 품목코드 자동 생성 (RM + 3자리 숫자)
   const existingCodes = state.masterItems
@@ -1517,7 +1517,7 @@ async function processInboundUpload() {
 // 제품 마스터 등록 모달 표시
 async function showProductMasterModal() {
   // 최신 마스터 데이터 로드
-  await loadMasterItems();
+  await loadMasterData();
   
   // 기존 제품 코드 조회해서 다음 번호 계산
   const existingCodes = state.masterItems
@@ -2474,7 +2474,7 @@ function filterInventory(category) {
 async function refreshInventory() {
   showToast('재고 현황을 새로고침합니다...', 'info');
   // 마스터 데이터 갱신
-  await loadMasterItems();
+  await loadMasterData();
   // 현재 선택된 필터로 다시 로드
   const activeFilter = document.querySelector('.inventory-filter.bg-haccp-primary');
   const category = activeFilter?.dataset?.category || '';
@@ -6187,7 +6187,10 @@ function searchMasterItems() {
 }
 
 // 신제품 + 배합표 동시 등록 모달
-function showNewProductWithBOMModal() {
+async function showNewProductWithBOMModal() {
+  // 최신 마스터 데이터 로드
+  await loadMasterData();
+  
   // 원재료 목록
   const materials = state.masterItems.filter(item => item.category === '원료');
   const materialOptions = materials.map(m => 
@@ -6277,7 +6280,8 @@ async function generateProductCode() {
 // BOM 행 추가
 function addBOMRow() {
   const container = document.getElementById('bom-rows');
-  const materials = JSON.parse(document.getElementById('material-options')?.value || '[]');
+  // state.masterItems에서 최신 원료 목록 가져오기 (material-options 대신)
+  const materials = state.masterItems.filter(m => m.category === '원료');
   const rowId = Date.now();
   
   const row = document.createElement('div');
@@ -6399,7 +6403,7 @@ async function parseBOMFromText() {
     return;
   }
   
-  let materials = JSON.parse(document.getElementById('material-options')?.value || '[]');
+  let materials = state.masterItems.filter(m => m.category === '원료');
   const materialMap = {};
   materials.forEach(m => {
     materialMap[m.item_name.toLowerCase()] = m.item_code;
@@ -9695,7 +9699,7 @@ async function saveAdminStock() {
     loadAdminStock();
     loadAlertCount();
     // 전역 마스터 데이터 갱신
-    await loadMasterItems();
+    await loadMasterData();
   } catch (e) {
     // Error handled
   }
@@ -9733,7 +9737,7 @@ async function confirmRecalculate() {
     loadAdminStock();
     loadAlertCount();
     // 전역 마스터 데이터 갱신
-    await loadMasterItems();
+    await loadMasterData();
     
     // 조정 결과 표시
     if (result.adjusted && result.adjusted.length > 0) {
@@ -16104,7 +16108,8 @@ function quickAddBOMForProduct(productCode, productName) {
 // 빠른 BOM 행 추가
 function addQuickBOMRow() {
   const container = document.getElementById('quick-bom-rows');
-  const materials = JSON.parse(document.getElementById('quick-material-options')?.value || '[]');
+  // state.masterItems에서 최신 원료 목록 가져오기
+  const materials = state.masterItems.filter(m => m.category === '원료');
   const rowId = Date.now();
   
   const row = document.createElement('div');
@@ -16135,7 +16140,7 @@ async function parseQuickBOMPaste() {
     return;
   }
   
-  let materials = JSON.parse(document.getElementById('quick-material-options')?.value || '[]');
+  let materials = state.masterItems.filter(m => m.category === '원료');
   const materialMap = {};
   materials.forEach(m => {
     materialMap[m.item_name.toLowerCase()] = m.item_code;

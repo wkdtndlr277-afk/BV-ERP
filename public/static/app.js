@@ -977,12 +977,13 @@ async function renderDashboard() {
         <!-- Alerts Detail -->
         ${data.alerts.lowStockItems.length > 0 ? `
         <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-red-50">
+          <div class="p-4 border-b bg-red-50 flex justify-between items-center">
             <h3 class="font-bold text-red-800"><i class="fas fa-exclamation-triangle mr-2"></i>안전재고 미만 품목</h3>
+            <span class="bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold">${data.alerts.lowStockCount || data.alerts.lowStockItems.length}개</span>
           </div>
-          <div class="overflow-x-auto">
+          <div class="overflow-x-auto max-h-80 overflow-y-auto">
             <table class="w-full text-sm data-table">
-              <thead>
+              <thead class="sticky top-0 bg-white">
                 <tr class="text-gray-500 border-b">
                   <th class="text-left p-3">품목코드</th>
                   <th class="text-left p-3">품목명</th>
@@ -1011,12 +1012,13 @@ async function renderDashboard() {
         
         ${data.alerts.expiringLots.length > 0 ? `
         <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-yellow-50">
+          <div class="p-4 border-b bg-yellow-50 flex justify-between items-center">
             <h3 class="font-bold text-yellow-800"><i class="fas fa-clock mr-2"></i>소비기한 임박 LOT (30일 이내)</h3>
+            <span class="bg-yellow-600 text-white px-3 py-1 rounded-full text-sm font-bold">${data.alerts.expiringCount || data.alerts.expiringLots.length}개</span>
           </div>
-          <div class="overflow-x-auto">
+          <div class="overflow-x-auto max-h-80 overflow-y-auto">
             <table class="w-full text-sm data-table">
-              <thead>
+              <thead class="sticky top-0 bg-white">
                 <tr class="text-gray-500 border-b">
                   <th class="text-left p-3">LOT번호</th>
                   <th class="text-left p-3">품목</th>

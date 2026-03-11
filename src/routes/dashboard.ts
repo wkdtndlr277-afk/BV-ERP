@@ -8,7 +8,7 @@ const dashboardRoutes = new Hono<{ Bindings: Bindings }>();
 dashboardRoutes.get('/', async (c) => {
   const today = new Date().toISOString().split('T')[0];
   
-  // 안전재고 미만 원료 품목 (원료만 표시)
+  // 안전재고 미만 원료 품목 (원료만, 전체 조회)
   const lowStockItems = await c.env.DB.prepare(`
     SELECT m.item_code, m.item_name, m.category, m.unit, m.current_stock, m.safety_stock,
            (m.safety_stock - m.current_stock) as shortage
@@ -17,10 +17,12 @@ dashboardRoutes.get('/', async (c) => {
       AND m.safety_stock > 0
       AND m.category = '원료'
     ORDER BY shortage DESC
-    LIMIT 10
   `).all();
   
-  // 유통기한 30일 이내 LOT (원료만 해당)
+  // 안전재고 미만 원료 개수
+  const lowStockCount = lowStockItems.results?.length || 0;
+  
+  // 유통기한 30일 이내 LOT (원료만, 전체 조회)
   const expiringLots = await c.env.DB.prepare(`
     SELECT i.*, m.item_name, m.category, m.unit,
            CAST(julianday(i.expiry_date) - julianday(?) AS INTEGER) as days_until_expiry
@@ -32,8 +34,10 @@ dashboardRoutes.get('/', async (c) => {
       AND julianday(i.expiry_date) - julianday(?) <= 30
       AND julianday(i.expiry_date) - julianday(?) >= 0
     ORDER BY i.expiry_date ASC
-    LIMIT 10
   `).bind(today, today, today).all();
+  
+  // 유통기한 임박 LOT 개수
+  const expiringCount = expiringLots.results?.length || 0;
   
   // 오늘 원료 사용량
   const todayUsage = await c.env.DB.prepare(`
@@ -101,7 +105,9 @@ dashboardRoutes.get('/', async (c) => {
       date: today,
       alerts: {
         lowStockItems: lowStockItems.results,
+        lowStockCount: lowStockCount,
         expiringLots: expiringLots.results,
+        expiringCount: expiringCount,
         kpiAlerts: {
           nonCompliantCount: nonCompliantCount?.count || 0,
           unregisteredToday: (todayKpiCount?.count || 0) === 0

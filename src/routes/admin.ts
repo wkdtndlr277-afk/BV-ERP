@@ -1055,4 +1055,40 @@ admin.delete('/super/bom-all', async (c) => {
   }
 })
 
+// 제품 마스터 전체 삭제 (최고관리자 전용) - BOM 삭제 후 남은 제품 정리용
+admin.delete('/super/products-all', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const { env } = c
+  
+  if (!token || !await isSuperAdmin(env.DB, token)) {
+    return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
+  }
+  
+  try {
+    // 제품 수 조회
+    const countResult = await env.DB.prepare("SELECT COUNT(*) as count FROM master WHERE category = '제품'").first()
+    const count = countResult?.count || 0
+    
+    if (count === 0) {
+      return c.json({ success: true, message: '삭제할 제품이 없습니다', deleted: 0 })
+    }
+    
+    // 제품 관련 데이터 삭제 (production, transactions 등)
+    await env.DB.prepare("DELETE FROM production WHERE product_code IN (SELECT item_code FROM master WHERE category = '제품')").run()
+    await env.DB.prepare("DELETE FROM transactions WHERE item_code IN (SELECT item_code FROM master WHERE category = '제품')").run()
+    
+    // 제품 마스터 삭제
+    await env.DB.prepare("DELETE FROM master WHERE category = '제품'").run()
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, before_data, reason)
+      VALUES (?, ?, ?, ?)
+    `).bind('제품전체삭제', 'master', JSON.stringify({ deleted_count: count }), '[최고관리자] 제품 마스터 전체 삭제').run()
+    
+    return c.json({ success: true, message: `제품 마스터 ${count}건이 삭제되었습니다`, deleted: count })
+  } catch (error: any) {
+    return c.json({ success: false, message: `삭제 실패: ${error.message}` }, 500)
+  }
+})
+
 export default admin

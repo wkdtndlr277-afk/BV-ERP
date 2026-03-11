@@ -18101,12 +18101,25 @@ async function loadSuperAdminPanel() {
           <h4 class="font-bold text-yellow-700 mb-3">
             <i class="fas fa-sitemap mr-2"></i> BOM 일괄 삭제
           </h4>
-          <p class="text-sm text-gray-500 mb-4">특정 제품 또는 전체 BOM을 삭제합니다.</p>
+          <p class="text-sm text-gray-500 mb-4">특정 제품 또는 전체 BOM을 삭제합니다. (제품 마스터도 함께 삭제됨)</p>
           <div class="space-y-3">
             <input type="text" id="delete-bom-product" placeholder="제품코드 (빈칸=전체)" class="w-full border rounded-lg px-3 py-2" />
             <input type="text" id="delete-bom-reason" placeholder="삭제 사유 입력..." class="w-full border rounded-lg px-3 py-2" />
             <button onclick="deleteBomData()" class="w-full bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg">
-              <i class="fas fa-trash mr-2"></i> BOM 삭제
+              <i class="fas fa-trash mr-2"></i> BOM + 제품 삭제
+            </button>
+          </div>
+        </div>
+        
+        <!-- 제품 마스터 전체 삭제 (BOM 삭제 후 남은 제품 정리용) -->
+        <div class="bg-white border border-orange-200 rounded-lg p-4">
+          <h4 class="font-bold text-orange-700 mb-3">
+            <i class="fas fa-box mr-2"></i> 제품 마스터 전체 삭제
+          </h4>
+          <p class="text-sm text-gray-500 mb-4">BOM 삭제 후 남아있는 제품 마스터를 정리합니다.</p>
+          <div class="space-y-3">
+            <button onclick="deleteAllProducts()" class="w-full bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg">
+              <i class="fas fa-trash mr-2"></i> 제품 전체 삭제
             </button>
           </div>
         </div>
@@ -18404,12 +18417,38 @@ async function deleteProductionRecord() {
   }
 }
 
+// 제품 마스터 전체 삭제
+async function deleteAllProducts() {
+  if (!confirm('⚠️ 모든 제품 마스터를 삭제하시겠습니까?\n\n이 작업은 되돌릴 수 없습니다.')) {
+    return;
+  }
+  
+  const confirmText = prompt('삭제를 확인하려면 "제품삭제"를 입력하세요:');
+  if (confirmText !== '제품삭제') {
+    showToast('삭제가 취소되었습니다.', 'warning');
+    return;
+  }
+  
+  try {
+    const token = getAuthToken();
+    const response = await axios.delete(`${API_BASE}/admin/super/products-all`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    
+    showToast(response.data.message, 'success');
+    loadDbStats();
+  } catch (e) {
+    showToast(e.response?.data?.message || '삭제에 실패했습니다.', 'error');
+  }
+}
+
 // 최고관리자 패널 관련 함수 전역 노출
 window.loadSuperAdminPanel = loadSuperAdminPanel;
 window.loadDbStats = loadDbStats;
 window.deleteTableData = deleteTableData;
 window.deleteMasterData = deleteMasterData;
 window.deleteBomData = deleteBomData;
+window.deleteAllProducts = deleteAllProducts;
 window.deleteItemForce = deleteItemForce;
 window.deleteProductionRecord = deleteProductionRecord;
 

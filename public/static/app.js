@@ -1598,10 +1598,6 @@ async function printRawMaterialInspection(inboundData) {
         </tr>
       </table>
       
-      <div class="footer">
-        <span>(주)본비반트</span>
-        <span>A4(210x297)</span>
-      </div>
     </body>
     </html>
   `);
@@ -1813,11 +1809,6 @@ async function printSubMaterialInspection(inboundData) {
         </tr>
       </table>
       
-      <div class="footer">
-        <span>BV-00-00</span>
-        <span>(주)본비반트</span>
-        <span>A4(210x297)</span>
-      </div>
     </body>
     </html>
   `);

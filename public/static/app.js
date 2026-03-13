@@ -1538,22 +1538,22 @@ async function printRawMaterialInspection(inboundData) {
             <td class="result">☐적합 ☐부적합</td>
           </tr>
           <tr>
-            <td class="item">잔사량</td>
-            <td>유리조각 없음</td>
+            <td class="item">원산지</td>
+            <td>제품별 상이</td>
             <td class="result">☐적합 ☐부적합</td>
           </tr>
           <tr>
-            <td class="item">배송차량점검/실온<br>보관원료</td>
+            <td class="item">배송차량청결상태</td>
             <td>배송차량의 청결상태가 입고된 원료에 오염 소지가 없어야 한다.</td>
             <td class="result">☐적합 ☐부적합</td>
           </tr>
           <tr>
-            <td class="item">심온보관원료<br>(0℃ ~ 35℃ 이하)</td>
-            <td>심온보관: 0℃ ~ 35℃ 이하</td>
+            <td class="item">실온보관원료<br>(1℃ ~ 35℃ 이하)</td>
+            <td>실온보관: 1℃ ~ 35℃ 이하</td>
             <td class="result">☐적합 ☐부적합</td>
           </tr>
           <tr>
-            <td class="item">냉장보관 원료<br>(10℃ 이하)</td>
+            <td class="item">냉장보관원료<br>(0℃ ~ 10℃)</td>
             <td>냉장차량 운송시 타코메타 기록지 확인</td>
             <td class="result">☐적합 ☐부적합</td>
           </tr>

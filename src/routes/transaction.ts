@@ -692,9 +692,63 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
           period_outbound: item.period_outbound,
           closing_qty: closingQty
         },
-        lot_count: 0 // LOT 상세는 별도 조회 필요시에만
+        lot_count: 0, // 아래에서 업데이트
+        lots: [] as any[] // LOT 상세
       };
     });
+    
+    // 각 품목별 LOT 상세 조회
+    let totalLotCount = 0;
+    for (const item of itemData) {
+      const lotsResult = await c.env.DB.prepare(`
+        SELECT 
+          i.lot_number,
+          i.inbound_date,
+          i.expiry_date,
+          i.origin_qty,
+          i.remain_qty,
+          i.supplier,
+          i.quality_status,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.lot_number = i.lot_number AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.lot_number = i.lot_number AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
+          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.lot_number = i.lot_number AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
+        FROM inbound i
+        WHERE i.item_code = ? 
+          AND i.quality_status = '합격'
+          AND (i.remain_qty > 0 OR i.inbound_date >= ? OR EXISTS (SELECT 1 FROM transactions t WHERE t.lot_number = i.lot_number AND t.trans_date >= ? AND t.trans_date <= ?))
+        ORDER BY i.inbound_date ASC, i.lot_number ASC
+      `).bind(startDate, endDate, startDate, endDate, startDate, endDate, item.item_code, startDate, startDate, endDate).all();
+      
+      const lots = (lotsResult.results || []).map((lot: any, idx: number) => {
+        // 기간 시작 시점의 LOT 잔량 역산 (현재 잔량 + 기간 사용량 + 기간 출고량 - 기간 조정량)
+        // 단, 기간 내 입고된 LOT은 이월이 0
+        const isNewLot = lot.inbound_date >= startDate && lot.inbound_date <= endDate;
+        const lotCarryOver = isNewLot ? 0 : (lot.remain_qty + lot.period_usage + lot.period_outbound - lot.period_adjustment);
+        const lotPeriodInbound = isNewLot ? lot.origin_qty : 0;
+        const lotClosingQty = lotCarryOver + lotPeriodInbound - lot.period_usage - lot.period_outbound + lot.period_adjustment;
+        
+        return {
+          order: idx + 1,
+          lot_number: lot.lot_number,
+          inbound_date: lot.inbound_date,
+          expiry_date: lot.expiry_date,
+          origin_qty: lot.origin_qty,
+          remain_qty: lot.remain_qty,
+          supplier: lot.supplier || '-',
+          quality_status: lot.quality_status,
+          carry_over: lotCarryOver,
+          period_inbound: lotPeriodInbound,
+          period_usage: lot.period_usage,
+          period_outbound: lot.period_outbound,
+          period_adjustment: lot.period_adjustment,
+          closing_qty: lotClosingQty
+        };
+      });
+      
+      item.lots = lots;
+      item.lot_count = lots.length;
+      totalLotCount += lots.length;
+    }
     
     // 전체 요약
     const summary = itemData.reduce((acc: any, item: any) => {
@@ -726,7 +780,7 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
         month
       },
       item_count: itemData.length,
-      total_lot_count: 0
+      total_lot_count: totalLotCount
     });
     
   } catch (error: any) {

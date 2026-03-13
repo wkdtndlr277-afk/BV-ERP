@@ -1411,10 +1411,10 @@ async function printRawMaterialInspection(inboundData) {
           margin-bottom: 8px;
         }
         .approval-box table {
-          width: 100px;
+          width: 90px;
         }
-        .approval-box th { height: 20px; font-size: 9px; }
-        .approval-box td { height: 28px; }
+        .approval-box th { height: 18px; font-size: 8px; }
+        .approval-box td { height: 22px; }
         
         .title {
           text-align: center;
@@ -1528,18 +1528,8 @@ async function printRawMaterialInspection(inboundData) {
             <td class="result">☐적합 ☐부적합</td>
           </tr>
           <tr>
-            <td class="item">수입식품 및<br>원산지증명서</td>
-            <td>수입되는 원료의 경우 수입식품증명서가 있어야 한다. (해당시)</td>
-            <td class="result">☐적합 ☐부적합</td>
-          </tr>
-          <tr>
-            <td class="item">잔류성<br>농약검사성적서</td>
-            <td>원료에 잔류농약검사성적서가 있어야 한다. (해당시)</td>
-            <td class="result">☐적합 ☐부적합</td>
-          </tr>
-          <tr>
-            <td class="item">원산지</td>
-            <td>제품별 상이</td>
+            <td class="item">수입서류 및<br>원산지증명서</td>
+            <td>수입 원료일 경우 수입신고필증 및 확인증, 국내원료일 경우 원산지 증명서가 있어야 한다.</td>
             <td class="result">☐적합 ☐부적합</td>
           </tr>
           <tr>

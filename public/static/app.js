@@ -22002,8 +22002,16 @@ async function renderInboundQuery() {
       
       <!-- 상세 데이터 테이블 -->
       <div class="bg-white rounded-xl shadow">
-        <div class="p-4 border-b">
+        <div class="p-4 border-b flex justify-between items-center">
           <h4 class="font-bold text-gray-800"><i class="fas fa-list mr-2"></i>입고 상세 내역</h4>
+          <div class="flex gap-2">
+            <button onclick="printSelectedInspections()" class="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700">
+              <i class="fas fa-print mr-1"></i> 선택 검사일지 인쇄
+            </button>
+            <button onclick="printAllInspections()" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+              <i class="fas fa-file-alt mr-1"></i> 전체 검사일지 인쇄
+            </button>
+          </div>
         </div>
         <div id="inbound-query-table" class="overflow-x-auto" style="max-height: 500px; overflow-y: auto;">
           <p class="text-gray-500 text-center py-8">조회 버튼을 클릭하세요</p>
@@ -22178,6 +22186,9 @@ function renderInboundQueryTable(details, viewType) {
     <table class="w-full text-sm">
       <thead class="bg-gray-100 sticky top-0">
         <tr>
+          <th class="px-2 py-2 text-center w-10">
+            <input type="checkbox" id="select-all-inbound" onchange="toggleAllInboundSelect()" class="w-4 h-4">
+          </th>
           <th class="px-3 py-2 text-left">입고일</th>
           <th class="px-3 py-2 text-left">LOT번호</th>
           <th class="px-3 py-2 text-left">품목코드</th>
@@ -22198,6 +22209,9 @@ function renderInboundQueryTable(details, viewType) {
                               'bg-yellow-100 text-yellow-700';
           return `
             <tr class="border-b hover:bg-blue-50">
+              <td class="px-2 py-2 text-center">
+                <input type="checkbox" class="inbound-select-checkbox w-4 h-4" data-index="${idx}">
+              </td>
               <td class="px-3 py-2">${row.inbound_date}</td>
               <td class="px-3 py-2 font-mono text-xs text-blue-600">${row.lot_number}</td>
               <td class="px-3 py-2 text-gray-600">${row.item_code}</td>
@@ -22210,8 +22224,8 @@ function renderInboundQueryTable(details, viewType) {
               <td class="px-3 py-2 text-gray-600">${row.supplier || '-'}</td>
               <td class="px-3 py-2 text-center">
                 <button onclick="printInboundInspectionFromQuery(${idx})" 
-                        class="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600" title="검사일지 인쇄">
-                  <i class="fas fa-print"></i>
+                        class="px-2 py-1 bg-orange-500 text-white rounded text-xs hover:bg-orange-600 font-medium" title="검사일지 인쇄">
+                  <i class="fas fa-print mr-1"></i>인쇄
                 </button>
               </td>
             </tr>
@@ -22323,6 +22337,61 @@ function printInboundInspectionFromQuery(index) {
   
   const inboundData = data.details[index];
   printInboundInspection(inboundData);
+}
+
+// 전체 선택 토글
+function toggleAllInboundSelect() {
+  const selectAll = document.getElementById('select-all-inbound');
+  const checkboxes = document.querySelectorAll('.inbound-select-checkbox');
+  checkboxes.forEach(cb => cb.checked = selectAll.checked);
+}
+
+// 선택된 항목 검사일지 인쇄
+function printSelectedInspections() {
+  const data = window.inboundQueryData;
+  if (!data || !data.details) {
+    showToast('조회된 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const checkboxes = document.querySelectorAll('.inbound-select-checkbox:checked');
+  if (checkboxes.length === 0) {
+    showToast('인쇄할 항목을 선택해주세요.', 'warning');
+    return;
+  }
+  
+  const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.dataset.index));
+  
+  // 순차적으로 인쇄 창 열기
+  selectedIndices.forEach((idx, i) => {
+    setTimeout(() => {
+      printInboundInspection(data.details[idx]);
+    }, i * 500); // 0.5초 간격으로 인쇄
+  });
+  
+  showToast(`${selectedIndices.length}건의 검사일지 인쇄를 시작합니다.`, 'success');
+}
+
+// 전체 검사일지 인쇄
+function printAllInspections() {
+  const data = window.inboundQueryData;
+  if (!data || !data.details || data.details.length === 0) {
+    showToast('조회된 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  if (!confirm(`총 ${data.details.length}건의 검사일지를 인쇄하시겠습니까?`)) {
+    return;
+  }
+  
+  // 순차적으로 인쇄 창 열기
+  data.details.forEach((item, i) => {
+    setTimeout(() => {
+      printInboundInspection(item);
+    }, i * 500); // 0.5초 간격으로 인쇄
+  });
+  
+  showToast(`${data.details.length}건의 검사일지 인쇄를 시작합니다.`, 'success');
 }
 
 // ==================== 재고 수불부 ====================
@@ -23904,6 +23973,9 @@ window.printRawMaterialInspection = printRawMaterialInspection;
 window.printSubMaterialInspection = printSubMaterialInspection;
 window.showInspectionPrintPrompt = showInspectionPrintPrompt;
 window.printDashboard = printDashboard;
+window.toggleAllInboundSelect = toggleAllInboundSelect;
+window.printSelectedInspections = printSelectedInspections;
+window.printAllInspections = printAllInspections;
 
 window.renderStockLedger = renderStockLedger;
 window.switchStockLedgerTab = switchStockLedgerTab;

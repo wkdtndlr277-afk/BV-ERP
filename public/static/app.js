@@ -1365,7 +1365,6 @@ async function printRawMaterialInspection(inboundData) {
     console.error('시험번호 생성 실패:', e);
   }
   
-  // 채취일자, 시험일자는 입고일 기준
   const inboundDate = inboundData.inbound_date || '';
   
   const printWindow = window.open('', '_blank');
@@ -1376,87 +1375,45 @@ async function printRawMaterialInspection(inboundData) {
       <meta charset="UTF-8">
       <title>원료입고 검사일지 - ${inboundData.lot_number}</title>
       <style>
-        @page { 
-          margin: 15mm 12mm; 
-          size: A4; 
-        }
+        @page { margin: 10mm; size: A4; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-          font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;
-          font-size: 10px;
-          line-height: 1.3;
-          color: #000;
-          width: 186mm;
-          margin: 0 auto;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        th, td {
-          border: 1px solid #000;
-          padding: 4px 6px;
-          font-size: 9px;
-          vertical-align: middle;
-        }
-        th {
-          background: #e6f3ff;
-          font-weight: normal;
-          text-align: center;
-        }
+        body { font-family: 'Malgun Gothic', sans-serif; font-size: 10px; color: #000; width: 190mm; margin: 0 auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #000; padding: 4px 6px; font-size: 10px; vertical-align: middle; }
+        th { background: #e6f3ff; font-weight: normal; text-align: center; }
         
-        .header-row {
-          display: flex;
-          justify-content: flex-end;
-          margin-bottom: 8px;
-        }
-        .approval-box table {
-          width: 90px;
-        }
-        .approval-box th { height: 18px; font-size: 8px; }
-        .approval-box td { height: 22px; }
+        .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+        .title { flex: 1; text-align: center; font-size: 18px; font-weight: bold; padding-top: 8px; }
+        .approval-box table { width: 100px; }
+        .approval-box th { height: 22px; font-size: 9px; padding: 3px; }
+        .approval-box td { height: 30px; }
         
-        .title {
-          text-align: center;
-          font-size: 18px;
-          font-weight: bold;
-          margin-bottom: 12px;
-        }
+        .info-table { margin-bottom: 10px; }
+        .info-table th { height: 26px; background: #e6f3ff; }
+        .info-table td { height: 26px; text-align: center; }
         
-        .info-table th { width: 60px; height: 24px; }
-        .info-table td { height: 24px; text-align: center; }
+        .inspection-table { margin-bottom: 10px; }
+        .inspection-table th { height: 24px; }
+        .inspection-table td { height: 26px; }
+        .inspection-table td.item { text-align: center; background: #f9f9f9; width: 110px; }
+        .inspection-table td.result { text-align: center; width: 90px; font-size: 9px; }
         
-        .inspection-table { margin-top: 10px; }
-        .inspection-table th.col-item { width: 100px; }
-        .inspection-table th.col-criteria { }
-        .inspection-table th.col-result { width: 85px; }
-        .inspection-table td { height: 24px; }
-        .inspection-table td.item { text-align: center; background: #f5f5f5; }
-        .inspection-table td.result { text-align: center; font-size: 8px; }
+        .judgment-table { margin-bottom: 10px; }
+        .judgment-table th { background: #90EE90; height: 26px; }
+        .judgment-table td { height: 30px; text-align: center; }
         
-        .judgment-section { margin-top: 10px; }
-        .judgment-section th { background: #90EE90; height: 24px; }
-        .judgment-section td { height: 28px; text-align: center; }
+        .action-table th { background: #fffacd; height: 24px; }
+        .action-table td { height: 28px; }
         
-        .action-section { margin-top: 10px; }
-        .action-section th { background: #fffacd; height: 22px; }
-        .action-section td { height: 26px; }
+        .footer { text-align: center; margin-top: 15px; font-size: 10px; }
         
-        .footer {
-          display: flex;
-          justify-content: space-between;
-          margin-top: 12px;
-          font-size: 8px;
-          color: #666;
-        }
-        
-        @media print {
-          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        }
+        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
       </style>
     </head>
     <body>
-      <div class="header-row">
+      <div class="header">
+        <div style="width: 100px;"></div>
+        <div class="title">원료입고 검사일지</div>
         <div class="approval-box">
           <table>
             <tr><th>검수담당자</th><th>승인</th></tr>
@@ -1465,21 +1422,18 @@ async function printRawMaterialInspection(inboundData) {
         </div>
       </div>
       
-      <div class="title">원료입고 검사일지</div>
-      
-      <!-- 기본 정보 테이블 -->
       <table class="info-table">
         <tr>
-          <th>원료명</th>
-          <td colspan="2">${inboundData.item_name || ''}</td>
-          <th>LOT No</th>
+          <th style="width:60px;">원료명</th>
+          <td>${inboundData.item_name || ''}</td>
+          <th style="width:55px;">LOT No</th>
           <td>${inboundData.lot_number || ''}</td>
-          <th>납품처</th>
+          <th style="width:50px;">납품처</th>
           <td>${inboundData.supplier || '-'}</td>
-          <th>포장단위</th>
+          <th style="width:55px;">포장단위</th>
           <td>${inboundData.unit || 'g'}</td>
-          <th>입고량</th>
-          <td>${formatNumber(inboundData.origin_qty || inboundData.quantity)}</td>
+          <th style="width:50px;">입고량</th>
+          <td style="width:55px;">${formatNumber(inboundData.origin_qty || inboundData.quantity)}</td>
         </tr>
         <tr>
           <th>입고일자</th>
@@ -1492,92 +1446,96 @@ async function printRawMaterialInspection(inboundData) {
           <td></td>
           <th>채취일자</th>
           <td>${inboundDate}</td>
+        </tr>
+        <tr>
           <th>시험일자</th>
-          <td>${inboundDate}</td>
+          <td colspan="9">${inboundDate}</td>
         </tr>
       </table>
       
-      <!-- 검사 항목 테이블 -->
       <table class="inspection-table">
         <thead>
           <tr>
-            <th class="col-item">항목</th>
-            <th class="col-criteria">기준</th>
-            <th class="col-result">시험결과</th>
+            <th class="item">항목</th>
+            <th>기준</th>
+            <th class="result">시험결과</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td class="item">성상</td>
-            <td>이미, 이취가 없고 고유의 향미가 있다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td>이미．이취가 없고 고유의 향미가 있다.</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
             <td class="item">이물 및 포장상태</td>
-            <td>이물이 없어야하고, 파손되거나 찌그러진 부분 없이 양호하며, 심하게 오염된 곳이 없어야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td>이물이 없어야 하고, 파손되거나 찌그러진 부분이 없어야 하며, 심하게 오염된 곳이 없어야 한다.</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
             <td class="item">표시사항</td>
             <td>훼손되지 않아야 하며, 식별이 가능하여야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
             <td class="item">성적서</td>
-            <td>입고된 원료에 해당하는 성적서가 첨부되어야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td>입고된 원료에 해당하는 성적서가 첨부 되어야하며, 시험 결과가 적합한 원료여야한다.</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
             <td class="item">수입서류 및<br>원산지증명서</td>
-            <td>수입 원료일 경우 수입신고필증 및 확인증, 국내원료일 경우 원산지 증명서가 있어야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td>수입 원료일 경우 수입신고필증 및 확인증,<br>국내 원료일 경우 원산지 증명서가 있어야 한다.</td>
+            <td class="result">□적합     □부적합</td>
+          </tr>
+          <tr>
+            <td class="item">원산지</td>
+            <td>제품별 상이</td>
+            <td class="result"></td>
           </tr>
           <tr>
             <td class="item">배송차량청결상태</td>
             <td>배송차량의 청결상태가 입고된 원료에 오염 소지가 없어야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
-            <td class="item">실온보관원료<br>(1℃ ~ 35℃ 이하)</td>
-            <td>실온보관: 1℃ ~ 35℃ 이하</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td class="item">실온보관원료<br>(1 ℃ ~ 35 ℃ 이하)</td>
+            <td>실온보관(1 ℃ ~ 35 ℃ 이하)</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
-            <td class="item">냉장보관원료<br>(0℃ ~ 10℃)</td>
+            <td class="item">냉장보관 원료<br>(0 ℃ ~ 10 ℃ 이하)</td>
             <td>냉장차량 운송시 타코메타 기록지 확인</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
-            <td class="item">냉동보관 원료<br>(-18℃ 이하)</td>
+            <td class="item">냉동보관 원료<br>(-18 ℃ 이하)</td>
             <td>냉동차량 운송시 타코메타 기록지 확인</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
         </tbody>
       </table>
       
-      <!-- 종합 판정 -->
-      <table class="judgment-section">
+      <table class="judgment-table">
         <tr>
-          <th style="width: 100px;">종 합 판 정</th>
-          <td style="width: 40%;"></td>
-          <th style="width: 70px;">판정일자</th>
-          <td style="width: 15%;"></td>
-          <th style="width: 70px;">판 정 자</th>
+          <th style="width:100px;">종 합 판 정</th>
+          <td style="width:35%;"></td>
+          <th style="width:70px;">판정일자</th>
+          <td style="width:15%;"></td>
+          <th style="width:60px;">판정자</th>
           <td></td>
         </tr>
       </table>
       
-      <!-- 이탈 시 조치사항 -->
-      <table class="action-section">
+      <table class="action-table">
         <tr>
           <th colspan="5">이탈 시 조치사항</th>
         </tr>
         <tr>
-          <th style="width: 60px;">일자</th>
-          <th style="width: 130px;">이상발생내역</th>
+          <th style="width:70px;">일자</th>
+          <th style="width:130px;">이상발생내역</th>
           <th>조치내역 및 결과</th>
-          <th style="width: 70px;">완료일</th>
-          <th style="width: 50px;">확인</th>
+          <th style="width:70px;">완료일</th>
+          <th style="width:50px;">확인</th>
         </tr>
         <tr>
           <td></td>
@@ -1588,6 +1546,7 @@ async function printRawMaterialInspection(inboundData) {
         </tr>
       </table>
       
+      <div class="footer">㈜본비반트</div>
     </body>
     </html>
   `);
@@ -1627,89 +1586,50 @@ async function printSubMaterialInspection(inboundData) {
       <meta charset="UTF-8">
       <title>부자재입고 검사일지 - ${inboundData.lot_number || inboundData.item_code}</title>
       <style>
-        @page { 
-          margin: 15mm 12mm; 
-          size: A4; 
-        }
+        @page { margin: 10mm; size: A4; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-          font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;
-          font-size: 10px;
-          line-height: 1.3;
-          color: #000;
-          width: 186mm;
-          margin: 0 auto;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        th, td {
-          border: 1px solid #000;
-          padding: 5px 8px;
-          font-size: 9px;
-          vertical-align: middle;
-        }
-        th {
-          background: #e6f3ff;
-          font-weight: normal;
-          text-align: center;
-        }
+        body { font-family: 'Malgun Gothic', sans-serif; font-size: 10px; color: #000; width: 190mm; margin: 0 auto; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #000; padding: 4px 6px; font-size: 10px; vertical-align: middle; }
+        th { background: #e6f3ff; font-weight: normal; text-align: center; }
         
-        .title {
-          text-align: center;
-          font-size: 18px;
-          font-weight: bold;
-          margin-bottom: 15px;
-        }
+        .title { text-align: center; font-size: 18px; font-weight: bold; margin-bottom: 15px; }
         
         .info-table { margin-bottom: 10px; }
-        .info-table th { width: 70px; height: 28px; }
-        .info-table td { height: 28px; text-align: center; }
+        .info-table th { height: 26px; background: #e6f3ff; }
+        .info-table td { height: 26px; text-align: center; }
         
-        .inspection-table { margin-top: 15px; }
-        .inspection-table th.col-item { width: 100px; }
-        .inspection-table th.col-criteria { }
-        .inspection-table th.col-result { width: 85px; }
-        .inspection-table td { height: 32px; }
-        .inspection-table td.item { text-align: center; background: #f5f5f5; }
-        .inspection-table td.result { text-align: center; font-size: 8px; }
+        .inspection-table { margin-bottom: 10px; }
+        .inspection-table th { height: 24px; }
+        .inspection-table td { height: 30px; }
+        .inspection-table td.item { text-align: center; background: #f9f9f9; width: 110px; }
+        .inspection-table td.result { text-align: center; width: 90px; font-size: 9px; }
         
-        .judgment-section { margin-top: 15px; }
-        .judgment-section th { background: #90EE90; height: 28px; }
-        .judgment-section td { height: 32px; text-align: center; }
+        .judgment-table { margin-bottom: 10px; }
+        .judgment-table th { background: #90EE90; height: 26px; }
+        .judgment-table td { height: 30px; text-align: center; }
         
-        .action-section { margin-top: 15px; }
-        .action-section th { background: #fffacd; height: 26px; }
-        .action-section td { height: 30px; }
+        .action-table th { background: #fffacd; height: 24px; }
+        .action-table td { height: 28px; }
         
-        .footer {
-          display: flex;
-          justify-content: space-between;
-          margin-top: 15px;
-          font-size: 8px;
-          color: #666;
-        }
+        .footer { text-align: center; margin-top: 15px; font-size: 10px; }
         
-        @media print {
-          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-        }
+        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
       </style>
     </head>
     <body>
       <div class="title">부자재입고 검사일지</div>
       
-      <!-- 기본 정보 테이블 -->
       <table class="info-table">
         <tr>
-          <th>부자재명</th>
+          <th style="width:70px;">부자재명</th>
           <td colspan="2">${inboundData.item_name || ''}</td>
-          <th>입고량</th>
+          <th style="width:60px;">입고량</th>
           <td>${formatNumber(inboundData.origin_qty || inboundData.quantity)}</td>
-          <th>시험번호</th>
+          <th style="width:65px;">시험번호</th>
           <td>${inspectionNumber}</td>
-          <th>거래업체</th>
-          <td colspan="2">${inboundData.supplier || '-'}</td>
+          <th style="width:65px;">거래업체</th>
+          <td>${inboundData.supplier || '-'}</td>
         </tr>
         <tr>
           <th>채취자</th>
@@ -1719,76 +1639,73 @@ async function printSubMaterialInspection(inboundData) {
           <th>채취방법</th>
           <td>무작위</td>
           <th>시험일자</th>
-          <td colspan="2">${inboundDate}</td>
+          <td>${inboundDate}</td>
         </tr>
       </table>
       
-      <!-- 검사 항목 테이블 -->
       <table class="inspection-table">
         <thead>
           <tr>
-            <th class="col-item">항목</th>
-            <th class="col-criteria">기준</th>
-            <th class="col-result">시험결과</th>
+            <th class="item">항목</th>
+            <th>기준</th>
+            <th class="result">시험결과</th>
           </tr>
         </thead>
         <tbody>
           <tr>
             <td class="item">표시사항</td>
-            <td>포장 부자재 표시내용과 일치 하여야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td>표준 부자재 표시내용과 일치 하여야 한다.</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
             <td class="item">포장상태</td>
             <td>파손되거나 손상된 부분이 없어야 하며, 위생상태가 양호해야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
             <td class="item">인쇄상태</td>
-            <td>포장 부자재에 서류에 첨부된 내용을 토대로 인쇄되어 있어야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td>표준 부자재와 색도가 동일해야 하며, 글자는 내용을 명확히 구분할 수 있도록 인쇄되어 있어야 한다.</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
-            <td class="item">절단면 및<br>접착단 상태</td>
-            <td>절단면은 깔끔하게 커팅 되어 있어야 하며, 접착면은 접착 상태가 양호하고, 마감처리가 깔끔해야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td class="item">절단면 및<br>접착면 상태</td>
+            <td>절단면은 깔끔하게 처리 되어 있어야 하며, 접착면은 접착 상태가 양호하고, 마감처리가 깔끔해야 한다.</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
             <td class="item">성적서</td>
-            <td>식품접촉가능이 입고된 부자재에 적합하는 성적서가 첨부되어야 하며, 시험 결과가 적합한 부자재여야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td>식품직접자재인 경우 입고된 부자재에 해당하는 성적서가 첨부되어야 하며, 시험 결과가 적합한 부자재여야 한다.</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
           <tr>
             <td class="item">배송차량청결상태</td>
             <td>배송차량의 청결상태가 입고된 부자재에 오염 소지가 없어야 한다.</td>
-            <td class="result">☐적합 ☐부적합</td>
+            <td class="result">□적합     □부적합</td>
           </tr>
         </tbody>
       </table>
       
-      <!-- 종합 판정 -->
-      <table class="judgment-section">
+      <table class="judgment-table">
         <tr>
-          <th style="width: 100px;">종합판정</th>
-          <td style="width: 40%;"></td>
-          <th style="width: 70px;">판정일자</th>
-          <td style="width: 15%;"></td>
-          <th style="width: 70px;">판 정 자</th>
+          <th style="width:100px;">종합판정</th>
+          <td style="width:35%;"></td>
+          <th style="width:70px;">판정일자</th>
+          <td style="width:15%;"></td>
+          <th style="width:60px;">판정자</th>
           <td></td>
         </tr>
       </table>
       
-      <!-- 이탈 시 조치사항 -->
-      <table class="action-section">
+      <table class="action-table">
         <tr>
           <th colspan="5">이탈 시 조치사항</th>
         </tr>
         <tr>
-          <th style="width: 60px;">일자</th>
-          <th style="width: 130px;">이상발생내역</th>
+          <th style="width:70px;">일자</th>
+          <th style="width:130px;">이상발생내역</th>
           <th>조치내역 및 결과</th>
-          <th style="width: 70px;">완료일</th>
-          <th style="width: 50px;">확인</th>
+          <th style="width:70px;">완료일</th>
+          <th style="width:50px;">확인</th>
         </tr>
         <tr>
           <td></td>
@@ -1799,6 +1716,7 @@ async function printSubMaterialInspection(inboundData) {
         </tr>
       </table>
       
+      <div class="footer">㈜본비반트</div>
     </body>
     </html>
   `);

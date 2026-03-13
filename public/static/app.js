@@ -1347,8 +1347,26 @@ async function printDashboard() {
 }
 
 // 원료입고 검사일지 인쇄
-function printRawMaterialInspection(inboundData) {
-  const today = new Date().toISOString().split('T')[0];
+async function printRawMaterialInspection(inboundData) {
+  // 시험번호 자동 생성
+  let inspectionNumber = '';
+  try {
+    const response = await api('/inspection-number', 'POST', {
+      lot_number: inboundData.lot_number,
+      item_code: inboundData.item_code,
+      item_name: inboundData.item_name,
+      category: inboundData.category || '원료',
+      inbound_date: inboundData.inbound_date
+    });
+    if (response.success) {
+      inspectionNumber = response.inspection_number;
+    }
+  } catch (e) {
+    console.error('시험번호 생성 실패:', e);
+  }
+  
+  // 채취일자, 시험일자는 입고일 기준
+  const inboundDate = inboundData.inbound_date || '';
   
   // 검사 항목 기준 정의
   const inspectionCriteria = {
@@ -1374,38 +1392,38 @@ function printRawMaterialInspection(inboundData) {
       <title>원료입고 검사일지 - ${inboundData.lot_number}</title>
       <style>
         @page { 
-          margin: 15mm; 
+          margin: 12mm; 
           size: A4; 
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
           font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;
-          font-size: 11px;
+          font-size: 10px;
           line-height: 1.4;
           color: #000;
           padding: 0;
           width: 100%;
-          max-width: 180mm;
+          max-width: 186mm;
           margin: 0 auto;
         }
         .header {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          margin-bottom: 12px;
+          margin-bottom: 10px;
         }
         .title {
           flex: 1;
           text-align: center;
         }
         .title h1 {
-          font-size: 20px;
+          font-size: 18px;
           font-weight: bold;
           border: none;
-          padding: 10px 0;
+          padding: 8px 0;
         }
         .approval-box {
-          width: 160px;
+          width: 120px;
         }
         .approval-box table {
           width: 100%;
@@ -1413,32 +1431,32 @@ function printRawMaterialInspection(inboundData) {
         }
         .approval-box th, .approval-box td {
           border: 1px solid #000;
-          padding: 4px 8px;
+          padding: 2px 4px;
           text-align: center;
-          font-size: 10px;
+          font-size: 9px;
         }
         .approval-box th {
           background: #e6f3ff;
-          height: 24px;
+          height: 18px;
         }
         .approval-box td {
-          height: 45px;
+          height: 28px;
         }
         
         .info-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 12px;
+          margin-bottom: 8px;
         }
         .info-table th, .info-table td {
           border: 1px solid #000;
-          padding: 8px 10px;
-          font-size: 11px;
-          height: 32px;
+          padding: 5px 6px;
+          font-size: 10px;
+          height: 26px;
         }
         .info-table th {
           background: #e6f3ff;
-          width: 70px;
+          width: 65px;
           text-align: center;
           font-weight: normal;
         }
@@ -1449,53 +1467,53 @@ function printRawMaterialInspection(inboundData) {
         .inspection-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 12px;
+          margin-bottom: 8px;
         }
         .inspection-table th, .inspection-table td {
           border: 1px solid #000;
-          padding: 8px 10px;
-          font-size: 10px;
+          padding: 5px 6px;
+          font-size: 9px;
           vertical-align: middle;
         }
         .inspection-table th {
           background: #e6f3ff;
           text-align: center;
           font-weight: normal;
-          height: 28px;
+          height: 22px;
         }
-        .inspection-table th.header-item { width: 120px; }
+        .inspection-table th.header-item { width: 110px; }
         .inspection-table th.header-criteria { width: auto; }
-        .inspection-table th.header-result { width: 100px; }
+        .inspection-table th.header-result { width: 90px; }
         .inspection-table td.item-name {
           text-align: center;
           background: #f9f9f9;
-          height: 32px;
+          height: 26px;
         }
         .inspection-table td.criteria {
-          font-size: 10px;
-          line-height: 1.5;
-          height: 32px;
+          font-size: 9px;
+          line-height: 1.4;
+          height: 26px;
         }
         .inspection-table td.result {
           text-align: center;
-          height: 32px;
+          height: 26px;
         }
         
         .judgment-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 12px;
+          margin-bottom: 8px;
         }
         .judgment-table th, .judgment-table td {
           border: 1px solid #000;
-          padding: 10px;
-          font-size: 11px;
-          height: 40px;
+          padding: 6px;
+          font-size: 10px;
+          height: 32px;
         }
         .judgment-table th {
           background: #90EE90;
           text-align: center;
-          width: 120px;
+          width: 100px;
         }
         .judgment-table td {
           text-align: center;
@@ -1504,30 +1522,30 @@ function printRawMaterialInspection(inboundData) {
         .action-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 12px;
+          margin-bottom: 8px;
         }
         .action-table th, .action-table td {
           border: 1px solid #000;
-          padding: 8px 10px;
-          font-size: 10px;
+          padding: 5px 6px;
+          font-size: 9px;
         }
         .action-table th {
           background: #fffacd;
           text-align: center;
-          height: 28px;
+          height: 22px;
         }
         .action-table td {
-          height: 35px;
+          height: 28px;
         }
         
         .footer {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          font-size: 9px;
+          font-size: 8px;
           color: #666;
-          margin-top: 15px;
-          padding-top: 8px;
+          margin-top: 10px;
+          padding-top: 6px;
           border-top: 1px solid #ccc;
         }
         
@@ -1538,13 +1556,13 @@ function printRawMaterialInspection(inboundData) {
     </head>
     <body>
       <div class="header">
-        <div style="width: 160px;"></div>
+        <div style="width: 120px;"></div>
         <div class="title">
           <h1>원료입고 검사일지</h1>
         </div>
         <div class="approval-box">
           <table>
-            <tr><th>검수담당자</th><th>승인</th></tr>
+            <tr><th>담당</th><th>승인</th></tr>
             <tr><td></td><td></td></tr>
           </table>
         </div>
@@ -1554,15 +1572,15 @@ function printRawMaterialInspection(inboundData) {
       <table class="info-table">
         <tr>
           <th>원료명</th>
-          <td style="width: 25%;">${inboundData.item_name || ''}</td>
+          <td style="width: 28%;">${inboundData.item_name || ''}</td>
           <th>LOT No</th>
-          <td style="width: 25%;">${inboundData.lot_number || ''}</td>
+          <td style="width: 28%;">${inboundData.lot_number || ''}</td>
           <th>납품처</th>
           <td>${inboundData.supplier || '-'}</td>
         </tr>
         <tr>
           <th>입고일자</th>
-          <td>${inboundData.inbound_date || ''}</td>
+          <td>${inboundDate}</td>
           <th>소비기한</th>
           <td>${inboundData.expiry_date || ''}</td>
           <th>입고량</th>
@@ -1570,11 +1588,11 @@ function printRawMaterialInspection(inboundData) {
         </tr>
         <tr>
           <th>시험번호</th>
-          <td></td>
+          <td>${inspectionNumber}</td>
           <th>채취일자</th>
-          <td></td>
+          <td>${inboundDate}</td>
           <th>시험일자</th>
-          <td></td>
+          <td>${inboundDate}</td>
         </tr>
       </table>
       
@@ -1618,11 +1636,11 @@ function printRawMaterialInspection(inboundData) {
           <th colspan="5" style="background: #fffacd;">이탈 시 조치사항</th>
         </tr>
         <tr>
-          <th style="width: 80px;">일자</th>
-          <th style="width: 180px;">이상발생내역</th>
+          <th style="width: 70px;">일자</th>
+          <th style="width: 160px;">이상발생내역</th>
           <th>조치내역 및 결과</th>
-          <th style="width: 90px;">완료일</th>
-          <th style="width: 70px;">확인</th>
+          <th style="width: 80px;">완료일</th>
+          <th style="width: 60px;">확인</th>
         </tr>
         <tr>
           <td></td>
@@ -1655,8 +1673,26 @@ function printRawMaterialInspection(inboundData) {
 }
 
 // 부자재입고 검사일지 인쇄
-function printSubMaterialInspection(inboundData) {
-  const today = new Date().toISOString().split('T')[0];
+async function printSubMaterialInspection(inboundData) {
+  // 시험번호 자동 생성
+  let inspectionNumber = '';
+  try {
+    const response = await api('/inspection-number', 'POST', {
+      lot_number: inboundData.lot_number,
+      item_code: inboundData.item_code,
+      item_name: inboundData.item_name,
+      category: inboundData.category || '부자재',
+      inbound_date: inboundData.inbound_date
+    });
+    if (response.success) {
+      inspectionNumber = response.inspection_number;
+    }
+  } catch (e) {
+    console.error('시험번호 생성 실패:', e);
+  }
+  
+  // 채취일자, 시험일자는 입고일 기준
+  const inboundDate = inboundData.inbound_date || '';
   
   // 부자재 검사 항목 기준 정의
   const inspectionCriteria = {
@@ -1677,37 +1713,37 @@ function printSubMaterialInspection(inboundData) {
       <title>부자재입고 검사일지 - ${inboundData.lot_number || inboundData.item_code}</title>
       <style>
         @page { 
-          margin: 15mm; 
+          margin: 12mm; 
           size: A4; 
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
           font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;
-          font-size: 11px;
+          font-size: 10px;
           line-height: 1.4;
           color: #000;
           padding: 0;
           width: 100%;
-          max-width: 180mm;
+          max-width: 186mm;
           margin: 0 auto;
         }
         .header {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          margin-bottom: 15px;
+          margin-bottom: 10px;
         }
         .title {
           flex: 1;
           text-align: center;
         }
         .title h1 {
-          font-size: 20px;
+          font-size: 18px;
           font-weight: bold;
-          padding: 10px 0;
+          padding: 8px 0;
         }
         .approval-box {
-          width: 160px;
+          width: 120px;
         }
         .approval-box table {
           width: 100%;
@@ -1715,32 +1751,32 @@ function printSubMaterialInspection(inboundData) {
         }
         .approval-box th, .approval-box td {
           border: 1px solid #000;
-          padding: 4px 8px;
+          padding: 2px 4px;
           text-align: center;
-          font-size: 10px;
+          font-size: 9px;
         }
         .approval-box th {
           background: #e6f3ff;
-          height: 24px;
+          height: 18px;
         }
         .approval-box td {
-          height: 45px;
+          height: 28px;
         }
         
         .info-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 15px;
+          margin-bottom: 10px;
         }
         .info-table th, .info-table td {
           border: 1px solid #000;
-          padding: 10px 12px;
-          font-size: 11px;
-          height: 38px;
+          padding: 6px 8px;
+          font-size: 10px;
+          height: 28px;
         }
         .info-table th {
           background: #e6f3ff;
-          width: 80px;
+          width: 70px;
           text-align: center;
           font-weight: normal;
         }
@@ -1751,53 +1787,53 @@ function printSubMaterialInspection(inboundData) {
         .inspection-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 15px;
+          margin-bottom: 10px;
         }
         .inspection-table th, .inspection-table td {
           border: 1px solid #000;
-          padding: 12px 14px;
-          font-size: 11px;
+          padding: 8px 10px;
+          font-size: 10px;
           vertical-align: middle;
         }
         .inspection-table th {
           background: #e6f3ff;
           text-align: center;
           font-weight: normal;
-          height: 32px;
+          height: 26px;
         }
-        .inspection-table th.header-item { width: 140px; }
+        .inspection-table th.header-item { width: 120px; }
         .inspection-table th.header-criteria { width: auto; }
-        .inspection-table th.header-result { width: 100px; }
+        .inspection-table th.header-result { width: 90px; }
         .inspection-table td.item-name {
           text-align: center;
           background: #f9f9f9;
-          height: 45px;
+          height: 36px;
         }
         .inspection-table td.criteria {
-          font-size: 11px;
-          line-height: 1.6;
-          height: 45px;
+          font-size: 10px;
+          line-height: 1.5;
+          height: 36px;
         }
         .inspection-table td.result {
           text-align: center;
-          height: 45px;
+          height: 36px;
         }
         
         .judgment-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 15px;
+          margin-bottom: 10px;
         }
         .judgment-table th, .judgment-table td {
           border: 1px solid #000;
-          padding: 12px;
-          font-size: 11px;
-          height: 45px;
+          padding: 8px;
+          font-size: 10px;
+          height: 36px;
         }
         .judgment-table th {
           background: #90EE90;
           text-align: center;
-          width: 120px;
+          width: 100px;
         }
         .judgment-table td {
           text-align: center;
@@ -1806,30 +1842,30 @@ function printSubMaterialInspection(inboundData) {
         .action-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 15px;
+          margin-bottom: 10px;
         }
         .action-table th, .action-table td {
           border: 1px solid #000;
-          padding: 10px 12px;
-          font-size: 10px;
+          padding: 6px 8px;
+          font-size: 9px;
         }
         .action-table th {
           background: #fffacd;
           text-align: center;
-          height: 32px;
+          height: 24px;
         }
         .action-table td {
-          height: 40px;
+          height: 32px;
         }
         
         .footer {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-top: 20px;
-          padding-top: 10px;
+          margin-top: 12px;
+          padding-top: 8px;
           border-top: 1px solid #ccc;
-          font-size: 9px;
+          font-size: 8px;
           color: #666;
         }
         
@@ -1840,13 +1876,13 @@ function printSubMaterialInspection(inboundData) {
     </head>
     <body>
       <div class="header">
-        <div style="width: 160px;"></div>
+        <div style="width: 120px;"></div>
         <div class="title">
           <h1>부자재입고 검사일지</h1>
         </div>
         <div class="approval-box">
           <table>
-            <tr><th>검수담당자</th><th>승인</th></tr>
+            <tr><th>담당</th><th>승인</th></tr>
             <tr><td></td><td></td></tr>
           </table>
         </div>
@@ -1864,19 +1900,19 @@ function printSubMaterialInspection(inboundData) {
         </tr>
         <tr>
           <th>시험번호</th>
-          <td></td>
+          <td>${inspectionNumber}</td>
           <th>채취장소</th>
           <td>부자재창고</td>
-          <th>시험일자</th>
-          <td></td>
+          <th>입고일자</th>
+          <td>${inboundDate}</td>
         </tr>
         <tr>
           <th>채취자</th>
           <td></td>
           <th>채취방법</th>
           <td>무작위</td>
-          <th>입고일자</th>
-          <td>${inboundData.inbound_date || ''}</td>
+          <th>시험일자</th>
+          <td>${inboundDate}</td>
         </tr>
       </table>
       
@@ -1920,11 +1956,11 @@ function printSubMaterialInspection(inboundData) {
           <th colspan="5" style="background: #fffacd;">이탈 시 조치사항</th>
         </tr>
         <tr>
-          <th style="width: 80px;">일자</th>
-          <th style="width: 180px;">이상발생내역</th>
+          <th style="width: 70px;">일자</th>
+          <th style="width: 160px;">이상발생내역</th>
           <th>조치내역 및 결과</th>
-          <th style="width: 90px;">완료일</th>
-          <th style="width: 70px;">확인</th>
+          <th style="width: 80px;">완료일</th>
+          <th style="width: 60px;">확인</th>
         </tr>
         <tr>
           <td></td>
@@ -1957,7 +1993,7 @@ function printSubMaterialInspection(inboundData) {
 }
 
 // 입고 검사일지 인쇄 (카테고리에 따라 자동 선택)
-function printInboundInspection(inboundData) {
+async function printInboundInspection(inboundData) {
   if (!inboundData) {
     showToast('인쇄할 입고 데이터가 없습니다.', 'warning');
     return;
@@ -1965,10 +2001,10 @@ function printInboundInspection(inboundData) {
   
   // 카테고리에 따라 적절한 검사일지 출력
   if (inboundData.category === '부자재') {
-    printSubMaterialInspection(inboundData);
+    await printSubMaterialInspection(inboundData);
   } else {
     // 원료 또는 기타 (기본값: 원료입고 검사일지)
-    printRawMaterialInspection(inboundData);
+    await printRawMaterialInspection(inboundData);
   }
 }
 

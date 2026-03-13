@@ -63,6 +63,83 @@ app.get('/api/health', (c) => {
   return c.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// 시험번호 생성 API (연도-순번 형식)
+app.post('/api/inspection-number', async (c) => {
+  try {
+    const year = new Date().getFullYear();
+    
+    // 시험번호 테이블 생성 (없으면)
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS inspection_numbers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        year INTEGER NOT NULL,
+        sequence INTEGER NOT NULL,
+        inspection_number TEXT NOT NULL UNIQUE,
+        lot_number TEXT,
+        item_code TEXT,
+        item_name TEXT,
+        category TEXT,
+        inbound_date TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    
+    // 해당 연도의 마지막 순번 조회
+    const lastSeq = await c.env.DB.prepare(`
+      SELECT MAX(sequence) as max_seq FROM inspection_numbers WHERE year = ?
+    `).bind(year).first() as { max_seq: number | null };
+    
+    const nextSeq = (lastSeq?.max_seq || 0) + 1;
+    const inspectionNumber = `${year}-${String(nextSeq).padStart(4, '0')}`;
+    
+    // 요청 데이터 가져오기
+    const body = await c.req.json().catch(() => ({}));
+    
+    // 시험번호 저장
+    await c.env.DB.prepare(`
+      INSERT INTO inspection_numbers (year, sequence, inspection_number, lot_number, item_code, item_name, category, inbound_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      year, 
+      nextSeq, 
+      inspectionNumber,
+      body.lot_number || null,
+      body.item_code || null,
+      body.item_name || null,
+      body.category || null,
+      body.inbound_date || null
+    ).run();
+    
+    return c.json({ 
+      success: true, 
+      inspection_number: inspectionNumber,
+      year,
+      sequence: nextSeq
+    });
+  } catch (error) {
+    console.error('Inspection number error:', error);
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
+// 시험번호 조회 API
+app.get('/api/inspection-number/:number', async (c) => {
+  try {
+    const number = c.req.param('number');
+    const result = await c.env.DB.prepare(`
+      SELECT * FROM inspection_numbers WHERE inspection_number = ?
+    `).bind(number).first();
+    
+    if (!result) {
+      return c.json({ success: false, error: '시험번호를 찾을 수 없습니다.' }, 404);
+    }
+    
+    return c.json({ success: true, data: result });
+  } catch (error) {
+    return c.json({ success: false, error: String(error) }, 500);
+  }
+});
+
 // DB 초기화 (필요한 테이블 자동 생성)
 app.get('/api/init-db', async (c) => {
   try {

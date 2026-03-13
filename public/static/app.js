@@ -1352,14 +1352,14 @@ function printRawMaterialInspection(inboundData) {
   
   // 검사 항목 기준 정의
   const inspectionCriteria = {
-    '성상': '메뉴, 이취가 없고 고유의 향미가 있다.',
+    '성상': '이미, 이취가 없고 고유의 향미가 있다.',
     '이물 및 포장상태': '이물이 없어야하고, 파손되거나 찌그러진 부분 없이 양호하며, 심하게 오염된 곳이 없어야 한다.',
     '표시사항': '훼손되지 않아야 하며, 식별이 가능하여야 한다.',
     '성적서': '입고된 원료에 해당하는 성적서가 첨부되어야 한다.',
     '수입식품 및 원산지증명서': '수입되는 원료의 경우 수입식품증명서가 있어야 한다. (해당시)',
     '잔류성 농약검사성적서': '원료에 잔류농약검사성적서가 있어야 한다. (해당시)',
     '잔사량': '유리조각 없음',
-    '배송지량 점검/실온보관원료': '배송차량의 청결상태가 입고된 원료에 오염을 소지가 없어야 한다.',
+    '배송차량 점검/실온보관원료': '배송차량의 청결상태가 입고된 원료에 오염 소지가 없어야 한다.',
     '심온보관원료': '심온보관: 0℃ ~ 35℃ 이하',
     '냉장보관 원료': '냉장차량 운송시 타코메타 기록지 확인',
     '냉동보관 원료': '냉동차량 운송시 타코메타 기록지 확인'
@@ -1373,32 +1373,39 @@ function printRawMaterialInspection(inboundData) {
       <meta charset="UTF-8">
       <title>원료입고 검사일지 - ${inboundData.lot_number}</title>
       <style>
-        @page { margin: 8mm; size: A4; }
+        @page { 
+          margin: 15mm; 
+          size: A4; 
+        }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
           font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;
-          font-size: 9px;
-          line-height: 1.3;
+          font-size: 11px;
+          line-height: 1.4;
           color: #000;
-          padding: 5px;
+          padding: 0;
+          width: 100%;
+          max-width: 180mm;
+          margin: 0 auto;
         }
         .header {
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
-          margin-bottom: 8px;
+          margin-bottom: 12px;
         }
         .title {
           flex: 1;
           text-align: center;
         }
         .title h1 {
-          font-size: 16px;
+          font-size: 20px;
           font-weight: bold;
           border: none;
+          padding: 10px 0;
         }
         .approval-box {
-          width: 140px;
+          width: 160px;
         }
         .approval-box table {
           width: 100%;
@@ -1406,31 +1413,32 @@ function printRawMaterialInspection(inboundData) {
         }
         .approval-box th, .approval-box td {
           border: 1px solid #000;
-          padding: 2px 4px;
+          padding: 4px 8px;
           text-align: center;
-          font-size: 8px;
+          font-size: 10px;
         }
         .approval-box th {
           background: #e6f3ff;
-          height: 18px;
+          height: 24px;
         }
         .approval-box td {
-          height: 35px;
+          height: 45px;
         }
         
         .info-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 8px;
+          margin-bottom: 12px;
         }
         .info-table th, .info-table td {
           border: 1px solid #000;
-          padding: 4px 6px;
-          font-size: 9px;
+          padding: 8px 10px;
+          font-size: 11px;
+          height: 32px;
         }
         .info-table th {
           background: #e6f3ff;
-          width: 80px;
+          width: 70px;
           text-align: center;
           font-weight: normal;
         }
@@ -1441,88 +1449,86 @@ function printRawMaterialInspection(inboundData) {
         .inspection-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 8px;
+          margin-bottom: 12px;
         }
         .inspection-table th, .inspection-table td {
           border: 1px solid #000;
-          padding: 4px 6px;
-          font-size: 8px;
+          padding: 8px 10px;
+          font-size: 10px;
           vertical-align: middle;
         }
         .inspection-table th {
           background: #e6f3ff;
           text-align: center;
           font-weight: normal;
+          height: 28px;
         }
-        .inspection-table th.header-item { width: 90px; }
+        .inspection-table th.header-item { width: 120px; }
         .inspection-table th.header-criteria { width: auto; }
-        .inspection-table th.header-result { width: 120px; }
+        .inspection-table th.header-result { width: 100px; }
         .inspection-table td.item-name {
           text-align: center;
           background: #f9f9f9;
+          height: 32px;
         }
         .inspection-table td.criteria {
-          font-size: 8px;
-          line-height: 1.4;
+          font-size: 10px;
+          line-height: 1.5;
+          height: 32px;
         }
         .inspection-table td.result {
           text-align: center;
-        }
-        .result-checkbox {
-          display: inline-block;
-          width: 12px;
-          height: 12px;
-          border: 1px solid #000;
-          margin: 0 3px;
-          vertical-align: middle;
-        }
-        .result-checkbox.checked {
-          background: #000;
+          height: 32px;
         }
         
         .judgment-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 8px;
+          margin-bottom: 12px;
         }
         .judgment-table th, .judgment-table td {
           border: 1px solid #000;
-          padding: 6px;
-          font-size: 9px;
+          padding: 10px;
+          font-size: 11px;
+          height: 40px;
         }
         .judgment-table th {
-          background: #e6f3ff;
+          background: #90EE90;
           text-align: center;
-          width: 100px;
+          width: 120px;
         }
         .judgment-table td {
           text-align: center;
-          height: 30px;
         }
         
         .action-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 8px;
+          margin-bottom: 12px;
         }
         .action-table th, .action-table td {
           border: 1px solid #000;
-          padding: 4px 6px;
-          font-size: 8px;
+          padding: 8px 10px;
+          font-size: 10px;
         }
         .action-table th {
           background: #fffacd;
           text-align: center;
+          height: 28px;
         }
         .action-table td {
-          height: 25px;
+          height: 35px;
         }
         
         .footer {
-          text-align: center;
-          font-size: 8px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 9px;
           color: #666;
-          margin-top: 10px;
+          margin-top: 15px;
+          padding-top: 8px;
+          border-top: 1px solid #ccc;
         }
         
         @media print {
@@ -1532,7 +1538,7 @@ function printRawMaterialInspection(inboundData) {
     </head>
     <body>
       <div class="header">
-        <div style="width: 140px;"></div>
+        <div style="width: 160px;"></div>
         <div class="title">
           <h1>원료입고 검사일지</h1>
         </div>
@@ -1548,27 +1554,27 @@ function printRawMaterialInspection(inboundData) {
       <table class="info-table">
         <tr>
           <th>원료명</th>
-          <td>${inboundData.item_name || ''}</td>
+          <td style="width: 25%;">${inboundData.item_name || ''}</td>
           <th>LOT No</th>
-          <td>${inboundData.lot_number || ''}</td>
+          <td style="width: 25%;">${inboundData.lot_number || ''}</td>
           <th>납품처</th>
           <td>${inboundData.supplier || '-'}</td>
-          <th>포장단위</th>
-          <td>${inboundData.unit || ''}</td>
-          <th>입고량</th>
-          <td>${formatNumber(inboundData.origin_qty || inboundData.quantity)} ${inboundData.unit || ''}</td>
         </tr>
         <tr>
           <th>입고일자</th>
           <td>${inboundData.inbound_date || ''}</td>
           <th>소비기한</th>
-          <td colspan="2">${inboundData.expiry_date || ''}</td>
+          <td>${inboundData.expiry_date || ''}</td>
+          <th>입고량</th>
+          <td>${formatNumber(inboundData.origin_qty || inboundData.quantity)} ${inboundData.unit || ''}</td>
+        </tr>
+        <tr>
           <th>시험번호</th>
-          <td colspan="2"></td>
+          <td></td>
           <th>채취일자</th>
-          <td>${inboundData.inbound_date || ''}</td>
+          <td></td>
           <th>시험일자</th>
-          <td>${inboundData.inbound_date || ''}</td>
+          <td></td>
         </tr>
       </table>
       
@@ -1586,11 +1592,7 @@ function printRawMaterialInspection(inboundData) {
             <tr>
               <td class="item-name">${item}</td>
               <td class="criteria">${criteria}</td>
-              <td class="result">
-                <span class="result-checkbox ${inboundData.quality_status === '합격' ? 'checked' : ''}"></span>적합
-                &nbsp;&nbsp;
-                <span class="result-checkbox ${inboundData.quality_status !== '합격' ? 'checked' : ''}"></span>부적합
-              </td>
+              <td class="result"></td>
             </tr>
           `).join('')}
         </tbody>
@@ -1599,15 +1601,13 @@ function printRawMaterialInspection(inboundData) {
       <!-- 종합 판정 -->
       <table class="judgment-table">
         <tr>
-          <th style="background: #90EE90;">종 합 판 정</th>
-          <td style="width: 150px;">판정일자</td>
-          <td style="width: 150px;">판 정 자</td>
+          <th>종 합 판 정</th>
+          <td style="width: 35%;">판정일자</td>
+          <td style="width: 35%;">판 정 자</td>
         </tr>
         <tr>
-          <td style="font-size: 14px; font-weight: bold; color: ${inboundData.quality_status === '합격' ? 'green' : 'red'};">
-            ${inboundData.quality_status || '합격'}
-          </td>
-          <td>${inboundData.inbound_date || ''}</td>
+          <td></td>
+          <td></td>
           <td></td>
         </tr>
       </table>
@@ -1618,11 +1618,18 @@ function printRawMaterialInspection(inboundData) {
           <th colspan="5" style="background: #fffacd;">이탈 시 조치사항</th>
         </tr>
         <tr>
-          <th style="width: 60px;">일자</th>
-          <th style="width: 150px;">이상발생내역</th>
+          <th style="width: 80px;">일자</th>
+          <th style="width: 180px;">이상발생내역</th>
           <th>조치내역 및 결과</th>
-          <th style="width: 80px;">완료일</th>
-          <th style="width: 60px;">확인</th>
+          <th style="width: 90px;">완료일</th>
+          <th style="width: 70px;">확인</th>
+        </tr>
+        <tr>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
         </tr>
         <tr>
           <td></td>
@@ -1634,7 +1641,9 @@ function printRawMaterialInspection(inboundData) {
       </table>
       
       <div class="footer">
-        (주)브이베이커리 | 출력일시: ${new Date().toLocaleString('ko-KR')}
+        <span>BV-00-00</span>
+        <span>(주)본비반트</span>
+        <span>A4(210x297)</span>
       </div>
     </body>
     </html>
@@ -1654,8 +1663,8 @@ function printSubMaterialInspection(inboundData) {
     '표시사항': '포장 부자재 표시내용과 일치 하여야 한다.',
     '포장상태': '파손되거나 손상된 부분이 없어야 하며, 위생상태가 양호해야 한다.',
     '인쇄상태': '포장 부자재에 서류에 첨부된 내용을 토대로 인쇄되어 있어야 한다.',
-    '절단면 및 접착단 상태': '절단면은 깔끔하게 커리 되어 있어야 하며, 접착면은 접착 상태가 양호하고, 마감처리가 깔끔해야 한다.',
-    '성적서': '식품접착가능이 입고된 부자재에 적합하는 성적서가 첨부되어야 하며, 시험 결과가 적합한 부자재여야 한다.',
+    '절단면 및 접착단 상태': '절단면은 깔끔하게 커팅 되어 있어야 하며, 접착면은 접착 상태가 양호하고, 마감처리가 깔끔해야 한다.',
+    '성적서': '식품접촉가능이 입고된 부자재에 적합하는 성적서가 첨부되어야 하며, 시험 결과가 적합한 부자재여야 한다.',
     '배송차량청결상태': '배송차량의 청결상태가 입고된 부자재에 오염 소지가 없어야 한다.'
   };
   
@@ -1667,33 +1676,67 @@ function printSubMaterialInspection(inboundData) {
       <meta charset="UTF-8">
       <title>부자재입고 검사일지 - ${inboundData.lot_number || inboundData.item_code}</title>
       <style>
-        @page { margin: 10mm; size: A4; }
+        @page { 
+          margin: 15mm; 
+          size: A4; 
+        }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
           font-family: 'Malgun Gothic', '맑은 고딕', sans-serif;
-          font-size: 9px;
-          line-height: 1.3;
+          font-size: 11px;
+          line-height: 1.4;
           color: #000;
-          padding: 10px;
+          padding: 0;
+          width: 100%;
+          max-width: 180mm;
+          margin: 0 auto;
+        }
+        .header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          margin-bottom: 15px;
         }
         .title {
+          flex: 1;
           text-align: center;
-          font-size: 18px;
+        }
+        .title h1 {
+          font-size: 20px;
           font-weight: bold;
-          margin-bottom: 15px;
-          padding-bottom: 8px;
-          border-bottom: 2px solid #000;
+          padding: 10px 0;
+        }
+        .approval-box {
+          width: 160px;
+        }
+        .approval-box table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+        .approval-box th, .approval-box td {
+          border: 1px solid #000;
+          padding: 4px 8px;
+          text-align: center;
+          font-size: 10px;
+        }
+        .approval-box th {
+          background: #e6f3ff;
+          height: 24px;
+        }
+        .approval-box td {
+          height: 45px;
         }
         
         .info-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 12px;
+          margin-bottom: 15px;
         }
         .info-table th, .info-table td {
           border: 1px solid #000;
-          padding: 6px 8px;
-          font-size: 9px;
+          padding: 10px 12px;
+          font-size: 11px;
+          height: 38px;
         }
         .info-table th {
           background: #e6f3ff;
@@ -1708,54 +1751,48 @@ function printSubMaterialInspection(inboundData) {
         .inspection-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 12px;
+          margin-bottom: 15px;
         }
         .inspection-table th, .inspection-table td {
           border: 1px solid #000;
-          padding: 8px;
-          font-size: 9px;
+          padding: 12px 14px;
+          font-size: 11px;
           vertical-align: middle;
         }
         .inspection-table th {
           background: #e6f3ff;
           text-align: center;
           font-weight: normal;
+          height: 32px;
         }
-        .inspection-table th.header-item { width: 100px; }
+        .inspection-table th.header-item { width: 140px; }
         .inspection-table th.header-criteria { width: auto; }
-        .inspection-table th.header-result { width: 130px; }
+        .inspection-table th.header-result { width: 100px; }
         .inspection-table td.item-name {
           text-align: center;
           background: #f9f9f9;
+          height: 45px;
         }
         .inspection-table td.criteria {
-          font-size: 9px;
-          line-height: 1.5;
+          font-size: 11px;
+          line-height: 1.6;
+          height: 45px;
         }
         .inspection-table td.result {
           text-align: center;
-        }
-        .result-checkbox {
-          display: inline-block;
-          width: 12px;
-          height: 12px;
-          border: 1px solid #000;
-          margin: 0 3px;
-          vertical-align: middle;
-        }
-        .result-checkbox.checked {
-          background: #000;
+          height: 45px;
         }
         
         .judgment-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 12px;
+          margin-bottom: 15px;
         }
         .judgment-table th, .judgment-table td {
           border: 1px solid #000;
-          padding: 8px;
-          font-size: 9px;
+          padding: 12px;
+          font-size: 11px;
+          height: 45px;
         }
         .judgment-table th {
           background: #90EE90;
@@ -1764,37 +1801,36 @@ function printSubMaterialInspection(inboundData) {
         }
         .judgment-table td {
           text-align: center;
-          height: 35px;
         }
         
         .action-table {
           width: 100%;
           border-collapse: collapse;
-          margin-bottom: 12px;
+          margin-bottom: 15px;
         }
         .action-table th, .action-table td {
           border: 1px solid #000;
-          padding: 6px;
-          font-size: 8px;
+          padding: 10px 12px;
+          font-size: 10px;
         }
         .action-table th {
           background: #fffacd;
           text-align: center;
+          height: 32px;
         }
         .action-table td {
-          height: 28px;
+          height: 40px;
         }
         
         .footer {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          margin-top: 15px;
-          font-size: 8px;
+          margin-top: 20px;
+          padding-top: 10px;
+          border-top: 1px solid #ccc;
+          font-size: 9px;
           color: #666;
-        }
-        .doc-number {
-          font-size: 8px;
         }
         
         @media print {
@@ -1803,28 +1839,43 @@ function printSubMaterialInspection(inboundData) {
       </style>
     </head>
     <body>
-      <div class="title">부자재입고 검사일지</div>
+      <div class="header">
+        <div style="width: 160px;"></div>
+        <div class="title">
+          <h1>부자재입고 검사일지</h1>
+        </div>
+        <div class="approval-box">
+          <table>
+            <tr><th>검수담당자</th><th>승인</th></tr>
+            <tr><td></td><td></td></tr>
+          </table>
+        </div>
+      </div>
       
       <!-- 기본 정보 -->
       <table class="info-table">
         <tr>
           <th>부자재명</th>
-          <td style="width: 200px;">${inboundData.item_name || ''}</td>
+          <td style="width: 30%;">${inboundData.item_name || ''}</td>
           <th>입고량</th>
           <td>${formatNumber(inboundData.origin_qty || inboundData.quantity)} ${inboundData.unit || ''}</td>
-          <th>시험번호</th>
-          <td>${inboundData.lot_number ? inboundData.lot_number.split('-').slice(0,2).join('-') : ''}</td>
           <th>거래업체</th>
           <td>${inboundData.supplier || '-'}</td>
         </tr>
         <tr>
-          <th>채취자</th>
+          <th>시험번호</th>
           <td></td>
           <th>채취장소</th>
           <td>부자재창고</td>
+          <th>시험일자</th>
+          <td></td>
+        </tr>
+        <tr>
+          <th>채취자</th>
+          <td></td>
           <th>채취방법</th>
           <td>무작위</td>
-          <th>시험일자</th>
+          <th>입고일자</th>
           <td>${inboundData.inbound_date || ''}</td>
         </tr>
       </table>
@@ -1843,11 +1894,7 @@ function printSubMaterialInspection(inboundData) {
             <tr>
               <td class="item-name">${item}</td>
               <td class="criteria">${criteria}</td>
-              <td class="result">
-                <span class="result-checkbox ${inboundData.quality_status === '합격' ? 'checked' : ''}"></span>적합
-                &nbsp;&nbsp;
-                <span class="result-checkbox ${inboundData.quality_status !== '합격' ? 'checked' : ''}"></span>부적합
-              </td>
+              <td class="result"></td>
             </tr>
           `).join('')}
         </tbody>
@@ -1857,14 +1904,12 @@ function printSubMaterialInspection(inboundData) {
       <table class="judgment-table">
         <tr>
           <th>종합판정</th>
-          <td style="width: 200px;">판정일자</td>
-          <td>판 정 자</td>
+          <td style="width: 35%;">판정일자</td>
+          <td style="width: 35%;">판 정 자</td>
         </tr>
         <tr>
-          <td style="font-size: 14px; font-weight: bold; color: ${inboundData.quality_status === '합격' ? 'green' : 'red'};">
-            ${inboundData.quality_status || '합격'}
-          </td>
-          <td>${inboundData.inbound_date || ''}</td>
+          <td></td>
+          <td></td>
           <td></td>
         </tr>
       </table>
@@ -1875,11 +1920,18 @@ function printSubMaterialInspection(inboundData) {
           <th colspan="5" style="background: #fffacd;">이탈 시 조치사항</th>
         </tr>
         <tr>
-          <th style="width: 70px;">일자</th>
-          <th style="width: 150px;">이상발생내역</th>
+          <th style="width: 80px;">일자</th>
+          <th style="width: 180px;">이상발생내역</th>
           <th>조치내역 및 결과</th>
-          <th style="width: 80px;">완료일</th>
-          <th style="width: 60px;">확인</th>
+          <th style="width: 90px;">완료일</th>
+          <th style="width: 70px;">확인</th>
+        </tr>
+        <tr>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
+          <td></td>
         </tr>
         <tr>
           <td></td>
@@ -1891,8 +1943,8 @@ function printSubMaterialInspection(inboundData) {
       </table>
       
       <div class="footer">
-        <span class="doc-number">BV-00-00</span>
-        <span>무료배포</span>
+        <span>BV-00-00</span>
+        <span>(주)본비반트</span>
         <span>A4(210x297)</span>
       </div>
     </body>

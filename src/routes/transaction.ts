@@ -690,6 +690,7 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
           period_inbound: item.period_inbound,
           period_usage: item.period_usage,
           period_outbound: item.period_outbound,
+          period_adjustment: 0, // LOT에서 합산하여 업데이트
           closing_qty: closingQty
         },
         lot_count: 0, // 아래에서 업데이트
@@ -747,6 +748,8 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       
       item.lots = lots;
       item.lot_count = lots.length;
+      // LOT에서 period_adjustment 합산
+      item.summary.period_adjustment = lots.reduce((sum: number, lot: any) => sum + (lot.period_adjustment || 0), 0);
       totalLotCount += lots.length;
     }
     
@@ -756,6 +759,7 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       acc.period_inbound += item.summary.period_inbound;
       acc.period_usage += item.summary.period_usage;
       acc.period_outbound += item.summary.period_outbound;
+      acc.period_adjustment += item.summary.period_adjustment || 0;
       acc.closing_qty += item.summary.closing_qty;
       acc.lot_remain_total += item.lot_remain_total;
       return acc;
@@ -764,6 +768,7 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       period_inbound: 0,
       period_usage: 0,
       period_outbound: 0,
+      period_adjustment: 0,
       closing_qty: 0,
       lot_remain_total: 0
     });

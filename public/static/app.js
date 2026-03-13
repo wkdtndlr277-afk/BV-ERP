@@ -1610,7 +1610,11 @@ async function printRawMaterialInspection(inboundData) {
             <tr>
               <td class="item-name">${item}</td>
               <td class="criteria">${criteria}</td>
-              <td class="result"></td>
+              <td class="result">
+                <span style="display:inline-block;width:12px;height:12px;border:1px solid #000;vertical-align:middle;margin-right:2px;"></span>적합
+                &nbsp;
+                <span style="display:inline-block;width:12px;height:12px;border:1px solid #000;vertical-align:middle;margin-right:2px;"></span>부적합
+              </td>
             </tr>
           `).join('')}
         </tbody>
@@ -1930,7 +1934,11 @@ async function printSubMaterialInspection(inboundData) {
             <tr>
               <td class="item-name">${item}</td>
               <td class="criteria">${criteria}</td>
-              <td class="result"></td>
+              <td class="result">
+                <span style="display:inline-block;width:12px;height:12px;border:1px solid #000;vertical-align:middle;margin-right:2px;"></span>적합
+                &nbsp;
+                <span style="display:inline-block;width:12px;height:12px;border:1px solid #000;vertical-align:middle;margin-right:2px;"></span>부적합
+              </td>
             </tr>
           `).join('')}
         </tbody>

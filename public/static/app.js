@@ -7795,6 +7795,9 @@ async function renderSuppliers() {
             거래처 관리
           </h2>
           <div class="flex gap-2">
+            <button onclick="exportSuppliersToExcel()" class="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700">
+              <i class="fas fa-file-excel mr-1"></i> 엑셀
+            </button>
             <button onclick="printSupplierList()" class="bg-gray-500 text-white px-4 py-2 rounded-lg font-medium hover:bg-gray-600">
               <i class="fas fa-print mr-1"></i> 인쇄
             </button>
@@ -8475,6 +8478,95 @@ async function viewSupplierDetail(supplierId) {
   } catch (e) {
     showToast('거래처 정보를 불러올 수 없습니다.', 'error');
   }
+}
+
+// 거래처 목록 엑셀 다운로드
+function exportSuppliersToExcel() {
+  const suppliers = window.allSuppliers || [];
+  const searchTerm = document.getElementById('supplier-search')?.value || '';
+  const haccpOnly = document.getElementById('filter-haccp')?.checked;
+  const importedOnly = document.getElementById('filter-imported')?.checked;
+  const typeFilter = window.supplierFilterType || '';
+  
+  // 현재 필터링된 데이터 사용
+  let filtered = suppliers;
+  if (searchTerm) {
+    filtered = filtered.filter(s => 
+      (s.supplier_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.supplier_code || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.contact_person || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.material_name || '').toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }
+  if (typeFilter) filtered = filtered.filter(s => s.supplier_type === typeFilter);
+  if (haccpOnly) filtered = filtered.filter(s => s.haccp_certified);
+  if (importedOnly) filtered = filtered.filter(s => s.is_imported);
+  
+  if (filtered.length === 0) {
+    showToast('다운로드할 거래처가 없습니다.', 'warning');
+    return;
+  }
+  
+  // CSV 헤더
+  const headers = [
+    '거래처코드',
+    '거래처명',
+    '거래유형',
+    '취급카테고리',
+    '업체구분',
+    '담당자',
+    '연락처',
+    '이메일',
+    '사업자번호',
+    '주소',
+    '취급품목',
+    'HACCP인증',
+    '수입업체',
+    '메모'
+  ];
+  
+  // CSV 데이터
+  const rows = filtered.map(s => [
+    s.supplier_code || '',
+    s.supplier_name || '',
+    s.supplier_type || '입고',
+    s.material_category || '원료',
+    s.business_type || '공급업체',
+    s.contact_person || '',
+    s.contact || '',
+    s.email || '',
+    s.business_number || '',
+    s.address || '',
+    s.material_name || '',
+    s.haccp_certified ? 'O' : '',
+    s.is_imported ? 'O' : '',
+    s.memo || ''
+  ]);
+  
+  // CSV 생성 (BOM 추가로 한글 깨짐 방지)
+  const BOM = '\uFEFF';
+  const csvContent = BOM + [
+    headers.join(','),
+    ...rows.map(row => row.map(cell => {
+      // 쉼표, 줄바꿈, 따옴표 포함시 따옴표로 감싸기
+      const str = String(cell).replace(/"/g, '""');
+      return str.includes(',') || str.includes('\n') || str.includes('"') ? `"${str}"` : str;
+    }).join(','))
+  ].join('\n');
+  
+  // 파일 다운로드
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const today = new Date().toISOString().split('T')[0];
+  link.href = url;
+  link.download = `거래처목록_${today}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  
+  showToast(`거래처 ${filtered.length}건이 다운로드되었습니다.`, 'success');
 }
 
 // 거래처 목록 인쇄
@@ -11831,6 +11923,7 @@ window.expandAllSuppliers = expandAllSuppliers;
 window.collapseAllSuppliers = collapseAllSuppliers;
 window.viewSupplierDetail = viewSupplierDetail;
 window.printSupplierList = printSupplierList;
+window.exportSuppliersToExcel = exportSuppliersToExcel;
 window.showAddMaterialModal = showAddMaterialModal;
 window.editSupplierMaterial = editSupplierMaterial;
 window.saveSupplierMaterial = saveSupplierMaterial;

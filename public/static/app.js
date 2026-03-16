@@ -695,7 +695,8 @@ async function api(endpoint, method = 'GET', data = null) {
   try {
     const options = {
       method,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 60000 // 60초 타임아웃
     };
     if (data) options.data = data;
     
@@ -3954,7 +3955,16 @@ async function loadDailyLedger() {
   
   console.log('loadDailyLedger:', { date, viewType, search, category });
   
-  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i> 로딩중...</div>';
+  // 로딩 상태 표시 (경과 시간 포함)
+  const startTime = Date.now();
+  let loadingTimer;
+  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i><br><span class="text-sm text-gray-500">데이터 로딩중... <span id="daily-loading-time">0</span>초</span></div>';
+  
+  loadingTimer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const timeEl = document.getElementById('daily-loading-time');
+    if (timeEl) timeEl.textContent = elapsed;
+  }, 1000);
   
   try {
     const params = new URLSearchParams({ date });
@@ -3971,6 +3981,7 @@ async function loadDailyLedger() {
       window.dailyLedgerPeriod = { start_date: date };
       window.dailyLedgerSummary = result.summary || {};
       
+      clearInterval(loadingTimer);
       renderFifoStatus(result, date);
     } else {
       params.append('period_type', 'daily');
@@ -3984,6 +3995,7 @@ async function loadDailyLedger() {
       window.dailyLedgerPeriod = result.period || {};
       window.dailyLedgerSummary = result.summary || {};
       
+      clearInterval(loadingTimer);
       if (viewType === 'summary') {
         renderDailySummary(result, date);
       } else {
@@ -3991,11 +4003,15 @@ async function loadDailyLedger() {
       }
     }
   } catch (e) {
+    clearInterval(loadingTimer);
     console.error('Daily ledger error:', e);
     contentEl.innerHTML = `<div class="p-8 text-center text-red-500">
       <i class="fas fa-exclamation-triangle text-2xl mb-2"></i><br>
       데이터를 불러오는데 실패했습니다.<br>
-      <span class="text-xs text-gray-500">${e.message || e}</span>
+      <span class="text-xs text-gray-500">${e.message || e}</span><br>
+      <button onclick="loadDailyLedger()" class="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">
+        <i class="fas fa-redo mr-1"></i> 다시 시도
+      </button>
     </div>`;
   }
 }
@@ -4759,7 +4775,16 @@ async function loadMonthlyLedger() {
   
   console.log('loadMonthlyLedger:', { year, month, viewType, search, category });
   
-  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i> 로딩중...</div>';
+  // 로딩 상태 표시 (경과 시간 포함)
+  const startTime = Date.now();
+  let loadingTimer;
+  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i><br><span class="text-sm text-gray-500">데이터 로딩중... <span id="monthly-loading-time">0</span>초</span></div>';
+  
+  loadingTimer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const timeEl = document.getElementById('monthly-loading-time');
+    if (timeEl) timeEl.textContent = elapsed;
+  }, 1000);
   
   try {
     const params = new URLSearchParams({ year, month });
@@ -4775,6 +4800,7 @@ async function loadMonthlyLedger() {
       window.monthlyLedgerData = result.data || [];
       window.monthlyLedgerPeriod = result.period || { year, month };
       window.monthlyLedgerSummary = result.summary || {};
+      clearInterval(loadingTimer);
       renderMonthlyDailyView(result);
     } else if (viewType === 'lot') {
       // LOT별 상세
@@ -4786,6 +4812,7 @@ async function loadMonthlyLedger() {
       window.monthlyLedgerData = result.data || [];
       window.monthlyLedgerPeriod = result.period || {};
       window.monthlyLedgerSummary = result.summary || {};
+      clearInterval(loadingTimer);
       renderMonthlyLotView(result);
     } else {
       // 품목별 요약
@@ -4797,14 +4824,19 @@ async function loadMonthlyLedger() {
       window.monthlyLedgerData = result.data || [];
       window.monthlyLedgerPeriod = result.period || {};
       window.monthlyLedgerSummary = result.summary || {};
+      clearInterval(loadingTimer);
       renderMonthlySummaryView(result);
     }
   } catch (e) {
+    clearInterval(loadingTimer);
     console.error('Monthly ledger error:', e);
     contentEl.innerHTML = `<div class="p-8 text-center text-red-500">
       <i class="fas fa-exclamation-triangle text-2xl mb-2"></i><br>
       데이터를 불러오는데 실패했습니다.<br>
-      <span class="text-xs text-gray-500">${e.message || e}</span>
+      <span class="text-xs text-gray-500">${e.message || e}</span><br>
+      <button onclick="loadMonthlyLedger()" class="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">
+        <i class="fas fa-redo mr-1"></i> 다시 시도
+      </button>
     </div>`;
   }
 }

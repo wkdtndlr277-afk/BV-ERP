@@ -1834,6 +1834,21 @@ async function renderInbound() {
       
       <div class="bg-white rounded-xl shadow p-6">
         <form id="inbound-form" class="space-y-4">
+          <!-- 카테고리 선택 -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">카테고리 <span class="text-red-500">*</span></label>
+            <div class="flex gap-4">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="inbound-category" value="원료" checked class="w-4 h-4 text-blue-600">
+                <span class="text-blue-600 font-medium"><i class="fas fa-leaf mr-1"></i>원료</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="inbound-category" value="부자재" class="w-4 h-4 text-purple-600">
+                <span class="text-purple-600 font-medium"><i class="fas fa-box mr-1"></i>부자재</span>
+              </label>
+            </div>
+          </div>
+          
           <!-- 품목 검색 -->
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">품목 <span class="text-red-500">*</span></label>
@@ -1917,7 +1932,7 @@ async function renderInbound() {
           <li>• LOT 번호는 자동 생성됩니다 (입고일-품목코드-순번)</li>
           <li>• <strong>합격</strong> 시 재고에 자동 반영됩니다</li>
           <li>• <strong>불합격</strong> 시 이력만 저장되고 재고는 반영되지 않습니다</li>
-          <li>• 검색 결과가 없으면 <strong class="text-green-600">신규 원료 등록</strong> 버튼이 표시됩니다</li>
+          <li>• 검색 결과가 없으면 <strong class="text-green-600">신규 원료/부자재 등록</strong> 버튼이 표시됩니다</li>
         </ul>
       </div>
     </div>
@@ -1927,28 +1942,41 @@ async function renderInbound() {
   const searchInput = document.getElementById('inbound-item-search');
   const searchResults = document.getElementById('inbound-search-results');
   
+  // 카테고리 선택 시 검색창 초기화
+  document.querySelectorAll('input[name="inbound-category"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+      searchInput.value = '';
+      searchResults.classList.add('hidden');
+      clearSelectedItem();
+    });
+  });
+  
   searchInput.addEventListener('input', function(e) {
     const term = e.target.value.toLowerCase().trim();
+    const selectedCategory = document.querySelector('input[name="inbound-category"]:checked')?.value || '원료';
     
     if (term.length < 1) {
       searchResults.classList.add('hidden');
       return;
     }
     
+    // 선택된 카테고리에 맞게 필터링
     const filtered = window.inboundMasterItems.filter(item => 
-      item.item_name.toLowerCase().includes(term) || 
-      item.item_code.toLowerCase().includes(term)
+      (item.item_name.toLowerCase().includes(term) || 
+       item.item_code.toLowerCase().includes(term)) &&
+      item.category === selectedCategory
     );
     
     if (filtered.length === 0) {
       // 검색 결과 없음 - 신규 등록 옵션 표시
+      const categoryLabel = selectedCategory === '부자재' ? '부자재' : '원료';
       searchResults.innerHTML = `
         <div class="p-3 text-gray-500 text-center border-b">
-          <i class="fas fa-search mr-1"></i> "${e.target.value}" 검색 결과가 없습니다
+          <i class="fas fa-search mr-1"></i> "${e.target.value}" ${categoryLabel} 검색 결과가 없습니다
         </div>
-        <div class="p-3 hover:bg-green-50 cursor-pointer text-center" onclick="showNewItemModal('${e.target.value}')">
+        <div class="p-3 hover:bg-green-50 cursor-pointer text-center" onclick="showNewItemModal('${e.target.value}', '${selectedCategory}')">
           <i class="fas fa-plus-circle text-green-600 mr-1"></i>
-          <span class="text-green-600 font-medium">"${e.target.value}" 신규 원료 등록</span>
+          <span class="text-green-600 font-medium">"${e.target.value}" 신규 ${categoryLabel} 등록</span>
         </div>
       `;
     } else {
@@ -1957,6 +1985,7 @@ async function renderInbound() {
              data-code="${item.item_code}" 
              data-name="${item.item_name}" 
              data-unit="${item.unit}"
+             data-category="${item.category}"
              data-expiry-days="${item.expiry_days}">
           <div class="font-medium">${item.item_name}</div>
           <div class="text-sm text-gray-500">${item.item_code} · ${item.category} · ${item.unit}</div>
@@ -2044,7 +2073,8 @@ async function renderInbound() {
       inbound_date: inboundDate,
       expiry_date: expiryDate,
       supplier: document.getElementById('inbound-supplier').value,
-      quality_status: document.querySelector('input[name="quality"]:checked').value
+      quality_status: document.querySelector('input[name="quality"]:checked').value,
+      category: document.querySelector('input[name="inbound-category"]:checked')?.value || '원료'
     };
     
     try {
@@ -2081,36 +2111,41 @@ async function renderInbound() {
   });
 }
 
-// 신규 원료 등록 모달
-async function showNewItemModal(searchTerm = '') {
+// 신규 원료/부자재 등록 모달
+async function showNewItemModal(searchTerm = '', category = '원료') {
   document.getElementById('inbound-search-results').classList.add('hidden');
   
   // 최신 마스터 데이터 로드
   await loadMasterData();
   
-  // 품목코드 자동 생성 (RM + 3자리 숫자)
+  // 품목코드 자동 생성 (원료: RM + 3자리, 부자재: SM + 3자리)
+  const prefix = category === '부자재' ? 'SM' : 'RM';
   const existingCodes = state.masterItems
-    .filter(i => i.item_code.startsWith('RM'))
-    .map(i => parseInt(i.item_code.replace('RM', '')) || 0);
+    .filter(i => i.item_code.startsWith(prefix))
+    .map(i => parseInt(i.item_code.replace(prefix, '')) || 0);
   const nextNum = Math.max(0, ...existingCodes) + 1;
-  const suggestedCode = `RM${String(nextNum).padStart(3, '0')}`;
+  const suggestedCode = `${prefix}${String(nextNum).padStart(3, '0')}`;
   
-  showModal('신규 원료 등록', `
+  const categoryLabel = category === '부자재' ? '부자재' : '원료';
+  const categoryColor = category === '부자재' ? 'purple' : 'green';
+  
+  showModal(`신규 ${categoryLabel} 등록`, `
     <form id="new-item-form" class="space-y-4">
-      <div class="bg-green-50 border border-green-200 rounded-lg p-3 mb-4">
-        <p class="text-sm text-green-700"><i class="fas fa-info-circle mr-1"></i> 새 원료를 등록하면 바로 입고에 사용할 수 있습니다.</p>
+      <input type="hidden" id="new-item-category" value="${category}">
+      <div class="bg-${categoryColor}-50 border border-${categoryColor}-200 rounded-lg p-3 mb-4">
+        <p class="text-sm text-${categoryColor}-700"><i class="fas fa-info-circle mr-1"></i> 새 ${categoryLabel}를 등록하면 바로 입고에 사용할 수 있습니다.</p>
       </div>
       
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">품목코드 <span class="text-red-500">*</span></label>
           <input type="text" id="new-item-code" value="${suggestedCode}" required
-                 class="w-full px-3 py-2 border rounded-lg" placeholder="RM001">
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="${prefix}001">
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">품목명 <span class="text-red-500">*</span></label>
           <input type="text" id="new-item-name" value="${searchTerm}" required
-                 class="w-full px-3 py-2 border rounded-lg" placeholder="원료명">
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="${categoryLabel}명">
         </div>
       </div>
       
@@ -2118,13 +2153,22 @@ async function showNewItemModal(searchTerm = '') {
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
           <select id="new-item-unit" class="w-full px-3 py-2 border rounded-lg">
-            <option value="kg">kg</option>
-            <option value="g">g</option>
-            <option value="L">L</option>
-            <option value="ml">ml</option>
-            <option value="ea">ea (개)</option>
-            <option value="box">box</option>
-            <option value="pack">pack</option>
+            ${category === '부자재' ? `
+              <option value="ea">ea (개)</option>
+              <option value="box">box</option>
+              <option value="pack">pack</option>
+              <option value="roll">roll</option>
+              <option value="장">장</option>
+              <option value="kg">kg</option>
+            ` : `
+              <option value="kg">kg</option>
+              <option value="g">g</option>
+              <option value="L">L</option>
+              <option value="ml">ml</option>
+              <option value="ea">ea (개)</option>
+              <option value="box">box</option>
+              <option value="pack">pack</option>
+            `}
           </select>
         </div>
         <div>
@@ -2134,27 +2178,30 @@ async function showNewItemModal(searchTerm = '') {
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">소비기한(일)</label>
-          <input type="number" id="new-item-expiry" value="365" min="1"
+          <input type="number" id="new-item-expiry" value="${category === '부자재' ? '730' : '365'}" min="1"
                  class="w-full px-3 py-2 border rounded-lg">
         </div>
       </div>
     </form>
   `, `
     <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
-    <button onclick="saveNewItemAndSelect()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">등록 후 선택</button>
+    <button onclick="saveNewItemAndSelect()" class="px-4 py-2 bg-${categoryColor}-600 text-white rounded-lg hover:bg-${categoryColor}-700">등록 후 선택</button>
   `);
 }
 
-// 신규 원료 저장 후 선택
+// 신규 원료/부자재 저장 후 선택
 async function saveNewItemAndSelect() {
+  const category = document.getElementById('new-item-category')?.value || '원료';
   const data = {
     item_code: document.getElementById('new-item-code').value.trim(),
     item_name: document.getElementById('new-item-name').value.trim(),
-    category: '원료',
+    category: category,
     unit: document.getElementById('new-item-unit').value,
     safety_stock: parseFloat(document.getElementById('new-item-safety').value) || 0,
     expiry_days: parseInt(document.getElementById('new-item-expiry').value) || 365
   };
+  
+  const categoryLabel = category === '부자재' ? '부자재' : '원료';
   
   if (!data.item_code || !data.item_name) {
     showToast('품목코드와 품목명을 입력해주세요', 'warning');
@@ -2163,7 +2210,7 @@ async function saveNewItemAndSelect() {
   
   try {
     await api('/master', 'POST', data);
-    showToast(`"${data.item_name}" 원료가 등록되었습니다`, 'success');
+    showToast(`"${data.item_name}" ${categoryLabel}가 등록되었습니다`, 'success');
     
     // 마스터 데이터 갱신
     await loadMasterData();
@@ -2174,7 +2221,7 @@ async function saveNewItemAndSelect() {
     // 새로 등록한 품목 선택
     selectInboundItem(data.item_code, data.item_name, data.unit, data.expiry_days, true);
   } catch (e) {
-    console.error('원료 등록 실패:', e);
+    console.error(`${categoryLabel} 등록 실패:`, e);
     showToast(`등록 실패: ${e.message || '알 수 없는 오류'}`, 'error');
   }
 }
@@ -8126,44 +8173,54 @@ function showSupplierModal(supplier = null) {
           </select>
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">업체 구분</label>
-          <select id="supplier-business-type" class="w-full border rounded-lg px-4 py-2">
-            <option value="공급업체" ${!supplier?.business_type || supplier?.business_type === '공급업체' ? 'selected' : ''}>공급업체</option>
-            <option value="제조업체" ${supplier?.business_type === '제조업체' ? 'selected' : ''}>제조업체 (직거래)</option>
+          <label class="block text-sm font-medium text-gray-700 mb-1">취급 카테고리</label>
+          <select id="supplier-material-category" class="w-full border rounded-lg px-4 py-2">
+            <option value="원료" ${!supplier?.material_category || supplier?.material_category === '원료' ? 'selected' : ''}>원료</option>
+            <option value="부자재" ${supplier?.material_category === '부자재' ? 'selected' : ''}>부자재</option>
+            <option value="원료/부자재" ${supplier?.material_category === '원료/부자재' ? 'selected' : ''}>원료/부자재 (둘 다)</option>
           </select>
         </div>
       </div>
       
       <div class="grid grid-cols-2 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">담당자</label>
-          <input type="text" id="supplier-contact-person" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact_person || ''}" placeholder="담당자명">
+          <label class="block text-sm font-medium text-gray-700 mb-1">업체 구분</label>
+          <select id="supplier-business-type" class="w-full border rounded-lg px-4 py-2">
+            <option value="공급업체" ${!supplier?.business_type || supplier?.business_type === '공급업체' ? 'selected' : ''}>공급업체</option>
+            <option value="제조업체" ${supplier?.business_type === '제조업체' ? 'selected' : ''}>제조업체 (직거래)</option>
+          </select>
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">연락처</label>
-          <input type="text" id="supplier-contact" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact || ''}" placeholder="전화번호">
+          <label class="block text-sm font-medium text-gray-700 mb-1">담당자</label>
+          <input type="text" id="supplier-contact-person" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact_person || ''}" placeholder="담당자명">
         </div>
       </div>
       
       <div class="grid grid-cols-2 gap-4">
         <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">연락처</label>
+          <input type="text" id="supplier-contact" class="w-full border rounded-lg px-4 py-2" value="${supplier?.contact || ''}" placeholder="전화번호">
+        </div>
+        <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">이메일</label>
           <input type="email" id="supplier-email" class="w-full border rounded-lg px-4 py-2" value="${supplier?.email || ''}" placeholder="이메일 주소">
         </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">사업자번호</label>
           <input type="text" id="supplier-business-number" class="w-full border rounded-lg px-4 py-2" value="${supplier?.business_number || ''}" placeholder="000-00-00000">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">취급품목</label>
+          <input type="text" id="supplier-material-name" class="w-full border rounded-lg px-4 py-2" value="${supplier?.material_name || ''}" placeholder="취급하는 원료/제품명">
         </div>
       </div>
       
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">주소</label>
         <input type="text" id="supplier-address" class="w-full border rounded-lg px-4 py-2" value="${supplier?.address || ''}" placeholder="사업장 주소">
-      </div>
-      
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">원료명 (취급품목)</label>
-        <input type="text" id="supplier-material-name" class="w-full border rounded-lg px-4 py-2" value="${supplier?.material_name || ''}" placeholder="취급하는 원료/제품명">
       </div>
       
       <div class="flex gap-6 pt-2 border-t">
@@ -8197,6 +8254,7 @@ async function saveSupplier(isEdit, supplierId) {
     supplier_code: document.getElementById('supplier-code').value.trim(),
     supplier_name: document.getElementById('supplier-name').value.trim(),
     supplier_type: document.getElementById('supplier-type').value,
+    material_category: document.getElementById('supplier-material-category').value,
     business_type: document.getElementById('supplier-business-type').value,
     contact: document.getElementById('supplier-contact').value.trim(),
     contact_person: document.getElementById('supplier-contact-person').value.trim(),

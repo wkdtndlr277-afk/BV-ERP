@@ -1377,21 +1377,25 @@ async function printRawMaterialInspection(inboundData) {
       <meta charset="UTF-8">
       <title>원료입고 검사일지 - ${inboundData.lot_number}</title>
       <style>
-        @page { margin: 10mm; size: A4; }
+        @page { margin: 8mm; size: A4; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { 
           width: 210mm; 
+          height: 297mm;
           font-family: '맑은 고딕', 'Malgun Gothic', sans-serif; 
           font-size: 11px; 
           color: #000; 
         }
         .container {
-          width: 190mm;
+          width: 194mm;
+          height: 281mm;
           margin: 0 auto;
-          padding: 5mm 0;
+          display: flex;
+          flex-direction: column;
         }
         table { 
           width: 100%; 
+          height: 100%;
           border-collapse: collapse; 
           table-layout: fixed; 
         }
@@ -1400,10 +1404,10 @@ async function printRawMaterialInspection(inboundData) {
           vertical-align: middle; 
           text-align: center;
           font-size: 11px;
-          padding: 2px 4px;
+          padding: 3px 5px;
         }
         
-        /* 열 너비 비율 (A:B:C:D:E:F:G = 1.875:14.125:12.375:15.25:17.625:12.5:13.625) */
+        /* 열 너비 비율 */
         .col-a { width: 2%; }
         .col-b { width: 16%; }
         .col-c { width: 14%; }
@@ -1412,9 +1416,9 @@ async function printRawMaterialInspection(inboundData) {
         .col-f { width: 14%; }
         .col-g { width: 15%; }
         
-        /* 제목 영역 (행 1~3) */
+        /* 제목 영역 */
         .title-cell {
-          font-size: 20px;
+          font-size: 22px;
           font-weight: bold;
           text-align: center;
           vertical-align: middle;
@@ -1423,35 +1427,31 @@ async function printRawMaterialInspection(inboundData) {
         }
         .approval-header {
           font-size: 11px;
-          height: 22.5px;
           border: 1px solid #000;
+          background: #f5f5f5;
         }
         .approval-cell {
-          height: 56px;
           border: 1px solid #000;
         }
         
-        /* 기본정보 영역 (행 4~7) */
+        /* 기본정보 영역 */
         .info-header {
           background: #e6f3ff;
           font-size: 11px;
-          height: 33px;
         }
         .info-cell {
           font-size: 11px;
-          height: 33px;
         }
         
-        /* 검사항목 헤더 (행 9) */
+        /* 검사항목 헤더 */
         .insp-header {
           font-size: 11px;
           font-weight: bold;
-          height: 30.75px;
           border-top: 2px solid #000;
           border-bottom: 2px double #000;
         }
         
-        /* 검사항목 (행 10~21) */
+        /* 검사항목 */
         .insp-item {
           font-size: 10px;
           text-align: center;
@@ -1462,49 +1462,44 @@ async function printRawMaterialInspection(inboundData) {
           font-size: 9px;
           text-align: left;
           padding: 4px 6px;
+          line-height: 1.3;
         }
         .insp-result {
           font-size: 10px;
           text-align: center;
         }
         
-        /* 종합판정 (행 23~24) */
+        /* 종합판정 */
         .judge-header {
           font-size: 11px;
           font-weight: bold;
           background: #90EE90;
-          height: 27px;
         }
         .judge-cell {
-          height: 32px;
         }
         
-        /* 이탈시 조치사항 (행 25~29) */
+        /* 이탈시 조치사항 */
         .action-title {
           font-size: 11px;
           font-weight: bold;
           background: #fffacd;
-          height: 31px;
         }
         .action-header {
           font-size: 10px;
           background: #fffacd;
-          height: 26px;
         }
         .action-cell {
-          height: 26px;
         }
         
         /* 회사명 */
         .company {
           font-size: 10px;
           text-align: center;
-          height: 19px;
           border: none;
         }
         
         @media print { 
-          html, body { width: 210mm; }
+          html, body { width: 210mm; height: 297mm; }
           body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } 
         }
       </style>
@@ -1523,23 +1518,23 @@ async function printRawMaterialInspection(inboundData) {
           </colgroup>
           
           <!-- 행 1~3: 제목 + 결재란 -->
-          <tr style="height: 22.5px;">
+          <tr style="height: 32px;">
             <td class="col-a" rowspan="3" style="border:none;"></td>
             <td colspan="4" rowspan="3" class="title-cell">원료입고 검사일지</td>
             <td class="approval-header">검수담당자</td>
             <td class="approval-header">승인</td>
           </tr>
-          <tr style="height: 47.25px;">
+          <tr style="height: 68px;">
             <td class="approval-cell"></td>
             <td class="approval-cell"></td>
           </tr>
-          <tr style="height: 9px;">
-            <td style="border:none; height:9px;"></td>
-            <td style="border:none; height:9px;"></td>
+          <tr style="height: 14px;">
+            <td style="border:none;"></td>
+            <td style="border:none;"></td>
           </tr>
           
-          <!-- 행 4: 원료명, LOT No, 납품처, 포장단위, 입고량 헤더 -->
-          <tr style="height: 33px;">
+          <!-- 행 4: 원료명, LOT No, 납품처 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="info-header">원료명</td>
             <td class="info-cell">${inboundData.item_name || ''}</td>
@@ -1549,8 +1544,8 @@ async function printRawMaterialInspection(inboundData) {
             <td class="info-cell">${inboundData.supplier || '-'}</td>
           </tr>
           
-          <!-- 행 5: 원료명 값, 포장단위, 입고량 값 -->
-          <tr style="height: 33px;">
+          <!-- 행 5: 포장단위, 입고량 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="info-header" colspan="2"></td>
             <td class="info-header">포장단위</td>
@@ -1559,8 +1554,8 @@ async function printRawMaterialInspection(inboundData) {
             <td class="info-cell">${formatNumber(inboundData.origin_qty || inboundData.quantity)}</td>
           </tr>
           
-          <!-- 행 6: 입고일자, 소비기한, 시험번호, 채취자, 채취일자, 시험일자 -->
-          <tr style="height: 33px;">
+          <!-- 행 6: 입고일자, 소비기한, 시험번호 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="info-header">입고일자</td>
             <td class="info-cell">${inboundDate}</td>
@@ -1571,7 +1566,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 7: 채취자, 채취일자, 시험일자 -->
-          <tr style="height: 33px;">
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="info-header">채취자</td>
             <td class="info-cell"></td>
@@ -1582,13 +1577,13 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 8: 빈 행 -->
-          <tr style="height: 17px;">
+          <tr style="height: 14px;">
             <td style="border:none;"></td>
             <td colspan="6" style="border:none;"></td>
           </tr>
           
           <!-- 행 9: 검사항목 헤더 -->
-          <tr style="height: 30.75px;">
+          <tr style="height: 40px;">
             <td style="border:none;"></td>
             <td colspan="2" class="insp-header">항목</td>
             <td colspan="2" class="insp-header">기준</td>
@@ -1596,7 +1591,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 10: 성상 -->
-          <tr style="height: 30.75px;">
+          <tr style="height: 44px;">
             <td style="border:none;"></td>
             <td colspan="2" class="insp-item">성상</td>
             <td colspan="2" class="insp-criteria">이미．이취가 없고 고유의 향미가 있다.</td>
@@ -1604,7 +1599,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 11: 이물 및 포장상태 -->
-          <tr style="height: 42.75px;">
+          <tr style="height: 56px;">
             <td style="border:none;"></td>
             <td colspan="2" class="insp-item">이물 및 포장상태</td>
             <td colspan="2" class="insp-criteria">이물이 없어야 하고, 파손되거나 찌그러진 부분이 없어야 하며, 심하게 오염된 곳이 없어야 한다.</td>
@@ -1612,7 +1607,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 12: 표시사항 -->
-          <tr style="height: 38.25px;">
+          <tr style="height: 52px;">
             <td style="border:none;"></td>
             <td colspan="2" class="insp-item">표시사항</td>
             <td colspan="2" class="insp-criteria">훼손되지 않아야 하며, 식별이 가능하여야 한다.<br>소비기한 잔여 기간 기준(전체의 2/3 이상)내에 있는가?</td>
@@ -1620,7 +1615,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 13: 성적서 -->
-          <tr style="height: 30.75px;">
+          <tr style="height: 48px;">
             <td style="border:none;"></td>
             <td colspan="2" class="insp-item">성적서</td>
             <td colspan="2" class="insp-criteria">입고된 원료에 해당하는 성적서가 첨부 되어야하며,시험 결과가 적합한 원료여야한다.</td>
@@ -1628,7 +1623,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 14: 수입서류 및 원산지증명서 -->
-          <tr style="height: 30.75px;">
+          <tr style="height: 48px;">
             <td style="border:none;"></td>
             <td colspan="2" class="insp-item">수입서류 및<br>원산지증명서</td>
             <td colspan="2" class="insp-criteria">수입 원료일 경우 수입신고필증 및 확인증,<br>국내 원료일 경우 원산지 증명서가 있어야 한다.</td>
@@ -1636,7 +1631,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 15: 원산지 -->
-          <tr style="height: 30.75px;">
+          <tr style="height: 44px;">
             <td style="border:none;"></td>
             <td colspan="2" class="insp-item">원산지</td>
             <td colspan="2" class="insp-criteria">제품별 상이</td>
@@ -1644,7 +1639,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 16: 배송차량청결상태 -->
-          <tr style="height: 30.75px;">
+          <tr style="height: 48px;">
             <td style="border:none;"></td>
             <td colspan="2" class="insp-item">배송차량청결상태</td>
             <td colspan="2" class="insp-criteria">배송차량의 청결상태가 입고된 원료에 오염 소지가 없어야 한다.</td>
@@ -1652,25 +1647,23 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 17~18: 실온보관원료 -->
-          <tr style="height: 30px;">
+          <tr style="height: 48px;">
             <td style="border:none;"></td>
-            <td colspan="2" rowspan="2" class="insp-item">실온보관원료<br>(1 ℃ ~ 35 ℃ 이하)</td>
-            <td colspan="2" rowspan="2" class="insp-criteria">실온보관(1 ℃ ~ 35 ℃ 이하)</td>
-            <td colspan="2" rowspan="2" class="insp-result">□적합     □부적합</td>
+            <td colspan="2" class="insp-item">실온보관원료<br>(1 ℃ ~ 35 ℃ 이하)</td>
+            <td colspan="2" class="insp-criteria">실온보관(1 ℃ ~ 35 ℃ 이하)</td>
+            <td colspan="2" class="insp-result">□적합     □부적합</td>
           </tr>
-          <tr style="height: 0px;"></tr>
           
           <!-- 행 19~20: 냉장보관 원료 -->
-          <tr style="height: 30px;">
+          <tr style="height: 48px;">
             <td style="border:none;"></td>
-            <td colspan="2" rowspan="2" class="insp-item">냉장보관 원료<br>(0 ℃ ~ 10 ℃ 이하)</td>
-            <td colspan="2" rowspan="2" class="insp-criteria">냉장차량 운송시 타코메타 기록지 확인</td>
-            <td colspan="2" rowspan="2" class="insp-result">□적합     □부적합</td>
+            <td colspan="2" class="insp-item">냉장보관 원료<br>(0 ℃ ~ 10 ℃ 이하)</td>
+            <td colspan="2" class="insp-criteria">냉장차량 운송시 타코메타 기록지 확인</td>
+            <td colspan="2" class="insp-result">□적합     □부적합</td>
           </tr>
-          <tr style="height: 0px;"></tr>
           
           <!-- 행 21: 냉동보관 원료 -->
-          <tr style="height: 30.75px;">
+          <tr style="height: 48px;">
             <td style="border:none;"></td>
             <td colspan="2" class="insp-item">냉동보관 원료<br>(-18 ℃ 이하)</td>
             <td colspan="2" class="insp-criteria">냉동차량 운송시 타코메타 기록지 확인</td>
@@ -1678,13 +1671,13 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 22: 빈 행 -->
-          <tr style="height: 18px;">
+          <tr style="height: 14px;">
             <td style="border:none;"></td>
             <td colspan="6" style="border:none;"></td>
           </tr>
           
           <!-- 행 23: 종합판정 헤더 -->
-          <tr style="height: 27px;">
+          <tr style="height: 38px;">
             <td style="border:none;"></td>
             <td colspan="2" class="judge-header">종 합 판 정</td>
             <td colspan="2" class="judge-header">판정일자</td>
@@ -1692,7 +1685,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 24: 종합판정 입력란 -->
-          <tr style="height: 32px;">
+          <tr style="height: 46px;">
             <td style="border:none;"></td>
             <td colspan="2" class="judge-cell"></td>
             <td colspan="2" class="judge-cell"></td>
@@ -1700,13 +1693,13 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 25~26: 이탈 시 조치사항 제목 -->
-          <tr style="height: 31px;">
+          <tr style="height: 40px;">
             <td style="border:none;"></td>
             <td colspan="6" class="action-title">이탈 시 조치사항</td>
           </tr>
           
           <!-- 행 27: 이탈시 조치사항 헤더 -->
-          <tr style="height: 26px;">
+          <tr style="height: 36px;">
             <td style="border:none;"></td>
             <td class="action-header">일자</td>
             <td colspan="2" class="action-header">이상발생내역</td>
@@ -1716,7 +1709,7 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 28~29: 조치사항 입력란 -->
-          <tr style="height: 26px;">
+          <tr style="height: 40px;">
             <td style="border:none;"></td>
             <td class="action-cell"></td>
             <td colspan="2" class="action-cell"></td>
@@ -1724,7 +1717,7 @@ async function printRawMaterialInspection(inboundData) {
             <td class="action-cell"></td>
             <td class="action-cell"></td>
           </tr>
-          <tr style="height: 26px;">
+          <tr style="height: 40px;">
             <td style="border:none;"></td>
             <td class="action-cell"></td>
             <td colspan="2" class="action-cell"></td>
@@ -1734,13 +1727,13 @@ async function printRawMaterialInspection(inboundData) {
           </tr>
           
           <!-- 행 30: 빈 행 -->
-          <tr style="height: 19px;">
+          <tr style="height: 14px;">
             <td style="border:none;"></td>
             <td colspan="6" style="border:none;"></td>
           </tr>
           
           <!-- 행 31: 회사명 -->
-          <tr style="height: 15px;">
+          <tr style="height: 22px;">
             <td style="border:none;"></td>
             <td colspan="6" class="company">㈜본비반트</td>
           </tr>

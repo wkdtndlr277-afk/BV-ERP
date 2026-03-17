@@ -1748,7 +1748,7 @@ async function printRawMaterialInspection(inboundData) {
   setTimeout(() => printWindow.print(), 300);
 }
 
-// 부자재입고 검사일지 인쇄
+// 부자재입고 검사일지 인쇄 - 엑셀 양식 그대로 적용
 async function printSubMaterialInspection(inboundData) {
   // 시험번호 자동 생성
   let inspectionNumber = '';
@@ -1778,52 +1778,119 @@ async function printSubMaterialInspection(inboundData) {
       <meta charset="UTF-8">
       <title>부자재입고 검사일지 - ${inboundData.lot_number || inboundData.item_code}</title>
       <style>
-        @page { margin: 8mm 10mm; size: A4; }
+        @page { margin: 8mm; size: A4; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body { 
           width: 210mm; 
-          height: 297mm; 
-          font-family: 'Malgun Gothic', sans-serif; 
-          font-size: 11px; 
+          height: 297mm;
+          font-family: '맑은 고딕', 'Malgun Gothic', sans-serif; 
+          font-size: 10px; 
           color: #000; 
         }
-        body {
-          padding: 0;
-          display: flex;
-          flex-direction: column;
-        }
         .container {
-          width: 190mm;
+          width: 194mm;
           height: 281mm;
           margin: 0 auto;
           display: flex;
           flex-direction: column;
         }
-        table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        th, td { border: 1px solid #000; padding: 6px 8px; font-size: 11px; vertical-align: middle; }
-        th { background: #e6f3ff; font-weight: normal; text-align: center; }
+        table { 
+          width: 100%; 
+          border-collapse: collapse; 
+          table-layout: fixed; 
+        }
+        td, th { 
+          border: 1px solid #000; 
+          vertical-align: middle; 
+          text-align: center;
+          font-size: 10px;
+          padding: 4px 6px;
+        }
         
-        .title { text-align: center; font-size: 22px; font-weight: bold; margin-bottom: 15px; height: 50px; line-height: 50px; }
+        /* 열 너비 비율 (A:3, B:18.25, C:19.125, D:19.75, E:11.625, F:10.25, G:13) */
+        .col-a { width: 3%; }
+        .col-b { width: 19%; }
+        .col-c { width: 20%; }
+        .col-d { width: 21%; }
+        .col-e { width: 12%; }
+        .col-f { width: 11%; }
+        .col-g { width: 14%; }
         
-        .info-table { margin-bottom: 10px; }
-        .info-table th { height: 36px; background: #e6f3ff; font-size: 11px; }
-        .info-table td { height: 36px; text-align: center; font-size: 11px; }
+        /* 제목 영역 */
+        .title-cell {
+          font-size: 14px;
+          font-weight: bold;
+          text-align: center;
+          vertical-align: middle;
+          border: none;
+        }
         
-        .inspection-table { flex: 1; margin-bottom: 10px; }
-        .inspection-table th { height: 32px; font-size: 11px; }
-        .inspection-table td { height: 50px; font-size: 11px; }
-        .inspection-table td.item { text-align: center; background: #f9f9f9; width: 120px; }
-        .inspection-table td.result { text-align: center; width: 100px; font-size: 10px; }
+        /* 기본정보 헤더 */
+        .info-header {
+          background: #e6f3ff;
+          font-size: 10px;
+          font-weight: bold;
+        }
+        .info-cell {
+          font-size: 10px;
+        }
         
-        .judgment-table { margin-bottom: 10px; }
-        .judgment-table th { background: #90EE90; height: 36px; font-size: 11px; }
-        .judgment-table td { height: 45px; text-align: center; }
+        /* 검사항목 헤더 */
+        .insp-header {
+          font-size: 10px;
+          font-weight: bold;
+          background: #e6f3ff;
+          border-top: 2px solid #000;
+          border-bottom: 2px double #000;
+        }
         
-        .action-table { margin-bottom: 10px; }
-        .action-table th { background: #fffacd; height: 32px; font-size: 11px; }
-        .action-table td { height: 60px; }
+        /* 검사항목 */
+        .insp-item {
+          font-size: 10px;
+          text-align: center;
+          vertical-align: middle;
+          background: #f9f9f9;
+        }
+        .insp-criteria {
+          font-size: 10px;
+          text-align: left;
+          padding: 6px 8px;
+          line-height: 1.4;
+        }
+        .insp-result {
+          font-size: 10px;
+          text-align: center;
+        }
         
-        .footer { text-align: center; font-size: 11px; margin-top: auto; padding: 10px 0; }
+        /* 종합판정 */
+        .judge-header {
+          font-size: 10px;
+          font-weight: bold;
+          background: #90EE90;
+        }
+        .judge-cell {
+          font-size: 10px;
+        }
+        
+        /* 이탈시 조치사항 */
+        .action-title {
+          font-size: 10px;
+          font-weight: bold;
+          background: #fffacd;
+        }
+        .action-header {
+          font-size: 10px;
+          background: #fffacd;
+        }
+        .action-cell {
+          font-size: 10px;
+        }
+        
+        /* 하단 문서번호 */
+        .footer-cell {
+          font-size: 10px;
+          border: none;
+        }
         
         @media print { 
           html, body { width: 210mm; height: 297mm; }
@@ -1833,105 +1900,216 @@ async function printSubMaterialInspection(inboundData) {
     </head>
     <body>
       <div class="container">
-        <div class="title">부자재입고 검사일지</div>
-        
-        <table class="info-table">
-          <tr>
-            <th style="width:12%;">부자재명</th>
-            <td style="width:25%;" colspan="2">${inboundData.item_name || ''}</td>
-            <th style="width:10%;">입고량</th>
-            <td style="width:13%;">${formatNumber(inboundData.origin_qty || inboundData.quantity)}</td>
-            <th style="width:10%;">시험번호</th>
-            <td style="width:13%;">${inspectionNumber}</td>
-            <th style="width:10%;">거래업체</th>
-            <td>${inboundData.supplier || '-'}</td>
+        <table>
+          <colgroup>
+            <col class="col-a">
+            <col class="col-b">
+            <col class="col-c">
+            <col class="col-d">
+            <col class="col-e">
+            <col class="col-f">
+            <col class="col-g">
+          </colgroup>
+          
+          <!-- 행 1: 빈 행 -->
+          <tr style="height: 15px;">
+            <td style="border:none;"></td>
+            <td colspan="6" style="border:none;"></td>
           </tr>
-          <tr>
-            <th>채취자</th>
-            <td></td>
-            <th>채취장소</th>
-            <td>부자재창고</td>
-            <th>채취방법</th>
-            <td>무작위</td>
-            <th>시험일자</th>
-            <td>${inboundDate}</td>
+          
+          <!-- 행 2: 제목 -->
+          <tr style="height: 28px;">
+            <td style="border:none;"></td>
+            <td colspan="5" class="title-cell">부자재입고 검사일지</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 3: 빈 행 -->
+          <tr style="height: 12px;">
+            <td style="border:none;"></td>
+            <td colspan="6" style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 4: 부자재명, 입고량, 시험번호, 거래업체 -->
+          <tr style="height: 48px;">
+            <td style="border:none;"></td>
+            <td class="info-header">부자재명</td>
+            <td class="info-cell">${inboundData.item_name || ''}</td>
+            <td class="info-header">입고량</td>
+            <td colspan="2" class="info-cell">${formatNumber(inboundData.origin_qty || inboundData.quantity)}</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 5: 시험번호, 거래업체 -->
+          <tr style="height: 56px;">
+            <td style="border:none;"></td>
+            <td class="info-header">시험번호</td>
+            <td class="info-cell">${inspectionNumber}</td>
+            <td class="info-header">거래업체</td>
+            <td colspan="2" class="info-cell">${inboundData.supplier || '-'}</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 6: 채취자, 채취장소, 채취방법, 시험일자 -->
+          <tr style="height: 48px;">
+            <td style="border:none;"></td>
+            <td class="info-header">채취자</td>
+            <td class="info-cell">검수담당자</td>
+            <td class="info-header">채취장소</td>
+            <td colspan="2" class="info-cell">부자재창고</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 7: 채취방법, 시험일자 -->
+          <tr style="height: 48px;">
+            <td style="border:none;"></td>
+            <td class="info-header">채취방법</td>
+            <td class="info-cell">무작위</td>
+            <td class="info-header">시험일자</td>
+            <td colspan="2" class="info-cell">${inboundDate}</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 8: 빈 행 -->
+          <tr style="height: 30px;">
+            <td style="border:none;"></td>
+            <td colspan="6" style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 9: 검사항목 헤더 -->
+          <tr style="height: 60px;">
+            <td style="border:none;"></td>
+            <td class="insp-header">항목</td>
+            <td colspan="2" class="insp-header">기준</td>
+            <td colspan="2" class="insp-header">시험결과</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 10: 표시사항 -->
+          <tr style="height: 60px;">
+            <td style="border:none;"></td>
+            <td class="insp-item">표시사항</td>
+            <td colspan="2" class="insp-criteria">표준 부자재 표시내용과 일치 하여야 한다.</td>
+            <td colspan="2" class="insp-result"> □적합     □부적합</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 11: 포장상태 -->
+          <tr style="height: 60px;">
+            <td style="border:none;"></td>
+            <td class="insp-item">포장상태</td>
+            <td colspan="2" class="insp-criteria">파손되거나 손상된 부분이 없어야 하며,<br>위생상태가 양호해야 한다.</td>
+            <td colspan="2" class="insp-result"> □적합     □부적합</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 12: 인쇄상태 -->
+          <tr style="height: 60px;">
+            <td style="border:none;"></td>
+            <td class="insp-item">인쇄상태</td>
+            <td colspan="2" class="insp-criteria">표준 부자재와 색도가 동일해야 하며,<br>글자는 내용을 명확히 구분할 수 있도록<br>인쇄되어 있어야 한다.</td>
+            <td colspan="2" class="insp-result"> □적합     □부적합</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 13: 절단면 및 접착면 상태 -->
+          <tr style="height: 60px;">
+            <td style="border:none;"></td>
+            <td class="insp-item">절단면 및<br>접착면 상태</td>
+            <td colspan="2" class="insp-criteria">절단면은 깔끔하게 처리 되어 있어야 하며,<br>접착면은 접착 상태가 양호하고, 마감처리가<br>깔끔해야 한다.</td>
+            <td colspan="2" class="insp-result"> □적합     □부적합</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 14: 성적서 -->
+          <tr style="height: 60px;">
+            <td style="border:none;"></td>
+            <td class="insp-item">성적서</td>
+            <td colspan="2" class="insp-criteria">식품직접자재인 경우 입고된 부자재에 해당하는<br>성적서가 첨부되어야 하며, 시험 결과가 적합한<br>부자재여야 한다.</td>
+            <td colspan="2" class="insp-result"> □적합     □부적합</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 15: 배송차량청결상태 -->
+          <tr style="height: 60px;">
+            <td style="border:none;"></td>
+            <td class="insp-item">배송차량청결상태</td>
+            <td colspan="2" class="insp-criteria">배송차량의 청결상태가 입고된 부자재에<br>오염 소지가 없어야 한다.</td>
+            <td colspan="2" class="insp-result"> □적합     □부적합</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 16: 빈 행 -->
+          <tr style="height: 18px;">
+            <td style="border:none;"></td>
+            <td colspan="6" style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 17: 종합판정 헤더 -->
+          <tr style="height: 40px;">
+            <td style="border:none;"></td>
+            <td class="judge-header">종합판정</td>
+            <td colspan="2" class="judge-header">판정일자</td>
+            <td colspan="2" class="judge-header">판정자</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 18: 종합판정 입력란 -->
+          <tr style="height: 40px;">
+            <td style="border:none;"></td>
+            <td class="judge-cell"></td>
+            <td colspan="2" class="judge-cell"></td>
+            <td colspan="2" class="judge-cell"></td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 19: 이탈 시 조치사항 제목 -->
+          <tr style="height: 40px;">
+            <td style="border:none;"></td>
+            <td colspan="5" class="action-title">이탈 시 조치사항</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 20: 이탈시 조치사항 헤더 -->
+          <tr style="height: 40px;">
+            <td style="border:none;"></td>
+            <td class="action-header">일자</td>
+            <td class="action-header">이상발생내역</td>
+            <td class="action-header">조치내역 및 결과</td>
+            <td class="action-header">완료일</td>
+            <td class="action-header">확인</td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 21~22: 조치사항 입력란 -->
+          <tr style="height: 40px;">
+            <td style="border:none;"></td>
+            <td class="action-cell"></td>
+            <td class="action-cell"></td>
+            <td class="action-cell"></td>
+            <td class="action-cell"></td>
+            <td class="action-cell"></td>
+            <td style="border:none;"></td>
+          </tr>
+          <tr style="height: 40px;">
+            <td style="border:none;"></td>
+            <td class="action-cell"></td>
+            <td class="action-cell"></td>
+            <td class="action-cell"></td>
+            <td class="action-cell"></td>
+            <td class="action-cell"></td>
+            <td style="border:none;"></td>
+          </tr>
+          
+          <!-- 행 23: 하단 문서번호 및 회사명 -->
+          <tr style="height: 20px;">
+            <td style="border:none;"></td>
+            <td class="footer-cell">BV-00-00</td>
+            <td colspan="2" style="border:none;"></td>
+            <td colspan="2" class="footer-cell">㈜본비반트</td>
+            <td class="footer-cell" style="text-align:left;">A4(210x297)</td>
           </tr>
         </table>
-        
-        <table class="inspection-table">
-          <thead>
-            <tr>
-              <th style="width:18%;">항목</th>
-              <th>기준</th>
-              <th style="width:15%;">시험결과</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td class="item">표시사항</td>
-              <td>표준 부자재 표시내용과 일치 하여야 한다.</td>
-              <td class="result">□적합 □부적합</td>
-            </tr>
-            <tr>
-              <td class="item">포장상태</td>
-              <td>파손되거나 손상된 부분이 없어야 하며, 위생상태가 양호해야 한다.</td>
-              <td class="result">□적합 □부적합</td>
-            </tr>
-            <tr>
-              <td class="item">인쇄상태</td>
-              <td>표준 부자재와 색도가 동일해야 하며, 글자는 내용을 명확히 구분할 수 있도록 인쇄되어 있어야 한다.</td>
-              <td class="result">□적합 □부적합</td>
-            </tr>
-            <tr>
-              <td class="item">절단면 및<br>접착면 상태</td>
-              <td>절단면은 깔끔하게 처리 되어 있어야 하며, 접착면은 접착 상태가 양호하고, 마감처리가 깔끔해야 한다.</td>
-              <td class="result">□적합 □부적합</td>
-            </tr>
-            <tr>
-              <td class="item">성적서</td>
-              <td>식품직접자재인 경우 입고된 부자재에 해당하는 성적서가 첨부되어야 하며, 시험 결과가 적합한 부자재여야 한다.</td>
-              <td class="result">□적합 □부적합</td>
-            </tr>
-            <tr>
-              <td class="item">배송차량청결상태</td>
-              <td>배송차량의 청결상태가 입고된 부자재에 오염 소지가 없어야 한다.</td>
-              <td class="result">□적합 □부적합</td>
-            </tr>
-          </tbody>
-        </table>
-        
-        <table class="judgment-table">
-          <tr>
-            <th style="width:15%;">종합판정</th>
-            <td style="width:35%;"></td>
-            <th style="width:12%;">판정일자</th>
-            <td style="width:18%;"></td>
-            <th style="width:10%;">판정자</th>
-            <td></td>
-          </tr>
-        </table>
-        
-        <table class="action-table">
-          <tr>
-            <th colspan="5">이탈 시 조치사항</th>
-          </tr>
-          <tr>
-            <th style="width:12%;">일자</th>
-            <th style="width:22%;">이상발생내역</th>
-            <th>조치내역 및 결과</th>
-            <th style="width:12%;">완료일</th>
-            <th style="width:10%;">확인</th>
-          </tr>
-          <tr>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-            <td></td>
-          </tr>
-        </table>
-        
-        <div class="footer">㈜본비반트</div>
       </div>
     </body>
     </html>

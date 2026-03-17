@@ -454,6 +454,11 @@ app.get('/*', (c) => {
                     <span>사용량 입력</span>
                 </a>
                 
+                <a href="#usage-history" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="usage-history">
+                    <i class="fas fa-history w-5"></i>
+                    <span>사용내역 조회</span>
+                </a>
+                
                 <a href="#outbound" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="outbound">
                     <i class="fas fa-truck w-5"></i>
                     <span>출고 등록</span>

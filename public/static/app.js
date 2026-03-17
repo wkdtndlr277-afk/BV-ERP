@@ -827,6 +827,7 @@ function renderPage(page) {
     case 'inbound': renderInbound(); break;
     case 'inbound-query': renderInboundQuery(); break;
     case 'usage': renderUsage(); break;
+    case 'usage-history': renderUsageHistoryPage(); break;
     case 'outbound': renderOutbound(); break;
     case 'quick-stock': renderQuickStock(); break;
     case 'production': renderProduction(); break;
@@ -2659,80 +2660,126 @@ function clearSelectedItem() {
   document.getElementById('inbound-item-search').focus();
 }
 
-// Usage Input (Raw Materials) - with search functionality
+// Usage Input (Raw Materials) - with search functionality and history tab
 async function renderUsage() {
   const content = document.getElementById('page-content');
+  const today = formatDate(new Date());
+  
+  content.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-mortar-pestle mr-2 text-haccp-primary"></i>
+          원료 사용량 관리
+        </h2>
+      </div>
+      
+      <!-- 탭 메뉴 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="flex border-b">
+          <button onclick="switchUsageTab('register')" class="usage-tab flex-1 py-3 text-center font-medium border-b-2 border-haccp-primary text-haccp-primary bg-blue-50" data-tab="register">
+            <i class="fas fa-plus-circle mr-1"></i> 사용량 등록
+          </button>
+          <button onclick="switchUsageTab('history')" class="usage-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="history">
+            <i class="fas fa-history mr-1"></i> 사용내역 조회
+          </button>
+          <button onclick="switchUsageTab('summary')" class="usage-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="summary">
+            <i class="fas fa-chart-bar mr-1"></i> 품목별 요약
+          </button>
+        </div>
+        
+        <div id="usage-tab-content" class="p-4">
+          <!-- 탭 내용이 여기에 렌더링됨 -->
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 기본 탭: 등록
+  switchUsageTab('register');
+}
+
+// 사용량 탭 전환
+async function switchUsageTab(tab) {
+  document.querySelectorAll('.usage-tab').forEach(el => {
+    if (el.dataset.tab === tab) {
+      el.classList.add('border-haccp-primary', 'text-haccp-primary', 'bg-blue-50');
+      el.classList.remove('border-transparent', 'text-gray-500');
+    } else {
+      el.classList.remove('border-haccp-primary', 'text-haccp-primary', 'bg-blue-50');
+      el.classList.add('border-transparent', 'text-gray-500');
+    }
+  });
+  
+  const contentEl = document.getElementById('usage-tab-content');
+  
+  if (tab === 'register') {
+    await renderUsageRegister(contentEl);
+  } else if (tab === 'history') {
+    await renderUsageHistory(contentEl);
+  } else if (tab === 'summary') {
+    await renderUsageSummary(contentEl);
+  }
+}
+
+// 사용량 등록 탭
+async function renderUsageRegister(contentEl) {
   const today = formatDate(new Date());
   
   try {
     const result = await api('/usage/available');
     const materials = result.data || [];
-    
-    // Store materials globally for filtering
     window.usageMaterials = materials;
     
-    content.innerHTML = `
-      <div class="max-w-3xl mx-auto space-y-6">
+    contentEl.innerHTML = `
+      <div class="space-y-4">
         <div class="flex items-center justify-between flex-wrap gap-4">
-          <h2 class="text-2xl font-bold text-gray-800">
-            <i class="fas fa-mortar-pestle mr-2 text-haccp-primary"></i>
-            오늘 사용량 입력
-          </h2>
-          <input type="date" id="usage-date" class="border rounded-lg px-4 py-2" value="${today}">
+          <div class="flex items-center gap-4">
+            <label class="text-sm font-medium text-gray-700">사용일:</label>
+            <input type="date" id="usage-date" class="border rounded-lg px-4 py-2" value="${today}">
+          </div>
+          <div class="relative">
+            <input type="text" 
+                   id="usage-search" 
+                   class="border rounded-lg pl-10 pr-4 py-2 w-64" 
+                   placeholder="원료명/코드 검색...">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+          </div>
         </div>
         
-        <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-gray-50">
-            <div class="flex items-center justify-between flex-wrap gap-4">
-              <span class="font-medium text-gray-700">원료 사용량 입력</span>
-              <div class="relative">
-                <input type="text" 
-                       id="usage-search" 
-                       class="border rounded-lg pl-10 pr-4 py-2 w-64" 
-                       placeholder="원료명 검색...">
-                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-              </div>
-            </div>
+        <form id="usage-form">
+          <div id="usage-list" class="divide-y border rounded-lg max-h-96 overflow-y-auto bg-white">
+            ${renderUsageItems(materials)}
           </div>
           
-          <form id="usage-form">
-            <div id="usage-list" class="divide-y max-h-96 overflow-y-auto">
-              ${renderUsageItems(materials)}
+          <div class="mt-4 flex items-center justify-between">
+            <div id="usage-summary" class="text-sm text-gray-600 hidden">
+              <span class="font-medium">선택:</span> <span id="selected-count">0</span>개 품목
             </div>
-            
-            <div class="p-4 border-t bg-gray-50 space-y-3">
-              <div id="usage-summary" class="text-sm text-gray-600 hidden">
-                <span class="font-medium">선택된 원료:</span> <span id="selected-count">0</span>개
-              </div>
-              <button type="submit" class="w-full bg-haccp-primary text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition flex items-center justify-center gap-2">
-                <i class="fas fa-save"></i>
-                사용량 저장
-              </button>
-            </div>
-          </form>
-        </div>
+            <button type="submit" class="bg-haccp-primary text-white px-6 py-2 rounded-lg font-bold hover:bg-blue-700 transition flex items-center gap-2">
+              <i class="fas fa-save"></i> 사용량 저장
+            </button>
+          </div>
+        </form>
         
-        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h4 class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> FEFO 자동 적용</h4>
-          <p class="text-sm text-blue-700">소비기한이 빠른 LOT부터 자동으로 차감됩니다. (선입선출)</p>
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+          <i class="fas fa-info-circle text-blue-600 mr-1"></i>
+          <span class="text-blue-700">소비기한 빠른 LOT부터 자동 차감됩니다 (FEFO)</span>
         </div>
       </div>
     `;
     
-    // Search functionality
+    // 이벤트 리스너
     document.getElementById('usage-search').addEventListener('input', function(e) {
-      const searchTerm = e.target.value.toLowerCase().trim();
-      filterUsageItems(searchTerm);
+      filterUsageItems(e.target.value.toLowerCase().trim());
     });
     
-    // Track input changes to show selected count
     document.getElementById('usage-list').addEventListener('input', function(e) {
       if (e.target.classList.contains('usage-input')) {
         updateUsageSummary();
       }
     });
     
-    // Form submit
     document.getElementById('usage-form').addEventListener('submit', async function(e) {
       e.preventDefault();
       
@@ -2742,10 +2789,7 @@ async function renderUsage() {
       inputs.forEach(input => {
         const qty = parseFloat(input.value);
         if (qty > 0) {
-          items.push({
-            item_code: input.dataset.itemCode,
-            quantity: qty
-          });
+          items.push({ item_code: input.dataset.itemCode, quantity: qty });
         }
       });
       
@@ -2760,15 +2804,828 @@ async function renderUsage() {
           usage_date: document.getElementById('usage-date').value
         });
         showToast(result.message, 'success');
-        renderUsage();
+        switchUsageTab('history'); // 등록 후 내역 탭으로 이동
         loadAlertCount();
       } catch (e) {
         // Error handled in api function
       }
     });
   } catch (e) {
-    content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+    contentEl.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
   }
+}
+
+// 사용내역 조회 탭
+async function renderUsageHistory(contentEl) {
+  const today = formatDate(new Date());
+  const weekAgo = formatDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+  
+  contentEl.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <div class="flex items-center gap-2">
+          <input type="date" id="usage-history-start" class="border rounded-lg px-3 py-2 text-sm" value="${weekAgo}">
+          <span class="text-gray-500">~</span>
+          <input type="date" id="usage-history-end" class="border rounded-lg px-3 py-2 text-sm" value="${today}">
+          <button onclick="loadUsageHistory()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">
+            <i class="fas fa-search mr-1"></i> 조회
+          </button>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="downloadUsageHistory()" class="bg-green-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-green-700">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀
+          </button>
+        </div>
+      </div>
+      
+      <div id="usage-history-content" class="border rounded-lg overflow-hidden">
+        <div class="p-8 text-center text-gray-400">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadUsageHistory();
+}
+
+// 사용내역 로드
+async function loadUsageHistory() {
+  const startDate = document.getElementById('usage-history-start').value;
+  const endDate = document.getElementById('usage-history-end').value;
+  const contentEl = document.getElementById('usage-history-content');
+  
+  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const result = await api(`/usage/history?start_date=${startDate}&end_date=${endDate}`);
+    const records = result.data || [];
+    
+    window.usageHistoryData = records;
+    
+    if (records.length === 0) {
+      contentEl.innerHTML = '<div class="p-8 text-center text-gray-400">해당 기간에 사용 내역이 없습니다.</div>';
+      return;
+    }
+    
+    // 날짜별로 그룹화
+    const grouped = {};
+    records.forEach(r => {
+      if (!grouped[r.usage_date]) grouped[r.usage_date] = [];
+      grouped[r.usage_date].push(r);
+    });
+    
+    contentEl.innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-between items-center">
+        <span class="font-medium text-gray-700">
+          ${startDate} ~ ${endDate} 사용 내역
+        </span>
+        <span class="text-sm text-gray-500">${records.length}건</span>
+      </div>
+      <div class="max-h-96 overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 sticky top-0">
+            <tr>
+              <th class="p-2 text-left">사용일</th>
+              <th class="p-2 text-left">품목명</th>
+              <th class="p-2 text-left">LOT번호</th>
+              <th class="p-2 text-right">사용량</th>
+              <th class="p-2 text-left">메모</th>
+              <th class="p-2 text-center">삭제</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${records.map(r => `
+              <tr class="hover:bg-gray-50">
+                <td class="p-2">${r.usage_date}</td>
+                <td class="p-2">
+                  <span class="font-medium">${r.item_name || '-'}</span>
+                  <span class="text-gray-400 text-xs ml-1">(${r.item_code})</span>
+                </td>
+                <td class="p-2 font-mono text-xs">${r.lot_number || '-'}</td>
+                <td class="p-2 text-right font-medium text-orange-600">${formatNumber(r.quantity)} ${r.unit || ''}</td>
+                <td class="p-2 text-gray-500 text-xs">${r.memo || '-'}</td>
+                <td class="p-2 text-center">
+                  <button onclick="deleteUsageRecord(${r.id})" class="text-red-500 hover:text-red-700" title="삭제">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    contentEl.innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 사용내역 삭제
+async function deleteUsageRecord(id) {
+  if (!confirm('이 사용 기록을 삭제하시겠습니까?\n삭제하면 재고가 복원됩니다.')) return;
+  
+  try {
+    const result = await api(`/usage/${id}`, 'DELETE');
+    showToast(result.message, 'success');
+    loadUsageHistory();
+    loadAlertCount();
+  } catch (e) {
+    // Error handled in api function
+  }
+}
+
+// 사용내역 엑셀 다운로드
+function downloadUsageHistory() {
+  const data = window.usageHistoryData || [];
+  
+  if (data.length === 0) {
+    showToast('다운로드할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const rows = data.map(r => ({
+    '사용일': r.usage_date,
+    '품목코드': r.item_code,
+    '품목명': r.item_name || '',
+    'LOT번호': r.lot_number || '',
+    '사용량': r.quantity,
+    '단위': r.unit || '',
+    '메모': r.memo || ''
+  }));
+  
+  const columns = [
+    { key: '사용일', label: '사용일' },
+    { key: '품목코드', label: '품목코드' },
+    { key: '품목명', label: '품목명' },
+    { key: 'LOT번호', label: 'LOT번호' },
+    { key: '사용량', label: '사용량', type: 'number' },
+    { key: '단위', label: '단위' },
+    { key: '메모', label: '메모' }
+  ];
+  
+  const startDate = document.getElementById('usage-history-start').value;
+  const endDate = document.getElementById('usage-history-end').value;
+  downloadExcel(rows, columns, `사용내역_${startDate}_${endDate}`);
+  showToast('엑셀 다운로드 완료', 'success');
+}
+
+// 품목별 요약 탭
+async function renderUsageSummary(contentEl) {
+  const today = formatDate(new Date());
+  const monthStart = today.substring(0, 8) + '01';
+  
+  contentEl.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex items-center gap-2">
+        <input type="date" id="usage-summary-start" class="border rounded-lg px-3 py-2 text-sm" value="${monthStart}">
+        <span class="text-gray-500">~</span>
+        <input type="date" id="usage-summary-end" class="border rounded-lg px-3 py-2 text-sm" value="${today}">
+        <button onclick="loadUsageSummary()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">
+          <i class="fas fa-search mr-1"></i> 조회
+        </button>
+      </div>
+      
+      <div id="usage-summary-content" class="border rounded-lg overflow-hidden">
+        <div class="p-8 text-center text-gray-400">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadUsageSummary();
+}
+
+// 품목별 요약 로드
+async function loadUsageSummary() {
+  const startDate = document.getElementById('usage-summary-start').value;
+  const endDate = document.getElementById('usage-summary-end').value;
+  const contentEl = document.getElementById('usage-summary-content');
+  
+  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const result = await api(`/usage/summary?start_date=${startDate}&end_date=${endDate}`);
+    const data = result.data || [];
+    
+    if (data.length === 0) {
+      contentEl.innerHTML = '<div class="p-8 text-center text-gray-400">해당 기간에 사용 내역이 없습니다.</div>';
+      return;
+    }
+    
+    const totalUsage = data.reduce((sum, d) => sum + d.total_usage, 0);
+    
+    contentEl.innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-between items-center">
+        <span class="font-medium text-gray-700">
+          ${startDate} ~ ${endDate} 품목별 사용량
+        </span>
+        <span class="text-sm">
+          <span class="text-gray-500">품목 ${data.length}개,</span>
+          <span class="text-orange-600 font-bold">총 ${formatNumber(totalUsage)}</span>
+        </span>
+      </div>
+      <div class="max-h-96 overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 sticky top-0">
+            <tr>
+              <th class="p-2 text-left">품목코드</th>
+              <th class="p-2 text-left">품목명</th>
+              <th class="p-2 text-right">총 사용량</th>
+              <th class="p-2 text-center">사용횟수</th>
+              <th class="p-2 text-right">비율</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${data.map(d => `
+              <tr class="hover:bg-gray-50">
+                <td class="p-2 font-mono text-xs">${d.item_code}</td>
+                <td class="p-2 font-medium">${d.item_name || '-'}</td>
+                <td class="p-2 text-right text-orange-600 font-bold">${formatNumber(d.total_usage)} ${d.unit || ''}</td>
+                <td class="p-2 text-center text-gray-500">${d.record_count}회</td>
+                <td class="p-2 text-right text-gray-500">${((d.total_usage / totalUsage) * 100).toFixed(1)}%</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    contentEl.innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 사용내역 조회 독립 페이지
+async function renderUsageHistoryPage() {
+  const content = document.getElementById('page-content');
+  const today = formatDate(new Date());
+  const weekAgo = formatDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+  const monthStart = today.substring(0, 8) + '01';
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-history mr-2 text-haccp-primary"></i>
+          사용내역 조회
+        </h2>
+        <a href="#usage" class="text-blue-600 hover:text-blue-800 text-sm">
+          <i class="fas fa-plus-circle mr-1"></i> 사용량 등록하기
+        </a>
+      </div>
+      
+      <!-- 탭 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="flex border-b">
+          <button onclick="switchUsageHistoryTab('detail')" class="usage-history-tab flex-1 py-3 text-center font-medium border-b-2 border-haccp-primary text-haccp-primary bg-blue-50" data-tab="detail">
+            <i class="fas fa-list mr-1"></i> 상세 내역
+          </button>
+          <button onclick="switchUsageHistoryTab('summary')" class="usage-history-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="summary">
+            <i class="fas fa-chart-bar mr-1"></i> 품목별 요약
+          </button>
+          <button onclick="switchUsageHistoryTab('daily')" class="usage-history-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="daily">
+            <i class="fas fa-calendar-day mr-1"></i> 일별 합계
+          </button>
+        </div>
+        
+        <div id="usage-history-tab-content" class="p-4">
+          <!-- 탭 내용 -->
+        </div>
+      </div>
+    </div>
+  `;
+  
+  switchUsageHistoryTab('detail');
+}
+
+// 사용내역 조회 탭 전환
+async function switchUsageHistoryTab(tab) {
+  document.querySelectorAll('.usage-history-tab').forEach(el => {
+    if (el.dataset.tab === tab) {
+      el.classList.add('border-haccp-primary', 'text-haccp-primary', 'bg-blue-50');
+      el.classList.remove('border-transparent', 'text-gray-500');
+    } else {
+      el.classList.remove('border-haccp-primary', 'text-haccp-primary', 'bg-blue-50');
+      el.classList.add('border-transparent', 'text-gray-500');
+    }
+  });
+  
+  const contentEl = document.getElementById('usage-history-tab-content');
+  
+  if (tab === 'detail') {
+    await renderUsageHistoryDetail(contentEl);
+  } else if (tab === 'summary') {
+    await renderUsageHistorySummary(contentEl);
+  } else if (tab === 'daily') {
+    await renderUsageHistoryDaily(contentEl);
+  }
+}
+
+// 상세 내역 탭
+async function renderUsageHistoryDetail(contentEl) {
+  const today = formatDate(new Date());
+  const weekAgo = formatDate(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000));
+  
+  contentEl.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <div class="flex items-center gap-2">
+          <input type="date" id="usage-hist-start" class="border rounded-lg px-3 py-2 text-sm" value="${weekAgo}">
+          <span class="text-gray-500">~</span>
+          <input type="date" id="usage-hist-end" class="border rounded-lg px-3 py-2 text-sm" value="${today}">
+          <select id="usage-hist-item" class="border rounded-lg px-3 py-2 text-sm">
+            <option value="">전체 품목</option>
+          </select>
+          <button onclick="loadUsageHistoryDetail()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">
+            <i class="fas fa-search mr-1"></i> 조회
+          </button>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="downloadUsageHistoryDetail()" class="bg-green-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-green-700">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀
+          </button>
+          <button onclick="printUsageHistoryDetail()" class="bg-gray-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-gray-700">
+            <i class="fas fa-print mr-1"></i> 인쇄
+          </button>
+        </div>
+      </div>
+      
+      <div id="usage-hist-detail-content" class="border rounded-lg overflow-hidden">
+        <div class="p-8 text-center text-gray-400">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 품목 목록 로드
+  try {
+    const result = await api('/usage/available');
+    const items = result.data || [];
+    const select = document.getElementById('usage-hist-item');
+    items.forEach(item => {
+      const opt = document.createElement('option');
+      opt.value = item.item_code;
+      opt.textContent = `${item.item_name} (${item.item_code})`;
+      select.appendChild(opt);
+    });
+  } catch (e) {}
+  
+  loadUsageHistoryDetail();
+}
+
+// 상세 내역 로드
+async function loadUsageHistoryDetail() {
+  const startDate = document.getElementById('usage-hist-start').value;
+  const endDate = document.getElementById('usage-hist-end').value;
+  const itemCode = document.getElementById('usage-hist-item').value;
+  const contentEl = document.getElementById('usage-hist-detail-content');
+  
+  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    let url = `/usage/history?start_date=${startDate}&end_date=${endDate}`;
+    if (itemCode) url += `&item_code=${itemCode}`;
+    
+    const result = await api(url);
+    const records = result.data || [];
+    
+    window.usageHistoryDetailData = records;
+    
+    if (records.length === 0) {
+      contentEl.innerHTML = '<div class="p-8 text-center text-gray-400">해당 기간에 사용 내역이 없습니다.</div>';
+      return;
+    }
+    
+    // 총 사용량 계산
+    const totalUsage = records.reduce((sum, r) => sum + r.quantity, 0);
+    
+    contentEl.innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-between items-center">
+        <span class="font-medium text-gray-700">
+          <i class="fas fa-calendar-alt mr-1"></i> ${startDate} ~ ${endDate}
+        </span>
+        <span class="text-sm">
+          <span class="text-gray-500">${records.length}건,</span>
+          <span class="text-orange-600 font-bold ml-1">총 ${formatNumber(totalUsage)}</span>
+        </span>
+      </div>
+      <div class="max-h-[500px] overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 sticky top-0">
+            <tr>
+              <th class="p-3 text-left">사용일</th>
+              <th class="p-3 text-left">품목명</th>
+              <th class="p-3 text-left">품목코드</th>
+              <th class="p-3 text-left">LOT번호</th>
+              <th class="p-3 text-right">사용량</th>
+              <th class="p-3 text-left">메모</th>
+              <th class="p-3 text-center">작업</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${records.map(r => `
+              <tr class="hover:bg-gray-50">
+                <td class="p-3">${r.usage_date}</td>
+                <td class="p-3 font-medium">${r.item_name || '-'}</td>
+                <td class="p-3 text-gray-500 text-xs font-mono">${r.item_code}</td>
+                <td class="p-3 font-mono text-xs text-blue-600">${r.lot_number || '-'}</td>
+                <td class="p-3 text-right font-bold text-orange-600">${formatNumber(r.quantity)} ${r.unit || ''}</td>
+                <td class="p-3 text-gray-500 text-xs max-w-[150px] truncate">${r.memo || '-'}</td>
+                <td class="p-3 text-center">
+                  <button onclick="deleteUsageRecordFromPage(${r.id})" class="text-red-500 hover:text-red-700 p-1" title="삭제 (재고 복원)">
+                    <i class="fas fa-trash-alt"></i>
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    contentEl.innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 사용내역 삭제 (독립 페이지용)
+async function deleteUsageRecordFromPage(id) {
+  if (!confirm('이 사용 기록을 삭제하시겠습니까?\\n삭제하면 재고가 복원됩니다.')) return;
+  
+  try {
+    const result = await api(`/usage/${id}`, 'DELETE');
+    showToast(result.message, 'success');
+    loadUsageHistoryDetail();
+    loadAlertCount();
+  } catch (e) {
+    // Error handled in api function
+  }
+}
+
+// 상세 내역 엑셀 다운로드
+function downloadUsageHistoryDetail() {
+  const data = window.usageHistoryDetailData || [];
+  
+  if (data.length === 0) {
+    showToast('다운로드할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const rows = data.map(r => ({
+    '사용일': r.usage_date,
+    '품목코드': r.item_code,
+    '품목명': r.item_name || '',
+    'LOT번호': r.lot_number || '',
+    '사용량': r.quantity,
+    '단위': r.unit || '',
+    '메모': r.memo || ''
+  }));
+  
+  const columns = [
+    { key: '사용일', label: '사용일' },
+    { key: '품목코드', label: '품목코드' },
+    { key: '품목명', label: '품목명' },
+    { key: 'LOT번호', label: 'LOT번호' },
+    { key: '사용량', label: '사용량', type: 'number' },
+    { key: '단위', label: '단위' },
+    { key: '메모', label: '메모' }
+  ];
+  
+  const startDate = document.getElementById('usage-hist-start').value;
+  const endDate = document.getElementById('usage-hist-end').value;
+  downloadExcel(rows, columns, `사용내역_${startDate}_${endDate}`);
+  showToast('엑셀 다운로드 완료', 'success');
+}
+
+// 상세 내역 인쇄
+function printUsageHistoryDetail() {
+  const data = window.usageHistoryDetailData || [];
+  
+  if (data.length === 0) {
+    showToast('인쇄할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const startDate = document.getElementById('usage-hist-start').value;
+  const endDate = document.getElementById('usage-hist-end').value;
+  const totalUsage = data.reduce((sum, r) => sum + r.quantity, 0);
+  
+  const printContent = `
+    <h2 style="text-align:center; margin-bottom:20px;">사용내역 상세</h2>
+    <p style="text-align:center; margin-bottom:10px;">${startDate} ~ ${endDate} (${data.length}건, 총 ${formatNumber(totalUsage)})</p>
+    <table border="1" cellpadding="8" cellspacing="0" style="width:100%; border-collapse:collapse; font-size:12px;">
+      <thead>
+        <tr style="background:#f0f0f0;">
+          <th>사용일</th>
+          <th>품목명</th>
+          <th>품목코드</th>
+          <th>LOT번호</th>
+          <th style="text-align:right;">사용량</th>
+          <th>메모</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.map(r => `
+          <tr>
+            <td>${r.usage_date}</td>
+            <td>${r.item_name || '-'}</td>
+            <td>${r.item_code}</td>
+            <td>${r.lot_number || '-'}</td>
+            <td style="text-align:right;">${formatNumber(r.quantity)} ${r.unit || ''}</td>
+            <td>${r.memo || '-'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  
+  printData(printContent);
+}
+
+// 품목별 요약 탭
+async function renderUsageHistorySummary(contentEl) {
+  const today = formatDate(new Date());
+  const monthStart = today.substring(0, 8) + '01';
+  
+  contentEl.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex items-center gap-2 flex-wrap">
+        <input type="date" id="usage-sum-start" class="border rounded-lg px-3 py-2 text-sm" value="${monthStart}">
+        <span class="text-gray-500">~</span>
+        <input type="date" id="usage-sum-end" class="border rounded-lg px-3 py-2 text-sm" value="${today}">
+        <button onclick="loadUsageHistorySummary()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">
+          <i class="fas fa-search mr-1"></i> 조회
+        </button>
+        <button onclick="downloadUsageHistorySummary()" class="bg-green-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-green-700 ml-auto">
+          <i class="fas fa-file-excel mr-1"></i> 엑셀
+        </button>
+      </div>
+      
+      <div id="usage-sum-content" class="border rounded-lg overflow-hidden">
+        <div class="p-8 text-center text-gray-400">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadUsageHistorySummary();
+}
+
+// 품목별 요약 로드
+async function loadUsageHistorySummary() {
+  const startDate = document.getElementById('usage-sum-start').value;
+  const endDate = document.getElementById('usage-sum-end').value;
+  const contentEl = document.getElementById('usage-sum-content');
+  
+  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const result = await api(`/usage/summary?start_date=${startDate}&end_date=${endDate}`);
+    const data = result.data || [];
+    
+    window.usageHistorySummaryData = data;
+    
+    if (data.length === 0) {
+      contentEl.innerHTML = '<div class="p-8 text-center text-gray-400">해당 기간에 사용 내역이 없습니다.</div>';
+      return;
+    }
+    
+    const totalUsage = data.reduce((sum, d) => sum + d.total_usage, 0);
+    const totalRecords = data.reduce((sum, d) => sum + d.record_count, 0);
+    
+    contentEl.innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-between items-center">
+        <span class="font-medium text-gray-700">
+          <i class="fas fa-chart-pie mr-1"></i> ${startDate} ~ ${endDate}
+        </span>
+        <span class="text-sm">
+          <span class="text-gray-500">${data.length}개 품목, ${totalRecords}회 사용,</span>
+          <span class="text-orange-600 font-bold ml-1">총 ${formatNumber(totalUsage)}</span>
+        </span>
+      </div>
+      <div class="max-h-[500px] overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 sticky top-0">
+            <tr>
+              <th class="p-3 text-center">#</th>
+              <th class="p-3 text-left">품목코드</th>
+              <th class="p-3 text-left">품목명</th>
+              <th class="p-3 text-right">총 사용량</th>
+              <th class="p-3 text-center">사용횟수</th>
+              <th class="p-3 text-right">비율</th>
+              <th class="p-3">비율 그래프</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${data.map((d, idx) => {
+              const percentage = ((d.total_usage / totalUsage) * 100).toFixed(1);
+              return `
+                <tr class="hover:bg-gray-50">
+                  <td class="p-3 text-center text-gray-400">${idx + 1}</td>
+                  <td class="p-3 font-mono text-xs text-gray-500">${d.item_code}</td>
+                  <td class="p-3 font-medium">${d.item_name || '-'}</td>
+                  <td class="p-3 text-right text-orange-600 font-bold">${formatNumber(d.total_usage)} ${d.unit || ''}</td>
+                  <td class="p-3 text-center text-gray-500">${d.record_count}회</td>
+                  <td class="p-3 text-right text-gray-600">${percentage}%</td>
+                  <td class="p-3">
+                    <div class="w-full bg-gray-200 rounded-full h-2">
+                      <div class="bg-orange-500 h-2 rounded-full" style="width: ${Math.min(percentage, 100)}%"></div>
+                    </div>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    contentEl.innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 품목별 요약 엑셀
+function downloadUsageHistorySummary() {
+  const data = window.usageHistorySummaryData || [];
+  
+  if (data.length === 0) {
+    showToast('다운로드할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const totalUsage = data.reduce((sum, d) => sum + d.total_usage, 0);
+  
+  const rows = data.map((d, idx) => ({
+    '순위': idx + 1,
+    '품목코드': d.item_code,
+    '품목명': d.item_name || '',
+    '총사용량': d.total_usage,
+    '단위': d.unit || '',
+    '사용횟수': d.record_count,
+    '비율(%)': ((d.total_usage / totalUsage) * 100).toFixed(1)
+  }));
+  
+  const columns = [
+    { key: '순위', label: '순위', type: 'number' },
+    { key: '품목코드', label: '품목코드' },
+    { key: '품목명', label: '품목명' },
+    { key: '총사용량', label: '총사용량', type: 'number' },
+    { key: '단위', label: '단위' },
+    { key: '사용횟수', label: '사용횟수', type: 'number' },
+    { key: '비율(%)', label: '비율(%)', type: 'number' }
+  ];
+  
+  const startDate = document.getElementById('usage-sum-start').value;
+  const endDate = document.getElementById('usage-sum-end').value;
+  downloadExcel(rows, columns, `품목별사용량요약_${startDate}_${endDate}`);
+  showToast('엑셀 다운로드 완료', 'success');
+}
+
+// 일별 합계 탭
+async function renderUsageHistoryDaily(contentEl) {
+  const today = formatDate(new Date());
+  const monthStart = today.substring(0, 8) + '01';
+  
+  contentEl.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex items-center gap-2 flex-wrap">
+        <input type="date" id="usage-daily-start" class="border rounded-lg px-3 py-2 text-sm" value="${monthStart}">
+        <span class="text-gray-500">~</span>
+        <input type="date" id="usage-daily-end" class="border rounded-lg px-3 py-2 text-sm" value="${today}">
+        <button onclick="loadUsageHistoryDaily()" class="bg-haccp-primary text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">
+          <i class="fas fa-search mr-1"></i> 조회
+        </button>
+        <button onclick="downloadUsageHistoryDaily()" class="bg-green-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-green-700 ml-auto">
+          <i class="fas fa-file-excel mr-1"></i> 엑셀
+        </button>
+      </div>
+      
+      <div id="usage-daily-content" class="border rounded-lg overflow-hidden">
+        <div class="p-8 text-center text-gray-400">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadUsageHistoryDaily();
+}
+
+// 일별 합계 로드
+async function loadUsageHistoryDaily() {
+  const startDate = document.getElementById('usage-daily-start').value;
+  const endDate = document.getElementById('usage-daily-end').value;
+  const contentEl = document.getElementById('usage-daily-content');
+  
+  contentEl.innerHTML = '<div class="p-8 text-center"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    const result = await api(`/usage/history?start_date=${startDate}&end_date=${endDate}`);
+    const records = result.data || [];
+    
+    if (records.length === 0) {
+      contentEl.innerHTML = '<div class="p-8 text-center text-gray-400">해당 기간에 사용 내역이 없습니다.</div>';
+      return;
+    }
+    
+    // 날짜별 그룹화
+    const dailyMap = {};
+    records.forEach(r => {
+      if (!dailyMap[r.usage_date]) {
+        dailyMap[r.usage_date] = { total: 0, count: 0, items: {} };
+      }
+      dailyMap[r.usage_date].total += r.quantity;
+      dailyMap[r.usage_date].count++;
+      if (!dailyMap[r.usage_date].items[r.item_code]) {
+        dailyMap[r.usage_date].items[r.item_code] = { name: r.item_name, qty: 0, unit: r.unit };
+      }
+      dailyMap[r.usage_date].items[r.item_code].qty += r.quantity;
+    });
+    
+    const dailyData = Object.entries(dailyMap)
+      .map(([date, data]) => ({ date, ...data, itemCount: Object.keys(data.items).length }))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    
+    window.usageHistoryDailyData = dailyData;
+    
+    const grandTotal = dailyData.reduce((sum, d) => sum + d.total, 0);
+    
+    contentEl.innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-between items-center">
+        <span class="font-medium text-gray-700">
+          <i class="fas fa-calendar-week mr-1"></i> ${startDate} ~ ${endDate}
+        </span>
+        <span class="text-sm">
+          <span class="text-gray-500">${dailyData.length}일,</span>
+          <span class="text-orange-600 font-bold ml-1">총 ${formatNumber(grandTotal)}</span>
+        </span>
+      </div>
+      <div class="max-h-[500px] overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 sticky top-0">
+            <tr>
+              <th class="p-3 text-left">날짜</th>
+              <th class="p-3 text-center">품목수</th>
+              <th class="p-3 text-center">건수</th>
+              <th class="p-3 text-right">일별 사용량</th>
+              <th class="p-3">상세</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${dailyData.map(d => {
+              const itemList = Object.entries(d.items)
+                .sort((a, b) => b[1].qty - a[1].qty)
+                .slice(0, 5)
+                .map(([code, info]) => `${info.name}: ${formatNumber(info.qty)}`)
+                .join(', ');
+              return `
+                <tr class="hover:bg-gray-50">
+                  <td class="p-3 font-medium">${d.date}</td>
+                  <td class="p-3 text-center text-gray-500">${d.itemCount}개</td>
+                  <td class="p-3 text-center text-gray-500">${d.count}건</td>
+                  <td class="p-3 text-right text-orange-600 font-bold">${formatNumber(d.total)}</td>
+                  <td class="p-3 text-xs text-gray-500 truncate max-w-[300px]">${itemList}${Object.keys(d.items).length > 5 ? '...' : ''}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    contentEl.innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 일별 합계 엑셀
+function downloadUsageHistoryDaily() {
+  const data = window.usageHistoryDailyData || [];
+  
+  if (data.length === 0) {
+    showToast('다운로드할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const rows = data.map(d => ({
+    '날짜': d.date,
+    '품목수': d.itemCount,
+    '건수': d.count,
+    '일별사용량': d.total
+  }));
+  
+  const columns = [
+    { key: '날짜', label: '날짜' },
+    { key: '품목수', label: '품목수', type: 'number' },
+    { key: '건수', label: '건수', type: 'number' },
+    { key: '일별사용량', label: '일별사용량', type: 'number' }
+  ];
+  
+  const startDate = document.getElementById('usage-daily-start').value;
+  const endDate = document.getElementById('usage-daily-end').value;
+  downloadExcel(rows, columns, `일별사용량_${startDate}_${endDate}`);
+  showToast('엑셀 다운로드 완료', 'success');
 }
 
 // Render usage items list

@@ -3065,9 +3065,12 @@ async function switchUsageTab(tab) {
   }
 }
 
-// 사용량 등록 탭
+// 사용량 등록 탭 - 날짜 유지 기능
+window.usageSelectedDate = window.usageSelectedDate || null;
+
 async function renderUsageRegister(contentEl) {
-  const today = formatDate(new Date());
+  // 저장된 날짜가 있으면 사용, 없으면 오늘 날짜
+  const useDate = window.usageSelectedDate || formatDate(new Date());
   
   try {
     const result = await api('/usage/available');
@@ -3079,7 +3082,10 @@ async function renderUsageRegister(contentEl) {
         <div class="flex items-center justify-between flex-wrap gap-4">
           <div class="flex items-center gap-4">
             <label class="text-sm font-medium text-gray-700">사용일:</label>
-            <input type="date" id="usage-date" class="border rounded-lg px-4 py-2" value="${today}">
+            <input type="date" id="usage-date" class="border rounded-lg px-4 py-2" value="${useDate}">
+            <span id="date-lock-indicator" class="text-xs ${window.usageSelectedDate ? 'text-green-600' : 'text-gray-400'}">
+              ${window.usageSelectedDate ? '<i class="fas fa-lock mr-1"></i>날짜 고정됨' : '<i class="fas fa-unlock mr-1"></i>오늘 날짜'}
+            </span>
           </div>
           <div class="relative">
             <input type="text" 
@@ -3112,6 +3118,14 @@ async function renderUsageRegister(contentEl) {
       </div>
     `;
     
+    // 날짜 변경 시 고정
+    document.getElementById('usage-date').addEventListener('change', function(e) {
+      window.usageSelectedDate = e.target.value;
+      const indicator = document.getElementById('date-lock-indicator');
+      indicator.className = 'text-xs text-green-600';
+      indicator.innerHTML = '<i class="fas fa-lock mr-1"></i>날짜 고정됨';
+    });
+    
     // 이벤트 리스너
     document.getElementById('usage-search').addEventListener('input', function(e) {
       filterUsageItems(e.target.value.toLowerCase().trim());
@@ -3142,12 +3156,16 @@ async function renderUsageRegister(contentEl) {
       }
       
       try {
+        const usageDate = document.getElementById('usage-date').value;
         const result = await api('/usage', 'POST', {
           items,
-          usage_date: document.getElementById('usage-date').value
+          usage_date: usageDate
         });
         showToast(result.message, 'success');
-        switchUsageTab('history'); // 등록 후 내역 탭으로 이동
+        
+        // 날짜는 유지하고 입력값만 초기화 + 재고 새로고침
+        window.usageSelectedDate = usageDate;
+        await refreshUsageListAfterSave();
         loadAlertCount();
       } catch (e) {
         // Error handled in api function
@@ -3155,6 +3173,38 @@ async function renderUsageRegister(contentEl) {
     });
   } catch (e) {
     contentEl.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 사용량 저장 후 목록 새로고침 (날짜 유지, 입력값 초기화)
+async function refreshUsageListAfterSave() {
+  try {
+    const result = await api('/usage/available');
+    const materials = result.data || [];
+    window.usageMaterials = materials;
+    
+    const listEl = document.getElementById('usage-list');
+    if (listEl) {
+      listEl.innerHTML = renderUsageItems(materials);
+    }
+    
+    // 요약 초기화
+    const summaryEl = document.getElementById('usage-summary');
+    if (summaryEl) {
+      summaryEl.classList.add('hidden');
+    }
+    const countEl = document.getElementById('selected-count');
+    if (countEl) {
+      countEl.textContent = '0';
+    }
+    
+    // 검색어도 초기화
+    const searchEl = document.getElementById('usage-search');
+    if (searchEl) {
+      searchEl.value = '';
+    }
+  } catch (e) {
+    console.error('재고 새로고침 실패:', e);
   }
 }
 

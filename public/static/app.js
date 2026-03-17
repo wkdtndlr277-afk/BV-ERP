@@ -1569,7 +1569,7 @@ async function printRawMaterialInspection(inboundData) {
           <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="info-header">채취자</td>
-            <td class="info-cell"></td>
+            <td class="info-cell">검수담당자</td>
             <td class="info-header">채취일자</td>
             <td class="info-cell">${inboundDate}</td>
             <td class="info-header">시험일자</td>

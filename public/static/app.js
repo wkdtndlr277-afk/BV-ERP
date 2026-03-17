@@ -4044,8 +4044,8 @@ function renderUsageItems(materials) {
                class="w-24 border rounded-lg px-3 py-2 text-right usage-input" 
                min="0" 
                max="${item.available_qty}"
-               step="0.01"
-               placeholder="0">
+               step="0.001"
+               placeholder="0.000">
         <span class="text-gray-500 w-10">${item.unit}</span>
       </div>
     </div>

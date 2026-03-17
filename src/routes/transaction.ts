@@ -611,6 +611,8 @@ transactionRoutes.get('/monthly-item-report', async (c) => {
 });
 
 // 통합 수불부 API - 품목별 요약 + LOT 상세 (최적화: 2개 쿼리만 실행)
+// 수불 공식: 이월 + 입고 - 사용 - 출고 + 조정 = 마감재고
+// 역산: 이월 = 마감재고 - 입고 + 사용 + 출고 - 조정
 transactionRoutes.get('/inventory-ledger', async (c) => {
   const date = c.req.query('date') || new Date().toISOString().split('T')[0];
   const period_type = c.req.query('period_type') || 'daily'; // daily, monthly
@@ -631,6 +633,10 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
   
   try {
     // 쿼리 1: 모든 품목 정보 + 기간 집계 (단일 쿼리)
+    // 입고: inbound 테이블의 origin_qty (기간 내 입고된 것만)
+    // 사용: transactions에서 trans_type='사용'
+    // 출고: transactions에서 trans_type='출고'  
+    // 조정: transactions에서 trans_type='재고조정' (양수/음수 그대로)
     let itemQuery = `
       SELECT 
         m.item_code,
@@ -640,11 +646,10 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
         m.current_stock,
         m.expiry_days,
         COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
-        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) 
-          + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_inbound,
+        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) as period_inbound,
         COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
-        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0)
-          + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound
+        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
+        COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
       FROM master m
       WHERE (
         m.current_stock > 0
@@ -654,7 +659,7 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       )
     `;
     
-    const itemParams: any[] = [startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate];
+    const itemParams: any[] = [startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate];
     
     if (category && category !== '전체') {
       itemQuery += ' AND m.category = ?';
@@ -720,10 +725,19 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       if (!lotsByItem[lot.item_code]) {
         lotsByItem[lot.item_code] = [];
       }
+      
+      // LOT별 이월/마감 계산
+      // 기간 내 신규 입고 LOT인지 확인
       const isNewLot = lot.inbound_date >= startDate && lot.inbound_date <= endDate;
-      const lotCarryOver = isNewLot ? 0 : (lot.remain_qty + lot.period_usage + lot.period_outbound - lot.period_adjustment);
+      
+      // 마감재고 = 현재 remain_qty
+      const lotClosingQty = lot.remain_qty;
+      
+      // 기간 내 입고량 (신규 LOT만 해당)
       const lotPeriodInbound = isNewLot ? lot.origin_qty : 0;
-      const lotClosingQty = lotCarryOver + lotPeriodInbound - lot.period_usage - lot.period_outbound + lot.period_adjustment;
+      
+      // 이월 = 마감 - 입고 + 사용 + 출고 - 조정
+      const lotCarryOver = isNewLot ? 0 : (lotClosingQty - lotPeriodInbound + lot.period_usage + lot.period_outbound - lot.period_adjustment);
       
       lotsByItem[lot.item_code].push({
         order: lotsByItem[lot.item_code].length + 1,
@@ -746,11 +760,14 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
     // 품목 데이터 변환 및 LOT 매핑
     let totalLotCount = 0;
     const itemData = (itemResult.results || []).map((item: any) => {
-      const carryOver = item.lot_remain_total + item.period_usage + item.period_outbound - item.period_inbound;
-      const closingQty = carryOver + item.period_inbound - item.period_usage - item.period_outbound;
       const lots = lotsByItem[item.item_code] || [];
-      const periodAdjustment = lots.reduce((sum: number, lot: any) => sum + (lot.period_adjustment || 0), 0);
       totalLotCount += lots.length;
+      
+      // 마감재고 = 현재 LOT 잔량 합계
+      const closingQty = item.lot_remain_total;
+      
+      // 이월 = 마감 - 입고 + 사용 + 출고 - 조정
+      const carryOver = closingQty - item.period_inbound + item.period_usage + item.period_outbound - item.period_adjustment;
       
       return {
         item_code: item.item_code,
@@ -765,7 +782,7 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
           period_inbound: item.period_inbound,
           period_usage: item.period_usage,
           period_outbound: item.period_outbound,
-          period_adjustment: periodAdjustment,
+          period_adjustment: item.period_adjustment,
           closing_qty: closingQty
         },
         lot_count: lots.length,
@@ -779,7 +796,7 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       acc.period_inbound += item.summary.period_inbound;
       acc.period_usage += item.summary.period_usage;
       acc.period_outbound += item.summary.period_outbound;
-      acc.period_adjustment += item.summary.period_adjustment || 0;
+      acc.period_adjustment += item.summary.period_adjustment;
       acc.closing_qty += item.summary.closing_qty;
       acc.lot_remain_total += item.lot_remain_total;
       return acc;

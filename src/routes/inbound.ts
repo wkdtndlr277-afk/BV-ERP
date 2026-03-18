@@ -52,24 +52,42 @@ inboundRoutes.get('/query', async (c) => {
     params.push(category);
   }
   
-  // 샘플 필터 (기본값: 일반 입고만, 'all': 전체, '1': 샘플만)
+  // 샘플 필터 - is_sample 컬럼이 없을 수 있으므로 조건부 적용
+  // 컬럼이 없는 경우 모든 데이터를 일반 입고로 취급
+  let sampleFilter = '';
   if (is_sample === '1') {
-    dateFilter += ' AND COALESCE(i.is_sample, 0) = 1';
+    // 샘플만 조회 - 컬럼이 없으면 결과 없음
+    sampleFilter = ' AND i.is_sample = 1';
   } else if (is_sample !== 'all') {
-    // 기본: 일반 입고만 (샘플 제외)
-    dateFilter += ' AND COALESCE(i.is_sample, 0) = 0';
+    // 기본: 일반 입고만 (샘플 제외) - 컬럼이 없거나 0인 경우 포함
+    sampleFilter = ' AND (i.is_sample IS NULL OR i.is_sample = 0)';
   }
   
   // 상세 데이터 조회
-  const detailQuery = `
+  let detailQuery = `
     SELECT i.*, m.item_name, m.category, m.unit,
            DATE(i.inbound_date) as date_group
     FROM inbound i 
     JOIN master m ON i.item_code = m.item_code
-    WHERE 1=1 ${dateFilter}
+    WHERE 1=1 ${dateFilter}${sampleFilter}
     ORDER BY i.inbound_date DESC, i.id DESC
   `;
-  const detailResult = await c.env.DB.prepare(detailQuery).bind(...params).all();
+  
+  let detailResult;
+  try {
+    detailResult = await c.env.DB.prepare(detailQuery).bind(...params).all();
+  } catch (e) {
+    // is_sample 컬럼이 없는 경우 필터 없이 재시도
+    detailQuery = `
+      SELECT i.*, m.item_name, m.category, m.unit,
+             DATE(i.inbound_date) as date_group
+      FROM inbound i 
+      JOIN master m ON i.item_code = m.item_code
+      WHERE 1=1 ${dateFilter}
+      ORDER BY i.inbound_date DESC, i.id DESC
+    `;
+    detailResult = await c.env.DB.prepare(detailQuery).bind(...params).all();
+  }
   
   // 통계 조회
   let summaryQuery = '';

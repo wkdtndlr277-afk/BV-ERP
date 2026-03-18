@@ -1255,48 +1255,54 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   const dateStart = start_date || today;
   const dateEnd = end_date || today;
   
-  // 샘플 필터 조건
+  // 샘플 필터 조건 - 컬럼이 없을 수 있으므로 간단한 조건 사용
+  const useSampleFilter = is_sample === '1' || is_sample === 'all';
   const sampleCondition = is_sample === '1' 
-    ? 'COALESCE(i.is_sample, 0) = 1'
+    ? 'i.is_sample = 1'
     : is_sample === 'all' 
       ? '1=1' 
-      : 'COALESCE(i.is_sample, 0) = 0';
+      : '(i.is_sample IS NULL OR i.is_sample = 0)';
   
   const sampleTransCondition = is_sample === '1'
-    ? 'COALESCE(t.is_sample, 0) = 1'
+    ? 't.is_sample = 1'
     : is_sample === 'all'
       ? '1=1'
-      : 'COALESCE(t.is_sample, 0) = 0';
+      : '(t.is_sample IS NULL OR t.is_sample = 0)';
   
-  // 한 번의 쿼리로 모든 데이터 조회 (성능 최적화)
-  // 재고조정(+)는 입고에, 재고조정(-)는 출고에 통합
-  let query = `
-    SELECT 
-      m.item_code,
-      m.item_name,
-      m.category,
-      m.unit,
-      ${is_sample === '1' ? '0' : 'm.current_stock'} as current_stock,
-      COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND ${sampleCondition}), 0) as lot_remain_total,
-      -- 가장 빠른 소비기한 (잔량이 있는 LOT 중)
-      (SELECT MIN(i.expiry_date) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sampleCondition}) as nearest_expiry,
-      -- 보관장소 (샘플인 경우, 가장 최근 입고의 보관장소)
-      (SELECT i.storage_location FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sampleCondition} ORDER BY i.inbound_date DESC LIMIT 1) as storage_location,
-      -- 기간 내 입고 (inbound 테이블 기준) + 양수 재고조정
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition}), 0) 
-        + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_inbound,
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_usage,
-      -- 기간 내 출고 + 음수 재고조정
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0)
-        + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_outbound
-    FROM master m
-    WHERE (
-      ${is_sample === '1' ? '0=1' : 'm.current_stock > 0'}
-      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition})
-      OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition})
-      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0 AND ${sampleCondition})
-    )
-  `;
+  // 기본 쿼리 (샘플 필터 없음)
+  const buildQuery = (withSampleFilter: boolean) => {
+    const sc = withSampleFilter ? sampleCondition : '1=1';
+    const stc = withSampleFilter ? sampleTransCondition : '1=1';
+    const storageSelect = withSampleFilter && is_sample === '1' 
+      ? `(SELECT i.storage_location FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sc} ORDER BY i.inbound_date DESC LIMIT 1) as storage_location,`
+      : 'NULL as storage_location,';
+    
+    return `
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.category,
+        m.unit,
+        m.current_stock,
+        COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' ${withSampleFilter ? 'AND ' + sc : ''}), 0) as lot_remain_total,
+        (SELECT MIN(i.expiry_date) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 ${withSampleFilter ? 'AND ' + sc : ''}) as nearest_expiry,
+        ${storageSelect}
+        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? ${withSampleFilter ? 'AND ' + sc : ''}), 0) 
+          + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''}), 0) as period_inbound,
+        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''}), 0) as period_usage,
+        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''}), 0)
+          + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''}), 0) as period_outbound
+      FROM master m
+      WHERE (
+        m.current_stock > 0
+        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ? ${withSampleFilter ? 'AND ' + sc : ''})
+        OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''})
+        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0 ${withSampleFilter ? 'AND ' + sc : ''})
+      )
+    `;
+  };
+  
+  let query = buildQuery(useSampleFilter);
   const params: any[] = [dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd];
   
   if (category && category !== '전체') {
@@ -1310,9 +1316,23 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   
   query += ' ORDER BY m.category, m.item_name';
   
+  let result;
   try {
-    const result = await c.env.DB.prepare(query).bind(...params).all();
-    
+    result = await c.env.DB.prepare(query).bind(...params).all();
+  } catch (e) {
+    // is_sample 컬럼이 없는 경우 필터 없이 재시도
+    query = buildQuery(false);
+    if (category && category !== '전체') {
+      query += ' AND m.category = ?';
+    }
+    if (search) {
+      query += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
+    }
+    query += ' ORDER BY m.category, m.item_name';
+    result = await c.env.DB.prepare(query).bind(...params).all();
+  }
+  
+  try {
     // 계산 잔량과 차이 추가
     // 이월 재고 = 현재 LOT 잔량 + 기간 내 (사용+출고) - 기간 내 입고
     // 재고조정은 이미 입고/출고에 통합됨

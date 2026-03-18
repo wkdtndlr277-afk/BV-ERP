@@ -17,6 +17,7 @@ inboundRoutes.get('/query', async (c) => {
   const item_code = c.req.query('item_code');
   const supplier = c.req.query('supplier');
   const category = c.req.query('category'); // 원료, 부자재, 전체
+  const item_search = c.req.query('item_search'); // 품목명/코드 검색
   
   let dateFilter = '';
   const params: any[] = [];
@@ -32,6 +33,12 @@ inboundRoutes.get('/query', async (c) => {
   if (item_code) {
     dateFilter += ' AND i.item_code = ?';
     params.push(item_code);
+  }
+  
+  if (item_search) {
+    dateFilter += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
+    params.push('%' + item_search + '%');
+    params.push('%' + item_search + '%');
   }
   
   if (supplier) {

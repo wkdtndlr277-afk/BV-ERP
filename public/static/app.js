@@ -23640,7 +23640,7 @@ async function renderInboundQuery() {
       
       <!-- 검색 조건 -->
       <div class="bg-white rounded-xl shadow p-6">
-        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-6 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">조회 유형</label>
             <select id="inbound-query-type" class="w-full border rounded-lg px-3 py-2" onchange="changeInboundQueryType()">
@@ -23665,20 +23665,24 @@ async function renderInboundQuery() {
             </select>
           </div>
           <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">품목 검색</label>
+            <input type="text" id="inbound-query-item" class="w-full border rounded-lg px-3 py-2" placeholder="품목명/코드 검색">
+          </div>
+          <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">거래처</label>
             <input type="text" id="inbound-query-supplier" class="w-full border rounded-lg px-3 py-2" placeholder="거래처명 검색">
           </div>
-          <div class="flex items-end gap-2">
-            <button onclick="loadInboundQuery()" class="flex-1 bg-haccp-primary text-white px-4 py-2 rounded-lg hover:bg-blue-700">
-              <i class="fas fa-search mr-1"></i> 조회
-            </button>
-            <button onclick="downloadInboundQuery()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
-              <i class="fas fa-file-excel mr-1"></i> 엑셀
-            </button>
-            <button onclick="printInboundQuery()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700">
-              <i class="fas fa-print mr-1"></i> 인쇄
-            </button>
-          </div>
+        </div>
+        <div class="flex justify-end gap-2 mt-4">
+          <button onclick="loadInboundQuery()" class="bg-haccp-primary text-white px-6 py-2 rounded-lg hover:bg-blue-700">
+            <i class="fas fa-search mr-1"></i> 조회
+          </button>
+          <button onclick="downloadInboundQuery()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀
+          </button>
+          <button onclick="printInboundQuery()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700">
+            <i class="fas fa-print mr-1"></i> 인쇄
+          </button>
         </div>
       </div>
       
@@ -23740,11 +23744,13 @@ async function loadInboundQuery() {
     : document.getElementById('inbound-query-month').value;
   const category = document.getElementById('inbound-query-category').value;
   const supplier = document.getElementById('inbound-query-supplier').value;
+  const itemSearch = document.getElementById('inbound-query-item').value.trim();
   
   try {
     const params = new URLSearchParams({ view_type: viewType, date });
     if (category && category !== '전체') params.append('category', category);
     if (supplier) params.append('supplier', supplier);
+    if (itemSearch) params.append('item_search', itemSearch);
     
     const result = await api(`/inbound/query?${params}`);
     const data = result.data;

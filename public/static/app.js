@@ -2272,6 +2272,20 @@ async function renderInbound() {
             </div>
           </div>
           
+          <!-- 샘플 입고 옵션 -->
+          <div class="border-t pt-4">
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" id="inbound-is-sample" class="w-5 h-5 text-yellow-600 rounded" onchange="toggleSampleOptions()">
+              <span class="font-medium text-yellow-700"><i class="fas fa-flask mr-1"></i> 샘플 입고</span>
+              <span class="text-xs text-gray-500">(샘플은 별도 재고로 관리됩니다)</span>
+            </label>
+            
+            <div id="sample-options" class="mt-3 p-3 bg-yellow-50 rounded-lg border border-yellow-200 hidden">
+              <label class="block text-sm font-medium text-gray-700 mb-1">보관 장소 <span class="text-red-500">*</span></label>
+              <input type="text" id="inbound-storage-location" class="w-full border rounded-lg px-4 py-2" placeholder="예: 냉장고 A-1, 샘플 보관함 2층">
+            </div>
+          </div>
+          
           <button type="submit" class="w-full bg-haccp-primary text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition flex items-center justify-center gap-2">
             <i class="fas fa-save"></i>
             저장
@@ -2420,6 +2434,15 @@ async function renderInbound() {
       return;
     }
     
+    // 샘플 입고 체크
+    const isSample = document.getElementById('inbound-is-sample').checked;
+    const storageLocation = document.getElementById('inbound-storage-location')?.value || '';
+    
+    if (isSample && !storageLocation.trim()) {
+      showToast('샘플의 보관 장소를 입력해주세요.', 'warning');
+      return;
+    }
+    
     const data = {
       item_code: itemCode,
       quantity: parseFloat(document.getElementById('inbound-qty').value),
@@ -2427,12 +2450,15 @@ async function renderInbound() {
       expiry_date: expiryDate,
       supplier: document.getElementById('inbound-supplier').value,
       quality_status: document.querySelector('input[name="quality"]:checked').value,
-      category: document.querySelector('input[name="inbound-category"]:checked')?.value || '원료'
+      category: document.querySelector('input[name="inbound-category"]:checked')?.value || '원료',
+      is_sample: isSample,
+      storage_location: isSample ? storageLocation.trim() : null
     };
     
     try {
       const result = await api('/inbound', 'POST', data);
-      showToast(`입고 등록 완료 (LOT: ${result.data.lot_number})`, 'success');
+      const sampleLabel = data.is_sample ? ' [샘플]' : '';
+      showToast(`입고 등록 완료${sampleLabel} (LOT: ${result.data.lot_number})`, 'success');
       
       // 검사일지 인쇄용 데이터 저장 (품목 정보 포함)
       const selectedItem = state.masterItems.find(m => m.item_code === data.item_code);
@@ -2441,7 +2467,9 @@ async function renderInbound() {
         item_name: selectedItem?.item_name || '',
         category: selectedItem?.category || '원료',
         unit: selectedItem?.unit || '',
-        quantity: data.quantity
+        quantity: data.quantity,
+        is_sample: data.is_sample,
+        storage_location: data.storage_location
       };
       
       // 폼 초기화
@@ -2454,10 +2482,17 @@ async function renderInbound() {
       document.getElementById('inbound-item-search').value = '';
       document.getElementById('selected-item-new-badge').classList.add('hidden');
       
+      // 샘플 옵션 초기화
+      document.getElementById('inbound-is-sample').checked = false;
+      document.getElementById('sample-options').classList.add('hidden');
+      document.getElementById('inbound-storage-location').value = '';
+      
       loadAlertCount();
       
-      // 검사일지 인쇄 프롬프트 표시
-      showInspectionPrintPrompt(window.lastInboundData);
+      // 검사일지 인쇄 프롬프트 표시 (샘플이 아닌 경우만)
+      if (!data.is_sample) {
+        showInspectionPrintPrompt(window.lastInboundData);
+      }
     } catch (e) {
       // Error already handled in api function
     }
@@ -3009,6 +3044,22 @@ function clearSelectedItem() {
   document.getElementById('inbound-unit').textContent = '-';
   document.getElementById('inbound-expiry').value = '';
   document.getElementById('inbound-item-search').focus();
+}
+
+// 샘플 입고 옵션 토글
+function toggleSampleOptions() {
+  const checkbox = document.getElementById('inbound-is-sample');
+  const sampleOptions = document.getElementById('sample-options');
+  const storageInput = document.getElementById('inbound-storage-location');
+  
+  if (checkbox.checked) {
+    sampleOptions.classList.remove('hidden');
+    storageInput.setAttribute('required', 'required');
+  } else {
+    sampleOptions.classList.add('hidden');
+    storageInput.removeAttribute('required');
+    storageInput.value = '';
+  }
 }
 
 // Usage Input (Raw Materials) - with search functionality and history tab
@@ -13530,6 +13581,7 @@ window.closeModal = closeModal;
 window.printReport = printReport;
 window.selectInboundItem = selectInboundItem;
 window.clearSelectedItem = clearSelectedItem;
+window.toggleSampleOptions = toggleSampleOptions;
 
 // 관리자 모드 함수들
 window.renderAdmin = renderAdmin;
@@ -23672,6 +23724,14 @@ async function renderInboundQuery() {
             <label class="block text-sm font-medium text-gray-700 mb-1">거래처</label>
             <input type="text" id="inbound-query-supplier" class="w-full border rounded-lg px-3 py-2" placeholder="거래처명 검색">
           </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">샘플 구분</label>
+            <select id="inbound-query-sample" class="w-full border rounded-lg px-3 py-2">
+              <option value="0">일반 입고만</option>
+              <option value="1">샘플만</option>
+              <option value="all">전체</option>
+            </select>
+          </div>
         </div>
         <div class="flex justify-end gap-2 mt-4">
           <button onclick="loadInboundQuery()" class="bg-haccp-primary text-white px-6 py-2 rounded-lg hover:bg-blue-700">
@@ -23745,18 +23805,20 @@ async function loadInboundQuery() {
   const category = document.getElementById('inbound-query-category').value;
   const supplier = document.getElementById('inbound-query-supplier').value;
   const itemSearch = document.getElementById('inbound-query-item').value.trim();
+  const sampleFilter = document.getElementById('inbound-query-sample')?.value || '0';
   
   try {
     const params = new URLSearchParams({ view_type: viewType, date });
     if (category && category !== '전체') params.append('category', category);
     if (supplier) params.append('supplier', supplier);
     if (itemSearch) params.append('item_search', itemSearch);
+    params.append('is_sample', sampleFilter);
     
     const result = await api(`/inbound/query?${params}`);
     const data = result.data;
     
     // 요약 통계 표시
-    renderInboundQuerySummary(data, viewType);
+    renderInboundQuerySummary(data, viewType, sampleFilter === '1');
     
     // 품목별 요약
     renderInboundItemSummary(data.itemSummary);
@@ -23764,8 +23826,8 @@ async function loadInboundQuery() {
     // 거래처별 요약
     renderInboundSupplierSummary(data.supplierSummary);
     
-    // 상세 테이블
-    renderInboundQueryTable(data.details, viewType);
+    // 상세 테이블 (샘플 보기인 경우 보관장소 컬럼 표시)
+    renderInboundQueryTable(data.details, viewType, sampleFilter === '1');
     
     // 전역 변수에 저장 (엑셀/인쇄용)
     window.inboundQueryData = data;
@@ -23775,18 +23837,19 @@ async function loadInboundQuery() {
   }
 }
 
-function renderInboundQuerySummary(data, viewType) {
+function renderInboundQuerySummary(data, viewType, isSampleView = false) {
   const container = document.getElementById('inbound-query-summary');
+  const sampleLabel = isSampleView ? ' <span class="text-yellow-600">(샘플)</span>' : '';
   
   if (viewType === 'daily') {
     const s = data.summary || {};
     container.innerHTML = `
       <div class="bg-blue-50 rounded-xl p-4 border border-blue-200">
-        <p class="text-sm text-blue-600">총 입고 건수</p>
+        <p class="text-sm text-blue-600">총 입고 건수${sampleLabel}</p>
         <p class="text-2xl font-bold text-blue-800">${formatNumber(s.total_count || 0)}건</p>
       </div>
       <div class="bg-green-50 rounded-xl p-4 border border-green-200">
-        <p class="text-sm text-green-600">입고 품목 수</p>
+        <p class="text-sm text-green-600">입고 품목 수${sampleLabel}</p>
         <p class="text-2xl font-bold text-green-800">${formatNumber(s.item_count || 0)}종</p>
       </div>
       <div class="bg-purple-50 rounded-xl p-4 border border-purple-200">
@@ -23803,7 +23866,7 @@ function renderInboundQuerySummary(data, viewType) {
     const dailyData = data.summary || [];
     container.innerHTML = `
       <div class="col-span-4 bg-white rounded-xl p-4 border">
-        <h4 class="font-bold text-gray-700 mb-3">일자별 입고 추이</h4>
+        <h4 class="font-bold text-gray-700 mb-3">일자별 입고 추이${sampleLabel}</h4>
         <div class="flex gap-1 items-end h-32">
           ${dailyData.slice(0, 31).reverse().map(d => {
             const height = Math.max(10, Math.min(100, d.count * 20));
@@ -23883,13 +23946,15 @@ function renderInboundSupplierSummary(suppliers) {
   `;
 }
 
-function renderInboundQueryTable(details, viewType) {
+function renderInboundQueryTable(details, viewType, isSampleView = false) {
   const container = document.getElementById('inbound-query-table');
   
   if (!details || details.length === 0) {
     container.innerHTML = '<p class="text-gray-500 text-center py-8">입고 데이터가 없습니다.</p>';
     return;
   }
+  
+  const sampleHeader = isSampleView ? '<th class="px-3 py-2 text-left text-yellow-700">보관장소</th>' : '';
   
   container.innerHTML = `
     <table class="w-full text-sm">
@@ -23903,6 +23968,7 @@ function renderInboundQueryTable(details, viewType) {
           <th class="px-3 py-2 text-left">품목코드</th>
           <th class="px-3 py-2 text-left">품목명</th>
           <th class="px-3 py-2 text-center">분류</th>
+          ${sampleHeader}
           <th class="px-3 py-2 text-right">입고량</th>
           <th class="px-3 py-2 text-right">잔량</th>
           <th class="px-3 py-2 text-center">소비기한</th>
@@ -23916,16 +23982,21 @@ function renderInboundQueryTable(details, viewType) {
           const statusColor = row.quality_status === '합격' ? 'bg-green-100 text-green-700' :
                               row.quality_status === '불합격' ? 'bg-red-100 text-red-700' : 
                               'bg-yellow-100 text-yellow-700';
+          const isSampleRow = row.is_sample || row.lot_number?.endsWith('-S');
+          const sampleBadge = isSampleRow ? '<span class="ml-1 text-yellow-600 text-xs"><i class="fas fa-flask"></i></span>' : '';
+          const sampleCell = isSampleView ? `<td class="px-3 py-2 text-yellow-700">${row.storage_location || '-'}</td>` : '';
+          
           return `
-            <tr class="border-b hover:bg-blue-50">
+            <tr class="border-b hover:bg-blue-50 ${isSampleRow ? 'bg-yellow-50' : ''}">
               <td class="px-2 py-2 text-center">
                 <input type="checkbox" class="inbound-select-checkbox w-4 h-4" data-index="${idx}">
               </td>
               <td class="px-3 py-2">${row.inbound_date}</td>
-              <td class="px-3 py-2 font-mono text-xs text-blue-600">${row.lot_number}</td>
+              <td class="px-3 py-2 font-mono text-xs text-blue-600">${row.lot_number}${sampleBadge}</td>
               <td class="px-3 py-2 text-gray-600">${row.item_code}</td>
               <td class="px-3 py-2 font-medium">${row.item_name}</td>
               <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 bg-gray-100 rounded text-xs">${row.category}</span></td>
+              ${sampleCell}
               <td class="px-3 py-2 text-right font-medium text-blue-600">${formatNumber(row.origin_qty)} ${row.unit}</td>
               <td class="px-3 py-2 text-right">${formatNumber(row.remain_qty)} ${row.unit}</td>
               <td class="px-3 py-2 text-center">${row.expiry_date || '-'}</td>
@@ -24159,7 +24230,15 @@ async function renderStockLedger() {
               <label class="block text-sm font-medium text-gray-700 mb-1">품목 검색</label>
               <input type="text" id="ledger-search" class="w-full border rounded-lg px-3 py-2" placeholder="품목명 검색">
             </div>
-            <div class="flex items-end gap-2 col-span-2">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">샘플 구분</label>
+              <select id="ledger-sample-filter" class="w-full border rounded-lg px-3 py-2">
+                <option value="0">일반 입고만</option>
+                <option value="1">샘플만</option>
+                <option value="all">전체</option>
+              </select>
+            </div>
+            <div class="flex items-end gap-2">
               <button onclick="loadStockLedger()" class="flex-1 bg-haccp-primary text-white px-4 py-2 rounded-lg hover:bg-blue-700">
                 <i class="fas fa-search mr-1"></i> 조회
               </button>
@@ -24770,19 +24849,21 @@ async function loadStockLedger() {
   const endDate = document.getElementById('ledger-end-date').value;
   const category = document.getElementById('ledger-category').value;
   const search = document.getElementById('ledger-search').value;
+  const sampleFilter = document.getElementById('ledger-sample-filter')?.value || '0';
   
   try {
     const params = new URLSearchParams({ start_date: startDate, end_date: endDate });
     if (category && category !== '전체') params.append('category', category);
     if (search) params.append('search', search);
+    params.append('is_sample', sampleFilter);
     
     const result = await api(`/transactions/stock-ledger?${params}`);
     
-    // 요약 표시
-    renderLedgerSummary(result.summary);
+    // 요약 표시 (샘플인 경우 제목 변경)
+    renderLedgerSummary(result.summary, sampleFilter === '1');
     
-    // 테이블 표시
-    renderLedgerTable(result.data);
+    // 테이블 표시 (샘플인 경우 보관장소 컬럼 추가)
+    renderLedgerTable(result.data, sampleFilter === '1');
     
     // 전역 변수 저장
     window.stockLedgerData = result;
@@ -24792,24 +24873,25 @@ async function loadStockLedger() {
   }
 }
 
-function renderLedgerSummary(summary) {
+function renderLedgerSummary(summary, isSampleView = false) {
   const container = document.getElementById('ledger-summary');
+  const sampleLabel = isSampleView ? ' (샘플)' : '';
   
   container.innerHTML = `
     <div class="bg-blue-50 rounded-lg p-3 border border-blue-200">
-      <p class="text-xs text-blue-600">이월 재고</p>
+      <p class="text-xs text-blue-600">이월 재고${sampleLabel}</p>
       <p class="text-lg font-bold text-blue-800">${formatNumber(summary.total_carry_over)}</p>
     </div>
     <div class="bg-green-50 rounded-lg p-3 border border-green-200">
-      <p class="text-xs text-green-600">기간 입고</p>
+      <p class="text-xs text-green-600">기간 입고${sampleLabel}</p>
       <p class="text-lg font-bold text-green-800">${formatNumber(summary.total_inbound)}</p>
     </div>
     <div class="bg-orange-50 rounded-lg p-3 border border-orange-200">
-      <p class="text-xs text-orange-600">기간 사용</p>
+      <p class="text-xs text-orange-600">기간 사용${sampleLabel}</p>
       <p class="text-lg font-bold text-orange-800">${formatNumber(summary.total_usage)}</p>
     </div>
     <div class="bg-teal-50 rounded-lg p-3 border border-teal-200">
-      <p class="text-xs text-teal-600">LOT 잔량</p>
+      <p class="text-xs text-teal-600">LOT 잔량${sampleLabel}</p>
       <p class="text-lg font-bold text-teal-800">${formatNumber(summary.total_lot_remain || 0)}</p>
     </div>
     <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
@@ -24819,7 +24901,7 @@ function renderLedgerSummary(summary) {
   `;
 }
 
-function renderLedgerTable(data) {
+function renderLedgerTable(data, isSampleView = false) {
   const container = document.getElementById('ledger-table');
   
   if (!data || data.length === 0) {
@@ -24828,12 +24910,14 @@ function renderLedgerTable(data) {
   }
   
   const today = new Date().toISOString().split('T')[0];
+  const sampleLabel = isSampleView ? '<span class="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs">샘플</span>' : '';
   
   // 원료/부자재: LOT잔량 기준 / 제품: 계산잔량 기준
   // 재고조정(+)는 입고에, 재고조정(-)는 출고에 이미 통합됨
   container.innerHTML = `
     <div class="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
       <i class="fas fa-info-circle mr-1"></i>
+      ${isSampleView ? '<strong>샘플 재고</strong>는 일반 재고와 별도로 관리됩니다. ' : ''}
       <strong>원료/부자재</strong>는 LOT 잔량이 실제 재고입니다. 
       <strong>제품</strong>은 트랜잭션 계산 잔량 기준입니다.
       <strong>재고조정(+)</strong>는 입고에, <strong>재고조정(-)</strong>는 출고에 포함됩니다.
@@ -24842,8 +24926,9 @@ function renderLedgerTable(data) {
       <thead class="bg-gray-100 sticky top-0">
         <tr>
           <th class="px-3 py-2 text-left">품목코드</th>
-          <th class="px-3 py-2 text-left">품목명</th>
+          <th class="px-3 py-2 text-left">품목명${sampleLabel}</th>
           <th class="px-3 py-2 text-center">분류</th>
+          ${isSampleView ? '<th class="px-3 py-2 text-left text-yellow-700">보관장소</th>' : ''}
           <th class="px-3 py-2 text-right">이월</th>
           <th class="px-3 py-2 text-right text-blue-600">입고(+조정)</th>
           <th class="px-3 py-2 text-right text-orange-600">사용</th>
@@ -24882,8 +24967,9 @@ function renderLedgerTable(data) {
           return `
             <tr class="border-b hover:bg-blue-50">
               <td class="px-3 py-2 text-gray-600">${row.item_code}</td>
-              <td class="px-3 py-2 font-medium">${row.item_name}</td>
+              <td class="px-3 py-2 font-medium">${row.item_name}${isSampleView ? '<span class="ml-1 text-xs text-yellow-600"><i class="fas fa-flask"></i></span>' : ''}</td>
               <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 ${isRawMaterial ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'} rounded text-xs">${row.category}</span></td>
+              ${isSampleView ? `<td class="px-3 py-2 text-yellow-700">${row.storage_location || '-'}</td>` : ''}
               <td class="px-3 py-2 text-right">${formatNumber(row.carry_over)}</td>
               <td class="px-3 py-2 text-right text-blue-600 font-medium">${formatNumber(row.period_inbound)}</td>
               <td class="px-3 py-2 text-right text-orange-600 font-medium">${formatNumber(row.period_usage)}</td>

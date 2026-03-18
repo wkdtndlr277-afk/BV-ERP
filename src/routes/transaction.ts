@@ -1248,11 +1248,25 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   const end_date = c.req.query('end_date');
   const category = c.req.query('category');
   const search = c.req.query('search');
+  const is_sample = c.req.query('is_sample'); // '0': 일반만, '1': 샘플만, 'all': 전체
   
   // 날짜 기본값 설정
   const today = new Date().toISOString().split('T')[0];
   const dateStart = start_date || today;
   const dateEnd = end_date || today;
+  
+  // 샘플 필터 조건
+  const sampleCondition = is_sample === '1' 
+    ? 'COALESCE(i.is_sample, 0) = 1'
+    : is_sample === 'all' 
+      ? '1=1' 
+      : 'COALESCE(i.is_sample, 0) = 0';
+  
+  const sampleTransCondition = is_sample === '1'
+    ? 'COALESCE(t.is_sample, 0) = 1'
+    : is_sample === 'all'
+      ? '1=1'
+      : 'COALESCE(t.is_sample, 0) = 0';
   
   // 한 번의 쿼리로 모든 데이터 조회 (성능 최적화)
   // 재고조정(+)는 입고에, 재고조정(-)는 출고에 통합
@@ -1262,23 +1276,25 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       m.item_name,
       m.category,
       m.unit,
-      m.current_stock,
-      COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
+      ${is_sample === '1' ? '0' : 'm.current_stock'} as current_stock,
+      COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND ${sampleCondition}), 0) as lot_remain_total,
       -- 가장 빠른 소비기한 (잔량이 있는 LOT 중)
-      (SELECT MIN(i.expiry_date) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0) as nearest_expiry,
+      (SELECT MIN(i.expiry_date) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sampleCondition}) as nearest_expiry,
+      -- 보관장소 (샘플인 경우, 가장 최근 입고의 보관장소)
+      (SELECT i.storage_location FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sampleCondition} ORDER BY i.inbound_date DESC LIMIT 1) as storage_location,
       -- 기간 내 입고 (inbound 테이블 기준) + 양수 재고조정
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) 
-        + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_inbound,
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition}), 0) 
+        + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_inbound,
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_usage,
       -- 기간 내 출고 + 음수 재고조정
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0)
-        + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0)
+        + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_outbound
     FROM master m
     WHERE (
-      m.current_stock > 0
-      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ?)
-      OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ?)
-      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
+      ${is_sample === '1' ? '0=1' : 'm.current_stock > 0'}
+      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition})
+      OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition})
+      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0 AND ${sampleCondition})
     )
   `;
   const params: any[] = [dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd];

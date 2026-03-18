@@ -18,6 +18,7 @@ inboundRoutes.get('/query', async (c) => {
   const supplier = c.req.query('supplier');
   const category = c.req.query('category'); // 원료, 부자재, 전체
   const item_search = c.req.query('item_search'); // 품목명/코드 검색
+  const is_sample = c.req.query('is_sample'); // 샘플 필터 (0, 1, 'all')
   
   let dateFilter = '';
   const params: any[] = [];
@@ -49,6 +50,14 @@ inboundRoutes.get('/query', async (c) => {
   if (category && category !== '전체') {
     dateFilter += ' AND m.category = ?';
     params.push(category);
+  }
+  
+  // 샘플 필터 (기본값: 일반 입고만, 'all': 전체, '1': 샘플만)
+  if (is_sample === '1') {
+    dateFilter += ' AND COALESCE(i.is_sample, 0) = 1';
+  } else if (is_sample !== 'all') {
+    // 기본: 일반 입고만 (샘플 제외)
+    dateFilter += ' AND COALESCE(i.is_sample, 0) = 0';
   }
   
   // 상세 데이터 조회
@@ -206,11 +215,16 @@ inboundRoutes.get('/lot/:lot_number', async (c) => {
 
 // 입고 등록
 inboundRoutes.post('/', async (c) => {
-  const body = await c.req.json<InboundRequest>();
-  const { item_code, quantity, inbound_date, expiry_date, supplier, quality_status } = body;
+  const body = await c.req.json<InboundRequest & { is_sample?: boolean; storage_location?: string }>();
+  const { item_code, quantity, inbound_date, expiry_date, supplier, quality_status, is_sample, storage_location } = body;
   
   if (!item_code || !quantity || quantity <= 0) {
     return c.json({ success: false, error: '품목과 수량을 올바르게 입력해주세요.' }, 400);
+  }
+  
+  // 샘플인 경우 보관 장소 필수
+  if (is_sample && !storage_location) {
+    return c.json({ success: false, error: '샘플의 보관 장소를 입력해주세요.' }, 400);
   }
   
   // 품목 확인
@@ -229,33 +243,50 @@ inboundRoutes.post('/', async (c) => {
   `).bind(item_code, inbound_date).first<{ count: number }>();
   
   const sequence = (todayCount?.count || 0) + 1;
-  const lot_number = generateLotNumber(item_code, inbound_date, sequence);
+  // 샘플인 경우 LOT 번호에 S 접미사 추가
+  let lot_number = generateLotNumber(item_code, inbound_date, sequence);
+  if (is_sample) {
+    lot_number = lot_number + '-S';
+  }
   
-  // 입고 등록
+  // 입고 등록 (샘플 관련 컬럼 포함)
   await c.env.DB.prepare(`
-    INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(lot_number, item_code, inbound_date, expiry_date, quantity, quantity, quality_status, supplier || null).run();
+    INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, storage_location)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    lot_number, 
+    item_code, 
+    inbound_date, 
+    expiry_date, 
+    quantity, 
+    quantity, 
+    quality_status, 
+    supplier || null,
+    is_sample ? 1 : 0,
+    is_sample ? storage_location : null
+  ).run();
   
-  // 합격인 경우에만 재고 반영
+  // 합격인 경우에만 재고 반영 (샘플은 일반 재고에 반영하지 않음 - 별도 관리)
   if (quality_status === '합격') {
-    // Master 재고 증가
-    await c.env.DB.prepare(`
-      UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
-      WHERE item_code = ?
-    `).bind(quantity, item_code).run();
+    // 샘플이 아닌 경우에만 Master 재고 증가
+    if (!is_sample) {
+      await c.env.DB.prepare(`
+        UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
+        WHERE item_code = ?
+      `).bind(quantity, item_code).run();
+    }
     
-    // Transaction 기록
+    // Transaction 기록 (샘플 여부 포함)
     await c.env.DB.prepare(`
-      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier)
-      VALUES (?, ?, '입고', ?, ?, ?, ?)
-    `).bind(inbound_date, item_code, quantity, lot_number, quantity, supplier || null).run();
+      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier, is_sample)
+      VALUES (?, ?, '입고', ?, ?, ?, ?, ?)
+    `).bind(inbound_date, item_code, quantity, lot_number, quantity, supplier || null, is_sample ? 1 : 0).run();
   }
   
   return c.json({ 
     success: true, 
-    message: '입고가 등록되었습니다.',
-    data: { lot_number, quality_status }
+    message: is_sample ? '샘플 입고가 등록되었습니다.' : '입고가 등록되었습니다.',
+    data: { lot_number, quality_status, is_sample, storage_location }
   });
 });
 

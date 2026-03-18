@@ -1350,6 +1350,10 @@ async function printDashboard() {
 
 // 원료입고 검사일지 인쇄 - 엑셀 양식 그대로 적용
 async function printRawMaterialInspection(inboundData) {
+  // 검사일지 양식 설정 불러오기
+  const formSettings = getInspectionFormSettings();
+  const settings = formSettings.rawMaterial;
+  
   // 시험번호 자동 생성
   let inspectionNumber = '';
   try {
@@ -1375,7 +1379,7 @@ async function printRawMaterialInspection(inboundData) {
     <html>
     <head>
       <meta charset="UTF-8">
-      <title>원료입고 검사일지 - ${inboundData.lot_number}</title>
+      <title>${settings.title} - ${inboundData.lot_number}</title>
       <style>
         @page { margin: 8mm; size: A4; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1520,7 +1524,7 @@ async function printRawMaterialInspection(inboundData) {
           <!-- 행 1~3: 제목 + 결재란 -->
           <tr style="height: 32px;">
             <td class="col-a" rowspan="3" style="border:none;"></td>
-            <td colspan="4" rowspan="3" class="title-cell">원료입고 검사일지</td>
+            <td colspan="4" rowspan="3" class="title-cell">${settings.title}</td>
             <td class="approval-header">검수담당자</td>
             <td class="approval-header">승인</td>
           </tr>
@@ -1569,7 +1573,7 @@ async function printRawMaterialInspection(inboundData) {
           <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="info-header">채취자</td>
-            <td class="info-cell">검수담당자</td>
+            <td class="info-cell">${settings.sampler}</td>
             <td class="info-header">채취일자</td>
             <td class="info-cell">${inboundDate}</td>
             <td class="info-header">시험일자</td>
@@ -1735,7 +1739,7 @@ async function printRawMaterialInspection(inboundData) {
           <!-- 행 31: 회사명 -->
           <tr style="height: 22px;">
             <td style="border:none;"></td>
-            <td colspan="6" class="company">㈜본비반트</td>
+            <td colspan="6" class="company">${settings.companyName}</td>
           </tr>
         </table>
       </div>
@@ -1750,6 +1754,10 @@ async function printRawMaterialInspection(inboundData) {
 
 // 부자재입고 검사일지 인쇄 - 엑셀 양식 그대로 적용
 async function printSubMaterialInspection(inboundData) {
+  // 검사일지 양식 설정 불러오기
+  const formSettings = getInspectionFormSettings();
+  const settings = formSettings.subMaterial;
+  
   // 시험번호 자동 생성
   let inspectionNumber = '';
   try {
@@ -1776,7 +1784,7 @@ async function printSubMaterialInspection(inboundData) {
     <html>
     <head>
       <meta charset="UTF-8">
-      <title>부자재입고 검사일지 - ${inboundData.lot_number || inboundData.item_code}</title>
+      <title>${settings.title} - ${inboundData.lot_number || inboundData.item_code}</title>
       <style>
         @page { margin: 8mm; size: A4; }
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1920,7 +1928,7 @@ async function printSubMaterialInspection(inboundData) {
           <!-- 행 2: 제목 -->
           <tr style="height: 28px;">
             <td style="border:none;"></td>
-            <td colspan="5" class="title-cell">부자재입고 검사일지</td>
+            <td colspan="5" class="title-cell">${settings.title}</td>
             <td style="border:none;"></td>
           </tr>
           
@@ -1954,9 +1962,9 @@ async function printSubMaterialInspection(inboundData) {
           <tr style="height: 48px;">
             <td style="border:none;"></td>
             <td class="info-header">채취자</td>
-            <td class="info-cell">검수담당자</td>
+            <td class="info-cell">${settings.sampler}</td>
             <td class="info-header">채취장소</td>
-            <td colspan="2" class="info-cell">부자재창고</td>
+            <td colspan="2" class="info-cell">${settings.samplingLocation}</td>
             <td style="border:none;"></td>
           </tr>
           
@@ -1964,7 +1972,7 @@ async function printSubMaterialInspection(inboundData) {
           <tr style="height: 48px;">
             <td style="border:none;"></td>
             <td class="info-header">채취방법</td>
-            <td class="info-cell">무작위</td>
+            <td class="info-cell">${settings.samplingMethod}</td>
             <td class="info-header">시험일자</td>
             <td colspan="2" class="info-cell">${inboundDate}</td>
             <td style="border:none;"></td>
@@ -2106,7 +2114,7 @@ async function printSubMaterialInspection(inboundData) {
             <td style="border:none;"></td>
             <td class="footer-cell">BV-00-00</td>
             <td colspan="2" style="border:none;"></td>
-            <td colspan="2" class="footer-cell">㈜본비반트</td>
+            <td colspan="2" class="footer-cell">${settings.companyName}</td>
             <td class="footer-cell" style="text-align:left;">A4(210x297)</td>
           </tr>
         </table>
@@ -10848,6 +10856,9 @@ async function renderAdminDashboard() {
             <button onclick="switchAdminTab('master')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="master">
               <i class="fas fa-database mr-2"></i> 품목 관리
             </button>
+            <button onclick="switchAdminTab('inspection-form')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="inspection-form">
+              <i class="fas fa-file-alt mr-2"></i> 검사일지 양식
+            </button>
             ${isSuperAdmin ? `
             <button onclick="switchAdminTab('super')" class="admin-tab px-6 py-4 text-purple-600 font-medium hover:bg-purple-50 border-b-2 border-transparent" data-tab="super">
               <i class="fas fa-crown mr-2"></i> 최고관리자
@@ -10886,6 +10897,7 @@ function switchAdminTab(tab) {
     case 'logs': loadAdminLogs(); break;
     case 'users': loadAdminUsers(); break;
     case 'master': loadAdminMaster(); break;
+    case 'inspection-form': loadAdminInspectionForm(); break;
     case 'super': loadSuperAdminPanel(); break;
   }
 }
@@ -11553,6 +11565,393 @@ async function confirmDeleteTransaction(id) {
     // Error handled
   }
 }
+
+// ========== 검사일지 양식 관리 ==========
+
+// 검사일지 양식 기본값
+const defaultInspectionFormSettings = {
+  rawMaterial: {
+    title: '원료입고 검사일지',
+    companyName: '㈜본비반트',
+    sampler: '검수담당자',
+    items: [
+      { name: '성상', criteria: '이미．이취가 없고 고유의 향미가 있다.' },
+      { name: '이물 및 포장상태', criteria: '이물이 없어야 하고, 파손되거나 찌그러진 부분이 없어야 하며, 심하게 오염된 곳이 없어야 한다.' },
+      { name: '표시사항', criteria: '훼손되지 않아야 하며, 식별이 가능하여야 한다.\n소비기한 잔여 기간 기준(전체의 2/3 이상)내에 있는가?' },
+      { name: '성적서', criteria: '입고된 원료에 해당하는 성적서가 첨부 되어야하며,시험 결과가 적합한 원료여야한다.' },
+      { name: '수입서류 및\n원산지증명서', criteria: '수입 원료일 경우 수입신고필증 및 확인증,\n국내 원료일 경우 원산지 증명서가 있어야 한다.' },
+      { name: '원산지', criteria: '제품별 상이' },
+      { name: '배송차량청결상태', criteria: '배송차량의 청결상태가 입고된 원료에 오염 소지가 없어야 한다.' },
+      { name: '실온보관원료\n(1 ℃ ~ 35 ℃ 이하)', criteria: '실온보관(1 ℃ ~ 35 ℃ 이하)' },
+      { name: '냉장보관 원료\n(0 ℃ ~ 10 ℃ 이하)', criteria: '냉장차량 운송시 타코메타 기록지 확인' },
+      { name: '냉동보관 원료\n(-18 ℃ 이하)', criteria: '냉동차량 운송시 타코메타 기록지 확인' }
+    ]
+  },
+  subMaterial: {
+    title: '부자재입고 검사일지',
+    companyName: '㈜본비반트',
+    sampler: '검수담당자',
+    samplingLocation: '부자재창고',
+    samplingMethod: '무작위',
+    items: [
+      { name: '표시사항', criteria: '표준 부자재 표시내용과 일치 하여야 한다.' },
+      { name: '포장상태', criteria: '파손되거나 손상된 부분이 없어야 하며,\n위생상태가 양호해야 한다.' },
+      { name: '인쇄상태', criteria: '표준 부자재와 색도가 동일해야 하며,\n글자는 내용을 명확히 구분할 수 있도록\n인쇄되어 있어야 한다.' },
+      { name: '절단면 및\n접착면 상태', criteria: '절단면은 깔끔하게 처리 되어 있어야 하며,\n접착면은 접착 상태가 양호하고, 마감처리가\n깔끔해야 한다.' },
+      { name: '성적서', criteria: '식품직접자재인 경우 입고된 부자재에 해당하는\n성적서가 첨부되어야 하며, 시험 결과가 적합한\n부자재여야 한다.' },
+      { name: '배송차량청결상태', criteria: '배송차량의 청결상태가 입고된 부자재에\n오염 소지가 없어야 한다.' }
+    ]
+  }
+};
+
+// 검사일지 양식 설정 불러오기
+function getInspectionFormSettings() {
+  const saved = localStorage.getItem('inspectionFormSettings');
+  if (saved) {
+    try {
+      return JSON.parse(saved);
+    } catch (e) {
+      console.error('검사일지 양식 설정 파싱 실패:', e);
+    }
+  }
+  return defaultInspectionFormSettings;
+}
+
+// 검사일지 양식 설정 저장
+function saveInspectionFormSettings(settings) {
+  localStorage.setItem('inspectionFormSettings', JSON.stringify(settings));
+}
+
+// 검사일지 양식 관리 탭
+function loadAdminInspectionForm() {
+  const tabContent = document.getElementById('admin-tab-content');
+  const settings = getInspectionFormSettings();
+  
+  tabContent.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex justify-between items-center">
+        <h3 class="text-lg font-bold text-gray-800">
+          <i class="fas fa-file-alt mr-2"></i>검사일지 양식 관리
+        </h3>
+        <div class="flex gap-2">
+          <button onclick="resetInspectionFormSettings()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 text-sm">
+            <i class="fas fa-undo mr-1"></i> 기본값 복원
+          </button>
+          <button onclick="saveAllInspectionForms()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
+            <i class="fas fa-save mr-1"></i> 저장
+          </button>
+        </div>
+      </div>
+      
+      <!-- 탭 -->
+      <div class="border-b">
+        <nav class="flex">
+          <button onclick="switchInspectionFormTab('raw')" class="inspection-form-tab px-6 py-3 font-medium border-b-2 border-blue-500 text-blue-600 bg-blue-50" data-tab="raw">
+            <i class="fas fa-leaf mr-1"></i> 원료입고 검사일지
+          </button>
+          <button onclick="switchInspectionFormTab('sub')" class="inspection-form-tab px-6 py-3 font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="sub">
+            <i class="fas fa-box mr-1"></i> 부자재입고 검사일지
+          </button>
+        </nav>
+      </div>
+      
+      <div id="inspection-form-content">
+        ${renderRawMaterialFormEditor(settings.rawMaterial)}
+      </div>
+    </div>
+  `;
+}
+
+// 검사일지 양식 탭 전환
+function switchInspectionFormTab(tab) {
+  const settings = getInspectionFormSettings();
+  
+  document.querySelectorAll('.inspection-form-tab').forEach(btn => {
+    btn.classList.remove('border-blue-500', 'text-blue-600', 'bg-blue-50');
+    btn.classList.add('border-transparent', 'text-gray-500');
+    if (btn.dataset.tab === tab) {
+      btn.classList.add('border-blue-500', 'text-blue-600', 'bg-blue-50');
+      btn.classList.remove('border-transparent', 'text-gray-500');
+    }
+  });
+  
+  const content = document.getElementById('inspection-form-content');
+  if (tab === 'raw') {
+    content.innerHTML = renderRawMaterialFormEditor(settings.rawMaterial);
+  } else {
+    content.innerHTML = renderSubMaterialFormEditor(settings.subMaterial);
+  }
+}
+
+// 원료 검사일지 양식 편집기
+function renderRawMaterialFormEditor(settings) {
+  return `
+    <div class="space-y-6">
+      <!-- 기본 정보 -->
+      <div class="bg-white border rounded-lg p-4">
+        <h4 class="font-bold text-gray-700 mb-4"><i class="fas fa-info-circle mr-1"></i> 기본 정보</h4>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">문서 제목</label>
+            <input type="text" id="raw-title" class="w-full border rounded-lg px-3 py-2" value="${settings.title}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">회사명</label>
+            <input type="text" id="raw-company" class="w-full border rounded-lg px-3 py-2" value="${settings.companyName}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">채취자 (고정값)</label>
+            <input type="text" id="raw-sampler" class="w-full border rounded-lg px-3 py-2" value="${settings.sampler}">
+          </div>
+        </div>
+      </div>
+      
+      <!-- 검사항목 -->
+      <div class="bg-white border rounded-lg p-4">
+        <div class="flex justify-between items-center mb-4">
+          <h4 class="font-bold text-gray-700"><i class="fas fa-list-check mr-1"></i> 검사항목 (${settings.items.length}개)</h4>
+          <button onclick="addRawInspectionItem()" class="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600">
+            <i class="fas fa-plus mr-1"></i> 항목 추가
+          </button>
+        </div>
+        <div id="raw-inspection-items" class="space-y-3">
+          ${settings.items.map((item, idx) => `
+            <div class="flex gap-3 items-start p-3 bg-gray-50 rounded-lg" data-idx="${idx}">
+              <div class="flex-shrink-0 text-gray-400 font-bold w-6 text-center pt-2">${idx + 1}</div>
+              <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">항목명</label>
+                  <input type="text" class="raw-item-name w-full border rounded px-2 py-1 text-sm" value="${item.name.replace(/\n/g, '\\n')}">
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">기준</label>
+                  <textarea class="raw-item-criteria w-full border rounded px-2 py-1 text-sm" rows="2">${item.criteria.replace(/\n/g, '\\n')}</textarea>
+                </div>
+              </div>
+              <button onclick="removeRawInspectionItem(${idx})" class="flex-shrink-0 px-2 py-1 text-red-500 hover:bg-red-100 rounded">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          `).join('')}
+        </div>
+        <p class="text-xs text-gray-400 mt-2"><i class="fas fa-info-circle mr-1"></i> 줄바꿈은 \\n 으로 입력하세요.</p>
+      </div>
+      
+      <!-- 미리보기 버튼 -->
+      <div class="text-center">
+        <button onclick="previewRawMaterialForm()" class="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+          <i class="fas fa-eye mr-1"></i> 미리보기
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// 부자재 검사일지 양식 편집기
+function renderSubMaterialFormEditor(settings) {
+  return `
+    <div class="space-y-6">
+      <!-- 기본 정보 -->
+      <div class="bg-white border rounded-lg p-4">
+        <h4 class="font-bold text-gray-700 mb-4"><i class="fas fa-info-circle mr-1"></i> 기본 정보</h4>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">문서 제목</label>
+            <input type="text" id="sub-title" class="w-full border rounded-lg px-3 py-2" value="${settings.title}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">회사명</label>
+            <input type="text" id="sub-company" class="w-full border rounded-lg px-3 py-2" value="${settings.companyName}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">채취자 (고정값)</label>
+            <input type="text" id="sub-sampler" class="w-full border rounded-lg px-3 py-2" value="${settings.sampler}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">채취장소</label>
+            <input type="text" id="sub-location" class="w-full border rounded-lg px-3 py-2" value="${settings.samplingLocation}">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-600 mb-1">채취방법</label>
+            <input type="text" id="sub-method" class="w-full border rounded-lg px-3 py-2" value="${settings.samplingMethod}">
+          </div>
+        </div>
+      </div>
+      
+      <!-- 검사항목 -->
+      <div class="bg-white border rounded-lg p-4">
+        <div class="flex justify-between items-center mb-4">
+          <h4 class="font-bold text-gray-700"><i class="fas fa-list-check mr-1"></i> 검사항목 (${settings.items.length}개)</h4>
+          <button onclick="addSubInspectionItem()" class="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600">
+            <i class="fas fa-plus mr-1"></i> 항목 추가
+          </button>
+        </div>
+        <div id="sub-inspection-items" class="space-y-3">
+          ${settings.items.map((item, idx) => `
+            <div class="flex gap-3 items-start p-3 bg-gray-50 rounded-lg" data-idx="${idx}">
+              <div class="flex-shrink-0 text-gray-400 font-bold w-6 text-center pt-2">${idx + 1}</div>
+              <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">항목명</label>
+                  <input type="text" class="sub-item-name w-full border rounded px-2 py-1 text-sm" value="${item.name.replace(/\n/g, '\\n')}">
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-500 mb-1">기준</label>
+                  <textarea class="sub-item-criteria w-full border rounded px-2 py-1 text-sm" rows="2">${item.criteria.replace(/\n/g, '\\n')}</textarea>
+                </div>
+              </div>
+              <button onclick="removeSubInspectionItem(${idx})" class="flex-shrink-0 px-2 py-1 text-red-500 hover:bg-red-100 rounded">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          `).join('')}
+        </div>
+        <p class="text-xs text-gray-400 mt-2"><i class="fas fa-info-circle mr-1"></i> 줄바꿈은 \\n 으로 입력하세요.</p>
+      </div>
+      
+      <!-- 미리보기 버튼 -->
+      <div class="text-center">
+        <button onclick="previewSubMaterialForm()" class="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+          <i class="fas fa-eye mr-1"></i> 미리보기
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// 원료 검사항목 추가
+function addRawInspectionItem() {
+  const settings = getInspectionFormSettings();
+  settings.rawMaterial.items.push({ name: '새 항목', criteria: '기준을 입력하세요.' });
+  saveInspectionFormSettings(settings);
+  switchInspectionFormTab('raw');
+}
+
+// 원료 검사항목 삭제
+function removeRawInspectionItem(idx) {
+  const settings = getInspectionFormSettings();
+  settings.rawMaterial.items.splice(idx, 1);
+  saveInspectionFormSettings(settings);
+  switchInspectionFormTab('raw');
+}
+
+// 부자재 검사항목 추가
+function addSubInspectionItem() {
+  const settings = getInspectionFormSettings();
+  settings.subMaterial.items.push({ name: '새 항목', criteria: '기준을 입력하세요.' });
+  saveInspectionFormSettings(settings);
+  switchInspectionFormTab('sub');
+}
+
+// 부자재 검사항목 삭제
+function removeSubInspectionItem(idx) {
+  const settings = getInspectionFormSettings();
+  settings.subMaterial.items.splice(idx, 1);
+  saveInspectionFormSettings(settings);
+  switchInspectionFormTab('sub');
+}
+
+// 모든 양식 저장
+function saveAllInspectionForms() {
+  const settings = getInspectionFormSettings();
+  
+  // 현재 활성 탭 확인
+  const activeTab = document.querySelector('.inspection-form-tab.border-blue-500');
+  const isRaw = activeTab?.dataset.tab === 'raw';
+  
+  if (isRaw) {
+    // 원료 양식 저장
+    settings.rawMaterial.title = document.getElementById('raw-title')?.value || settings.rawMaterial.title;
+    settings.rawMaterial.companyName = document.getElementById('raw-company')?.value || settings.rawMaterial.companyName;
+    settings.rawMaterial.sampler = document.getElementById('raw-sampler')?.value || settings.rawMaterial.sampler;
+    
+    const names = document.querySelectorAll('.raw-item-name');
+    const criterias = document.querySelectorAll('.raw-item-criteria');
+    settings.rawMaterial.items = Array.from(names).map((nameEl, idx) => ({
+      name: nameEl.value.replace(/\\n/g, '\n'),
+      criteria: criterias[idx]?.value.replace(/\\n/g, '\n') || ''
+    }));
+  } else {
+    // 부자재 양식 저장
+    settings.subMaterial.title = document.getElementById('sub-title')?.value || settings.subMaterial.title;
+    settings.subMaterial.companyName = document.getElementById('sub-company')?.value || settings.subMaterial.companyName;
+    settings.subMaterial.sampler = document.getElementById('sub-sampler')?.value || settings.subMaterial.sampler;
+    settings.subMaterial.samplingLocation = document.getElementById('sub-location')?.value || settings.subMaterial.samplingLocation;
+    settings.subMaterial.samplingMethod = document.getElementById('sub-method')?.value || settings.subMaterial.samplingMethod;
+    
+    const names = document.querySelectorAll('.sub-item-name');
+    const criterias = document.querySelectorAll('.sub-item-criteria');
+    settings.subMaterial.items = Array.from(names).map((nameEl, idx) => ({
+      name: nameEl.value.replace(/\\n/g, '\n'),
+      criteria: criterias[idx]?.value.replace(/\\n/g, '\n') || ''
+    }));
+  }
+  
+  saveInspectionFormSettings(settings);
+  showToast('검사일지 양식이 저장되었습니다.', 'success');
+}
+
+// 기본값 복원
+function resetInspectionFormSettings() {
+  if (confirm('모든 검사일지 양식을 기본값으로 복원하시겠습니까?')) {
+    localStorage.removeItem('inspectionFormSettings');
+    showToast('기본값으로 복원되었습니다.', 'success');
+    loadAdminInspectionForm();
+  }
+}
+
+// 원료 검사일지 미리보기
+function previewRawMaterialForm() {
+  // 현재 입력값 임시 저장
+  saveAllInspectionForms();
+  
+  const sampleData = {
+    item_name: '(샘플) 유기농강력분',
+    item_code: 'R001',
+    lot_number: '20260318-R001-001',
+    supplier: '(샘플) 대한제분',
+    origin_qty: 25,
+    quantity: 25,
+    unit: 'kg',
+    inbound_date: formatDate(new Date()),
+    expiry_date: '2027-03-18',
+    category: '원료'
+  };
+  
+  printRawMaterialInspection(sampleData);
+}
+
+// 부자재 검사일지 미리보기
+function previewSubMaterialForm() {
+  // 현재 입력값 임시 저장
+  saveAllInspectionForms();
+  
+  const sampleData = {
+    item_name: '(샘플) 식빵봉투',
+    item_code: 'P001',
+    lot_number: '20260318-P001-001',
+    supplier: '(샘플) 포장재상사',
+    origin_qty: 1000,
+    quantity: 1000,
+    unit: 'EA',
+    inbound_date: formatDate(new Date()),
+    category: '부자재'
+  };
+  
+  printSubMaterialInspection(sampleData);
+}
+
+// Window 함수 등록
+window.loadAdminInspectionForm = loadAdminInspectionForm;
+window.switchInspectionFormTab = switchInspectionFormTab;
+window.addRawInspectionItem = addRawInspectionItem;
+window.removeRawInspectionItem = removeRawInspectionItem;
+window.addSubInspectionItem = addSubInspectionItem;
+window.removeSubInspectionItem = removeSubInspectionItem;
+window.saveAllInspectionForms = saveAllInspectionForms;
+window.resetInspectionFormSettings = resetInspectionFormSettings;
+window.previewRawMaterialForm = previewRawMaterialForm;
+window.previewSubMaterialForm = previewSubMaterialForm;
 
 // ========== 품목(마스터) 관리 ==========
 

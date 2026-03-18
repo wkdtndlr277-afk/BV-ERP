@@ -222,8 +222,9 @@ transactionRoutes.get('/daily-report', async (c) => {
   const search = c.req.query('search');
   
   // stock-ledger와 동일한 방식으로 통일
-  // 입고: inbound 테이블 origin_qty + 양수 재고조정
-  // 사용/출고: transactions 테이블 + 음수 재고조정
+  // 입고: inbound 테이블 origin_qty
+  // 재고조정: 양수/음수 별도 표시
+  // 사용/출고: transactions 테이블
   let query = `
     SELECT 
       ? as report_date,
@@ -233,13 +234,15 @@ transactionRoutes.get('/daily-report', async (c) => {
       m.unit,
       m.current_stock,
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
-      -- 당일 입고 (inbound 테이블) + 양수 재고조정
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date = ?), 0) 
-        + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date = ?), 0) as inbound,
+      -- 당일 입고 (inbound 테이블)
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date = ?), 0) as inbound_qty,
+      -- 당일 양수 재고조정 (+)
+      COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date = ?), 0) as adj_plus,
+      -- 당일 음수 재고조정 (-)
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date = ?), 0) as adj_minus,
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date = ?), 0) as usage,
-      -- 당일 출고 + 음수 재고조정
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date = ?), 0)
-        + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date = ?), 0) as outbound
+      -- 당일 출고
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date = ?), 0) as outbound_qty
     FROM master m
     WHERE (
       m.current_stock > 0
@@ -264,12 +267,18 @@ transactionRoutes.get('/daily-report', async (c) => {
   const result = await c.env.DB.prepare(query).bind(...params).all();
   
   // 이월 재고 계산 (역산 방식)
+  // 입고 총계 = inbound_qty + adj_plus
+  // 출고 총계 = usage + outbound_qty + adj_minus
   const dataWithCarryOver = (result.results || []).map((item: any) => {
-    const carryOver = item.lot_remain_total + item.usage + item.outbound - item.inbound;
+    const totalInbound = item.inbound_qty + item.adj_plus;
+    const totalOutbound = item.usage + item.outbound_qty + item.adj_minus;
+    const carryOver = item.lot_remain_total + totalOutbound - totalInbound;
     return {
       ...item,
+      inbound: totalInbound,  // 기존 호환성
+      outbound: totalOutbound,  // 기존 호환성
       carry_over: carryOver,
-      calc_remain: carryOver + item.inbound - item.usage - item.outbound
+      calc_remain: carryOver + totalInbound - totalOutbound
     };
   });
   
@@ -286,8 +295,8 @@ transactionRoutes.get('/monthly-report', async (c) => {
   const startDate = `${year}-${month.padStart(2, '0')}-01`;
   const endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
   
-  // stock-ledger와 동일한 방식으로 통일
-  // 입고: inbound 테이블 origin_qty + 양수 재고조정
+  // 입고: inbound 테이블 origin_qty
+  // 재고조정: 양수/음수 별도 표시
   let query = `
     SELECT 
       m.item_code,
@@ -296,13 +305,15 @@ transactionRoutes.get('/monthly-report', async (c) => {
       m.unit,
       m.current_stock as closing_stock,
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
-      -- 월간 입고 (inbound 테이블) + 양수 재고조정
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) 
-        + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as total_inbound,
+      -- 월간 입고 (inbound 테이블)
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) as inbound_qty,
+      -- 월간 양수 재고조정 (+)
+      COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as adj_plus,
+      -- 월간 음수 재고조정 (-)
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as adj_minus,
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as total_usage,
-      -- 월간 출고 + 음수 재고조정
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0)
-        + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as total_outbound
+      -- 월간 출고
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as outbound_qty
     FROM master m
     WHERE (
       m.current_stock > 0
@@ -326,13 +337,19 @@ transactionRoutes.get('/monthly-report', async (c) => {
   
   const result = await c.env.DB.prepare(query).bind(...params).all();
   
-  // 이월 재고 계산 (역산 방식) - stock-ledger와 동일
+  // 이월 재고 계산 (역산 방식)
+  // 입고 총계 = inbound_qty + adj_plus
+  // 출고 총계 = total_usage + outbound_qty + adj_minus
   const dataWithOpening = (result.results || []).map((item: any) => {
-    const carryOver = item.lot_remain_total + item.total_usage + item.total_outbound - item.total_inbound;
+    const totalInbound = item.inbound_qty + item.adj_plus;
+    const totalOutbound = item.total_usage + item.outbound_qty + item.adj_minus;
+    const carryOver = item.lot_remain_total + totalOutbound - totalInbound;
     return {
       ...item,
+      total_inbound: totalInbound,  // 기존 호환성
+      total_outbound: totalOutbound,  // 기존 호환성
       opening_stock: carryOver,
-      calc_remain: carryOver + item.total_inbound - item.total_usage - item.total_outbound
+      calc_remain: carryOver + totalInbound - totalOutbound
     };
   });
   

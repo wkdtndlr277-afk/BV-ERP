@@ -1256,9 +1256,10 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   const dateEnd = end_date || today;
   
   // 샘플 필터 - is_sample 컬럼 존재 여부 먼저 확인
-  let hasSampleColumn = true;
+  let hasSampleColumn = false;
   try {
-    await c.env.DB.prepare("SELECT is_sample FROM inbound LIMIT 1").all();
+    const tableInfo = await c.env.DB.prepare("PRAGMA table_info(inbound)").all();
+    hasSampleColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sample');
   } catch (e) {
     hasSampleColumn = false;
   }

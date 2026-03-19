@@ -24912,15 +24912,14 @@ function renderLedgerTable(data, isSampleView = false) {
   const today = new Date().toISOString().split('T')[0];
   const sampleLabel = isSampleView ? '<span class="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs">샘플</span>' : '';
   
-  // 원료/부자재: LOT잔량 기준 / 제품: 계산잔량 기준
-  // 재고조정(+)는 입고에, 재고조정(-)는 출고에 이미 통합됨
+  // 원료/부자재: LOT잔량 기준 / 제품: 현재고 기준
   container.innerHTML = `
     <div class="mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
       <i class="fas fa-info-circle mr-1"></i>
       ${isSampleView ? '<strong>샘플 재고</strong>는 일반 재고와 별도로 관리됩니다. ' : ''}
       <strong>원료/부자재</strong>는 LOT 잔량이 실제 재고입니다. 
-      <strong>제품</strong>은 트랜잭션 계산 잔량 기준입니다.
-      <strong>재고조정(+)</strong>는 입고에, <strong>재고조정(-)</strong>는 출고에 포함됩니다.
+      <strong>제품</strong>은 마스터 현재고 기준입니다.
+      <strong>차이</strong>는 원료/부자재의 마스터 현재고와 LOT 잔량의 차이입니다.
     </div>
     <table class="w-full text-sm">
       <thead class="bg-gray-100 sticky top-0">
@@ -24929,12 +24928,11 @@ function renderLedgerTable(data, isSampleView = false) {
           <th class="px-3 py-2 text-left">품목명${sampleLabel}</th>
           <th class="px-3 py-2 text-center">분류</th>
           ${isSampleView ? '<th class="px-3 py-2 text-left text-yellow-700">보관장소</th>' : ''}
-          <th class="px-3 py-2 text-right">이월</th>
-          <th class="px-3 py-2 text-right text-blue-600">입고(+조정)</th>
+          <th class="px-3 py-2 text-right">전일재고</th>
+          <th class="px-3 py-2 text-right text-blue-600">입고</th>
           <th class="px-3 py-2 text-right text-orange-600">사용</th>
-          <th class="px-3 py-2 text-right text-red-600">출고(-조정)</th>
-          <th class="px-3 py-2 text-right text-teal-600 font-bold">실재고</th>
-          <th class="px-3 py-2 text-right">현재고</th>
+          <th class="px-3 py-2 text-right text-red-600">출고</th>
+          <th class="px-3 py-2 text-right text-teal-600 font-bold">현재고</th>
           <th class="px-3 py-2 text-right">차이</th>
           <th class="px-3 py-2 text-center">소비기한</th>
           <th class="px-3 py-2 text-center">단위</th>
@@ -24942,10 +24940,10 @@ function renderLedgerTable(data, isSampleView = false) {
       </thead>
       <tbody>
         ${data.map(row => {
-          // 원료/부자재: LOT잔량이 실재고, 제품: 계산잔량이 실재고
+          // 원료/부자재: LOT잔량, 제품: 현재고
           const isRawMaterial = row.category === '원료' || row.category === '부자재';
-          const actualStock = isRawMaterial ? (row.lot_remain_total || 0) : row.calc_remain;
-          const stockDiff = row.current_stock - actualStock;
+          const actualStock = row.actual_stock !== undefined ? row.actual_stock : (isRawMaterial ? (row.lot_remain_total || 0) : row.current_stock);
+          const stockDiff = row.diff !== undefined ? row.diff : 0;
           
           const diffClass = Math.abs(stockDiff) > 0.01 
             ? (stockDiff > 0 ? 'text-blue-600' : 'text-red-600')
@@ -24975,7 +24973,6 @@ function renderLedgerTable(data, isSampleView = false) {
               <td class="px-3 py-2 text-right text-orange-600 font-medium">${formatNumber(row.period_usage)}</td>
               <td class="px-3 py-2 text-right text-red-600">${formatNumber(row.period_outbound)}</td>
               <td class="px-3 py-2 text-right text-teal-600 font-bold">${formatNumber(actualStock)}</td>
-              <td class="px-3 py-2 text-right">${formatNumber(row.current_stock)}</td>
               <td class="px-3 py-2 text-right ${diffClass}">${stockDiff > 0 ? '+' : ''}${formatNumber(stockDiff)}</td>
               <td class="px-3 py-2 text-center ${expiryClass}">${expiryDisplay}</td>
               <td class="px-3 py-2 text-center text-gray-500">${row.unit}</td>

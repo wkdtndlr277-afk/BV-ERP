@@ -1334,29 +1334,37 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   
   try {
     // 계산 잔량과 차이 추가
-    // 이월 재고 = 현재 LOT 잔량 + 기간 내 (사용+출고) - 기간 내 입고
-    // 재고조정은 이미 입고/출고에 통합됨
+    // 원료/부자재: LOT 잔량 기준 (FEFO)
+    // 제품: 트랜잭션 기반 계산
     const ledgerData = (result.results || []).map((item: any) => {
-      // 역산 방식: carry_over = lot_remain_total + usage + outbound - inbound
-      const carryOver = item.lot_remain_total 
+      const isRawMaterial = item.category === '원료' || item.category === '부자재';
+      
+      // 원료/부자재: LOT 잔량이 실제 재고
+      // 제품: current_stock이 실제 재고 (LOT 관리 안함)
+      const actualStock = isRawMaterial ? item.lot_remain_total : item.current_stock;
+      
+      // 이월 재고 역산: 현재 실재고 + 기간 내 (사용+출고) - 기간 내 입고
+      const carryOver = actualStock 
         + item.period_usage 
         + item.period_outbound 
         - item.period_inbound;
       
-      // 계산 잔량: carry_over + inbound - usage - outbound = lot_remain_total
+      // 계산 잔량: 이월 + 입고 - 사용 - 출고 (검증용)
       const calcRemain = carryOver + item.period_inbound - item.period_usage - item.period_outbound;
       
-      // 원료/부자재는 LOT 잔량을, 제품은 계산 잔량을 기준으로 비교
-      const baseStock = item.category === '제품' ? calcRemain : item.lot_remain_total;
+      // 차이: 마스터 현재고 vs 실제 재고 (원료는 LOT잔량, 제품은 마스터 현재고와 동일하므로 0)
+      const diff = isRawMaterial ? (item.current_stock - item.lot_remain_total) : 0;
+      
       return {
         ...item,
         carry_over: carryOver,
         calc_remain: calcRemain,
-        diff: item.current_stock - baseStock
+        actual_stock: actualStock,
+        diff: diff
       };
     });
     
-    // 요약 통계 (재고조정은 입고/출고에 통합되어 제거됨)
+    // 요약 통계
     const summary = ledgerData.reduce((acc: any, item: any) => {
       acc.total_carry_over += item.carry_over;
       acc.total_inbound += item.period_inbound;

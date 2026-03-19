@@ -1255,54 +1255,78 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   const dateStart = start_date || today;
   const dateEnd = end_date || today;
   
-  // 샘플 필터 조건 - 컬럼이 없을 수 있으므로 간단한 조건 사용
-  const useSampleFilter = is_sample === '1' || is_sample === 'all';
-  const sampleCondition = is_sample === '1' 
-    ? 'i.is_sample = 1'
-    : is_sample === 'all' 
-      ? '1=1' 
-      : '(i.is_sample IS NULL OR i.is_sample = 0)';
+  // 샘플 필터 - is_sample 컬럼 존재 여부 먼저 확인
+  let hasSampleColumn = true;
+  try {
+    await c.env.DB.prepare("SELECT is_sample FROM inbound LIMIT 1").all();
+  } catch (e) {
+    hasSampleColumn = false;
+  }
   
-  const sampleTransCondition = is_sample === '1'
-    ? 't.is_sample = 1'
-    : is_sample === 'all'
-      ? '1=1'
-      : '(t.is_sample IS NULL OR t.is_sample = 0)';
+  // 샘플만 조회 요청인데 컬럼이 없으면 즉시 빈 결과 반환
+  if (is_sample === '1' && !hasSampleColumn) {
+    return c.json({
+      success: true,
+      data: [],
+      summary: {
+        total_carry_over: 0,
+        total_inbound: 0,
+        total_usage: 0,
+        total_outbound: 0,
+        total_calc_remain: 0,
+        total_current_stock: 0,
+        total_lot_remain: 0,
+        item_count: 0,
+        diff_count: 0
+      },
+      period: { start_date: dateStart, end_date: dateEnd },
+      notice: '샘플 관리 기능이 아직 활성화되지 않았습니다.'
+    });
+  }
   
-  // 기본 쿼리 (샘플 필터 없음)
-  const buildQuery = (withSampleFilter: boolean) => {
-    const sc = withSampleFilter ? sampleCondition : '1=1';
-    const stc = withSampleFilter ? sampleTransCondition : '1=1';
-    const storageSelect = withSampleFilter && is_sample === '1' 
-      ? `(SELECT i.storage_location FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sc} ORDER BY i.inbound_date DESC LIMIT 1) as storage_location,`
-      : 'NULL as storage_location,';
-    
-    return `
-      SELECT 
-        m.item_code,
-        m.item_name,
-        m.category,
-        m.unit,
-        m.current_stock,
-        COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' ${withSampleFilter ? 'AND ' + sc : ''}), 0) as lot_remain_total,
-        (SELECT MIN(i.expiry_date) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 ${withSampleFilter ? 'AND ' + sc : ''}) as nearest_expiry,
-        ${storageSelect}
-        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? ${withSampleFilter ? 'AND ' + sc : ''}), 0) 
-          + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''}), 0) as period_inbound,
-        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''}), 0) as period_usage,
-        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''}), 0)
-          + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''}), 0) as period_outbound
-      FROM master m
-      WHERE (
-        m.current_stock > 0
-        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ? ${withSampleFilter ? 'AND ' + sc : ''})
-        OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ? ${withSampleFilter ? 'AND ' + stc : ''})
-        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0 ${withSampleFilter ? 'AND ' + sc : ''})
-      )
-    `;
-  };
+  // 샘플 필터 조건 설정
+  let sampleCondition = '1=1';
+  let sampleTransCondition = '1=1';
   
-  let query = buildQuery(useSampleFilter);
+  if (hasSampleColumn) {
+    if (is_sample === '1') {
+      sampleCondition = 'i.is_sample = 1';
+      sampleTransCondition = 't.is_sample = 1';
+    } else if (is_sample !== 'all') {
+      sampleCondition = '(i.is_sample IS NULL OR i.is_sample = 0)';
+      sampleTransCondition = '(t.is_sample IS NULL OR t.is_sample = 0)';
+    }
+  }
+  
+  // 쿼리 생성
+  const storageSelect = hasSampleColumn && is_sample === '1' 
+    ? `(SELECT i.storage_location FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sampleCondition} ORDER BY i.inbound_date DESC LIMIT 1) as storage_location,`
+    : 'NULL as storage_location,';
+  
+  let query = `
+    SELECT 
+      m.item_code,
+      m.item_name,
+      m.category,
+      m.unit,
+      m.current_stock,
+      COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND ${sampleCondition}), 0) as lot_remain_total,
+      (SELECT MIN(i.expiry_date) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sampleCondition}) as nearest_expiry,
+      ${storageSelect}
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition}), 0) 
+        + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_inbound,
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_usage,
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0)
+        + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_outbound
+    FROM master m
+    WHERE (
+      m.current_stock > 0
+      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition})
+      OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition})
+      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0 AND ${sampleCondition})
+    )
+  `;
+  
   const params: any[] = [dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd];
   
   if (category && category !== '전체') {
@@ -1316,87 +1340,69 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   
   query += ' ORDER BY m.category, m.item_name';
   
-  let result;
-  try {
-    result = await c.env.DB.prepare(query).bind(...params).all();
-  } catch (e) {
-    // is_sample 컬럼이 없는 경우 필터 없이 재시도
-    query = buildQuery(false);
-    if (category && category !== '전체') {
-      query += ' AND m.category = ?';
-    }
-    if (search) {
-      query += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
-    }
-    query += ' ORDER BY m.category, m.item_name';
-    result = await c.env.DB.prepare(query).bind(...params).all();
-  }
+  const result = await c.env.DB.prepare(query).bind(...params).all();
   
-  try {
-    // 계산 잔량과 차이 추가
-    // 원료/부자재: LOT 잔량 기준 (FEFO)
-    // 제품: 트랜잭션 기반 계산
-    const ledgerData = (result.results || []).map((item: any) => {
-      const isRawMaterial = item.category === '원료' || item.category === '부자재';
-      
-      // 원료/부자재: LOT 잔량이 실제 재고
-      // 제품: current_stock이 실제 재고 (LOT 관리 안함)
-      const actualStock = isRawMaterial ? item.lot_remain_total : item.current_stock;
-      
-      // 이월 재고 역산: 현재 실재고 + 기간 내 (사용+출고) - 기간 내 입고
-      const carryOver = actualStock 
-        + item.period_usage 
-        + item.period_outbound 
-        - item.period_inbound;
-      
-      // 계산 잔량: 이월 + 입고 - 사용 - 출고 (검증용)
-      const calcRemain = carryOver + item.period_inbound - item.period_usage - item.period_outbound;
-      
-      // 차이: 마스터 현재고 vs 실제 재고 (원료는 LOT잔량, 제품은 마스터 현재고와 동일하므로 0)
-      const diff = isRawMaterial ? (item.current_stock - item.lot_remain_total) : 0;
-      
-      return {
-        ...item,
-        carry_over: carryOver,
-        calc_remain: calcRemain,
-        actual_stock: actualStock,
-        diff: diff
-      };
-    });
+  // 계산 잔량과 차이 추가
+  // 원료/부자재: LOT 잔량 기준 (FEFO)
+  // 제품: 트랜잭션 기반 계산
+  const ledgerData = (result.results || []).map((item: any) => {
+    const isRawMaterial = item.category === '원료' || item.category === '부자재';
     
-    // 요약 통계
-    const summary = ledgerData.reduce((acc: any, item: any) => {
-      acc.total_carry_over += item.carry_over;
-      acc.total_inbound += item.period_inbound;
-      acc.total_usage += item.period_usage;
-      acc.total_outbound += item.period_outbound;
-      acc.total_calc_remain += item.calc_remain;
-      acc.total_current_stock += item.current_stock;
-      acc.total_lot_remain += item.lot_remain_total;
-      acc.item_count++;
-      if (Math.abs(item.diff) > 0.01) acc.diff_count++;
-      return acc;
-    }, {
-      total_carry_over: 0,
-      total_inbound: 0,
-      total_usage: 0,
-      total_outbound: 0,
-      total_calc_remain: 0,
-      total_current_stock: 0,
-      total_lot_remain: 0,
-      item_count: 0,
-      diff_count: 0
-    });
+    // 원료/부자재: LOT 잔량이 실제 재고
+    // 제품: current_stock이 실제 재고 (LOT 관리 안함)
+    const actualStock = isRawMaterial ? item.lot_remain_total : item.current_stock;
     
-    return c.json({
-      success: true,
-      data: ledgerData,
-      summary,
-      period: { start_date: dateStart, end_date: dateEnd }
-    });
-  } catch (error: any) {
-    return c.json({ success: false, error: error.message }, 500);
-  }
+    // 이월 재고 역산: 현재 실재고 + 기간 내 (사용+출고) - 기간 내 입고
+    const carryOver = actualStock 
+      + item.period_usage 
+      + item.period_outbound 
+      - item.period_inbound;
+    
+    // 계산 잔량: 이월 + 입고 - 사용 - 출고 (검증용)
+    const calcRemain = carryOver + item.period_inbound - item.period_usage - item.period_outbound;
+    
+    // 차이: 마스터 현재고 vs 실제 재고 (원료는 LOT잔량, 제품은 마스터 현재고와 동일하므로 0)
+    const diff = isRawMaterial ? (item.current_stock - item.lot_remain_total) : 0;
+    
+    return {
+      ...item,
+      carry_over: carryOver,
+      calc_remain: calcRemain,
+      actual_stock: actualStock,
+      diff: diff
+    };
+  });
+  
+  // 요약 통계
+  const summary = ledgerData.reduce((acc: any, item: any) => {
+    acc.total_carry_over += item.carry_over;
+    acc.total_inbound += item.period_inbound;
+    acc.total_usage += item.period_usage;
+    acc.total_outbound += item.period_outbound;
+    acc.total_calc_remain += item.calc_remain;
+    acc.total_current_stock += item.current_stock;
+    acc.total_lot_remain += item.lot_remain_total;
+    acc.item_count++;
+    if (Math.abs(item.diff) > 0.01) acc.diff_count++;
+    return acc;
+  }, {
+    total_carry_over: 0,
+    total_inbound: 0,
+    total_usage: 0,
+    total_outbound: 0,
+    total_calc_remain: 0,
+    total_current_stock: 0,
+    total_lot_remain: 0,
+    item_count: 0,
+    diff_count: 0
+  });
+  
+  return c.json({
+    success: true,
+    data: ledgerData,
+    summary,
+    period: { start_date: dateStart, end_date: dateEnd }
+  });
 });
 
 // 매칭 확인 API (사전 검증용)

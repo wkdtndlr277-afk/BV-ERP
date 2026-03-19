@@ -52,19 +52,43 @@ inboundRoutes.get('/query', async (c) => {
     params.push(category);
   }
   
-  // 샘플 필터 - is_sample 컬럼이 없을 수 있으므로 조건부 적용
-  // 컬럼이 없는 경우 모든 데이터를 일반 입고로 취급
-  let sampleFilter = '';
-  if (is_sample === '1') {
-    // 샘플만 조회 - 컬럼이 없으면 결과 없음
-    sampleFilter = ' AND i.is_sample = 1';
-  } else if (is_sample !== 'all') {
-    // 기본: 일반 입고만 (샘플 제외) - 컬럼이 없거나 0인 경우 포함
-    sampleFilter = ' AND (i.is_sample IS NULL OR i.is_sample = 0)';
+  // 샘플 필터 - is_sample 컬럼 존재 여부 먼저 확인
+  let hasSampleColumn = true;
+  try {
+    await c.env.DB.prepare("SELECT is_sample FROM inbound LIMIT 1").all();
+  } catch (e) {
+    hasSampleColumn = false;
   }
   
+  // 샘플만 조회 요청인데 컬럼이 없으면 즉시 빈 결과 반환
+  if (is_sample === '1' && !hasSampleColumn) {
+    return c.json({ 
+      success: true, 
+      data: {
+        details: [],
+        summary: view_type === 'daily' ? {} : [],
+        itemSummary: [],
+        supplierSummary: [],
+        view_type,
+        date,
+        notice: '샘플 관리 기능이 아직 활성화되지 않았습니다.'
+      }
+    });
+  }
+  
+  // 샘플 필터 설정
+  let sampleFilter = '';
+  if (hasSampleColumn) {
+    if (is_sample === '1') {
+      sampleFilter = ' AND i.is_sample = 1';
+    } else if (is_sample !== 'all') {
+      sampleFilter = ' AND (i.is_sample IS NULL OR i.is_sample = 0)';
+    }
+  }
+  // 컬럼이 없고 is_sample !== '1'이면 필터 없이 진행 (모든 데이터를 일반으로 취급)
+  
   // 상세 데이터 조회
-  let detailQuery = `
+  const detailQuery = `
     SELECT i.*, m.item_name, m.category, m.unit,
            DATE(i.inbound_date) as date_group
     FROM inbound i 
@@ -73,23 +97,9 @@ inboundRoutes.get('/query', async (c) => {
     ORDER BY i.inbound_date DESC, i.id DESC
   `;
   
-  let detailResult;
-  try {
-    detailResult = await c.env.DB.prepare(detailQuery).bind(...params).all();
-  } catch (e) {
-    // is_sample 컬럼이 없는 경우 필터 없이 재시도
-    detailQuery = `
-      SELECT i.*, m.item_name, m.category, m.unit,
-             DATE(i.inbound_date) as date_group
-      FROM inbound i 
-      JOIN master m ON i.item_code = m.item_code
-      WHERE 1=1 ${dateFilter}
-      ORDER BY i.inbound_date DESC, i.id DESC
-    `;
-    detailResult = await c.env.DB.prepare(detailQuery).bind(...params).all();
-  }
+  const detailResult = await c.env.DB.prepare(detailQuery).bind(...params).all();
   
-  // 통계 조회
+  // 통계 조회 (샘플 필터 적용)
   let summaryQuery = '';
   if (view_type === 'daily') {
     summaryQuery = `
@@ -103,7 +113,7 @@ inboundRoutes.get('/query', async (c) => {
         SUM(CASE WHEN i.quality_status = '검사중' THEN 1 ELSE 0 END) as pending_count
       FROM inbound i
       JOIN master m ON i.item_code = m.item_code
-      WHERE 1=1 ${dateFilter}
+      WHERE 1=1 ${dateFilter}${sampleFilter}
     `;
   } else {
     // 월별인 경우 일자별 그룹핑
@@ -115,7 +125,7 @@ inboundRoutes.get('/query', async (c) => {
         COUNT(DISTINCT i.item_code) as item_count
       FROM inbound i
       JOIN master m ON i.item_code = m.item_code
-      WHERE 1=1 ${dateFilter}
+      WHERE 1=1 ${dateFilter}${sampleFilter}
       GROUP BY DATE(i.inbound_date)
       ORDER BY DATE(i.inbound_date) DESC
     `;
@@ -123,7 +133,7 @@ inboundRoutes.get('/query', async (c) => {
   
   const summaryResult = await c.env.DB.prepare(summaryQuery).bind(...params).all();
   
-  // 품목별 합계 (상위 10개)
+  // 품목별 합계 (상위 10개) - 샘플 필터 적용
   const itemSummaryQuery = `
     SELECT 
       i.item_code,
@@ -135,14 +145,14 @@ inboundRoutes.get('/query', async (c) => {
       COUNT(DISTINCT i.supplier) as supplier_count
     FROM inbound i
     JOIN master m ON i.item_code = m.item_code
-    WHERE 1=1 ${dateFilter}
+    WHERE 1=1 ${dateFilter}${sampleFilter}
     GROUP BY i.item_code, m.item_name, m.category, m.unit
     ORDER BY SUM(i.origin_qty) DESC
     LIMIT 10
   `;
   const itemSummaryResult = await c.env.DB.prepare(itemSummaryQuery).bind(...params).all();
   
-  // 거래처별 합계
+  // 거래처별 합계 - 샘플 필터 적용
   const supplierSummaryQuery = `
     SELECT 
       i.supplier,
@@ -151,7 +161,7 @@ inboundRoutes.get('/query', async (c) => {
       COUNT(DISTINCT i.item_code) as item_count
     FROM inbound i
     JOIN master m ON i.item_code = m.item_code
-    WHERE i.supplier IS NOT NULL AND i.supplier != '' ${dateFilter.replace('AND', 'AND')}
+    WHERE i.supplier IS NOT NULL AND i.supplier != '' ${dateFilter}${sampleFilter}
     GROUP BY i.supplier
     ORDER BY SUM(i.origin_qty) DESC
     LIMIT 10

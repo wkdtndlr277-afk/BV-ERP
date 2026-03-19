@@ -250,8 +250,16 @@ inboundRoutes.post('/', async (c) => {
     return c.json({ success: false, error: '품목과 수량을 올바르게 입력해주세요.' }, 400);
   }
   
-  // 샘플인 경우 보관 장소 필수
-  if (is_sample && !storage_location) {
+  // is_sample 컬럼 존재 여부 확인
+  let hasSampleColumn = true;
+  try {
+    await c.env.DB.prepare("SELECT is_sample FROM inbound LIMIT 1").all();
+  } catch (e) {
+    hasSampleColumn = false;
+  }
+  
+  // 샘플인 경우 보관 장소 필수 (컬럼이 있을 때만)
+  if (hasSampleColumn && is_sample && !storage_location) {
     return c.json({ success: false, error: '샘플의 보관 장소를 입력해주세요.' }, 400);
   }
   
@@ -271,50 +279,75 @@ inboundRoutes.post('/', async (c) => {
   `).bind(item_code, inbound_date).first<{ count: number }>();
   
   const sequence = (todayCount?.count || 0) + 1;
-  // 샘플인 경우 LOT 번호에 S 접미사 추가
+  // 샘플인 경우 LOT 번호에 S 접미사 추가 (컬럼이 있을 때만)
   let lot_number = generateLotNumber(item_code, inbound_date, sequence);
-  if (is_sample) {
+  if (hasSampleColumn && is_sample) {
     lot_number = lot_number + '-S';
   }
   
-  // 입고 등록 (샘플 관련 컬럼 포함)
-  await c.env.DB.prepare(`
-    INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, storage_location)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).bind(
-    lot_number, 
-    item_code, 
-    inbound_date, 
-    expiry_date, 
-    quantity, 
-    quantity, 
-    quality_status, 
-    supplier || null,
-    is_sample ? 1 : 0,
-    is_sample ? storage_location : null
-  ).run();
+  // 입고 등록 - 컬럼 존재 여부에 따라 쿼리 분기
+  if (hasSampleColumn) {
+    // 샘플 컬럼이 있는 경우 (신규 스키마)
+    await c.env.DB.prepare(`
+      INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, storage_location)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      lot_number, 
+      item_code, 
+      inbound_date, 
+      expiry_date, 
+      quantity, 
+      quantity, 
+      quality_status, 
+      supplier || null,
+      is_sample ? 1 : 0,
+      is_sample ? storage_location : null
+    ).run();
+  } else {
+    // 샘플 컬럼이 없는 경우 (기존 스키마)
+    await c.env.DB.prepare(`
+      INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      lot_number, 
+      item_code, 
+      inbound_date, 
+      expiry_date, 
+      quantity, 
+      quantity, 
+      quality_status, 
+      supplier || null
+    ).run();
+  }
   
   // 합격인 경우에만 재고 반영 (샘플은 일반 재고에 반영하지 않음 - 별도 관리)
   if (quality_status === '합격') {
     // 샘플이 아닌 경우에만 Master 재고 증가
-    if (!is_sample) {
+    if (!is_sample || !hasSampleColumn) {
       await c.env.DB.prepare(`
         UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
         WHERE item_code = ?
       `).bind(quantity, item_code).run();
     }
     
-    // Transaction 기록 (샘플 여부 포함)
-    await c.env.DB.prepare(`
-      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier, is_sample)
-      VALUES (?, ?, '입고', ?, ?, ?, ?, ?)
-    `).bind(inbound_date, item_code, quantity, lot_number, quantity, supplier || null, is_sample ? 1 : 0).run();
+    // Transaction 기록 - 컬럼 존재 여부에 따라 쿼리 분기
+    if (hasSampleColumn) {
+      await c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier, is_sample)
+        VALUES (?, ?, '입고', ?, ?, ?, ?, ?)
+      `).bind(inbound_date, item_code, quantity, lot_number, quantity, supplier || null, is_sample ? 1 : 0).run();
+    } else {
+      await c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier)
+        VALUES (?, ?, '입고', ?, ?, ?, ?)
+      `).bind(inbound_date, item_code, quantity, lot_number, quantity, supplier || null).run();
+    }
   }
   
   return c.json({ 
     success: true, 
-    message: is_sample ? '샘플 입고가 등록되었습니다.' : '입고가 등록되었습니다.',
-    data: { lot_number, quality_status, is_sample, storage_location }
+    message: (hasSampleColumn && is_sample) ? '샘플 입고가 등록되었습니다.' : '입고가 등록되었습니다.',
+    data: { lot_number, quality_status, is_sample: hasSampleColumn ? is_sample : undefined, storage_location: hasSampleColumn ? storage_location : undefined }
   });
 });
 

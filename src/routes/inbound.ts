@@ -244,31 +244,47 @@ inboundRoutes.get('/lot/:lot_number', async (c) => {
 
 // 입고 등록
 inboundRoutes.post('/', async (c) => {
-  const body = await c.req.json<InboundRequest & { is_sample?: boolean; storage_location?: string }>();
-  const { item_code, quantity, inbound_date, expiry_date, supplier, quality_status, is_sample, storage_location } = body;
-  
-  if (!item_code || !quantity || quantity <= 0) {
-    return c.json({ success: false, error: '품목과 수량을 올바르게 입력해주세요.' }, 400);
-  }
-  
-  // is_sample 컬럼 존재 여부 확인
-  let hasSampleColumn = false;
   try {
-    const tableInfo = await c.env.DB.prepare("PRAGMA table_info(inbound)").all();
-    hasSampleColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sample');
-  } catch (e) {
-    hasSampleColumn = false;
-  }
-  
-  // 샘플인 경우 보관 장소 필수 (컬럼이 있을 때만)
-  if (hasSampleColumn && is_sample && !storage_location) {
+    const body = await c.req.json<InboundRequest & { is_sample?: boolean; storage_location?: string }>();
+    const { item_code, quantity, inbound_date, expiry_date, supplier, quality_status, is_sample, storage_location } = body;
+    
+    if (!item_code || !quantity || quantity <= 0) {
+      return c.json({ success: false, error: '품목과 수량을 올바르게 입력해주세요.' }, 400);
+    }
+    
+    // is_sample 컬럼 존재 여부 확인
+    let hasSampleColumn = false;
+    try {
+      const tableInfo = await c.env.DB.prepare("PRAGMA table_info(inbound)").all();
+      hasSampleColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sample');
+    } catch (e) {
+      hasSampleColumn = false;
+    }
+    
+    // 샘플인 경우 보관 장소 필수 (컬럼이 있을 때만)
+    if (hasSampleColumn && is_sample && !storage_location) {
     return c.json({ success: false, error: '샘플의 보관 장소를 입력해주세요.' }, 400);
   }
   
-  // 품목 확인
-  const master = await c.env.DB.prepare(
+  // 품목 확인 (master 또는 supplies 테이블에서)
+  let master = await c.env.DB.prepare(
     'SELECT * FROM master WHERE item_code = ?'
   ).bind(item_code).first();
+  
+  let isSupplies = false;
+  if (!master) {
+    // supplies 테이블에서 찾기
+    try {
+      master = await c.env.DB.prepare(
+        'SELECT * FROM supplies WHERE item_code = ?'
+      ).bind(item_code).first();
+      if (master) {
+        isSupplies = true;
+      }
+    } catch (e) {
+      // supplies 테이블이 없을 수 있음
+    }
+  }
   
   if (!master) {
     return c.json({ success: false, error: '등록되지 않은 품목입니다.' }, 404);
@@ -288,6 +304,9 @@ inboundRoutes.post('/', async (c) => {
   }
   
   // 입고 등록 - 컬럼 존재 여부에 따라 쿼리 분기
+  // 부자재는 expiry_date가 없을 수 있으므로 null 처리
+  const expiryDateValue = expiry_date || null;
+  
   if (hasSampleColumn) {
     // 샘플 컬럼이 있는 경우 (신규 스키마)
     await c.env.DB.prepare(`
@@ -297,10 +316,10 @@ inboundRoutes.post('/', async (c) => {
       lot_number, 
       item_code, 
       inbound_date, 
-      expiry_date, 
+      expiryDateValue, 
       quantity, 
       quantity, 
-      quality_status, 
+      quality_status || '합격', 
       supplier || null,
       is_sample ? 1 : 0,
       is_sample ? storage_location : null
@@ -314,22 +333,31 @@ inboundRoutes.post('/', async (c) => {
       lot_number, 
       item_code, 
       inbound_date, 
-      expiry_date, 
+      expiryDateValue, 
       quantity, 
       quantity, 
-      quality_status, 
+      quality_status || '합격', 
       supplier || null
     ).run();
   }
   
   // 합격인 경우에만 재고 반영 (샘플은 일반 재고에 반영하지 않음 - 별도 관리)
   if (quality_status === '합격') {
-    // 샘플이 아닌 경우에만 Master 재고 증가
+    // 샘플이 아닌 경우에만 재고 증가
     if (!is_sample || !hasSampleColumn) {
-      await c.env.DB.prepare(`
-        UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
-        WHERE item_code = ?
-      `).bind(quantity, item_code).run();
+      if (isSupplies) {
+        // 부자재는 supplies 테이블에서 재고 업데이트
+        await c.env.DB.prepare(`
+          UPDATE supplies SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
+          WHERE item_code = ?
+        `).bind(quantity, item_code).run();
+      } else {
+        // 원료/제품은 master 테이블에서 재고 업데이트
+        await c.env.DB.prepare(`
+          UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
+          WHERE item_code = ?
+        `).bind(quantity, item_code).run();
+      }
     }
     
     // Transaction 기록 - 컬럼 존재 여부에 따라 쿼리 분기
@@ -351,6 +379,10 @@ inboundRoutes.post('/', async (c) => {
     message: (hasSampleColumn && is_sample) ? '샘플 입고가 등록되었습니다.' : '입고가 등록되었습니다.',
     data: { lot_number, quality_status, is_sample: hasSampleColumn ? is_sample : undefined, storage_location: hasSampleColumn ? storage_location : undefined }
   });
+  } catch (error: any) {
+    console.error('Inbound registration error:', error);
+    return c.json({ success: false, error: `입고 등록 실패: ${error.message}` }, 500);
+  }
 });
 
 // LOT 수정 (관리자용 - 잔량 조정)

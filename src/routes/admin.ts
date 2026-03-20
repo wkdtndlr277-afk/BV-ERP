@@ -1115,4 +1115,341 @@ admin.delete('/super/products-all', async (c) => {
   }
 })
 
+// 부자재 카테고리 추가 마이그레이션
+admin.post('/migrate/add-supplies-category', async (c) => {
+  const { env } = c
+  
+  try {
+    // 현재 master 테이블의 CHECK 제약 조건 확인
+    const schemaResult = await env.DB.prepare(`
+      SELECT sql FROM sqlite_master WHERE name = 'master' AND type = 'table'
+    `).first()
+    
+    const currentSchema = schemaResult?.sql?.toString() || ''
+    const hasCheck = currentSchema.includes('CHECK')
+    
+    if (!hasCheck) {
+      return c.json({ 
+        success: true, 
+        message: 'master 테이블에 이미 CHECK 제약 조건이 없습니다. 부자재 등록이 가능합니다.'
+      })
+    }
+    
+    // D1 batch를 사용하여 여러 쿼리를 순차 실행
+    // 먼저 현재 데이터 개수 확인
+    const countBefore = await env.DB.prepare(`SELECT COUNT(*) as count FROM master`).first()
+    
+    // Step 1: 백업 테이블 생성 (이미 있으면 삭제)
+    const results = await env.DB.batch([
+      env.DB.prepare(`DROP TABLE IF EXISTS master_migration_backup`),
+      env.DB.prepare(`CREATE TABLE master_migration_backup AS SELECT * FROM master`)
+    ])
+    
+    // Step 2: 인덱스 삭제
+    await env.DB.batch([
+      env.DB.prepare(`DROP INDEX IF EXISTS idx_master_category`),
+      env.DB.prepare(`DROP INDEX IF EXISTS idx_master_item_code`)
+    ])
+    
+    // Step 3: 기존 테이블 삭제 시도 
+    // foreign_keys가 활성화 되어있으면 실패할 수 있음
+    // 그래서 참조하는 테이블들의 외래키를 먼저 처리해야 함
+    
+    // 참조 테이블들도 함께 재생성하는 방법을 사용
+    // 모든 참조 테이블의 데이터를 백업
+    await env.DB.batch([
+      env.DB.prepare(`DROP TABLE IF EXISTS inbound_backup`),
+      env.DB.prepare(`DROP TABLE IF EXISTS transactions_backup`),
+      env.DB.prepare(`CREATE TABLE inbound_backup AS SELECT * FROM inbound`),
+      env.DB.prepare(`CREATE TABLE transactions_backup AS SELECT * FROM transactions`)
+    ])
+    
+    // 참조 테이블 삭제 (역순 - 자식 먼저)
+    await env.DB.batch([
+      env.DB.prepare(`DROP TABLE IF EXISTS transactions`),
+      env.DB.prepare(`DROP TABLE IF EXISTS inbound`)
+    ])
+    
+    // master 테이블 삭제
+    await env.DB.prepare(`DROP TABLE master`).run()
+    
+    // 새 master 테이블 생성 (CHECK 제약 없음)
+    await env.DB.prepare(`
+      CREATE TABLE master (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_code TEXT UNIQUE NOT NULL,
+        item_name TEXT NOT NULL,
+        category TEXT NOT NULL,
+        unit TEXT DEFAULT 'kg',
+        current_stock REAL DEFAULT 0,
+        safety_stock REAL DEFAULT 0,
+        expiry_days INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // master 데이터 복원
+    await env.DB.prepare(`
+      INSERT INTO master (id, item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, created_at, updated_at)
+      SELECT id, item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, created_at, updated_at
+      FROM master_migration_backup
+    `).run()
+    
+    // 인덱스 생성
+    await env.DB.batch([
+      env.DB.prepare(`CREATE INDEX idx_master_category ON master(category)`),
+      env.DB.prepare(`CREATE INDEX idx_master_item_code ON master(item_code)`)
+    ])
+    
+    // inbound 테이블 재생성
+    await env.DB.prepare(`
+      CREATE TABLE inbound (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        lot_number TEXT UNIQUE NOT NULL,
+        item_code TEXT NOT NULL,
+        inbound_date TEXT NOT NULL,
+        expiry_date TEXT,
+        origin_qty REAL NOT NULL,
+        remain_qty REAL NOT NULL,
+        quality_status TEXT DEFAULT '합격',
+        supplier TEXT,
+        unit_price REAL DEFAULT 0,
+        is_sample INTEGER DEFAULT 0,
+        storage_location TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (item_code) REFERENCES master(item_code)
+      )
+    `).run()
+    
+    // inbound 데이터 복원
+    await env.DB.prepare(`
+      INSERT INTO inbound 
+      SELECT * FROM inbound_backup
+    `).run()
+    
+    // inbound 인덱스
+    await env.DB.batch([
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_inbound_item_code ON inbound(item_code)`),
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_inbound_inbound_date ON inbound(inbound_date)`),
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_inbound_expiry_date ON inbound(expiry_date)`)
+    ])
+    
+    // transactions 테이블 재생성
+    await env.DB.prepare(`
+      CREATE TABLE transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trans_date TEXT NOT NULL,
+        item_code TEXT NOT NULL,
+        trans_type TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        lot_number TEXT,
+        production_lot TEXT,
+        remain_qty REAL,
+        memo TEXT,
+        supplier TEXT,
+        is_sample INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (item_code) REFERENCES master(item_code)
+      )
+    `).run()
+    
+    // transactions 데이터 복원
+    await env.DB.prepare(`
+      INSERT INTO transactions 
+      SELECT * FROM transactions_backup
+    `).run()
+    
+    // transactions 인덱스
+    await env.DB.batch([
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(trans_date)`),
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_transactions_item_code ON transactions(item_code)`),
+      env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_transactions_lot ON transactions(lot_number)`)
+    ])
+    
+    // 백업 테이블들 삭제
+    await env.DB.batch([
+      env.DB.prepare(`DROP TABLE IF EXISTS master_migration_backup`),
+      env.DB.prepare(`DROP TABLE IF EXISTS inbound_backup`),
+      env.DB.prepare(`DROP TABLE IF EXISTS transactions_backup`)
+    ])
+    
+    // 검증
+    const countAfter = await env.DB.prepare(`SELECT COUNT(*) as count FROM master`).first()
+    const inboundCount = await env.DB.prepare(`SELECT COUNT(*) as count FROM inbound`).first()
+    const transCount = await env.DB.prepare(`SELECT COUNT(*) as count FROM transactions`).first()
+    
+    const newSchema = await env.DB.prepare(`
+      SELECT sql FROM sqlite_master WHERE name = 'master' AND type = 'table'
+    `).first()
+    
+    return c.json({ 
+      success: true, 
+      message: `마이그레이션 완료! CHECK 제약 조건이 제거되었습니다. 부자재 등록이 가능합니다.`,
+      details: {
+        masterCount: { before: countBefore?.count, after: countAfter?.count },
+        inboundCount: inboundCount?.count,
+        transactionsCount: transCount?.count,
+        newSchema: newSchema?.sql
+      }
+    })
+  } catch (error: any) {
+    // 에러 발생 시 상세 정보 반환
+    return c.json({ 
+      success: false, 
+      message: `마이그레이션 실패: ${error.message}`,
+      hint: '데이터가 손상되었을 수 있습니다. 백업 테이블(master_migration_backup, inbound_backup, transactions_backup)이 있다면 복원이 가능합니다.'
+    }, 500)
+  }
+})
+
+// 마이그레이션 실패 시 복구 API
+admin.post('/migrate/restore-from-backup', async (c) => {
+  const { env } = c
+  
+  try {
+    const results: string[] = []
+    
+    // 백업 테이블들 존재 확인
+    const tables = await env.DB.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_backup'
+    `).all()
+    
+    const backupTables = (tables.results || []).map((t: any) => t.name)
+    results.push(`백업 테이블 발견: ${backupTables.join(', ')}`)
+    
+    // inbound 복원
+    if (backupTables.includes('inbound_backup')) {
+      // 현재 inbound 테이블 상태 확인
+      const inboundExists = await env.DB.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='inbound'
+      `).first()
+      
+      if (!inboundExists) {
+        // inbound 테이블이 없으면 백업에서 생성
+        await env.DB.prepare(`CREATE TABLE inbound AS SELECT * FROM inbound_backup`).run()
+        results.push('inbound 테이블 복원됨')
+      } else {
+        // 테이블은 있지만 데이터 확인
+        const count = await env.DB.prepare(`SELECT COUNT(*) as count FROM inbound`).first()
+        if (count?.count === 0) {
+          await env.DB.prepare(`INSERT INTO inbound SELECT * FROM inbound_backup`).run()
+          results.push('inbound 데이터 복원됨')
+        } else {
+          results.push(`inbound 테이블 정상 (${count?.count}건)`)
+        }
+      }
+    }
+    
+    // transactions 복원
+    if (backupTables.includes('transactions_backup')) {
+      const transExists = await env.DB.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='transactions'
+      `).first()
+      
+      if (!transExists) {
+        await env.DB.prepare(`CREATE TABLE transactions AS SELECT * FROM transactions_backup`).run()
+        results.push('transactions 테이블 복원됨')
+      } else {
+        const count = await env.DB.prepare(`SELECT COUNT(*) as count FROM transactions`).first()
+        if (count?.count === 0) {
+          await env.DB.prepare(`INSERT INTO transactions SELECT * FROM transactions_backup`).run()
+          results.push('transactions 데이터 복원됨')
+        } else {
+          results.push(`transactions 테이블 정상 (${count?.count}건)`)
+        }
+      }
+    }
+    
+    // 최종 상태 확인
+    const masterCount = await env.DB.prepare(`SELECT COUNT(*) as count FROM master`).first()
+    const inboundCount = await env.DB.prepare(`SELECT COUNT(*) as count FROM inbound`).first()
+    const transCount = await env.DB.prepare(`SELECT COUNT(*) as count FROM transactions`).first()
+    
+    return c.json({
+      success: true,
+      message: '복원 완료',
+      results,
+      counts: {
+        master: masterCount?.count,
+        inbound: inboundCount?.count,
+        transactions: transCount?.count
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, message: `복원 실패: ${error.message}` }, 500)
+  }
+})
+
+// 테이블 스키마 확인 API
+admin.get('/schema/:table_name', async (c) => {
+  const { env } = c
+  const tableName = c.req.param('table_name')
+  
+  try {
+    const schema = await env.DB.prepare(`
+      SELECT sql FROM sqlite_master WHERE name = ? AND type = 'table'
+    `).bind(tableName).first()
+    
+    const count = await env.DB.prepare(`SELECT COUNT(*) as count FROM ${tableName}`).first()
+    
+    return c.json({
+      success: true,
+      table: tableName,
+      count: count?.count,
+      schema: schema?.sql
+    })
+  } catch (error: any) {
+    return c.json({ success: false, message: error.message }, 500)
+  }
+})
+
+// supplies(부자재) 테이블 생성 마이그레이션
+admin.post('/migrate/create-supplies-table', async (c) => {
+  const { env } = c
+  
+  try {
+    // supplies 테이블 존재 확인
+    const exists = await env.DB.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='supplies'
+    `).first()
+    
+    if (exists) {
+      const count = await env.DB.prepare(`SELECT COUNT(*) as count FROM supplies`).first()
+      return c.json({ 
+        success: true, 
+        message: 'supplies 테이블이 이미 존재합니다.',
+        count: count?.count
+      })
+    }
+    
+    // supplies 테이블 생성 (master와 동일한 구조, CHECK 제약 없음)
+    await env.DB.prepare(`
+      CREATE TABLE supplies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_code TEXT UNIQUE NOT NULL,
+        item_name TEXT NOT NULL,
+        category TEXT NOT NULL DEFAULT '부자재',
+        unit TEXT DEFAULT 'ea',
+        current_stock REAL DEFAULT 0,
+        safety_stock REAL DEFAULT 0,
+        expiry_days INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // 인덱스 생성
+    await env.DB.prepare(`CREATE INDEX idx_supplies_item_code ON supplies(item_code)`).run()
+    
+    return c.json({ 
+      success: true, 
+      message: 'supplies(부자재) 테이블이 생성되었습니다.'
+    })
+  } catch (error: any) {
+    return c.json({ success: false, message: `테이블 생성 실패: ${error.message}` }, 500)
+  }
+})
+
 export default admin

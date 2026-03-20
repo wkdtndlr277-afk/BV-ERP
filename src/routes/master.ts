@@ -15,28 +15,72 @@ masterRoutes.use('*', async (c, next) => {
   await next();
 });
 
-// 전체 품목 조회
+// 전체 품목 조회 (master + supplies UNION)
 masterRoutes.get('/', async (c) => {
   const category = c.req.query('category');
-  let query = 'SELECT * FROM master';
-  const params: string[] = [];
   
-  if (category) {
-    query += ' WHERE category = ?';
-    params.push(category);
+  try {
+    // supplies 테이블 존재 여부 확인
+    const suppliesExists = await c.env.DB.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='supplies'
+    `).first();
+    
+    if (category === '부자재') {
+      // 부자재만 조회 - supplies 테이블에서
+      if (!suppliesExists) {
+        return c.json({ success: true, data: [] });
+      }
+      const result = await c.env.DB.prepare(`
+        SELECT * FROM supplies ORDER BY item_code
+      `).all<Master>();
+      return c.json({ success: true, data: result.results });
+    } else if (category) {
+      // 특정 카테고리 (원료/제품) - master 테이블에서
+      const result = await c.env.DB.prepare(`
+        SELECT * FROM master WHERE category = ? ORDER BY item_code
+      `).bind(category).all<Master>();
+      return c.json({ success: true, data: result.results });
+    } else {
+      // 전체 조회 - master + supplies UNION
+      if (suppliesExists) {
+        const result = await c.env.DB.prepare(`
+          SELECT * FROM master 
+          UNION ALL 
+          SELECT * FROM supplies 
+          ORDER BY category, item_code
+        `).all<Master>();
+        return c.json({ success: true, data: result.results });
+      } else {
+        const result = await c.env.DB.prepare(`
+          SELECT * FROM master ORDER BY category, item_code
+        `).all<Master>();
+        return c.json({ success: true, data: result.results });
+      }
+    }
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
   }
-  query += ' ORDER BY category, item_code';
-  
-  const result = await c.env.DB.prepare(query).bind(...params).all<Master>();
-  return c.json({ success: true, data: result.results });
 });
 
-// 품목 상세 조회
+// 품목 상세 조회 (master 또는 supplies에서)
 masterRoutes.get('/:item_code', async (c) => {
   const item_code = c.req.param('item_code');
-  const result = await c.env.DB.prepare(
+  
+  // 먼저 master에서 찾기
+  let result = await c.env.DB.prepare(
     'SELECT * FROM master WHERE item_code = ?'
   ).bind(item_code).first<Master>();
+  
+  // master에 없으면 supplies에서 찾기
+  if (!result) {
+    try {
+      result = await c.env.DB.prepare(
+        'SELECT * FROM supplies WHERE item_code = ?'
+      ).bind(item_code).first<Master>();
+    } catch (e) {
+      // supplies 테이블이 없을 수 있음
+    }
+  }
   
   if (!result) {
     return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
@@ -44,7 +88,7 @@ masterRoutes.get('/:item_code', async (c) => {
   return c.json({ success: true, data: result });
 });
 
-// 품목 등록
+// 품목 등록 (부자재는 supplies 테이블에, 원료/제품은 master 테이블에)
 masterRoutes.post('/', async (c) => {
   const body = await c.req.json<Partial<Master>>();
   const { item_code, item_name, category, unit, safety_stock, expiry_days } = body;
@@ -57,22 +101,49 @@ masterRoutes.post('/', async (c) => {
     const unitValue = unit || (category === '부자재' ? 'ea' : 'kg');
     const safetyValue = safety_stock || 0;
     
-    // 부자재는 소비기한 없음 (NULL로 저장)
     if (category === '부자재') {
+      // 부자재는 supplies 테이블에 저장
+      // supplies 테이블 존재 확인 및 생성
+      const suppliesExists = await c.env.DB.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='supplies'
+      `).first();
+      
+      if (!suppliesExists) {
+        // supplies 테이블 자동 생성
+        await c.env.DB.prepare(`
+          CREATE TABLE supplies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_code TEXT UNIQUE NOT NULL,
+            item_name TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT '부자재',
+            unit TEXT DEFAULT 'ea',
+            current_stock REAL DEFAULT 0,
+            safety_stock REAL DEFAULT 0,
+            expiry_days INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `).run();
+        await c.env.DB.prepare(`CREATE INDEX idx_supplies_item_code ON supplies(item_code)`).run();
+      }
+      
+      // supplies 테이블에 삽입
       await c.env.DB.prepare(`
-        INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
-        VALUES (?, ?, ?, ?, 0, ?, NULL)
-      `).bind(item_code, item_name, category, unitValue, safetyValue).run();
+        INSERT INTO supplies (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
+        VALUES (?, ?, '부자재', ?, 0, ?, NULL)
+      `).bind(item_code, item_name, unitValue, safetyValue).run();
+      
+      return c.json({ success: true, message: '부자재가 등록되었습니다.' });
     } else {
-      // 원료/제품은 소비기한 필수 (기본 365일)
+      // 원료/제품은 master 테이블에 저장
       const expiryValue = expiry_days || 365;
       await c.env.DB.prepare(`
         INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
         VALUES (?, ?, ?, ?, 0, ?, ?)
       `).bind(item_code, item_name, category, unitValue, safetyValue, expiryValue).run();
+      
+      return c.json({ success: true, message: '품목이 등록되었습니다.' });
     }
-    
-    return c.json({ success: true, message: '품목이 등록되었습니다.' });
   } catch (error: any) {
     console.error('Master insert error:', error);
     if (error.message?.includes('UNIQUE')) {

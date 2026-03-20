@@ -216,15 +216,14 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
 });
 
 // 일별 수불부 (원료/제품)
+// 핵심 원칙: 전일재고 = 해당일 이전까지 모든 거래의 누적합 (정방향 계산)
+// 당일재고 = 전일재고 + 당일입고 - 당일사용 - 당일출고 + 당일조정
 transactionRoutes.get('/daily-report', async (c) => {
   const date = c.req.query('date') || new Date().toISOString().split('T')[0];
   const category = c.req.query('category');
   const search = c.req.query('search');
   
-  // stock-ledger와 동일한 방식으로 통일
-  // 입고: inbound 테이블 origin_qty
-  // 재고조정: 양수/음수 별도 표시
-  // 사용/출고: transactions 테이블
+  // 정방향 계산: 전일재고 = 해당일 이전까지의 모든 입고 - 사용 - 출고 + 조정
   let query = `
     SELECT 
       ? as report_date,
@@ -234,6 +233,14 @@ transactionRoutes.get('/daily-report', async (c) => {
       m.unit,
       m.current_stock,
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
+      -- 전일재고 계산용: 해당일 이전 입고 합계
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ?), 0) as before_inbound,
+      -- 전일재고 계산용: 해당일 이전 사용 합계
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
+      -- 전일재고 계산용: 해당일 이전 출고 합계
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
+      -- 전일재고 계산용: 해당일 이전 재고조정 합계 (양수/음수 그대로)
+      COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
       -- 당일 입고 (inbound 테이블)
       COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date = ?), 0) as inbound_qty,
       -- 당일 양수 재고조정 (+)
@@ -249,9 +256,17 @@ transactionRoutes.get('/daily-report', async (c) => {
       OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date = ?)
       OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date = ?)
       OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
+      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date < ?)
+      OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date < ?)
     )
   `;
-  const params: any[] = [date, date, date, date, date, date, date, date];
+  // 파라미터 순서: report_date(1) + before(4) + period(5) + exists(5)
+  const params: any[] = [
+    date,  // report_date
+    date, date, date, date,  // before queries
+    date, date, date, date, date,  // period queries
+    date, date, date, date  // EXISTS queries
+  ];
   
   if (category && category !== '전체') {
     query += ' AND m.category = ?';
@@ -266,19 +281,27 @@ transactionRoutes.get('/daily-report', async (c) => {
   
   const result = await c.env.DB.prepare(query).bind(...params).all();
   
-  // 이월 재고 계산 (역산 방식)
-  // 입고 총계 = inbound_qty + adj_plus
-  // 출고 총계 = usage + outbound_qty + adj_minus
+  // 정방향 계산
+  // 전일재고 = 이전입고 - 이전사용 - 이전출고 + 이전조정
+  // 당일재고 = 전일재고 + 당일입고 - 당일사용 - 당일출고 + 당일조정
   const dataWithCarryOver = (result.results || []).map((item: any) => {
+    // 전일재고 (정방향 누적 계산)
+    const carryOver = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
+    
+    // 당일 입고 총계 (입고량 + 양수 재고조정)
     const totalInbound = item.inbound_qty + item.adj_plus;
-    const totalOutbound = item.usage + item.outbound_qty + item.adj_minus;
-    const carryOver = item.lot_remain_total + totalOutbound - totalInbound;
+    // 당일 출고 총계 (출고량 + 음수 재고조정)
+    const totalOutbound = item.outbound_qty + item.adj_minus;
+    
+    // 당일재고 (정방향 계산)
+    const closingStock = carryOver + totalInbound - item.usage - totalOutbound;
+    
     return {
       ...item,
-      inbound: totalInbound,  // 기존 호환성
-      outbound: totalOutbound,  // 기존 호환성
-      carry_over: carryOver,
-      calc_remain: carryOver + totalInbound - totalOutbound
+      carry_over: carryOver,            // 전일재고
+      inbound: totalInbound,            // 당일입고 (입고+양수조정)
+      outbound: totalOutbound,          // 당일출고 (출고+음수조정)
+      calc_remain: closingStock         // 당일재고
     };
   });
   
@@ -286,6 +309,9 @@ transactionRoutes.get('/daily-report', async (c) => {
 });
 
 // 월별 수불부 (원료/제품) - 품목별 요약
+// 핵심 원칙: 월초재고 = 해당월 시작일 이전까지 모든 거래의 누적합 (정방향 계산)
+// 월말재고 = 월초재고 + 당월입고 - 당월사용 - 당월출고 + 당월조정
+// 이렇게 하면 N월 월말재고 = N+1월 월초재고가 자동으로 보장됨
 transactionRoutes.get('/monthly-report', async (c) => {
   const year = c.req.query('year') || new Date().getFullYear().toString();
   const month = c.req.query('month') || String(new Date().getMonth() + 1).padStart(2, '0');
@@ -295,24 +321,32 @@ transactionRoutes.get('/monthly-report', async (c) => {
   const startDate = `${year}-${month.padStart(2, '0')}-01`;
   const endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
   
-  // 입고: inbound 테이블 origin_qty
-  // 재고조정: 양수/음수 별도 표시
+  // 정방향 계산: 월초재고 = 해당월 이전까지의 모든 입고 - 사용 - 출고 + 조정
   let query = `
     SELECT 
       m.item_code,
       m.item_name,
       m.category,
       m.unit,
-      m.current_stock as closing_stock,
+      m.current_stock,
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
-      -- 월간 입고 (inbound 테이블)
+      -- 월초재고 계산용: 해당월 이전 입고 합계
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ?), 0) as before_inbound,
+      -- 월초재고 계산용: 해당월 이전 사용 합계
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
+      -- 월초재고 계산용: 해당월 이전 출고 합계
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
+      -- 월초재고 계산용: 해당월 이전 재고조정 합계 (양수/음수 그대로)
+      COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
+      -- 당월 입고 (inbound 테이블)
       COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) as inbound_qty,
-      -- 월간 양수 재고조정 (+)
+      -- 당월 양수 재고조정 (+)
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as adj_plus,
-      -- 월간 음수 재고조정 (-)
+      -- 당월 음수 재고조정 (-)
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as adj_minus,
+      -- 당월 사용
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as total_usage,
-      -- 월간 출고
+      -- 당월 출고
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as outbound_qty
     FROM master m
     WHERE (
@@ -320,9 +354,16 @@ transactionRoutes.get('/monthly-report', async (c) => {
       OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ?)
       OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ?)
       OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
+      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date < ?)
+      OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date < ?)
     )
   `;
-  const params: any[] = [startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate];
+  // 파라미터 순서: before(4개) + period(6개) + exists(6개)
+  const params: any[] = [
+    startDate, startDate, startDate, startDate,  // before queries
+    startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate,  // period queries
+    startDate, endDate, startDate, endDate, startDate, startDate  // EXISTS queries
+  ];
   
   if (category && category !== '전체') {
     query += ' AND m.category = ?';
@@ -337,19 +378,28 @@ transactionRoutes.get('/monthly-report', async (c) => {
   
   const result = await c.env.DB.prepare(query).bind(...params).all();
   
-  // 이월 재고 계산 (역산 방식)
-  // 입고 총계 = inbound_qty + adj_plus
-  // 출고 총계 = total_usage + outbound_qty + adj_minus
+  // 정방향 계산
+  // 월초재고 = 이전입고 - 이전사용 - 이전출고 + 이전조정
+  // 월말재고 = 월초재고 + 당월입고 - 당월사용 - 당월출고 + 당월조정
   const dataWithOpening = (result.results || []).map((item: any) => {
+    // 월초재고 (정방향 누적 계산)
+    const openingStock = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
+    
+    // 당월 입고 총계 (입고량 + 양수 재고조정)
     const totalInbound = item.inbound_qty + item.adj_plus;
-    const totalOutbound = item.total_usage + item.outbound_qty + item.adj_minus;
-    const carryOver = item.lot_remain_total + totalOutbound - totalInbound;
+    // 당월 출고 총계 (출고량 + 음수 재고조정)
+    const totalOutbound = item.outbound_qty + item.adj_minus;
+    
+    // 월말재고 (정방향 계산)
+    const closingStock = openingStock + totalInbound - item.total_usage - totalOutbound;
+    
     return {
       ...item,
-      total_inbound: totalInbound,  // 기존 호환성
-      total_outbound: totalOutbound,  // 기존 호환성
-      opening_stock: carryOver,
-      calc_remain: carryOver + totalInbound - totalOutbound
+      opening_stock: openingStock,      // 월초재고
+      total_inbound: totalInbound,       // 당월입고 (입고+양수조정)
+      total_outbound: totalOutbound,     // 당월출고 (출고+음수조정)
+      closing_stock: closingStock,       // 월말재고
+      calc_remain: closingStock          // 계산된 잔량 (호환성)
     };
   });
   

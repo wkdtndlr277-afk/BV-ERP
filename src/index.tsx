@@ -338,6 +338,111 @@ app.get('/api/version', (c) => {
   });
 });
 
+// DB Export API - 데이터베이스를 JSON으로 내보내기
+app.get('/api/export-db', async (c) => {
+  try {
+    const tables = ['master', 'inbound', 'transactions', 'suppliers'];
+    const exportData: any = {};
+    
+    for (const table of tables) {
+      try {
+        const result = await c.env.DB.prepare(`SELECT * FROM ${table}`).all();
+        exportData[table] = result.results || [];
+      } catch (e) {
+        exportData[table] = [];
+      }
+    }
+    
+    return c.json({
+      success: true,
+      exported_at: new Date().toISOString(),
+      data: exportData
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// DB Import API - JSON 데이터를 데이터베이스에 적용
+app.post('/api/import-db', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { table, data, mode = 'upsert' } = body;
+    
+    if (!table || !data || !Array.isArray(data)) {
+      return c.json({ success: false, error: '테이블명과 데이터 배열이 필요합니다.' }, 400);
+    }
+    
+    const allowedTables = ['master', 'inbound', 'transactions', 'suppliers'];
+    if (!allowedTables.includes(table)) {
+      return c.json({ success: false, error: '허용되지 않은 테이블입니다.' }, 400);
+    }
+    
+    let inserted = 0;
+    let updated = 0;
+    let errors: any[] = [];
+    
+    for (const row of data) {
+      try {
+        if (table === 'master') {
+          // master 테이블: item_code 기준 upsert
+          const existing = await c.env.DB.prepare('SELECT id FROM master WHERE item_code = ?').bind(row.item_code).first();
+          
+          if (existing) {
+            await c.env.DB.prepare(`
+              UPDATE master SET item_name = ?, category = ?, unit = ?, current_stock = ?, safety_stock = ?, expiry_days = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE item_code = ?
+            `).bind(row.item_name, row.category, row.unit, row.current_stock || 0, row.safety_stock || 0, row.expiry_days || 365, row.item_code).run();
+            updated++;
+          } else {
+            await c.env.DB.prepare(`
+              INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `).bind(row.item_code, row.item_name, row.category, row.unit, row.current_stock || 0, row.safety_stock || 0, row.expiry_days || 365).run();
+            inserted++;
+          }
+        } else if (table === 'inbound') {
+          // inbound 테이블: lot_number 기준 upsert
+          const existing = await c.env.DB.prepare('SELECT id FROM inbound WHERE lot_number = ?').bind(row.lot_number).first();
+          
+          if (existing) {
+            await c.env.DB.prepare(`
+              UPDATE inbound SET item_code = ?, inbound_date = ?, expiry_date = ?, origin_qty = ?, remain_qty = ?, quality_status = ?, supplier = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE lot_number = ?
+            `).bind(row.item_code, row.inbound_date, row.expiry_date, row.origin_qty, row.remain_qty, row.quality_status, row.supplier, row.lot_number).run();
+            updated++;
+          } else {
+            await c.env.DB.prepare(`
+              INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).bind(row.lot_number, row.item_code, row.inbound_date, row.expiry_date, row.origin_qty, row.remain_qty, row.quality_status, row.supplier).run();
+            inserted++;
+          }
+        } else if (table === 'transactions') {
+          // transactions: id 기준 (새로 insert만)
+          await c.env.DB.prepare(`
+            INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier, memo)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(row.trans_date, row.item_code, row.trans_type, row.quantity, row.lot_number, row.remain_qty, row.supplier, row.memo).run();
+          inserted++;
+        }
+      } catch (e: any) {
+        errors.push({ row, error: e.message });
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${inserted}건 추가, ${updated}건 수정, ${errors.length}건 오류`,
+      inserted,
+      updated,
+      errors: errors.slice(0, 10) // 최대 10개 오류만 반환
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // Main HTML page
 app.get('/*', (c) => {
   return c.html(`

@@ -2464,10 +2464,15 @@ async function renderInbound() {
       const selectedItem = state.masterItems.find(m => m.item_code === data.item_code);
       window.lastInboundData = {
         ...result.data,
+        item_code: data.item_code,
         item_name: selectedItem?.item_name || '',
         category: selectedItem?.category || '원료',
         unit: selectedItem?.unit || '',
         quantity: data.quantity,
+        origin_qty: data.quantity,
+        inbound_date: data.inbound_date,
+        expiry_date: data.expiry_date || '',
+        supplier: data.supplier || '',
         is_sample: data.is_sample,
         storage_location: data.storage_location
       };

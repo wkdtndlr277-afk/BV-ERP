@@ -678,8 +678,9 @@ transactionRoutes.get('/monthly-item-report', async (c) => {
 });
 
 // 통합 수불부 API - 품목별 요약 + LOT 상세 (최적화: 2개 쿼리만 실행)
-// 수불 공식: 이월 + 입고 - 사용 - 출고 + 조정 = 마감재고
-// 역산: 이월 = 마감재고 - 입고 + 사용 + 출고 - 조정
+// 핵심 원칙: 정방향 계산 - 월초재고 = 해당 기간 시작일 이전까지의 모든 거래 누적합
+// 월말재고 = 월초재고 + 당월입고 - 당월사용 - 당월출고 + 당월조정
+// 이렇게 하면 N월 월말재고 = N+1월 월초재고가 자동으로 보장됨
 transactionRoutes.get('/inventory-ledger', async (c) => {
   const date = c.req.query('date') || new Date().toISOString().split('T')[0];
   const period_type = c.req.query('period_type') || 'daily'; // daily, monthly
@@ -699,11 +700,8 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
   }
   
   try {
-    // 쿼리 1: 모든 품목 정보 + 기간 집계 (단일 쿼리)
-    // 입고: inbound 테이블의 origin_qty (기간 내 입고된 것만)
-    // 사용: transactions에서 trans_type='사용'
-    // 출고: transactions에서 trans_type='출고'  
-    // 조정: transactions에서 trans_type='재고조정' (양수/음수 그대로)
+    // 쿼리 1: 모든 품목 정보 + 기간 집계 (정방향 계산)
+    // 월초재고 계산을 위해 기간 이전 데이터도 조회
     let itemQuery = `
       SELECT 
         m.item_code,
@@ -713,9 +711,21 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
         m.current_stock,
         m.expiry_days,
         COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
+        -- 월초재고 계산용: 기간 이전 입고 합계
+        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ?), 0) as before_inbound,
+        -- 월초재고 계산용: 기간 이전 사용 합계
+        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
+        -- 월초재고 계산용: 기간 이전 출고 합계
+        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
+        -- 월초재고 계산용: 기간 이전 재고조정 합계
+        COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
+        -- 기간 내 입고량
         COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) as period_inbound,
+        -- 기간 내 사용량
         COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
+        -- 기간 내 출고량
         COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
+        -- 기간 내 재고조정
         COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
       FROM master m
       WHERE (
@@ -723,10 +733,17 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
         OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ?)
         OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ?)
         OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
+        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date < ?)
+        OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date < ?)
       )
     `;
     
-    const itemParams: any[] = [startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate];
+    // 파라미터 순서: before(4개) + period(4개) + exists(6개)
+    const itemParams: any[] = [
+      startDate, startDate, startDate, startDate,  // before queries
+      startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate,  // period queries
+      startDate, endDate, startDate, endDate, startDate, startDate  // EXISTS queries
+    ];
     
     if (category && category !== '전체') {
       itemQuery += ' AND m.category = ?';
@@ -830,11 +847,11 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       const lots = lotsByItem[item.item_code] || [];
       totalLotCount += lots.length;
       
-      // 마감재고 = 현재 LOT 잔량 합계
-      const closingQty = item.lot_remain_total;
+      // 정방향 계산: 월초재고 = 기간 이전 입고 - 사용 - 출고 + 조정
+      const carryOver = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
       
-      // 이월 = 마감 - 입고 + 사용 + 출고 - 조정
-      const carryOver = closingQty - item.period_inbound + item.period_usage + item.period_outbound - item.period_adjustment;
+      // 월말재고 = 월초재고 + 기간입고 - 기간사용 - 기간출고 + 기간조정
+      const closingQty = carryOver + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
       
       return {
         item_code: item.item_code,

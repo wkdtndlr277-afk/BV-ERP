@@ -2564,11 +2564,13 @@ async function showNewItemModal(searchTerm = '', category = '원료') {
           <input type="number" id="new-item-safety" value="0" min="0" step="0.01"
                  class="w-full px-3 py-2 border rounded-lg">
         </div>
+        ${category !== '부자재' ? `
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">소비기한(일)</label>
-          <input type="number" id="new-item-expiry" value="${category === '부자재' ? '730' : '365'}" min="1"
+          <input type="number" id="new-item-expiry" value="365" min="1"
                  class="w-full px-3 py-2 border rounded-lg">
         </div>
+        ` : `<input type="hidden" id="new-item-expiry" value="">`}
       </div>
     </form>
   `, `
@@ -2580,13 +2582,14 @@ async function showNewItemModal(searchTerm = '', category = '원료') {
 // 신규 원료/부자재 저장 후 선택
 async function saveNewItemAndSelect() {
   const category = document.getElementById('new-item-category')?.value || '원료';
+  const expiryValue = document.getElementById('new-item-expiry').value;
   const data = {
     item_code: document.getElementById('new-item-code').value.trim(),
     item_name: document.getElementById('new-item-name').value.trim(),
     category: category,
     unit: document.getElementById('new-item-unit').value,
     safety_stock: parseFloat(document.getElementById('new-item-safety').value) || 0,
-    expiry_days: parseInt(document.getElementById('new-item-expiry').value) || 365
+    expiry_days: category === '부자재' ? null : (parseInt(expiryValue) || 365)
   };
   
   const categoryLabel = category === '부자재' ? '부자재' : '원료';

@@ -54,6 +54,9 @@ masterRoutes.post('/', async (c) => {
   }
   
   try {
+    // 부자재는 소비기한 없음 (null), 원료/제품은 기본 365일
+    const expiryValue = category === '부자재' ? null : (expiry_days || 365);
+    
     await c.env.DB.prepare(`
       INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
       VALUES (?, ?, ?, ?, 0, ?, ?)
@@ -61,9 +64,9 @@ masterRoutes.post('/', async (c) => {
       item_code,
       item_name,
       category,
-      unit || 'kg',
+      unit || (category === '부자재' ? 'ea' : 'kg'),
       safety_stock || 0,
-      expiry_days || 365
+      expiryValue
     ).run();
     
     return c.json({ success: true, message: '품목이 등록되었습니다.' });
@@ -188,9 +191,9 @@ masterRoutes.post('/upload', async (c) => {
       continue;
     }
     
-    if (category !== '원료' && category !== '제품') {
+    if (category !== '원료' && category !== '제품' && category !== '부자재') {
       results.failed++;
-      results.errors.push(`${item_code}: 구분은 '원료' 또는 '제품'이어야 합니다`);
+      results.errors.push(`${item_code}: 구분은 '원료', '제품', '부자재' 중 하나여야 합니다`);
       continue;
     }
     
@@ -237,7 +240,8 @@ masterRoutes.post('/upload', async (c) => {
 masterRoutes.get('/template/sample', async (c) => {
   const sampleData = [
     { item_code: 'RM001', item_name: '강력분', category: '원료', unit: 'kg', safety_stock: 100, expiry_days: 180 },
-    { item_code: 'PD001', item_name: '식빵', category: '제품', unit: 'ea', safety_stock: 20, expiry_days: 5 }
+    { item_code: 'PD001', item_name: '식빵', category: '제품', unit: 'ea', safety_stock: 20, expiry_days: 5 },
+    { item_code: 'SM001', item_name: '비닐봉투', category: '부자재', unit: 'ea', safety_stock: 500, expiry_days: null }
   ];
   
   return c.json({ success: true, data: sampleData });
@@ -248,8 +252,8 @@ masterRoutes.delete('/category/:category/all', async (c) => {
   const category = c.req.param('category');
   const confirm = c.req.query('confirm');
   
-  if (category !== '원료' && category !== '제품') {
-    return c.json({ success: false, error: '유효한 카테고리가 아닙니다. (원료/제품)' }, 400);
+  if (category !== '원료' && category !== '제품' && category !== '부자재') {
+    return c.json({ success: false, error: '유효한 카테고리가 아닙니다. (원료/제품/부자재)' }, 400);
   }
   
   // 해당 카테고리의 모든 품목 조회

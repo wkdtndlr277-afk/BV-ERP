@@ -1299,7 +1299,7 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     }
   }
   
-  // 쿼리 생성
+  // 쿼리 생성 - 월초재고를 정확히 계산하기 위해 기간 이전 데이터도 조회
   const storageSelect = hasSampleColumn && is_sample === '1' 
     ? `(SELECT i.storage_location FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sampleCondition} ORDER BY i.inbound_date DESC LIMIT 1) as storage_location,`
     : 'NULL as storage_location,';
@@ -1314,21 +1314,41 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND ${sampleCondition}), 0) as lot_remain_total,
       (SELECT MIN(i.expiry_date) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sampleCondition}) as nearest_expiry,
       ${storageSelect}
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition}), 0) 
-        + COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_inbound,
+      -- 월초재고: 조회 시작일 이전까지의 입고 합계
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND ${sampleCondition}), 0) as before_inbound,
+      -- 월초재고: 조회 시작일 이전까지의 사용량 합계
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_usage,
+      -- 월초재고: 조회 시작일 이전까지의 출고량 합계
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_outbound,
+      -- 월초재고: 조회 시작일 이전까지의 재고조정 합계 (양수/음수 모두)
+      COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_adjustment,
+      -- 기간 내 입고량
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition}), 0) as period_inbound_raw,
+      -- 기간 내 양수 재고조정
+      COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_adj_plus,
+      -- 기간 내 사용량
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_usage,
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0)
-        + COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_outbound
+      -- 기간 내 출고량
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_outbound_raw,
+      -- 기간 내 음수 재고조정
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_adj_minus
     FROM master m
     WHERE (
       m.current_stock > 0
       OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition})
       OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition})
       OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0 AND ${sampleCondition})
+      OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date < ? AND ${sampleCondition})
+      OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date < ? AND ${sampleTransCondition})
     )
   `;
   
-  const params: any[] = [dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd];
+  // 파라미터 순서: before(4개) + period(6개) + exists(6개)
+  const params: any[] = [
+    dateStart, dateStart, dateStart, dateStart,  // before_inbound, before_usage, before_outbound, before_adjustment
+    dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd,  // period queries
+    dateStart, dateEnd, dateStart, dateEnd, dateStart, dateStart  // EXISTS queries
+  ];
   
   if (category && category !== '전체') {
     query += ' AND m.category = ?';
@@ -1344,31 +1364,35 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   const result = await c.env.DB.prepare(query).bind(...params).all();
   
   // 계산 잔량과 차이 추가
-  // 원료/부자재: LOT 잔량 기준 (FEFO)
-  // 제품: 트랜잭션 기반 계산
+  // 월초재고 = 기간 이전 입고 - 기간 이전 사용 - 기간 이전 출고 + 기간 이전 조정
+  // 월말재고 = 월초재고 + 기간 입고 - 기간 사용 - 기간 출고 + 기간 조정
   const ledgerData = (result.results || []).map((item: any) => {
     const isRawMaterial = item.category === '원료' || item.category === '부자재';
     
-    // 원료/부자재: LOT 잔량이 실제 재고
-    // 제품: current_stock이 실제 재고 (LOT 관리 안함)
+    // 월초재고 계산 (기간 시작일 이전까지의 누적)
+    const carryOver = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
+    
+    // 기간 내 입고 (입고량 + 양수 재고조정)
+    const periodInbound = item.period_inbound_raw + item.period_adj_plus;
+    
+    // 기간 내 출고 (출고량 + 음수 재고조정)
+    const periodOutbound = item.period_outbound_raw + item.period_adj_minus;
+    
+    // 월말재고 계산 (월초 + 입고 - 사용 - 출고)
+    const closingStock = carryOver + periodInbound - item.period_usage - periodOutbound;
+    
+    // 실제 재고 (LOT 잔량 또는 마스터 재고)
     const actualStock = isRawMaterial ? item.lot_remain_total : item.current_stock;
     
-    // 이월 재고 역산: 현재 실재고 + 기간 내 (사용+출고) - 기간 내 입고
-    const carryOver = actualStock 
-      + item.period_usage 
-      + item.period_outbound 
-      - item.period_inbound;
-    
-    // 계산 잔량: 이월 + 입고 - 사용 - 출고 (검증용)
-    const calcRemain = carryOver + item.period_inbound - item.period_usage - item.period_outbound;
-    
-    // 차이: 마스터 현재고 vs 실제 재고 (원료는 LOT잔량, 제품은 마스터 현재고와 동일하므로 0)
-    const diff = isRawMaterial ? (item.current_stock - item.lot_remain_total) : 0;
+    // 차이: 계산된 월말재고 vs 실제 재고
+    const diff = isRawMaterial ? (closingStock - item.lot_remain_total) : 0;
     
     return {
       ...item,
       carry_over: carryOver,
-      calc_remain: calcRemain,
+      period_inbound: periodInbound,
+      period_outbound: periodOutbound,
+      calc_remain: closingStock,
       actual_stock: actualStock,
       diff: diff
     };

@@ -2422,6 +2422,7 @@ async function renderInbound() {
     
     const inboundDate = document.getElementById('inbound-date').value;
     const expiryDate = document.getElementById('inbound-expiry').value;
+    const selectedCategory = document.querySelector('input[name="inbound-category"]:checked')?.value || '원료';
     
     // 날짜 형식 검증 (YYYY-MM-DD)
     const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
@@ -2429,7 +2430,8 @@ async function renderInbound() {
       showToast('입고일 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
       return;
     }
-    if (!dateRegex.test(expiryDate)) {
+    // 부자재가 아닌 경우에만 소비기한 필수 검증
+    if (selectedCategory !== '부자재' && expiryDate && !dateRegex.test(expiryDate)) {
       showToast('소비기한 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
       return;
     }
@@ -2447,10 +2449,10 @@ async function renderInbound() {
       item_code: itemCode,
       quantity: parseFloat(document.getElementById('inbound-qty').value),
       inbound_date: inboundDate,
-      expiry_date: expiryDate,
+      expiry_date: selectedCategory === '부자재' ? null : (expiryDate || null),
       supplier: document.getElementById('inbound-supplier').value,
       quality_status: document.querySelector('input[name="quality"]:checked').value,
-      category: document.querySelector('input[name="inbound-category"]:checked')?.value || '원료',
+      category: selectedCategory,
       is_sample: isSample,
       storage_location: isSample ? storageLocation.trim() : null
     };
@@ -2461,13 +2463,22 @@ async function renderInbound() {
       showToast(`입고 등록 완료${sampleLabel} (LOT: ${result.data.lot_number})`, 'success');
       
       // 검사일지 인쇄용 데이터 저장 (품목 정보 포함)
-      const selectedItem = state.masterItems.find(m => m.item_code === data.item_code);
+      // state.masterItems 또는 window.inboundMasterItems에서 찾기
+      let selectedItem = state.masterItems.find(m => m.item_code === data.item_code);
+      if (!selectedItem && window.inboundMasterItems) {
+        selectedItem = window.inboundMasterItems.find(m => m.item_code === data.item_code);
+      }
+      
+      // 화면에 표시된 품목명과 단위 가져오기 (fallback)
+      const displayedItemName = document.getElementById('selected-item-name')?.textContent || '';
+      const displayedUnit = document.getElementById('inbound-unit')?.textContent || '';
+      
       window.lastInboundData = {
         ...result.data,
         item_code: data.item_code,
-        item_name: selectedItem?.item_name || '',
-        category: selectedItem?.category || '원료',
-        unit: selectedItem?.unit || '',
+        item_name: selectedItem?.item_name || displayedItemName || '',
+        category: selectedItem?.category || data.category,
+        unit: selectedItem?.unit || displayedUnit || '',
         quantity: data.quantity,
         origin_qty: data.quantity,
         inbound_date: data.inbound_date,
@@ -2476,6 +2487,8 @@ async function renderInbound() {
         is_sample: data.is_sample,
         storage_location: data.storage_location
       };
+      
+      console.log('검사일지 인쇄 데이터:', window.lastInboundData);
       
       // 폼 초기화
       this.reset();

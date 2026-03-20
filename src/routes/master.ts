@@ -54,20 +54,23 @@ masterRoutes.post('/', async (c) => {
   }
   
   try {
-    // 부자재는 소비기한 없음 (null), 원료/제품은 기본 365일
-    const expiryValue = category === '부자재' ? null : (expiry_days || 365);
+    const unitValue = unit || (category === '부자재' ? 'ea' : 'kg');
+    const safetyValue = safety_stock || 0;
     
-    await c.env.DB.prepare(`
-      INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
-      VALUES (?, ?, ?, ?, 0, ?, ?)
-    `).bind(
-      item_code,
-      item_name,
-      category,
-      unit || (category === '부자재' ? 'ea' : 'kg'),
-      safety_stock || 0,
-      expiryValue
-    ).run();
+    // 부자재는 소비기한 없음 (NULL로 저장)
+    if (category === '부자재') {
+      await c.env.DB.prepare(`
+        INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
+        VALUES (?, ?, ?, ?, 0, ?, NULL)
+      `).bind(item_code, item_name, category, unitValue, safetyValue).run();
+    } else {
+      // 원료/제품은 소비기한 필수 (기본 365일)
+      const expiryValue = expiry_days || 365;
+      await c.env.DB.prepare(`
+        INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
+        VALUES (?, ?, ?, ?, 0, ?, ?)
+      `).bind(item_code, item_name, category, unitValue, safetyValue, expiryValue).run();
+    }
     
     return c.json({ success: true, message: '품목이 등록되었습니다.' });
   } catch (error: any) {

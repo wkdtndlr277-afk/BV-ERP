@@ -74,10 +74,14 @@ masterRoutes.post('/', async (c) => {
     
     return c.json({ success: true, message: '품목이 등록되었습니다.' });
   } catch (error: any) {
+    console.error('Master insert error:', error);
     if (error.message?.includes('UNIQUE')) {
       return c.json({ success: false, error: '이미 존재하는 품목코드입니다.' }, 400);
     }
-    throw error;
+    if (error.message?.includes('CHECK') || error.message?.includes('constraint')) {
+      return c.json({ success: false, error: `DB 제약조건 오류: ${error.message}` }, 400);
+    }
+    return c.json({ success: false, error: `등록 실패: ${error.message || '알 수 없는 오류'}` }, 500);
   }
 });
 

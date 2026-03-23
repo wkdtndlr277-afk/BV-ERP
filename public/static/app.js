@@ -18343,11 +18343,18 @@ async function autoRegisterMaterials() {
 
 // 미등록 제품 자동 등록
 async function autoRegisterProducts() {
+  console.log('autoRegisterProducts 호출됨');
+  
   const data = window.bomUploadData;
+  console.log('bomUploadData:', data);
+  console.log('unmatchedProducts:', data?.unmatchedProducts);
+  
   if (!data || !data.unmatchedProducts || data.unmatchedProducts.length === 0) {
     showToast('등록할 제품이 없습니다', 'info');
     return;
   }
+  
+  showToast(`${data.unmatchedProducts.length}개 제품 등록 중...`, 'info');
   
   // 기존 제품 코드 수집
   const existingCodes = state.masterItems.filter(m => m.category === '제품').map(m => m.item_code);

@@ -18031,6 +18031,7 @@ function parseBOMExcelData(rows) {
   const items = [];
   const errors = [];
   const unmatchedMaterials = new Set();
+  const unmatchedProducts = new Set();
   
   // 제품/원재료 매핑
   const productMap = {};
@@ -18159,6 +18160,7 @@ function parseBOMExcelData(rows) {
     
     if (!productCode) {
       errors.push(`${i + 1}행: 제품 "${productName}" 미등록`);
+      unmatchedProducts.add(productName);
     }
     if (!materialCode) {
       unmatchedMaterials.add(materialName);
@@ -18170,7 +18172,7 @@ function parseBOMExcelData(rows) {
     errors.push(`미등록 원재료: ${Array.from(unmatchedMaterials).slice(0, 10).join(', ')}${unmatchedMaterials.size > 10 ? ` 외 ${unmatchedMaterials.size - 10}개` : ''}`);
   }
   
-  return { items, errors, unmatchedMaterials: Array.from(unmatchedMaterials) };
+  return { items, errors, unmatchedMaterials: Array.from(unmatchedMaterials), unmatchedProducts: Array.from(unmatchedProducts) };
 }
 
 // BOM 업로드 미리보기 표시
@@ -18191,10 +18193,31 @@ function showBOMUploadPreview(data) {
   const validProducts = Object.values(grouped).filter(g => g.productCode).length;
   const validItems = data.items.filter(i => i.productCode && i.materialCode).length;
   const unmatchedCount = data.unmatchedMaterials?.length || 0;
+  const unmatchedProductCount = data.unmatchedProducts?.length || 0;
   
   countEl.textContent = `${validProducts}개 제품, ${validItems}/${data.items.length}개 항목 등록 가능`;
   
   let html = '';
+  
+  // 미등록 제품이 있으면 자동 등록 옵션 표시
+  if (unmatchedProductCount > 0) {
+    html += `
+      <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+        <div class="flex items-center justify-between">
+          <div>
+            <span class="font-medium text-red-800">
+              <i class="fas fa-box mr-1"></i>
+              미등록 제품 ${unmatchedProductCount}개 발견
+            </span>
+            <p class="text-xs text-red-600 mt-1">${data.unmatchedProducts.slice(0, 3).join(', ')}${unmatchedProductCount > 3 ? ` 외 ${unmatchedProductCount - 3}개` : ''}</p>
+          </div>
+          <button onclick="autoRegisterProducts()" class="bg-red-500 text-white px-3 py-1.5 text-sm rounded hover:bg-red-600">
+            <i class="fas fa-plus-circle mr-1"></i> 제품 자동 등록
+          </button>
+        </div>
+      </div>
+    `;
+  }
   
   // 미등록 원재료가 있으면 자동 등록 옵션 표시
   if (unmatchedCount > 0) {
@@ -18315,6 +18338,89 @@ async function autoRegisterMaterials() {
   } catch (e) {
     console.error('원재료 등록 오류:', e);
     showToast('원재료 등록 실패', 'error');
+  }
+}
+
+// 미등록 제품 자동 등록
+async function autoRegisterProducts() {
+  const data = window.bomUploadData;
+  if (!data || !data.unmatchedProducts || data.unmatchedProducts.length === 0) {
+    showToast('등록할 제품이 없습니다', 'info');
+    return;
+  }
+  
+  // 기존 제품 코드 수집
+  const existingCodes = state.masterItems.filter(m => m.category === '제품').map(m => m.item_code);
+  let codeNum = existingCodes.length + 1;
+  
+  // 등록할 제품 목록 생성
+  const items = data.unmatchedProducts.map(name => {
+    // 새 제품 코드 생성 (PD001, PD002, ...)
+    let code = `PD${String(codeNum).padStart(3, '0')}`;
+    while (existingCodes.includes(code)) {
+      codeNum++;
+      code = `PD${String(codeNum).padStart(3, '0')}`;
+    }
+    existingCodes.push(code);
+    codeNum++;
+    
+    return {
+      item_code: code,
+      item_name: name,
+      category: '제품',
+      unit: 'ea',
+      safety_stock: 0,
+      expiry_days: 30
+    };
+  });
+  
+  try {
+    const result = await api('/master/upload', 'POST', { items });
+    showToast(`${result.results.success}개 제품 등록 완료`, 'success');
+    
+    // 마스터 데이터 리로드
+    await loadMasterData();
+    
+    // 기존 파싱 데이터에서 제품 코드 업데이트
+    const oldData = window.bomUploadData;
+    if (oldData && oldData.items) {
+      // 제품 매핑 다시 만들기
+      const productMap = {};
+      state.masterItems.forEach(m => {
+        if (m.category === '제품') {
+          const nameLower = m.item_name.toLowerCase().trim();
+          productMap[nameLower] = m.item_code;
+          // 쉼표 앞부분도 매핑
+          const shortName = nameLower.split(',')[0].trim();
+          if (shortName) productMap[shortName] = m.item_code;
+        }
+      });
+      
+      // 아이템 업데이트
+      oldData.items.forEach(item => {
+        if (!item.productCode) {
+          const nameLower = item.productName.toLowerCase().trim();
+          const code = productMap[nameLower] || productMap[nameLower.split(',')[0].trim()];
+          if (code) item.productCode = code;
+        }
+      });
+      
+      // 미매칭 제품 다시 계산
+      oldData.unmatchedProducts = oldData.items
+        .filter(i => !i.productCode)
+        .map(i => i.productName)
+        .filter((v, i, a) => a.indexOf(v) === i);
+      
+      // 미리보기 새로고침
+      showBOMUploadPreview(oldData);
+      showToast('제품 등록 완료! 이제 등록하기 버튼을 누르세요.', 'success');
+    } else {
+      cancelBOMUpload();
+      showToast('제품 등록 완료. 파일을 다시 업로드해주세요.', 'info');
+    }
+  } catch (e) {
+    console.error('제품 등록 오류:', e);
+    showToast('제품 등록 실패', 'error');
   }
 }
 
@@ -19614,6 +19720,7 @@ window.resetBOMDropZone = resetBOMDropZone;
 window.cancelBOMUpload = cancelBOMUpload;
 window.executeBOMUpload = executeBOMUpload;
 window.autoRegisterMaterials = autoRegisterMaterials;
+window.autoRegisterProducts = autoRegisterProducts;
 
 // ========== 제품 출고 ==========
 

@@ -447,4 +447,115 @@ inboundRoutes.get('/expiring/:days', async (c) => {
   return c.json({ success: true, data: result.results });
 });
 
+// 입고 삭제 (단건)
+inboundRoutes.delete('/:lot_number', async (c) => {
+  const lot_number = c.req.param('lot_number');
+  
+  try {
+    // LOT 정보 조회
+    const lot = await c.env.DB.prepare(`
+      SELECT * FROM inbound WHERE lot_number = ?
+    `).bind(lot_number).first() as any;
+    
+    if (!lot) {
+      return c.json({ success: false, error: '해당 LOT을 찾을 수 없습니다.' }, 404);
+    }
+    
+    // 재고 차감 (잔량만큼)
+    if (lot.remain_qty > 0) {
+      // supplies 테이블인지 확인
+      const isSupplies = lot.item_code.startsWith('SM');
+      const targetTable = isSupplies ? 'supplies' : 'master';
+      
+      await c.env.DB.prepare(`
+        UPDATE ${targetTable} SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP 
+        WHERE item_code = ?
+      `).bind(lot.remain_qty, lot.item_code).run();
+    }
+    
+    // 관련 트랜잭션 삭제
+    await c.env.DB.prepare(`
+      DELETE FROM transactions WHERE lot_number = ?
+    `).bind(lot_number).run();
+    
+    // 입고 기록 삭제
+    await c.env.DB.prepare(`
+      DELETE FROM inbound WHERE lot_number = ?
+    `).bind(lot_number).run();
+    
+    return c.json({ 
+      success: true, 
+      message: `LOT ${lot_number}이(가) 삭제되었습니다.`,
+      deleted_qty: lot.remain_qty
+    });
+  } catch (error: any) {
+    console.error('입고 삭제 오류:', error);
+    return c.json({ success: false, error: `삭제 실패: ${error.message}` }, 500);
+  }
+});
+
+// 입고 일괄 삭제
+inboundRoutes.post('/delete-batch', async (c) => {
+  const body = await c.req.json<{ lot_numbers: string[] }>();
+  const { lot_numbers } = body;
+  
+  if (!lot_numbers || !Array.isArray(lot_numbers) || lot_numbers.length === 0) {
+    return c.json({ success: false, error: '삭제할 LOT 번호가 필요합니다.' }, 400);
+  }
+  
+  try {
+    let deletedCount = 0;
+    let errors: string[] = [];
+    
+    for (const lot_number of lot_numbers) {
+      try {
+        // LOT 정보 조회
+        const lot = await c.env.DB.prepare(`
+          SELECT * FROM inbound WHERE lot_number = ?
+        `).bind(lot_number).first() as any;
+        
+        if (!lot) {
+          errors.push(`${lot_number}: 찾을 수 없음`);
+          continue;
+        }
+        
+        // 재고 차감
+        if (lot.remain_qty > 0) {
+          const isSupplies = lot.item_code.startsWith('SM');
+          const targetTable = isSupplies ? 'supplies' : 'master';
+          
+          await c.env.DB.prepare(`
+            UPDATE ${targetTable} SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP 
+            WHERE item_code = ?
+          `).bind(lot.remain_qty, lot.item_code).run();
+        }
+        
+        // 트랜잭션 삭제
+        await c.env.DB.prepare(`
+          DELETE FROM transactions WHERE lot_number = ?
+        `).bind(lot_number).run();
+        
+        // 입고 기록 삭제
+        await c.env.DB.prepare(`
+          DELETE FROM inbound WHERE lot_number = ?
+        `).bind(lot_number).run();
+        
+        deletedCount++;
+      } catch (e: any) {
+        errors.push(`${lot_number}: ${e.message}`);
+      }
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: `${deletedCount}건 삭제 완료${errors.length > 0 ? `, ${errors.length}건 실패` : ''}`,
+      deleted_count: deletedCount,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error: any) {
+    console.error('일괄 삭제 오류:', error);
+    return c.json({ success: false, error: `삭제 실패: ${error.message}` }, 500);
+  }
+});
+
 export default inboundRoutes;

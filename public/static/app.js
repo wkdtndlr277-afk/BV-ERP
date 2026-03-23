@@ -24161,7 +24161,8 @@ async function deleteSingleInbound(id, lotNumber) {
   }
   
   try {
-    const result = await api(`/admin/inbound/${id}`, 'DELETE');
+    // 일반 사용자용 API 사용 (LOT 번호 기준)
+    const result = await api(`/inbound/${encodeURIComponent(lotNumber)}`, 'DELETE');
     showToast(`입고 데이터가 삭제되었습니다. (LOT: ${lotNumber})`, 'success');
     // 목록 새로고침
     loadInboundQuery();
@@ -24196,14 +24197,15 @@ async function deleteSelectedInbound() {
   let successCount = 0;
   let failCount = 0;
   
-  for (const item of selectedItems) {
-    try {
-      await api(`/admin/inbound/${item.id}`, 'DELETE');
-      successCount++;
-    } catch (e) {
-      console.error(`삭제 실패 (LOT: ${item.lot_number}):`, e);
-      failCount++;
-    }
+  // 일괄 삭제 API 사용 (더 효율적)
+  try {
+    const lotNumberList = selectedItems.map(item => item.lot_number);
+    const result = await api('/inbound/delete-batch', 'POST', { lot_numbers: lotNumberList });
+    successCount = result.deleted_count || selectedItems.length;
+    failCount = result.errors ? result.errors.length : 0;
+  } catch (e) {
+    console.error('일괄 삭제 실패:', e);
+    failCount = selectedItems.length;
   }
   
   if (successCount > 0) {

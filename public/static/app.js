@@ -18230,7 +18230,7 @@ function showBOMUploadPreview(data) {
       const matStatus = m.materialCode 
         ? '<span class="text-green-600"><i class="fas fa-check"></i></span>' 
         : '<span class="text-red-500" title="미등록 원재료"><i class="fas fa-times"></i></span>';
-      html += `<tr class="border-b"><td class="px-3 py-1 pl-6 text-gray-500">└</td><td class="px-3 py-1">${m.materialName}</td><td class="px-3 py-1 text-right">${m.quantity.toFixed(2)}g</td><td class="px-3 py-1 text-center">${matStatus}</td></tr>`;
+      html += `<tr class="border-b"><td class="px-3 py-1 pl-6 text-gray-500">└</td><td class="px-3 py-1">${m.materialName}</td><td class="px-3 py-1 text-right">${(Math.round(m.quantity * 100) / 100).toFixed(2)}g</td><td class="px-3 py-1 text-center">${matStatus}</td></tr>`;
     });
   }
   
@@ -18368,7 +18368,7 @@ async function executeBOMUpload() {
     }
     grouped[item.productCode].push({
       item_code: item.materialCode,
-      quantity: item.quantity,
+      quantity: Math.round(item.quantity * 100) / 100,  // 소수점 2자리 반올림
       unit: 'g'
     });
   });

@@ -18051,7 +18051,27 @@ function parseBOMExcelData(rows) {
     } else if (m.category === '원료') {
       materialMap[nameLower] = m.item_code;
       materialMap[codeLower] = m.item_code;
-      // 유사 매칭 추가 (카카오=코코아 등)
+      
+      // 유사 매칭 추가
+      // 1. 괄호 제거 버전 - 호두(분태) -> 호두분태
+      const noBrackets = nameLower.replace(/[\(\)\[\]]/g, '');
+      if (noBrackets !== nameLower) {
+        materialMap[noBrackets] = m.item_code;
+      }
+      
+      // 2. 공백 제거 버전
+      const noSpaces = nameLower.replace(/\s+/g, '');
+      if (noSpaces !== nameLower) {
+        materialMap[noSpaces] = m.item_code;
+      }
+      
+      // 3. 괄호+공백 모두 제거
+      const simplified = nameLower.replace(/[\(\)\[\]\s]/g, '');
+      if (simplified !== nameLower) {
+        materialMap[simplified] = m.item_code;
+      }
+      
+      // 4. 카카오=코코아 등 유사어
       if (nameLower.includes('코코아')) {
         materialMap[nameLower.replace('코코아', '카카오')] = m.item_code;
       }
@@ -18120,8 +18140,13 @@ function parseBOMExcelData(rows) {
       productCode = productMap[shortProduct];
     }
     
-    // 원재료 매칭
+    // 원재료 매칭 (정확히 또는 유사 매칭)
     let materialCode = materialMap[materialName.toLowerCase()];
+    if (!materialCode) {
+      // 유사 매칭 시도: 괄호/공백 제거
+      const simplifiedName = materialName.toLowerCase().replace(/[\(\)\[\]\s]/g, '');
+      materialCode = materialMap[simplifiedName];
+    }
     
     items.push({
       productName,

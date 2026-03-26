@@ -56,7 +56,7 @@ app.route('/api/cost', costRoutes);
 // 시스템 버전
 const SYSTEM_VERSION = '1.6.0';
 const SYSTEM_BUILD_DATE = '2026-02-02';
-const CACHE_BUST = '20260326093051';
+const CACHE_BUST = '1774518792';
 
 // Health check
 app.get('/api/health', (c) => {
@@ -451,6 +451,9 @@ app.get('/*', (c) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>(주)본비반트 통합관리시스템</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
@@ -605,6 +608,16 @@ app.get('/*', (c) => {
                 <a href="#inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="inventory">
                     <i class="fas fa-boxes w-5"></i>
                     <span>재고 현황</span>
+                </a>
+                
+                <a href="#supplies-inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="supplies-inventory">
+                    <i class="fas fa-box w-5"></i>
+                    <span>부자재 재고</span>
+                </a>
+                
+                <a href="#sample-inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="sample-inventory">
+                    <i class="fas fa-flask w-5"></i>
+                    <span>샘플 재고</span>
                 </a>
                 
                 <a href="#stock-ledger" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="stock-ledger">

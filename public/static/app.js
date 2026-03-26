@@ -1,10 +1,74 @@
 // HACCP ERP Frontend Application
-// Version: 1.6.2 Build: 20260317-1000
-const APP_VERSION = '1.6.2';
-const APP_BUILD = '20260317-1000';
+// Version: 1.6.3 Build: 20260326
+const APP_VERSION = '1.6.3';
+const APP_BUILD = '20260326';
+const CACHE_BUST = '1774518792';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
+
+// ========== 자동 버전 체크 및 새로고침 ==========
+// 5분마다 서버 버전 확인하여 업데이트가 있으면 알림
+(function() {
+  const CHECK_INTERVAL = 5 * 60 * 1000; // 5분
+  
+  async function checkVersion() {
+    try {
+      // 캐시 무시하고 index.html 다시 가져오기
+      const response = await fetch('/?_t=' + Date.now(), { cache: 'no-store' });
+      const html = await response.text();
+      
+      // HTML에서 버전 추출 (app.js?v=XXXXXX)
+      const match = html.match(/app\.js\?v=(\d+)/);
+      if (match && match[1] !== CACHE_BUST) {
+        // 새 버전 발견
+        console.log('새 버전 발견:', match[1], '현재:', CACHE_BUST);
+        showUpdateNotification();
+      }
+    } catch (e) {
+      // 무시 (오프라인 등)
+    }
+  }
+  
+  function showUpdateNotification() {
+    // 이미 알림이 있으면 무시
+    if (document.getElementById('update-notification')) return;
+    
+    const notification = document.createElement('div');
+    notification.id = 'update-notification';
+    notification.innerHTML = `
+      <div style="position:fixed; bottom:20px; right:20px; z-index:10000; 
+                  background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                  color:white; padding:16px 24px; border-radius:12px; 
+                  box-shadow:0 10px 40px rgba(0,0,0,0.3); max-width:320px;">
+        <div style="display:flex; align-items:center; gap:12px;">
+          <i class="fas fa-sync-alt" style="font-size:24px;"></i>
+          <div>
+            <p style="font-weight:bold; margin-bottom:4px;">새 버전이 있습니다!</p>
+            <p style="font-size:13px; opacity:0.9;">페이지를 새로고침하여 최신 기능을 사용하세요.</p>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:12px;">
+          <button onclick="location.reload(true)" 
+                  style="flex:1; background:white; color:#667eea; border:none; 
+                         padding:8px 16px; border-radius:6px; font-weight:bold; cursor:pointer;">
+            지금 새로고침
+          </button>
+          <button onclick="this.parentElement.parentElement.parentElement.remove()" 
+                  style="background:rgba(255,255,255,0.2); color:white; border:none; 
+                         padding:8px 12px; border-radius:6px; cursor:pointer;">
+            나중에
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(notification);
+  }
+  
+  // 첫 체크는 1분 후, 이후 5분마다
+  setTimeout(checkVersion, 60 * 1000);
+  setInterval(checkVersion, CHECK_INTERVAL);
+})();
 
 // State Management
 const state = {
@@ -836,6 +900,8 @@ function renderPage(page) {
     case 'product-outbound': renderProductOutbound(); break;
     case 'cost-calc': renderCostCalc(); break;
     case 'inventory': renderInventory(); break;
+    case 'supplies-inventory': renderSuppliesInventory(); break;
+    case 'sample-inventory': renderSampleInventory(); break;
     case 'stock-ledger': renderStockLedger(); break;
     case 'transaction-search': renderTransactionSearch(); break;
     case 'lot-history': renderLotHistory(); break;
@@ -1792,7 +1858,7 @@ async function printSubMaterialInspection(inboundData) {
           width: 210mm; 
           height: 297mm;
           font-family: '맑은 고딕', 'Malgun Gothic', sans-serif; 
-          font-size: 10px; 
+          font-size: 11px; 
           color: #000; 
         }
         .container {
@@ -1804,6 +1870,7 @@ async function printSubMaterialInspection(inboundData) {
         }
         table { 
           width: 100%; 
+          height: 100%;
           border-collapse: collapse; 
           table-layout: fixed; 
         }
@@ -1811,48 +1878,55 @@ async function printSubMaterialInspection(inboundData) {
           border: 1px solid #000; 
           vertical-align: middle; 
           text-align: center;
-          font-size: 10px;
-          padding: 4px 6px;
+          font-size: 11px;
+          padding: 3px 5px;
         }
         
-        /* 열 너비 비율 (A:3, B:18.25, C:19.125, D:19.75, E:11.625, F:10.25, G:13) */
-        .col-a { width: 3%; }
-        .col-b { width: 19%; }
-        .col-c { width: 20%; }
-        .col-d { width: 21%; }
-        .col-e { width: 12%; }
-        .col-f { width: 11%; }
-        .col-g { width: 14%; }
+        /* 열 너비 비율 - 원료입고검사일지와 동일 */
+        .col-a { width: 2%; }
+        .col-b { width: 16%; }
+        .col-c { width: 14%; }
+        .col-d { width: 17%; }
+        .col-e { width: 20%; }
+        .col-f { width: 14%; }
+        .col-g { width: 15%; }
         
-        /* 제목 영역 */
+        /* 제목 영역 - 원료입고검사일지와 동일 */
         .title-cell {
-          font-size: 14px;
+          font-size: 22px;
           font-weight: bold;
           text-align: center;
           vertical-align: middle;
           border: none;
+          border-bottom: 1px solid #000;
+        }
+        .approval-header {
+          font-size: 11px;
+          border: 1px solid #000;
+          background: #f5f5f5;
+        }
+        .approval-cell {
+          border: 1px solid #000;
         }
         
-        /* 기본정보 헤더 */
+        /* 기본정보 영역 - 원료입고검사일지와 동일 */
         .info-header {
           background: #e6f3ff;
-          font-size: 10px;
-          font-weight: bold;
+          font-size: 11px;
         }
         .info-cell {
-          font-size: 10px;
+          font-size: 11px;
         }
         
-        /* 검사항목 헤더 */
+        /* 검사항목 헤더 - 원료입고검사일지와 동일 */
         .insp-header {
-          font-size: 10px;
+          font-size: 11px;
           font-weight: bold;
-          background: #e6f3ff;
           border-top: 2px solid #000;
           border-bottom: 2px double #000;
         }
         
-        /* 검사항목 */
+        /* 검사항목 - 원료입고검사일지와 동일 */
         .insp-item {
           font-size: 10px;
           text-align: center;
@@ -1860,29 +1934,28 @@ async function printSubMaterialInspection(inboundData) {
           background: #f9f9f9;
         }
         .insp-criteria {
-          font-size: 10px;
+          font-size: 9px;
           text-align: left;
-          padding: 6px 8px;
-          line-height: 1.4;
+          padding: 4px 6px;
+          line-height: 1.3;
         }
         .insp-result {
           font-size: 10px;
           text-align: center;
         }
         
-        /* 종합판정 */
+        /* 종합판정 - 원료입고검사일지와 동일 */
         .judge-header {
-          font-size: 10px;
+          font-size: 11px;
           font-weight: bold;
           background: #90EE90;
         }
         .judge-cell {
-          font-size: 10px;
         }
         
-        /* 이탈시 조치사항 */
+        /* 이탈시 조치사항 - 원료입고검사일지와 동일 */
         .action-title {
-          font-size: 10px;
+          font-size: 11px;
           font-weight: bold;
           background: #fffacd;
         }
@@ -1891,12 +1964,12 @@ async function printSubMaterialInspection(inboundData) {
           background: #fffacd;
         }
         .action-cell {
-          font-size: 10px;
         }
         
-        /* 하단 문서번호 */
-        .footer-cell {
+        /* 회사명 - 원료입고검사일지와 동일 */
+        .company {
           font-size: 10px;
+          text-align: center;
           border: none;
         }
         
@@ -1919,203 +1992,157 @@ async function printSubMaterialInspection(inboundData) {
             <col class="col-g">
           </colgroup>
           
-          <!-- 행 1: 빈 행 -->
-          <tr style="height: 15px;">
+          <!-- 행 1~3: 제목 + 결재란 - 원료입고검사일지와 동일 -->
+          <tr style="height: 32px;">
+            <td class="col-a" rowspan="3" style="border:none;"></td>
+            <td colspan="4" rowspan="3" class="title-cell">${settings.title}</td>
+            <td class="approval-header">검수담당자</td>
+            <td class="approval-header">승인</td>
+          </tr>
+          <tr style="height: 68px;">
+            <td class="approval-cell"></td>
+            <td class="approval-cell"></td>
+          </tr>
+          <tr style="height: 14px;">
             <td style="border:none;"></td>
-            <td colspan="6" style="border:none;"></td>
+            <td style="border:none;"></td>
           </tr>
           
-          <!-- 행 2: 제목 -->
-          <tr style="height: 28px;">
-            <td style="border:none;"></td>
-            <td colspan="5" class="title-cell">${settings.title}</td>
-            <td style="border:none;"></td>
-          </tr>
-          
-          <!-- 행 3: 빈 행 -->
-          <tr style="height: 12px;">
-            <td style="border:none;"></td>
-            <td colspan="6" style="border:none;"></td>
-          </tr>
-          
-          <!-- 행 4: 부자재명, 입고량, 시험번호, 거래업체 -->
-          <tr style="height: 48px;">
+          <!-- 행 4: 부자재명, LOT No, 납품처 - 원료입고검사일지와 동일 레이아웃 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="info-header">부자재명</td>
             <td class="info-cell">${inboundData.item_name || ''}</td>
-            <td class="info-header">입고량</td>
-            <td colspan="2" class="info-cell">${formatNumber(inboundData.origin_qty || inboundData.quantity)}</td>
-            <td style="border:none;"></td>
+            <td class="info-header">LOT No</td>
+            <td class="info-cell">${inboundData.lot_number || ''}</td>
+            <td class="info-header">납품처</td>
+            <td class="info-cell">${inboundData.supplier || '-'}</td>
           </tr>
           
-          <!-- 행 5: 시험번호, 거래업체 -->
-          <tr style="height: 56px;">
+          <!-- 행 5: 입고수량, 단위, 시험번호 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
+            <td class="info-header">입고수량</td>
+            <td class="info-cell">${formatNumber(inboundData.origin_qty || inboundData.quantity)}</td>
+            <td class="info-header">단위</td>
+            <td class="info-cell">${inboundData.unit || 'ea'}</td>
             <td class="info-header">시험번호</td>
             <td class="info-cell">${inspectionNumber}</td>
-            <td class="info-header">거래업체</td>
-            <td colspan="2" class="info-cell">${inboundData.supplier || '-'}</td>
-            <td style="border:none;"></td>
           </tr>
           
-          <!-- 행 6: 채취자, 채취장소, 채취방법, 시험일자 -->
-          <tr style="height: 48px;">
+          <!-- 행 6: 입고일자, 시험일자, 채취자 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
+            <td class="info-header">입고일자</td>
+            <td class="info-cell">${inboundDate}</td>
+            <td class="info-header">시험일자</td>
+            <td class="info-cell">${inboundDate}</td>
             <td class="info-header">채취자</td>
             <td class="info-cell">${settings.sampler}</td>
-            <td class="info-header">채취장소</td>
-            <td colspan="2" class="info-cell">${settings.samplingLocation}</td>
-            <td style="border:none;"></td>
           </tr>
           
-          <!-- 행 7: 채취방법, 시험일자 -->
-          <tr style="height: 48px;">
+          <!-- 행 7: 검사항목 헤더 - 원료입고검사일지와 동일 -->
+          <tr style="height: 28px;">
             <td style="border:none;"></td>
-            <td class="info-header">채취방법</td>
-            <td class="info-cell">${settings.samplingMethod}</td>
-            <td class="info-header">시험일자</td>
-            <td colspan="2" class="info-cell">${inboundDate}</td>
-            <td style="border:none;"></td>
+            <td class="insp-header">검사항목</td>
+            <td colspan="4" class="insp-header">검사기준</td>
+            <td class="insp-header">시험결과</td>
           </tr>
           
-          <!-- 행 8: 빈 행 -->
-          <tr style="height: 30px;">
-            <td style="border:none;"></td>
-            <td colspan="6" style="border:none;"></td>
-          </tr>
-          
-          <!-- 행 9: 검사항목 헤더 -->
-          <tr style="height: 60px;">
-            <td style="border:none;"></td>
-            <td class="insp-header">항목</td>
-            <td colspan="2" class="insp-header">기준</td>
-            <td colspan="2" class="insp-header">시험결과</td>
-            <td style="border:none;"></td>
-          </tr>
-          
-          <!-- 행 10: 표시사항 -->
-          <tr style="height: 60px;">
+          <!-- 검사항목 1: 표시사항 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="insp-item">표시사항</td>
-            <td colspan="2" class="insp-criteria">표준 부자재 표시내용과 일치 하여야 한다.</td>
-            <td colspan="2" class="insp-result"> □적합     □부적합</td>
-            <td style="border:none;"></td>
+            <td colspan="4" class="insp-criteria">표준 부자재 표시내용과 일치하여야 한다.</td>
+            <td class="insp-result">□적합 □부적합</td>
           </tr>
           
-          <!-- 행 11: 포장상태 -->
-          <tr style="height: 60px;">
+          <!-- 검사항목 2: 포장상태 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="insp-item">포장상태</td>
-            <td colspan="2" class="insp-criteria">파손되거나 손상된 부분이 없어야 하며,<br>위생상태가 양호해야 한다.</td>
-            <td colspan="2" class="insp-result"> □적합     □부적합</td>
-            <td style="border:none;"></td>
+            <td colspan="4" class="insp-criteria">파손되거나 손상된 부분이 없어야 하며, 위생상태가 양호해야 한다.</td>
+            <td class="insp-result">□적합 □부적합</td>
           </tr>
           
-          <!-- 행 12: 인쇄상태 -->
-          <tr style="height: 60px;">
+          <!-- 검사항목 3: 인쇄상태 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="insp-item">인쇄상태</td>
-            <td colspan="2" class="insp-criteria">표준 부자재와 색도가 동일해야 하며,<br>글자는 내용을 명확히 구분할 수 있도록<br>인쇄되어 있어야 한다.</td>
-            <td colspan="2" class="insp-result"> □적합     □부적합</td>
-            <td style="border:none;"></td>
+            <td colspan="4" class="insp-criteria">표준 부자재와 색도가 동일해야 하며, 글자는 내용을 명확히 구분할 수 있도록 인쇄되어 있어야 한다.</td>
+            <td class="insp-result">□적합 □부적합</td>
           </tr>
           
-          <!-- 행 13: 절단면 및 접착면 상태 -->
-          <tr style="height: 60px;">
+          <!-- 검사항목 4: 절단면 및 접착면 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
-            <td class="insp-item">절단면 및<br>접착면 상태</td>
-            <td colspan="2" class="insp-criteria">절단면은 깔끔하게 처리 되어 있어야 하며,<br>접착면은 접착 상태가 양호하고, 마감처리가<br>깔끔해야 한다.</td>
-            <td colspan="2" class="insp-result"> □적합     □부적합</td>
-            <td style="border:none;"></td>
+            <td class="insp-item">절단면/<br>접착면</td>
+            <td colspan="4" class="insp-criteria">절단면은 깔끔하게 처리되어 있어야 하며, 접착면은 접착상태가 양호하고 마감처리가 깔끔해야 한다.</td>
+            <td class="insp-result">□적합 □부적합</td>
           </tr>
           
-          <!-- 행 14: 성적서 -->
-          <tr style="height: 60px;">
+          <!-- 검사항목 5: 성적서 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
             <td class="insp-item">성적서</td>
-            <td colspan="2" class="insp-criteria">식품직접자재인 경우 입고된 부자재에 해당하는<br>성적서가 첨부되어야 하며, 시험 결과가 적합한<br>부자재여야 한다.</td>
-            <td colspan="2" class="insp-result"> □적합     □부적합</td>
-            <td style="border:none;"></td>
+            <td colspan="4" class="insp-criteria">식품직접자재인 경우 입고된 부자재에 해당하는 성적서가 첨부되어야 하며, 시험결과가 적합한 부자재여야 한다.</td>
+            <td class="insp-result">□적합 □부적합</td>
           </tr>
           
-          <!-- 행 15: 배송차량청결상태 -->
-          <tr style="height: 60px;">
+          <!-- 검사항목 6: 배송차량청결 -->
+          <tr style="height: 42px;">
             <td style="border:none;"></td>
-            <td class="insp-item">배송차량청결상태</td>
-            <td colspan="2" class="insp-criteria">배송차량의 청결상태가 입고된 부자재에<br>오염 소지가 없어야 한다.</td>
-            <td colspan="2" class="insp-result"> □적합     □부적합</td>
-            <td style="border:none;"></td>
+            <td class="insp-item">배송차량<br>청결상태</td>
+            <td colspan="4" class="insp-criteria">배송차량의 청결상태가 입고된 부자재에 오염 소지가 없어야 한다.</td>
+            <td class="insp-result">□적합 □부적합</td>
           </tr>
           
-          <!-- 행 16: 빈 행 -->
-          <tr style="height: 18px;">
-            <td style="border:none;"></td>
-            <td colspan="6" style="border:none;"></td>
-          </tr>
-          
-          <!-- 행 17: 종합판정 헤더 -->
-          <tr style="height: 40px;">
+          <!-- 종합판정 - 원료입고검사일지와 동일 레이아웃 -->
+          <tr style="height: 28px;">
             <td style="border:none;"></td>
             <td class="judge-header">종합판정</td>
             <td colspan="2" class="judge-header">판정일자</td>
             <td colspan="2" class="judge-header">판정자</td>
-            <td style="border:none;"></td>
+            <td rowspan="2" class="judge-cell" style="font-size: 12px;">□합격<br>□불합격</td>
           </tr>
-          
-          <!-- 행 18: 종합판정 입력란 -->
-          <tr style="height: 40px;">
+          <tr style="height: 35px;">
             <td style="border:none;"></td>
-            <td class="judge-cell"></td>
+            <td class="judge-cell">${inboundData.quality_status === '합격' ? '합격' : (inboundData.quality_status || '')}</td>
+            <td colspan="2" class="judge-cell">${inboundDate}</td>
             <td colspan="2" class="judge-cell"></td>
-            <td colspan="2" class="judge-cell"></td>
-            <td style="border:none;"></td>
           </tr>
           
-          <!-- 행 19: 이탈 시 조치사항 제목 -->
-          <tr style="height: 40px;">
+          <!-- 이탈시 조치사항 - 원료입고검사일지와 동일 -->
+          <tr style="height: 28px;">
             <td style="border:none;"></td>
-            <td colspan="5" class="action-title">이탈 시 조치사항</td>
-            <td style="border:none;"></td>
+            <td colspan="6" class="action-title">이탈 시 조치사항</td>
           </tr>
-          
-          <!-- 행 20: 이탈시 조치사항 헤더 -->
-          <tr style="height: 40px;">
+          <tr style="height: 28px;">
             <td style="border:none;"></td>
             <td class="action-header">일자</td>
-            <td class="action-header">이상발생내역</td>
-            <td class="action-header">조치내역 및 결과</td>
-            <td class="action-header">완료일</td>
+            <td colspan="2" class="action-header">이상발생내역</td>
+            <td colspan="2" class="action-header">조치내역 및 결과</td>
             <td class="action-header">확인</td>
+          </tr>
+          <tr style="height: 35px;">
             <td style="border:none;"></td>
+            <td class="action-cell"></td>
+            <td colspan="2" class="action-cell"></td>
+            <td colspan="2" class="action-cell"></td>
+            <td class="action-cell"></td>
+          </tr>
+          <tr style="height: 35px;">
+            <td style="border:none;"></td>
+            <td class="action-cell"></td>
+            <td colspan="2" class="action-cell"></td>
+            <td colspan="2" class="action-cell"></td>
+            <td class="action-cell"></td>
           </tr>
           
-          <!-- 행 21~22: 조치사항 입력란 -->
-          <tr style="height: 40px;">
+          <!-- 하단 회사명 - 원료입고검사일지와 동일 -->
+          <tr style="height: 28px;">
             <td style="border:none;"></td>
-            <td class="action-cell"></td>
-            <td class="action-cell"></td>
-            <td class="action-cell"></td>
-            <td class="action-cell"></td>
-            <td class="action-cell"></td>
-            <td style="border:none;"></td>
-          </tr>
-          <tr style="height: 40px;">
-            <td style="border:none;"></td>
-            <td class="action-cell"></td>
-            <td class="action-cell"></td>
-            <td class="action-cell"></td>
-            <td class="action-cell"></td>
-            <td class="action-cell"></td>
-            <td style="border:none;"></td>
-          </tr>
-          
-          <!-- 행 23: 하단 문서번호 및 회사명 -->
-          <tr style="height: 20px;">
-            <td style="border:none;"></td>
-            <td class="footer-cell">BV-00-00</td>
-            <td colspan="2" style="border:none;"></td>
-            <td colspan="2" class="footer-cell">${settings.companyName}</td>
-            <td class="footer-cell" style="text-align:left;">A4(210x297)</td>
+            <td colspan="6" class="company">${settings.companyName}</td>
           </tr>
         </table>
       </div>
@@ -4531,6 +4558,560 @@ async function saveQuickStock() {
     // Error handled
   }
 }
+
+// ==================== 부자재 재고 관리 ====================
+async function renderSuppliesInventory() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-box mr-2 text-orange-500"></i>
+          부자재 재고 관리
+        </h2>
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="refreshSuppliesInventory()" class="px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600">
+            <i class="fas fa-sync-alt mr-1"></i> 새로고침
+          </button>
+          <div class="relative">
+            <input type="text" id="supplies-search" class="border rounded-lg pl-10 pr-4 py-2 w-48" placeholder="품목명/코드 검색...">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+          </div>
+          <button onclick="showNewSupplyModal()" class="px-4 py-2 rounded-lg bg-green-500 text-white hover:bg-green-600">
+            <i class="fas fa-plus mr-1"></i> 부자재 등록
+          </button>
+        </div>
+      </div>
+      
+      <!-- 부자재 재고 요약 -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="bg-white p-4 rounded-xl shadow">
+          <p class="text-sm text-gray-500">총 부자재 품목</p>
+          <p id="supplies-total-items" class="text-2xl font-bold text-gray-800">-</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow">
+          <p class="text-sm text-gray-500">재고 보유 품목</p>
+          <p id="supplies-in-stock" class="text-2xl font-bold text-green-600">-</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow">
+          <p class="text-sm text-gray-500">재고 없음</p>
+          <p id="supplies-out-stock" class="text-2xl font-bold text-red-600">-</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow">
+          <p class="text-sm text-gray-500">안전재고 미만</p>
+          <p id="supplies-low-stock" class="text-2xl font-bold text-orange-500">-</p>
+        </div>
+      </div>
+      
+      <div id="supplies-content" class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="p-8 text-center text-gray-500">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.getElementById('supplies-search').addEventListener('input', function(e) {
+    filterSuppliesBySearch(e.target.value.toLowerCase().trim());
+  });
+  
+  loadSuppliesInventory();
+}
+
+async function loadSuppliesInventory() {
+  try {
+    const result = await api('/master?category=부자재');
+    const items = result.data || [];
+    
+    window.suppliesData = items;
+    
+    // 요약 통계
+    const totalItems = items.length;
+    const inStock = items.filter(i => i.current_stock > 0).length;
+    const outStock = items.filter(i => i.current_stock <= 0).length;
+    const lowStock = items.filter(i => i.current_stock < i.safety_stock && i.current_stock > 0).length;
+    
+    document.getElementById('supplies-total-items').textContent = totalItems;
+    document.getElementById('supplies-in-stock').textContent = inStock;
+    document.getElementById('supplies-out-stock').textContent = outStock;
+    document.getElementById('supplies-low-stock').textContent = lowStock;
+    
+    document.getElementById('supplies-content').innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-end gap-2">
+        <button onclick="downloadSuppliesInventory()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+          <i class="fas fa-file-excel mr-1"></i> 엑셀
+        </button>
+        <button onclick="printSuppliesInventory()" class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700">
+          <i class="fas fa-print mr-1"></i> 출력
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm data-table">
+          <thead>
+            <tr class="text-gray-500 border-b bg-gray-50">
+              <th class="text-left p-3">품목코드</th>
+              <th class="text-left p-3">품목명</th>
+              <th class="text-left p-3">단위</th>
+              <th class="text-right p-3">현재고</th>
+              <th class="text-right p-3">안전재고</th>
+              <th class="text-center p-3">상태</th>
+              <th class="text-center p-3">관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(item => {
+              const isLow = item.current_stock < item.safety_stock;
+              const isOut = item.current_stock <= 0;
+              return `
+              <tr class="border-b hover:bg-gray-50">
+                <td class="p-3 font-mono">${item.item_code}</td>
+                <td class="p-3 font-medium">${item.item_name}</td>
+                <td class="p-3">${item.unit}</td>
+                <td class="p-3 text-right font-medium ${isOut ? 'text-red-600' : isLow ? 'text-orange-500' : ''}">${formatNumber(item.current_stock)}</td>
+                <td class="p-3 text-right text-gray-500">${formatNumber(item.safety_stock)}</td>
+                <td class="p-3 text-center">
+                  ${isOut 
+                    ? '<span class="px-2 py-1 rounded text-xs bg-red-100 text-red-700">재고없음</span>'
+                    : isLow 
+                      ? '<span class="px-2 py-1 rounded text-xs bg-orange-100 text-orange-700">부족</span>'
+                      : '<span class="px-2 py-1 rounded text-xs bg-green-100 text-green-700">정상</span>'
+                  }
+                </td>
+                <td class="p-3 text-center">
+                  <button onclick="adjustSupplyStock('${item.item_code}', '${item.item_name}', ${item.current_stock})" 
+                          class="text-blue-500 hover:text-blue-700 mr-2" title="재고 조정">
+                    <i class="fas fa-edit"></i>
+                  </button>
+                  <button onclick="viewSupplyLots('${item.item_code}', '${item.item_name}')" 
+                          class="text-green-500 hover:text-green-700" title="LOT 조회">
+                    <i class="fas fa-list"></i>
+                  </button>
+                </td>
+              </tr>
+            `}).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('supplies-content').innerHTML = '<div class="p-8 text-center text-red-500">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+function filterSuppliesBySearch(term) {
+  const rows = document.querySelectorAll('#supplies-content tbody tr');
+  rows.forEach(row => {
+    const code = row.querySelector('td:nth-child(1)')?.textContent?.toLowerCase() || '';
+    const name = row.querySelector('td:nth-child(2)')?.textContent?.toLowerCase() || '';
+    row.style.display = (!term || code.includes(term) || name.includes(term)) ? '' : 'none';
+  });
+}
+
+async function refreshSuppliesInventory() {
+  showToast('부자재 재고를 새로고침합니다...', 'info');
+  await loadMasterData();
+  await loadSuppliesInventory();
+  showToast('부자재 재고가 업데이트되었습니다', 'success');
+}
+
+function adjustSupplyStock(itemCode, itemName, currentStock) {
+  showModal('부자재 재고 조정', `
+    <form id="adjust-supply-form" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">품목</label>
+        <input type="text" value="${itemName} (${itemCode})" disabled class="w-full border rounded-lg px-4 py-2 bg-gray-100">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">현재 재고</label>
+        <input type="text" value="${formatNumber(currentStock)}" disabled class="w-full border rounded-lg px-4 py-2 bg-gray-100">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">조정 후 재고 <span class="text-red-500">*</span></label>
+        <input type="number" id="new-supply-stock" step="0.01" class="w-full border rounded-lg px-4 py-2" required>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">조정 사유 <span class="text-red-500">*</span></label>
+        <input type="text" id="supply-adjust-reason" placeholder="예: 재고실사, 손실 등" class="w-full border rounded-lg px-4 py-2" required>
+      </div>
+    </form>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveSupplyAdjustment('${itemCode}', ${currentStock})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+  `);
+}
+
+async function saveSupplyAdjustment(itemCode, oldStock) {
+  const newStock = parseFloat(document.getElementById('new-supply-stock').value);
+  const reason = document.getElementById('supply-adjust-reason').value.trim();
+  
+  if (isNaN(newStock) || newStock < 0) {
+    showToast('올바른 재고 수량을 입력하세요', 'warning');
+    return;
+  }
+  if (!reason) {
+    showToast('조정 사유를 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/admin/stock-adjustment', 'POST', {
+      item_code: itemCode,
+      old_stock: oldStock,
+      new_stock: newStock,
+      reason: reason,
+      category: '부자재'
+    });
+    showToast('재고가 조정되었습니다', 'success');
+    closeModal();
+    loadSuppliesInventory();
+  } catch (e) {
+    showToast('재고 조정 실패: ' + e.message, 'error');
+  }
+}
+
+async function viewSupplyLots(itemCode, itemName) {
+  try {
+    const result = await api(`/inbound/query?item_code=${itemCode}&view_type=monthly`);
+    const lots = result.data?.details || [];
+    
+    showModal(`${itemName} LOT 현황`, `
+      <div class="max-h-96 overflow-y-auto">
+        ${lots.length === 0 ? '<p class="text-gray-500 text-center py-4">입고 이력이 없습니다</p>' : `
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 sticky top-0">
+              <tr>
+                <th class="text-left p-2">LOT번호</th>
+                <th class="text-left p-2">입고일</th>
+                <th class="text-right p-2">입고량</th>
+                <th class="text-right p-2">잔량</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${lots.map(lot => `
+                <tr class="border-b">
+                  <td class="p-2 font-mono text-xs">${lot.lot_number}</td>
+                  <td class="p-2">${lot.inbound_date}</td>
+                  <td class="p-2 text-right">${formatNumber(lot.origin_qty)}</td>
+                  <td class="p-2 text-right font-medium ${lot.remain_qty <= 0 ? 'text-gray-400' : ''}">${formatNumber(lot.remain_qty)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `}
+      </div>
+    `, '<button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">닫기</button>');
+  } catch (e) {
+    showToast('LOT 조회 실패', 'error');
+  }
+}
+
+function downloadSuppliesInventory() {
+  const items = window.suppliesData || [];
+  const data = items.map(item => ({
+    '품목코드': item.item_code,
+    '품목명': item.item_name,
+    '단위': item.unit,
+    '현재고': item.current_stock,
+    '안전재고': item.safety_stock,
+    '상태': item.current_stock <= 0 ? '재고없음' : item.current_stock < item.safety_stock ? '부족' : '정상'
+  }));
+  downloadExcel(data, '부자재_재고현황');
+}
+
+function printSuppliesInventory() {
+  const items = window.suppliesData || [];
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`
+    <!DOCTYPE html><html><head><title>부자재 재고 현황</title>
+    <style>
+      body { font-family: sans-serif; padding: 20px; }
+      h1 { font-size: 18px; margin-bottom: 10px; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th, td { border: 1px solid #333; padding: 6px; }
+      th { background: #f0f0f0; }
+      .right { text-align: right; }
+    </style></head><body>
+    <h1>부자재 재고 현황 (${formatDate(new Date())})</h1>
+    <table>
+      <thead><tr><th>품목코드</th><th>품목명</th><th>단위</th><th>현재고</th><th>안전재고</th><th>상태</th></tr></thead>
+      <tbody>
+        ${items.map(i => `<tr>
+          <td>${i.item_code}</td><td>${i.item_name}</td><td>${i.unit}</td>
+          <td class="right">${formatNumber(i.current_stock)}</td><td class="right">${formatNumber(i.safety_stock)}</td>
+          <td>${i.current_stock <= 0 ? '재고없음' : i.current_stock < i.safety_stock ? '부족' : '정상'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table></body></html>
+  `);
+  printWindow.document.close();
+  printWindow.print();
+}
+
+window.renderSuppliesInventory = renderSuppliesInventory;
+window.refreshSuppliesInventory = refreshSuppliesInventory;
+window.adjustSupplyStock = adjustSupplyStock;
+window.saveSupplyAdjustment = saveSupplyAdjustment;
+window.viewSupplyLots = viewSupplyLots;
+window.downloadSuppliesInventory = downloadSuppliesInventory;
+window.printSuppliesInventory = printSuppliesInventory;
+
+// ==================== 샘플 재고 관리 ====================
+async function renderSampleInventory() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-flask mr-2 text-purple-500"></i>
+          샘플 재고 관리
+        </h2>
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="refreshSampleInventory()" class="px-4 py-2 rounded-lg bg-blue-500 text-white hover:bg-blue-600">
+            <i class="fas fa-sync-alt mr-1"></i> 새로고침
+          </button>
+          <div class="relative">
+            <input type="text" id="sample-search" class="border rounded-lg pl-10 pr-4 py-2 w-48" placeholder="품목명/코드 검색...">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 샘플 재고 요약 -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-white p-4 rounded-xl shadow">
+          <p class="text-sm text-gray-500">총 샘플 LOT</p>
+          <p id="sample-total-lots" class="text-2xl font-bold text-purple-600">-</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow">
+          <p class="text-sm text-gray-500">총 샘플 수량</p>
+          <p id="sample-total-qty" class="text-2xl font-bold text-gray-800">-</p>
+        </div>
+        <div class="bg-white p-4 rounded-xl shadow">
+          <p class="text-sm text-gray-500">품목 종류</p>
+          <p id="sample-item-count" class="text-2xl font-bold text-blue-600">-</p>
+        </div>
+      </div>
+      
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+        <p class="text-yellow-800">
+          <i class="fas fa-info-circle mr-1"></i>
+          샘플은 일반 재고와 별도로 관리됩니다. 입고 등록 시 "샘플 입고" 옵션을 체크하면 이 화면에서 조회됩니다.
+        </p>
+      </div>
+      
+      <div id="sample-content" class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="p-8 text-center text-gray-500">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.getElementById('sample-search').addEventListener('input', function(e) {
+    filterSamplesBySearch(e.target.value.toLowerCase().trim());
+  });
+  
+  loadSampleInventory();
+}
+
+async function loadSampleInventory() {
+  try {
+    // 샘플만 조회 (is_sample=1)
+    const result = await api('/inbound/query?is_sample=1&view_type=monthly');
+    const lots = result.data?.details || [];
+    
+    // 잔량 있는 것만 필터링
+    const activeLots = lots.filter(lot => lot.remain_qty > 0);
+    window.sampleData = activeLots;
+    
+    // 요약 통계
+    const totalLots = activeLots.length;
+    const totalQty = activeLots.reduce((sum, lot) => sum + (lot.remain_qty || 0), 0);
+    const itemCount = new Set(activeLots.map(lot => lot.item_code)).size;
+    
+    document.getElementById('sample-total-lots').textContent = totalLots;
+    document.getElementById('sample-total-qty').textContent = formatNumber(totalQty);
+    document.getElementById('sample-item-count').textContent = itemCount;
+    
+    if (activeLots.length === 0) {
+      document.getElementById('sample-content').innerHTML = `
+        <div class="p-8 text-center text-gray-500">
+          <i class="fas fa-flask text-4xl mb-4 text-gray-300"></i>
+          <p>등록된 샘플이 없습니다</p>
+          <p class="text-sm mt-2">입고 등록에서 "샘플 입고" 옵션을 체크하여 등록하세요</p>
+        </div>
+      `;
+      return;
+    }
+    
+    document.getElementById('sample-content').innerHTML = `
+      <div class="p-3 bg-gray-50 border-b flex justify-end gap-2">
+        <button onclick="downloadSampleInventory()" class="text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">
+          <i class="fas fa-file-excel mr-1"></i> 엑셀
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm data-table">
+          <thead>
+            <tr class="text-gray-500 border-b bg-gray-50">
+              <th class="text-left p-3">LOT번호</th>
+              <th class="text-left p-3">품목명</th>
+              <th class="text-left p-3">카테고리</th>
+              <th class="text-left p-3">보관장소</th>
+              <th class="text-left p-3">입고일</th>
+              <th class="text-right p-3">입고량</th>
+              <th class="text-right p-3">잔량</th>
+              <th class="text-center p-3">관리</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${activeLots.map(lot => `
+              <tr class="border-b hover:bg-gray-50">
+                <td class="p-3 font-mono text-xs">${lot.lot_number}</td>
+                <td class="p-3 font-medium">${lot.item_name || lot.item_code}</td>
+                <td class="p-3">
+                  <span class="px-2 py-1 rounded text-xs bg-purple-100 text-purple-700">${lot.category || '샘플'}</span>
+                </td>
+                <td class="p-3">${lot.storage_location || '-'}</td>
+                <td class="p-3">${lot.inbound_date}</td>
+                <td class="p-3 text-right">${formatNumber(lot.origin_qty)} ${lot.unit || ''}</td>
+                <td class="p-3 text-right font-medium">${formatNumber(lot.remain_qty)} ${lot.unit || ''}</td>
+                <td class="p-3 text-center">
+                  <button onclick="useSample('${lot.lot_number}', '${lot.item_code}', ${lot.remain_qty})" 
+                          class="text-orange-500 hover:text-orange-700 mr-2" title="샘플 사용">
+                    <i class="fas fa-minus-circle"></i>
+                  </button>
+                  <button onclick="deleteSampleLot('${lot.lot_number}')" 
+                          class="text-red-500 hover:text-red-700" title="폐기">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    document.getElementById('sample-content').innerHTML = `
+      <div class="p-8 text-center text-gray-500">
+        <i class="fas fa-info-circle text-2xl mb-2"></i>
+        <p>샘플 재고 기능이 아직 활성화되지 않았거나 데이터가 없습니다</p>
+      </div>
+    `;
+  }
+}
+
+function filterSamplesBySearch(term) {
+  const rows = document.querySelectorAll('#sample-content tbody tr');
+  rows.forEach(row => {
+    const lot = row.querySelector('td:nth-child(1)')?.textContent?.toLowerCase() || '';
+    const name = row.querySelector('td:nth-child(2)')?.textContent?.toLowerCase() || '';
+    row.style.display = (!term || lot.includes(term) || name.includes(term)) ? '' : 'none';
+  });
+}
+
+async function refreshSampleInventory() {
+  showToast('샘플 재고를 새로고침합니다...', 'info');
+  await loadSampleInventory();
+  showToast('샘플 재고가 업데이트되었습니다', 'success');
+}
+
+function useSample(lotNumber, itemCode, remainQty) {
+  showModal('샘플 사용', `
+    <form id="use-sample-form" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">LOT 번호</label>
+        <input type="text" value="${lotNumber}" disabled class="w-full border rounded-lg px-4 py-2 bg-gray-100">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">현재 잔량</label>
+        <input type="text" value="${formatNumber(remainQty)}" disabled class="w-full border rounded-lg px-4 py-2 bg-gray-100">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">사용 수량 <span class="text-red-500">*</span></label>
+        <input type="number" id="sample-use-qty" step="0.01" max="${remainQty}" class="w-full border rounded-lg px-4 py-2" required>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">사용 용도 <span class="text-red-500">*</span></label>
+        <input type="text" id="sample-use-purpose" placeholder="예: 품질검사, 고객샘플, 테스트 등" class="w-full border rounded-lg px-4 py-2" required>
+      </div>
+    </form>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveSampleUsage('${lotNumber}', '${itemCode}', ${remainQty})" class="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600">사용 처리</button>
+  `);
+}
+
+async function saveSampleUsage(lotNumber, itemCode, remainQty) {
+  const useQty = parseFloat(document.getElementById('sample-use-qty').value);
+  const purpose = document.getElementById('sample-use-purpose').value.trim();
+  
+  if (isNaN(useQty) || useQty <= 0) {
+    showToast('사용 수량을 입력하세요', 'warning');
+    return;
+  }
+  if (useQty > remainQty) {
+    showToast('잔량보다 많이 사용할 수 없습니다', 'warning');
+    return;
+  }
+  if (!purpose) {
+    showToast('사용 용도를 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/usage', 'POST', {
+      item_code: itemCode,
+      lot_number: lotNumber,
+      quantity: useQty,
+      memo: `[샘플사용] ${purpose}`,
+      is_sample: true
+    });
+    showToast('샘플 사용이 처리되었습니다', 'success');
+    closeModal();
+    loadSampleInventory();
+  } catch (e) {
+    showToast('샘플 사용 처리 실패: ' + e.message, 'error');
+  }
+}
+
+async function deleteSampleLot(lotNumber) {
+  if (!confirm(`LOT ${lotNumber}을(를) 폐기하시겠습니까?\\n이 작업은 되돌릴 수 없습니다.`)) return;
+  
+  try {
+    await api(`/inbound/${lotNumber}`, 'DELETE');
+    showToast('샘플이 폐기되었습니다', 'success');
+    loadSampleInventory();
+  } catch (e) {
+    showToast('샘플 폐기 실패: ' + e.message, 'error');
+  }
+}
+
+function downloadSampleInventory() {
+  const items = window.sampleData || [];
+  const data = items.map(item => ({
+    'LOT번호': item.lot_number,
+    '품목코드': item.item_code,
+    '품목명': item.item_name,
+    '카테고리': item.category,
+    '보관장소': item.storage_location || '',
+    '입고일': item.inbound_date,
+    '입고량': item.origin_qty,
+    '잔량': item.remain_qty,
+    '단위': item.unit
+  }));
+  downloadExcel(data, '샘플_재고현황');
+}
+
+window.renderSampleInventory = renderSampleInventory;
+window.refreshSampleInventory = refreshSampleInventory;
+window.useSample = useSample;
+window.saveSampleUsage = saveSampleUsage;
+window.deleteSampleLot = deleteSampleLot;
+window.downloadSampleInventory = downloadSampleInventory;
 
 // Inventory Status
 async function renderInventory() {

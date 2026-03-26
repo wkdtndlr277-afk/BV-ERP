@@ -88,13 +88,17 @@ inboundRoutes.get('/query', async (c) => {
   }
   // 컬럼이 없고 is_sample !== '1'이면 필터 없이 진행 (모든 데이터를 일반으로 취급)
   
-  // 상세 데이터 조회
+  // 상세 데이터 조회 (master 또는 supplies 테이블에서 품목 정보 가져오기)
   const detailQuery = `
-    SELECT i.*, m.item_name, m.category, m.unit,
+    SELECT i.*, 
+           COALESCE(m.item_name, s.item_name) as item_name, 
+           COALESCE(m.category, '부자재') as category, 
+           COALESCE(m.unit, s.unit) as unit,
            DATE(i.inbound_date) as date_group
     FROM inbound i 
-    JOIN master m ON i.item_code = m.item_code
-    WHERE 1=1 ${dateFilter}${sampleFilter}
+    LEFT JOIN master m ON i.item_code = m.item_code
+    LEFT JOIN supplies s ON i.item_code = s.item_code
+    WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
     ORDER BY i.inbound_date DESC, i.id DESC
   `;
   
@@ -113,8 +117,9 @@ inboundRoutes.get('/query', async (c) => {
         SUM(CASE WHEN i.quality_status = '불합격' THEN 1 ELSE 0 END) as failed_count,
         SUM(CASE WHEN i.quality_status = '검사중' THEN 1 ELSE 0 END) as pending_count
       FROM inbound i
-      JOIN master m ON i.item_code = m.item_code
-      WHERE 1=1 ${dateFilter}${sampleFilter}
+      LEFT JOIN master m ON i.item_code = m.item_code
+      LEFT JOIN supplies s ON i.item_code = s.item_code
+      WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
     `;
   } else {
     // 월별인 경우 일자별 그룹핑
@@ -125,8 +130,9 @@ inboundRoutes.get('/query', async (c) => {
         SUM(i.origin_qty) as total_qty,
         COUNT(DISTINCT i.item_code) as item_count
       FROM inbound i
-      JOIN master m ON i.item_code = m.item_code
-      WHERE 1=1 ${dateFilter}${sampleFilter}
+      LEFT JOIN master m ON i.item_code = m.item_code
+      LEFT JOIN supplies s ON i.item_code = s.item_code
+      WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
       GROUP BY DATE(i.inbound_date)
       ORDER BY DATE(i.inbound_date) DESC
     `;
@@ -138,16 +144,17 @@ inboundRoutes.get('/query', async (c) => {
   const itemSummaryQuery = `
     SELECT 
       i.item_code,
-      m.item_name,
-      m.category,
-      m.unit,
+      COALESCE(m.item_name, s.item_name) as item_name,
+      COALESCE(m.category, '부자재') as category,
+      COALESCE(m.unit, s.unit) as unit,
       COUNT(*) as inbound_count,
       SUM(i.origin_qty) as total_qty,
       COUNT(DISTINCT i.supplier) as supplier_count
     FROM inbound i
-    JOIN master m ON i.item_code = m.item_code
-    WHERE 1=1 ${dateFilter}${sampleFilter}
-    GROUP BY i.item_code, m.item_name, m.category, m.unit
+    LEFT JOIN master m ON i.item_code = m.item_code
+    LEFT JOIN supplies s ON i.item_code = s.item_code
+    WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
+    GROUP BY i.item_code, COALESCE(m.item_name, s.item_name), COALESCE(m.category, '부자재'), COALESCE(m.unit, s.unit)
     ORDER BY SUM(i.origin_qty) DESC
     LIMIT 10
   `;
@@ -161,8 +168,9 @@ inboundRoutes.get('/query', async (c) => {
       SUM(i.origin_qty) as total_qty,
       COUNT(DISTINCT i.item_code) as item_count
     FROM inbound i
-    JOIN master m ON i.item_code = m.item_code
-    WHERE i.supplier IS NOT NULL AND i.supplier != '' ${dateFilter}${sampleFilter}
+    LEFT JOIN master m ON i.item_code = m.item_code
+    LEFT JOIN supplies s ON i.item_code = s.item_code
+    WHERE i.supplier IS NOT NULL AND i.supplier != '' AND (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
     GROUP BY i.supplier
     ORDER BY SUM(i.origin_qty) DESC
     LIMIT 10
@@ -190,10 +198,14 @@ inboundRoutes.get('/', async (c) => {
   const has_remain = c.req.query('has_remain'); // 잔량 있는 것만
   
   let query = `
-    SELECT i.*, m.item_name, m.category, m.unit 
+    SELECT i.*, 
+           COALESCE(m.item_name, s.item_name) as item_name, 
+           COALESCE(m.category, '부자재') as category, 
+           COALESCE(m.unit, s.unit) as unit 
     FROM inbound i 
-    JOIN master m ON i.item_code = m.item_code
-    WHERE 1=1
+    LEFT JOIN master m ON i.item_code = m.item_code
+    LEFT JOIN supplies s ON i.item_code = s.item_code
+    WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL)
   `;
   const params: any[] = [];
   
@@ -224,10 +236,14 @@ inboundRoutes.get('/lot/:lot_number', async (c) => {
   const lot_number = c.req.param('lot_number');
   
   const lot = await c.env.DB.prepare(`
-    SELECT i.*, m.item_name, m.category, m.unit 
+    SELECT i.*, 
+           COALESCE(m.item_name, s.item_name) as item_name, 
+           COALESCE(m.category, '부자재') as category, 
+           COALESCE(m.unit, s.unit) as unit 
     FROM inbound i 
-    JOIN master m ON i.item_code = m.item_code
-    WHERE i.lot_number = ?
+    LEFT JOIN master m ON i.item_code = m.item_code
+    LEFT JOIN supplies s ON i.item_code = s.item_code
+    WHERE i.lot_number = ? AND (m.item_code IS NOT NULL OR s.item_code IS NOT NULL)
   `).bind(lot_number).first();
   
   if (!lot) {
@@ -434,13 +450,19 @@ inboundRoutes.get('/expiring/:days', async (c) => {
   const today = new Date().toISOString().split('T')[0];
   
   const result = await c.env.DB.prepare(`
-    SELECT i.*, m.item_name, m.category, m.unit,
+    SELECT i.*, 
+           COALESCE(m.item_name, s.item_name) as item_name, 
+           COALESCE(m.category, '부자재') as category, 
+           COALESCE(m.unit, s.unit) as unit,
            CAST(julianday(i.expiry_date) - julianday(?) AS INTEGER) as days_until_expiry
     FROM inbound i
-    JOIN master m ON i.item_code = m.item_code
+    LEFT JOIN master m ON i.item_code = m.item_code
+    LEFT JOIN supplies s ON i.item_code = s.item_code
     WHERE i.remain_qty > 0 
       AND i.quality_status = '합격'
+      AND i.expiry_date IS NOT NULL
       AND julianday(i.expiry_date) - julianday(?) <= ?
+      AND (m.item_code IS NOT NULL OR s.item_code IS NOT NULL)
     ORDER BY i.expiry_date ASC
   `).bind(today, today, days).all();
   

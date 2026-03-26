@@ -233,16 +233,16 @@ transactionRoutes.get('/daily-report', async (c) => {
       m.unit,
       m.current_stock,
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
-      -- 전일재고 계산용: 해당일 이전 입고 합계
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ?), 0) as before_inbound,
+      -- 전일재고 계산용: 해당일 이전 입고 합계 (재고조정 LOT 제외)
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
       -- 전일재고 계산용: 해당일 이전 사용 합계
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
       -- 전일재고 계산용: 해당일 이전 출고 합계
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
       -- 전일재고 계산용: 해당일 이전 재고조정 합계 (양수/음수 그대로)
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
-      -- 당일 입고 (inbound 테이블)
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date = ?), 0) as inbound_qty,
+      -- 당일 입고 (inbound 테이블, 재고조정 LOT 제외)
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date = ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as inbound_qty,
       -- 당일 양수 재고조정 (+)
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date = ?), 0) as adj_plus,
       -- 당일 음수 재고조정 (-)
@@ -330,16 +330,16 @@ transactionRoutes.get('/monthly-report', async (c) => {
       m.unit,
       m.current_stock,
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
-      -- 월초재고 계산용: 해당월 이전 입고 합계
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ?), 0) as before_inbound,
+      -- 월초재고 계산용: 해당월 이전 입고 합계 (재고조정 LOT 제외)
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
       -- 월초재고 계산용: 해당월 이전 사용 합계
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
       -- 월초재고 계산용: 해당월 이전 출고 합계
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
       -- 월초재고 계산용: 해당월 이전 재고조정 합계 (양수/음수 그대로)
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
-      -- 당월 입고 (inbound 테이블)
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) as inbound_qty,
+      -- 당월 입고 (inbound 테이블, 재고조정 LOT 제외)
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as inbound_qty,
       -- 당월 양수 재고조정 (+)
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ?), 0) as adj_plus,
       -- 당월 음수 재고조정 (-)
@@ -711,16 +711,16 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
         m.current_stock,
         m.expiry_days,
         COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
-        -- 월초재고 계산용: 기간 이전 입고 합계
-        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ?), 0) as before_inbound,
+        -- 월초재고 계산용: 기간 이전 입고 합계 (재고조정 LOT 제외)
+        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
         -- 월초재고 계산용: 기간 이전 사용 합계
         COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
         -- 월초재고 계산용: 기간 이전 출고 합계
         COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
         -- 월초재고 계산용: 기간 이전 재고조정 합계
         COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
-        -- 기간 내 입고량
-        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ?), 0) as period_inbound,
+        -- 기간 내 입고량 (재고조정 LOT 제외)
+        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as period_inbound,
         -- 기간 내 사용량
         COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
         -- 기간 내 출고량
@@ -1381,16 +1381,16 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND ${sampleCondition}), 0) as lot_remain_total,
       (SELECT MIN(i.expiry_date) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0 AND ${sampleCondition}) as nearest_expiry,
       ${storageSelect}
-      -- 월초재고: 조회 시작일 이전까지의 입고 합계
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND ${sampleCondition}), 0) as before_inbound,
+      -- 월초재고: 조회 시작일 이전까지의 입고 합계 (재고조정 LOT 제외)
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%' AND ${sampleCondition}), 0) as before_inbound,
       -- 월초재고: 조회 시작일 이전까지의 사용량 합계
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_usage,
       -- 월초재고: 조회 시작일 이전까지의 출고량 합계
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_outbound,
       -- 월초재고: 조회 시작일 이전까지의 재고조정 합계 (양수/음수 모두)
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_adjustment,
-      -- 기간 내 입고량
-      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND ${sampleCondition}), 0) as period_inbound_raw,
+      -- 기간 내 입고량 (재고조정 LOT 제외)
+      COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND i.lot_number NOT LIKE 'ADJ-%' AND ${sampleCondition}), 0) as period_inbound_raw,
       -- 기간 내 양수 재고조정
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_adj_plus,
       -- 기간 내 사용량

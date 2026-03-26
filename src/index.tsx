@@ -56,7 +56,7 @@ app.route('/api/cost', costRoutes);
 // 시스템 버전
 const SYSTEM_VERSION = '1.6.0';
 const SYSTEM_BUILD_DATE = '2026-02-02';
-const CACHE_BUST = '1774518792';
+const CACHE_BUST = '1774518924';
 
 // Health check
 app.get('/api/health', (c) => {

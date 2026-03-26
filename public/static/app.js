@@ -2,73 +2,25 @@
 // Version: 1.6.3 Build: 20260326
 const APP_VERSION = '1.6.3';
 const APP_BUILD = '20260326';
-const CACHE_BUST = '1774518792';
+const CACHE_BUST = '1774518924';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
 
-// ========== 자동 버전 체크 및 새로고침 ==========
-// 5분마다 서버 버전 확인하여 업데이트가 있으면 알림
-(function() {
-  const CHECK_INTERVAL = 5 * 60 * 1000; // 5분
-  
-  async function checkVersion() {
-    try {
-      // 캐시 무시하고 index.html 다시 가져오기
-      const response = await fetch('/?_t=' + Date.now(), { cache: 'no-store' });
-      const html = await response.text();
-      
-      // HTML에서 버전 추출 (app.js?v=XXXXXX)
-      const match = html.match(/app\.js\?v=(\d+)/);
-      if (match && match[1] !== CACHE_BUST) {
-        // 새 버전 발견
-        console.log('새 버전 발견:', match[1], '현재:', CACHE_BUST);
-        showUpdateNotification();
-      }
-    } catch (e) {
-      // 무시 (오프라인 등)
+// ========== 버전 체크 (페이지 로드 시 1회만) ==========
+async function checkVersionOnLoad() {
+  try {
+    const response = await fetch('/?_t=' + Date.now(), { cache: 'no-store' });
+    const html = await response.text();
+    const match = html.match(/app\.js\?v=(\d+)/);
+    if (match && match[1] !== CACHE_BUST) {
+      console.log('새 버전 발견 - 자동 새로고침');
+      location.reload(true);
     }
-  }
-  
-  function showUpdateNotification() {
-    // 이미 알림이 있으면 무시
-    if (document.getElementById('update-notification')) return;
-    
-    const notification = document.createElement('div');
-    notification.id = 'update-notification';
-    notification.innerHTML = `
-      <div style="position:fixed; bottom:20px; right:20px; z-index:10000; 
-                  background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                  color:white; padding:16px 24px; border-radius:12px; 
-                  box-shadow:0 10px 40px rgba(0,0,0,0.3); max-width:320px;">
-        <div style="display:flex; align-items:center; gap:12px;">
-          <i class="fas fa-sync-alt" style="font-size:24px;"></i>
-          <div>
-            <p style="font-weight:bold; margin-bottom:4px;">새 버전이 있습니다!</p>
-            <p style="font-size:13px; opacity:0.9;">페이지를 새로고침하여 최신 기능을 사용하세요.</p>
-          </div>
-        </div>
-        <div style="display:flex; gap:8px; margin-top:12px;">
-          <button onclick="location.reload(true)" 
-                  style="flex:1; background:white; color:#667eea; border:none; 
-                         padding:8px 16px; border-radius:6px; font-weight:bold; cursor:pointer;">
-            지금 새로고침
-          </button>
-          <button onclick="this.parentElement.parentElement.parentElement.remove()" 
-                  style="background:rgba(255,255,255,0.2); color:white; border:none; 
-                         padding:8px 12px; border-radius:6px; cursor:pointer;">
-            나중에
-          </button>
-        </div>
-      </div>
-    `;
-    document.body.appendChild(notification);
-  }
-  
-  // 첫 체크는 1분 후, 이후 5분마다
-  setTimeout(checkVersion, 60 * 1000);
-  setInterval(checkVersion, CHECK_INTERVAL);
-})();
+  } catch (e) { /* 무시 */ }
+}
+// 페이지 로드 시 1회 체크
+checkVersionOnLoad();
 
 // State Management
 const state = {

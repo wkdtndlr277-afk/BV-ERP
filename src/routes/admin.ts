@@ -499,6 +499,127 @@ admin.post('/recalculate-stock', async (c) => {
   }
 })
 
+// 수불부 데이터 동기화 - LOT 기반으로 transactions 재계산
+// LOT 잔량이 정확하다고 가정하고, 계산 잔량과 차이를 재고조정으로 보정
+admin.post('/sync-stock-ledger', async (c) => {
+  const { env } = c
+  const { reason, item_codes } = await c.req.json()
+  
+  try {
+    // 동기화 대상 품목 조회
+    let items: any[] = []
+    if (item_codes && item_codes.length > 0) {
+      // 특정 품목만
+      const placeholders = item_codes.map(() => '?').join(',')
+      const result = await env.DB.prepare(
+        `SELECT item_code, item_name, category, current_stock FROM master WHERE item_code IN (${placeholders})`
+      ).bind(...item_codes).all()
+      items = result.results as any[]
+    } else {
+      // 전체 원료/부자재
+      const result = await env.DB.prepare(
+        "SELECT item_code, item_name, category, current_stock FROM master WHERE category IN ('원료', '부자재')"
+      ).all()
+      items = result.results as any[]
+    }
+    
+    const adjustments: any[] = []
+    const errors: string[] = []
+    
+    for (const item of items) {
+      try {
+        // 1. LOT 기준 데이터
+        const lotData = await env.DB.prepare(`
+          SELECT 
+            COALESCE(SUM(origin_qty), 0) as total_inbound,
+            COALESCE(SUM(remain_qty), 0) as total_remain
+          FROM inbound
+          WHERE item_code = ? AND quality_status = '합격'
+        `).bind(item.item_code).first() as any
+        
+        // LOT 기반 실제 사용량 = 입고 합계 - 잔량 합계
+        const lotBasedUsage = (lotData?.total_inbound || 0) - (lotData?.total_remain || 0)
+        
+        // 2. Transactions 기준 데이터
+        const transData = await env.DB.prepare(`
+          SELECT
+            COALESCE(SUM(CASE WHEN trans_type = '입고' THEN quantity ELSE 0 END), 0) as trans_inbound,
+            COALESCE(SUM(CASE WHEN trans_type = '사용' THEN ABS(quantity) ELSE 0 END), 0) as trans_usage,
+            COALESCE(SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END), 0) as trans_outbound,
+            COALESCE(SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END), 0) as trans_adjustment
+          FROM transactions
+          WHERE item_code = ?
+        `).bind(item.item_code).first() as any
+        
+        // 현재 transactions 기반 계산 잔량
+        const transBasedRemain = (transData?.trans_inbound || 0) 
+          - (transData?.trans_usage || 0) 
+          - (transData?.trans_outbound || 0) 
+          + (transData?.trans_adjustment || 0)
+        
+        // 3. 차이 계산
+        const lotRemain = lotData?.total_remain || 0
+        const diff = lotRemain - transBasedRemain  // 양수: LOT이 더 많음 (재고조정 +), 음수: transactions이 더 많음 (재고조정 -)
+        
+        // 차이가 0.01 이상인 경우만 조정
+        if (Math.abs(diff) > 0.01) {
+          // 재고조정 트랜잭션 추가
+          await env.DB.prepare(`
+            INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+            VALUES (date('now'), ?, '재고조정', ?, ?)
+          `).bind(item.item_code, diff, `[수불부 동기화] ${reason || ''} - LOT잔량: ${lotRemain.toFixed(2)}, 계산잔량: ${transBasedRemain.toFixed(2)}`).run()
+          
+          // 마스터 재고도 LOT 잔량으로 업데이트
+          if (item.current_stock !== lotRemain) {
+            await env.DB.prepare(`
+              UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE item_code = ?
+            `).bind(lotRemain, item.item_code).run()
+          }
+          
+          adjustments.push({
+            item_code: item.item_code,
+            item_name: item.item_name,
+            lot_inbound: lotData?.total_inbound || 0,
+            lot_remain: lotRemain,
+            lot_usage: lotBasedUsage,
+            trans_usage: transData?.trans_usage || 0,
+            trans_based_remain: transBasedRemain,
+            adjustment: diff,
+            master_before: item.current_stock,
+            master_after: lotRemain
+          })
+        }
+      } catch (itemError: any) {
+        errors.push(`${item.item_code}: ${itemError.message}`)
+      }
+    }
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, before_data, after_data, reason)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(
+      '수불부동기화', 
+      'transactions', 
+      JSON.stringify({ items_count: items.length }), 
+      JSON.stringify({ adjusted: adjustments.length, errors: errors.length, details: adjustments.slice(0, 10) }), 
+      reason || '수불부 LOT 동기화'
+    ).run()
+    
+    return c.json({
+      success: true,
+      message: `${adjustments.length}개 품목의 수불부가 동기화되었습니다`,
+      total_items: items.length,
+      adjusted: adjustments.length,
+      details: adjustments,
+      errors: errors.length > 0 ? errors : undefined
+    })
+  } catch (error: any) {
+    return c.json({ success: false, message: '수불부 동기화 실패: ' + error.message }, 500)
+  }
+})
+
 // ========== 로그 조회 ==========
 
 // 관리자 로그 조회

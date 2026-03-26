@@ -24630,6 +24630,9 @@ async function renderStockLedger() {
               <button onclick="recalculateStock()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
                 <i class="fas fa-sync-alt mr-2"></i>재고 재계산
               </button>
+              <button onclick="syncStockLedger()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700">
+                <i class="fas fa-balance-scale mr-2"></i>수불부 동기화
+              </button>
             </div>
           </div>
           
@@ -25072,6 +25075,92 @@ async function recalculateStock() {
     showToast('재계산 실패: ' + err.message, 'error');
   }
 }
+
+// 수불부 동기화 (LOT 기반)
+async function syncStockLedger() {
+  if (!confirm('수불부를 LOT 잔량 기준으로 동기화하시겠습니까?\n\n이 작업은:\n1. LOT 잔량과 계산 잔량의 차이를 파악합니다\n2. 차이가 있는 품목에 재고조정 트랜잭션을 생성합니다\n3. 마스터 재고를 LOT 잔량으로 업데이트합니다\n\n⚠️ 관리자 권한이 필요합니다.')) {
+    return;
+  }
+  
+  try {
+    showToast('수불부 동기화 중...', 'info');
+    
+    const result = await api('/admin/sync-stock-ledger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: '사용자 요청 수불부 동기화' })
+    });
+    
+    if (result.success) {
+      showToast(`${result.adjusted}개 품목의 수불부가 동기화되었습니다.`, 'success');
+      
+      // 결과 표시
+      const tableContainer = document.getElementById('adj-preview-table');
+      if (result.details && result.details.length > 0) {
+        tableContainer.innerHTML = `
+          <div class="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+            <h4 class="font-bold text-purple-800 mb-2">
+              <i class="fas fa-balance-scale mr-2"></i>수불부 동기화 완료
+            </h4>
+            <p class="text-sm text-purple-700">
+              총 ${result.total_items}개 품목 확인, ${result.adjusted}개 품목 조정됨
+            </p>
+            ${result.errors ? `<p class="text-sm text-red-600 mt-1">오류: ${result.errors.length}건</p>` : ''}
+          </div>
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-2 py-2 text-left">품목코드</th>
+                <th class="px-2 py-2 text-left">품목명</th>
+                <th class="px-2 py-2 text-right">LOT잔량</th>
+                <th class="px-2 py-2 text-right">계산잔량</th>
+                <th class="px-2 py-2 text-right text-purple-600">조정량</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${result.details.slice(0, 50).map(r => `
+                <tr class="border-b hover:bg-purple-50">
+                  <td class="px-2 py-2 text-gray-600">${r.item_code}</td>
+                  <td class="px-2 py-2 font-medium">${r.item_name}</td>
+                  <td class="px-2 py-2 text-right text-teal-600 font-bold">${formatNumber(r.lot_remain)}</td>
+                  <td class="px-2 py-2 text-right text-gray-500">${formatNumber(r.trans_based_remain)}</td>
+                  <td class="px-2 py-2 text-right font-bold ${r.adjustment > 0 ? 'text-blue-600' : 'text-red-600'}">
+                    ${r.adjustment > 0 ? '+' : ''}${formatNumber(r.adjustment)}
+                  </td>
+                </tr>
+              `).join('')}
+              ${result.details.length > 50 ? `
+                <tr class="bg-gray-50">
+                  <td colspan="5" class="px-2 py-2 text-center text-gray-500">
+                    ... 외 ${result.details.length - 50}건 더 있음
+                  </td>
+                </tr>
+              ` : ''}
+            </tbody>
+          </table>
+        `;
+      } else {
+        tableContainer.innerHTML = `
+          <div class="p-4 bg-green-50 border border-green-200 rounded-lg">
+            <p class="text-green-800">
+              <i class="fas fa-check-circle mr-2"></i>
+              모든 품목의 수불부가 정상입니다. 조정할 항목이 없습니다.
+            </p>
+          </div>
+        `;
+      }
+      
+      // 수불부 새로고침
+      loadStockLedger();
+    } else {
+      showToast('동기화 실패: ' + result.message, 'error');
+    }
+    
+  } catch (err) {
+    showToast('동기화 실패: ' + err.message, 'error');
+  }
+}
+window.syncStockLedger = syncStockLedger;
 
 // ========== 재고조정 관리 기능 끝 ==========
 

@@ -2248,8 +2248,8 @@ async function renderInbound() {
           
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 <span class="text-red-500">*</span></label>
-              <input type="text" id="inbound-expiry" class="w-full border rounded-lg px-4 py-2" placeholder="YYYY-MM-DD" maxlength="10" required>
+              <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 <span id="expiry-required-mark" class="text-red-500">*</span></label>
+              <input type="text" id="inbound-expiry" class="w-full border rounded-lg px-4 py-2" placeholder="YYYY-MM-DD" maxlength="10">
             </div>
             
             <div>
@@ -2309,12 +2309,17 @@ async function renderInbound() {
   const searchInput = document.getElementById('inbound-item-search');
   const searchResults = document.getElementById('inbound-search-results');
   
-  // 카테고리 선택 시 검색창 초기화
+  // 카테고리 선택 시 검색창 초기화 및 소비기한 필수 표시 업데이트
   document.querySelectorAll('input[name="inbound-category"]').forEach(radio => {
     radio.addEventListener('change', function() {
       searchInput.value = '';
       searchResults.classList.add('hidden');
       clearSelectedItem();
+      // 부자재 선택 시 소비기한 필수 표시 숨김
+      const expiryMark = document.getElementById('expiry-required-mark');
+      if (expiryMark) {
+        expiryMark.style.display = this.value === '부자재' ? 'none' : 'inline';
+      }
     });
   });
   
@@ -2430,8 +2435,18 @@ async function renderInbound() {
       showToast('입고일 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
       return;
     }
-    // 부자재가 아닌 경우에만 소비기한 필수 검증
-    if (selectedCategory !== '부자재' && expiryDate && !dateRegex.test(expiryDate)) {
+    // 원료는 소비기한 필수, 부자재는 선택
+    if (selectedCategory !== '부자재') {
+      if (!expiryDate) {
+        showToast('원료는 소비기한을 입력해야 합니다.', 'warning');
+        return;
+      }
+      if (!dateRegex.test(expiryDate)) {
+        showToast('소비기한 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
+        return;
+      }
+    } else if (expiryDate && !dateRegex.test(expiryDate)) {
+      // 부자재도 소비기한을 입력했다면 형식 검증
       showToast('소비기한 형식이 올바르지 않습니다. (YYYY-MM-DD)', 'warning');
       return;
     }

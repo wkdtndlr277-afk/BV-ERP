@@ -5070,6 +5070,7 @@ async function renderInventory() {
           </div>
           <button onclick="filterInventory('')" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 inventory-filter active" data-category="">전체</button>
           <button onclick="filterInventory('원료')" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 inventory-filter" data-category="원료">원료</button>
+          <button onclick="filterInventory('부자재')" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 inventory-filter" data-category="부자재">부자재</button>
           <button onclick="filterInventory('제품')" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 inventory-filter" data-category="제품">제품</button>
         </div>
       </div>
@@ -5726,13 +5727,16 @@ async function renderDailyReport() {
       
       <!-- 구분 탭 + 검색 조건 -->
       <div class="bg-white rounded-xl shadow">
-        <!-- 원료/제품 탭 -->
+        <!-- 원료/부자재/제품 탭 -->
         <div class="flex border-b">
           <button onclick="switchDailyTab('전체')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-haccp-primary text-haccp-primary bg-blue-50" data-tab="전체">
             <i class="fas fa-th-list mr-1"></i> 전체
           </button>
           <button onclick="switchDailyTab('원료')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="원료">
             <i class="fas fa-seedling mr-1"></i> 원료
+          </button>
+          <button onclick="switchDailyTab('부자재')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="부자재">
+            <i class="fas fa-boxes mr-1"></i> 부자재
           </button>
           <button onclick="switchDailyTab('제품')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="제품">
             <i class="fas fa-box mr-1"></i> 제품
@@ -6535,13 +6539,16 @@ async function renderMonthlyReport() {
       
       <!-- 구분 탭 + 검색 조건 -->
       <div class="bg-white rounded-xl shadow">
-        <!-- 원료/제품 탭 -->
+        <!-- 원료/부자재/제품 탭 -->
         <div class="flex border-b">
           <button onclick="switchMonthlyTab('전체')" class="monthly-tab flex-1 py-3 text-center font-medium border-b-2 border-haccp-primary text-haccp-primary bg-blue-50" data-tab="전체">
             <i class="fas fa-th-list mr-1"></i> 전체
           </button>
           <button onclick="switchMonthlyTab('원료')" class="monthly-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="원료">
             <i class="fas fa-seedling mr-1"></i> 원료
+          </button>
+          <button onclick="switchMonthlyTab('부자재')" class="monthly-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="부자재">
+            <i class="fas fa-boxes mr-1"></i> 부자재
           </button>
           <button onclick="switchMonthlyTab('제품')" class="monthly-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="제품">
             <i class="fas fa-box mr-1"></i> 제품

@@ -609,11 +609,7 @@ app.get('/*', (c) => {
                     <span>재고 현황</span>
                 </a>
                 
-                <a href="#supplies-inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="supplies-inventory">
-                    <i class="fas fa-box w-5"></i>
-                    <span>부자재 재고</span>
-                </a>
-                
+
                 <a href="#sample-inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="sample-inventory">
                     <i class="fas fa-flask w-5"></i>
                     <span>샘플 재고</span>

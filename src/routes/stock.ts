@@ -4,25 +4,53 @@ import type { Bindings, StockAdjustmentRequest } from '../types';
 
 const stockRoutes = new Hono<{ Bindings: Bindings }>();
 
-// 현재 재고 현황
+// 현재 재고 현황 (원료, 제품, 부자재 통합)
 stockRoutes.get('/current', async (c) => {
   const category = c.req.query('category');
   
-  let query = `
-    SELECT m.*,
-           CASE WHEN m.current_stock < m.safety_stock THEN 1 ELSE 0 END as is_low_stock
+  // master 테이블 (원료, 제품)
+  let masterQuery = `
+    SELECT m.item_code, m.item_name, m.category, m.unit, m.current_stock, m.safety_stock,
+           CASE WHEN m.current_stock < m.safety_stock THEN 1 ELSE 0 END as is_low_stock,
+           m.expiry_days, m.created_at, m.updated_at
     FROM master m
   `;
+  
+  // supplies 테이블 (부자재)
+  let suppliesQuery = `
+    SELECT s.item_code, s.item_name, '부자재' as category, s.unit, s.current_stock, 0 as safety_stock,
+           0 as is_low_stock,
+           NULL as expiry_days, s.created_at, s.updated_at
+    FROM supplies s
+  `;
+  
   const params: any[] = [];
   
-  if (category) {
-    query += ' WHERE m.category = ?';
-    params.push(category);
+  if (category && category !== '전체') {
+    if (category === '부자재') {
+      // 부자재만
+      suppliesQuery += " WHERE 1=1";
+      const result = await c.env.DB.prepare(suppliesQuery).all();
+      return c.json({ success: true, data: result.results });
+    } else {
+      // 원료 또는 제품만
+      masterQuery += ' WHERE m.category = ?';
+      params.push(category);
+      masterQuery += ' ORDER BY m.category, m.item_name';
+      const result = await c.env.DB.prepare(masterQuery).bind(...params).all();
+      return c.json({ success: true, data: result.results });
+    }
   }
   
-  query += ' ORDER BY m.category, m.item_name';
+  // 전체 조회 - UNION ALL
+  const unionQuery = `
+    ${masterQuery}
+    UNION ALL
+    ${suppliesQuery}
+    ORDER BY category, item_name
+  `;
   
-  const result = await c.env.DB.prepare(query).bind(...params).all();
+  const result = await c.env.DB.prepare(unionQuery).all();
   return c.json({ success: true, data: result.results });
 });
 

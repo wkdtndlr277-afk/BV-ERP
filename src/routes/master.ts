@@ -156,40 +156,134 @@ masterRoutes.post('/', async (c) => {
   }
 });
 
-// 품목 수정
+// 품목 수정 (카테고리 변경 시 테이블 간 이동 지원)
 masterRoutes.put('/:item_code', async (c) => {
   const item_code = c.req.param('item_code');
   const body = await c.req.json<Partial<Master>>();
-  const { item_name, unit, safety_stock, expiry_days } = body;
+  const { item_name, category, unit, safety_stock, expiry_days } = body;
   
-  // 먼저 master 테이블에서 시도
-  const result = await c.env.DB.prepare(`
-    UPDATE master 
-    SET item_name = COALESCE(?, item_name),
-        unit = COALESCE(?, unit),
-        safety_stock = COALESCE(?, safety_stock),
-        expiry_days = COALESCE(?, expiry_days),
-        updated_at = CURRENT_TIMESTAMP
-    WHERE item_code = ?
-  `).bind(item_name, unit, safety_stock, expiry_days, item_code).run();
-  
-  if (result.meta.changes === 0) {
-    // master에 없으면 supplies 테이블에서 시도
-    const suppliesResult = await c.env.DB.prepare(`
-      UPDATE supplies 
-      SET item_name = COALESCE(?, item_name),
-          unit = COALESCE(?, unit),
-          safety_stock = COALESCE(?, safety_stock),
-          expiry_days = COALESCE(?, expiry_days),
-          updated_at = CURRENT_TIMESTAMP
-      WHERE item_code = ?
-    `).bind(item_name, unit, safety_stock, expiry_days, item_code).run();
+  try {
+    // 현재 품목 위치 확인
+    const masterItem = await c.env.DB.prepare(
+      'SELECT * FROM master WHERE item_code = ?'
+    ).bind(item_code).first<Master>();
     
-    if (suppliesResult.meta.changes === 0) {
+    let suppliesItem = null;
+    try {
+      suppliesItem = await c.env.DB.prepare(
+        'SELECT * FROM supplies WHERE item_code = ?'
+      ).bind(item_code).first<Master>();
+    } catch (e) {
+      // supplies 테이블이 없을 수 있음
+    }
+    
+    if (!masterItem && !suppliesItem) {
       return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
     }
+    
+    const currentItem = masterItem || suppliesItem;
+    const isCurrentlyInMaster = !!masterItem;
+    const currentCategory = currentItem?.category || (isCurrentlyInMaster ? '원료' : '부자재');
+    const newCategory = category || currentCategory;
+    const shouldBeInSupplies = newCategory === '부자재';
+    
+    // 카테고리 변경으로 테이블 이동이 필요한 경우
+    if (isCurrentlyInMaster && shouldBeInSupplies) {
+      // master → supplies 이동
+      // supplies 테이블 존재 확인 및 생성
+      const suppliesExists = await c.env.DB.prepare(`
+        SELECT name FROM sqlite_master WHERE type='table' AND name='supplies'
+      `).first();
+      
+      if (!suppliesExists) {
+        await c.env.DB.prepare(`
+          CREATE TABLE supplies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_code TEXT UNIQUE NOT NULL,
+            item_name TEXT NOT NULL,
+            category TEXT NOT NULL DEFAULT '부자재',
+            unit TEXT DEFAULT 'ea',
+            current_stock REAL DEFAULT 0,
+            safety_stock REAL DEFAULT 0,
+            expiry_days INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `).run();
+        await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_supplies_item_code ON supplies(item_code)`).run();
+      }
+      
+      // supplies에 삽입
+      await c.env.DB.prepare(`
+        INSERT INTO supplies (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, created_at)
+        VALUES (?, ?, '부자재', ?, ?, ?, ?, ?)
+      `).bind(
+        item_code,
+        item_name || currentItem!.item_name,
+        unit || currentItem!.unit || 'ea',
+        currentItem!.current_stock || 0,
+        safety_stock ?? currentItem!.safety_stock ?? 0,
+        expiry_days ?? currentItem!.expiry_days,
+        currentItem!.created_at
+      ).run();
+      
+      // master에서 삭제
+      await c.env.DB.prepare('DELETE FROM master WHERE item_code = ?').bind(item_code).run();
+      
+      return c.json({ success: true, message: '품목이 부자재로 변경되었습니다.' });
+      
+    } else if (!isCurrentlyInMaster && !shouldBeInSupplies) {
+      // supplies → master 이동
+      await c.env.DB.prepare(`
+        INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        item_code,
+        item_name || currentItem!.item_name,
+        newCategory,
+        unit || currentItem!.unit || 'kg',
+        currentItem!.current_stock || 0,
+        safety_stock ?? currentItem!.safety_stock ?? 0,
+        expiry_days ?? currentItem!.expiry_days ?? 365,
+        currentItem!.created_at
+      ).run();
+      
+      // supplies에서 삭제
+      await c.env.DB.prepare('DELETE FROM supplies WHERE item_code = ?').bind(item_code).run();
+      
+      return c.json({ success: true, message: `품목이 ${newCategory}(으)로 변경되었습니다.` });
+      
+    } else {
+      // 같은 테이블 내 업데이트
+      if (isCurrentlyInMaster) {
+        await c.env.DB.prepare(`
+          UPDATE master 
+          SET item_name = COALESCE(?, item_name),
+              category = COALESCE(?, category),
+              unit = COALESCE(?, unit),
+              safety_stock = COALESCE(?, safety_stock),
+              expiry_days = COALESCE(?, expiry_days),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE item_code = ?
+        `).bind(item_name, category, unit, safety_stock, expiry_days, item_code).run();
+      } else {
+        await c.env.DB.prepare(`
+          UPDATE supplies 
+          SET item_name = COALESCE(?, item_name),
+              unit = COALESCE(?, unit),
+              safety_stock = COALESCE(?, safety_stock),
+              expiry_days = COALESCE(?, expiry_days),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE item_code = ?
+        `).bind(item_name, unit, safety_stock, expiry_days, item_code).run();
+      }
+      
+      return c.json({ success: true, message: '품목이 수정되었습니다.' });
+    }
+  } catch (error: any) {
+    console.error('Master update error:', error);
+    return c.json({ success: false, error: `수정 실패: ${error.message}` }, 500);
   }
-  return c.json({ success: true, message: '품목이 수정되었습니다.' });
 });
 
 // 품목 삭제 (관련 데이터 연동 삭제)

@@ -54,7 +54,7 @@ app.route('/api/frozen-stock', frozenStockRoutes);
 app.route('/api/cost', costRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '1.7.0';
+const SYSTEM_VERSION = '1.7.2';
 const SYSTEM_BUILD_DATE = '2026-03-27';
 
 // Health check
@@ -738,7 +738,7 @@ app.get('/*', (c) => {
     <!-- Modal Container -->
     <div id="modal-container"></div>
     
-    <script src="/static/app.js?v=${SYSTEM_VERSION}"></script>
+    <script src="/static/app.js?v=${SYSTEM_VERSION}&t=${Date.now()}"></script>
 </body>
 </html>
   `);

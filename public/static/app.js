@@ -2,25 +2,9 @@
 // Version: 1.6.3 Build: 20260326
 const APP_VERSION = '1.6.3';
 const APP_BUILD = '20260326';
-const CACHE_BUST = '1774567597';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
-
-// ========== 버전 체크 (페이지 로드 시 1회만) ==========
-async function checkVersionOnLoad() {
-  try {
-    const response = await fetch('/?_t=' + Date.now(), { cache: 'no-store' });
-    const html = await response.text();
-    const match = html.match(/app\.js\?v=(\d+)/);
-    if (match && match[1] !== CACHE_BUST) {
-      console.log('새 버전 발견 - 자동 새로고침');
-      location.reload(true);
-    }
-  } catch (e) { /* 무시 */ }
-}
-// 페이지 로드 시 1회 체크
-checkVersionOnLoad();
 
 // State Management
 const state = {

@@ -54,9 +54,8 @@ app.route('/api/frozen-stock', frozenStockRoutes);
 app.route('/api/cost', costRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '1.6.0';
-const SYSTEM_BUILD_DATE = '2026-02-02';
-const CACHE_BUST = '1774518924';
+const SYSTEM_VERSION = '1.6.4';
+const SYSTEM_BUILD_DATE = '2026-03-27';
 
 // Health check
 app.get('/api/health', (c) => {
@@ -743,7 +742,7 @@ app.get('/*', (c) => {
     <!-- Modal Container -->
     <div id="modal-container"></div>
     
-    <script src="/static/app.js?v=${CACHE_BUST}"></script>
+    <script src="/static/app.js?v=${SYSTEM_VERSION}"></script>
 </body>
 </html>
   `);

@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.6.3 Build: 20260326
-const APP_VERSION = '1.6.8';
+const APP_VERSION = '1.6.9';
 const APP_BUILD = '20260326';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -1928,20 +1928,16 @@ async function printSubMaterialInspection(inboundData) {
             <col class="col-g">
           </colgroup>
           
-          <!-- 행 1~3: 제목 + 결재란 - 원료입고검사일지와 동일 -->
-          <tr style="height: 32px;">
-            <td class="col-a" rowspan="3" style="border:none;"></td>
-            <td colspan="4" rowspan="3" class="title-cell">${settings.title}</td>
-            <td class="approval-header">검수담당자</td>
-            <td class="approval-header">승인</td>
+          <!-- 행 1~2: 제목 + 결재란 -->
+          <tr style="height: 24px;">
+            <td class="col-a" rowspan="2" style="border:none;"></td>
+            <td colspan="4" rowspan="2" class="title-cell">${settings.title}</td>
+            <td class="approval-header" style="width: 50px;">검수담당자</td>
+            <td class="approval-header" style="width: 50px;">승인</td>
           </tr>
-          <tr style="height: 68px;">
+          <tr style="height: 40px;">
             <td class="approval-cell"></td>
             <td class="approval-cell"></td>
-          </tr>
-          <tr style="height: 14px;">
-            <td style="border:none;"></td>
-            <td style="border:none;"></td>
           </tr>
           
           <!-- 행 4: 부자재명, LOT No, 납품처 - 원료입고검사일지와 동일 레이아웃 -->
@@ -2033,19 +2029,18 @@ async function printSubMaterialInspection(inboundData) {
             <td class="insp-result">□적합 □부적합</td>
           </tr>
           
-          <!-- 종합판정 - 원료입고검사일지와 동일 레이아웃 -->
+          <!-- 종합판정 -->
           <tr style="height: 28px;">
             <td style="border:none;"></td>
             <td class="judge-header">종합판정</td>
             <td colspan="2" class="judge-header">판정일자</td>
-            <td colspan="2" class="judge-header">판정자</td>
-            <td rowspan="2" class="judge-cell" style="font-size: 12px;">□합격<br>□불합격</td>
+            <td colspan="3" class="judge-header">판정자</td>
           </tr>
           <tr style="height: 35px;">
             <td style="border:none;"></td>
             <td class="judge-cell">${inboundData.quality_status === '합격' ? '합격' : (inboundData.quality_status || '')}</td>
             <td colspan="2" class="judge-cell">${inboundDate}</td>
-            <td colspan="2" class="judge-cell"></td>
+            <td colspan="3" class="judge-cell"></td>
           </tr>
           
           <!-- 이탈시 조치사항 - 원료입고검사일지와 동일 -->

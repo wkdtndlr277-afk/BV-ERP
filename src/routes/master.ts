@@ -44,9 +44,9 @@ masterRoutes.get('/', async (c) => {
       // 전체 조회 - master + supplies UNION
       if (suppliesExists) {
         const result = await c.env.DB.prepare(`
-          SELECT * FROM master 
+          SELECT id, item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, created_at, updated_at FROM master 
           UNION ALL 
-          SELECT * FROM supplies 
+          SELECT id, item_code, item_name, category, unit, current_stock, COALESCE(safety_stock, 0) as safety_stock, expiry_days, created_at, updated_at FROM supplies 
           ORDER BY category, item_code
         `).all<Master>();
         return c.json({ success: true, data: result.results });
@@ -162,6 +162,7 @@ masterRoutes.put('/:item_code', async (c) => {
   const body = await c.req.json<Partial<Master>>();
   const { item_name, unit, safety_stock, expiry_days } = body;
   
+  // 먼저 master 테이블에서 시도
   const result = await c.env.DB.prepare(`
     UPDATE master 
     SET item_name = COALESCE(?, item_name),
@@ -173,7 +174,20 @@ masterRoutes.put('/:item_code', async (c) => {
   `).bind(item_name, unit, safety_stock, expiry_days, item_code).run();
   
   if (result.meta.changes === 0) {
-    return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
+    // master에 없으면 supplies 테이블에서 시도
+    const suppliesResult = await c.env.DB.prepare(`
+      UPDATE supplies 
+      SET item_name = COALESCE(?, item_name),
+          unit = COALESCE(?, unit),
+          safety_stock = COALESCE(?, safety_stock),
+          expiry_days = COALESCE(?, expiry_days),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE item_code = ?
+    `).bind(item_name, unit, safety_stock, expiry_days, item_code).run();
+    
+    if (suppliesResult.meta.changes === 0) {
+      return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
+    }
   }
   return c.json({ success: true, message: '품목이 수정되었습니다.' });
 });
@@ -183,10 +197,18 @@ masterRoutes.delete('/:item_code', async (c) => {
   const item_code = c.req.param('item_code');
   const force = c.req.query('force') === 'true'; // 강제 삭제 옵션
   
-  // 해당 품목 확인
-  const item = await c.env.DB.prepare(
-    'SELECT * FROM master WHERE item_code = ?'
+  // 해당 품목 확인 (master 또는 supplies)
+  let item = await c.env.DB.prepare(
+    'SELECT *, "master" as source FROM master WHERE item_code = ?'
   ).bind(item_code).first<any>();
+  
+  let isSupplies = false;
+  if (!item) {
+    item = await c.env.DB.prepare(
+      'SELECT *, "supplies" as source FROM supplies WHERE item_code = ?'
+    ).bind(item_code).first<any>();
+    isSupplies = true;
+  }
   
   if (!item) {
     return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
@@ -236,8 +258,12 @@ masterRoutes.delete('/:item_code', async (c) => {
     await c.env.DB.prepare('DELETE FROM production WHERE product_code = ?').bind(item_code).run();
   }
   
-  // 마스터 삭제
-  await c.env.DB.prepare('DELETE FROM master WHERE item_code = ?').bind(item_code).run();
+  // 마스터 또는 부자재 삭제
+  if (isSupplies) {
+    await c.env.DB.prepare('DELETE FROM supplies WHERE item_code = ?').bind(item_code).run();
+  } else {
+    await c.env.DB.prepare('DELETE FROM master WHERE item_code = ?').bind(item_code).run();
+  }
   
   return c.json({ 
     success: true, 

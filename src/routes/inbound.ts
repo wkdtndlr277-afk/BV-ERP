@@ -48,8 +48,14 @@ inboundRoutes.get('/query', async (c) => {
   }
   
   if (category && category !== '전체') {
-    dateFilter += ' AND m.category = ?';
-    params.push(category);
+    if (category === '부자재') {
+      // 부자재: master에 없고 supplies에 있는 품목
+      dateFilter += ' AND m.item_code IS NULL AND s.item_code IS NOT NULL';
+    } else {
+      // 원료/제품: master 테이블에서 카테고리 필터
+      dateFilter += ' AND m.category = ?';
+      params.push(category);
+    }
   }
   
   // 샘플 필터 - is_sample 컬럼 존재 여부 먼저 확인

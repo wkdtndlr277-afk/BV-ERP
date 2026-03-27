@@ -54,7 +54,7 @@ app.route('/api/frozen-stock', frozenStockRoutes);
 app.route('/api/cost', costRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '1.6.6';
+const SYSTEM_VERSION = '1.6.7';
 const SYSTEM_BUILD_DATE = '2026-03-27';
 
 // Health check

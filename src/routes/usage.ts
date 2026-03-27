@@ -5,15 +5,25 @@ import type { Bindings } from '../types';
 
 const usageRoutes = new Hono<{ Bindings: Bindings }>();
 
-// 사용 가능한 원료 목록 조회 (잔량 있는 것만)
+// 사용 가능한 원료/부자재 목록 조회 (잔량 있는 것만)
 usageRoutes.get('/available', async (c) => {
   const result = await c.env.DB.prepare(`
-    SELECT m.item_code, m.item_name, m.category, m.unit, m.current_stock, m.safety_stock,
-           COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0), 0) as available_qty
-    FROM master m
-    WHERE m.category IN ('원료', '부자재')
-      AND m.current_stock > 0
-    ORDER BY m.category, m.item_name
+    SELECT * FROM (
+      -- 원료 (master 테이블)
+      SELECT m.item_code, m.item_name, m.category, m.unit, m.current_stock, m.safety_stock,
+             COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.remain_qty > 0), 0) as available_qty
+      FROM master m
+      WHERE m.category = '원료' AND m.current_stock > 0
+      
+      UNION ALL
+      
+      -- 부자재 (supplies 테이블)
+      SELECT s.item_code, s.item_name, '부자재' as category, s.unit, s.current_stock, 0 as safety_stock,
+             COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격' AND i.remain_qty > 0), 0) as available_qty
+      FROM supplies s
+      WHERE s.current_stock > 0
+    ) combined
+    ORDER BY category, item_name
   `).all();
   
   return c.json({ success: true, data: result.results });
@@ -26,9 +36,11 @@ usageRoutes.get('/today', async (c) => {
   const result = await c.env.DB.prepare(`
     SELECT t.id, t.trans_date as usage_date, t.item_code, t.lot_number, 
            ABS(t.quantity) as quantity, t.memo, t.created_at,
-           m.item_name, m.unit
+           COALESCE(m.item_name, s.item_name) as item_name, 
+           COALESCE(m.unit, s.unit) as unit
     FROM transactions t
     LEFT JOIN master m ON t.item_code = m.item_code
+    LEFT JOIN supplies s ON t.item_code = s.item_code
     WHERE t.trans_type = '사용' AND t.trans_date = ?
     ORDER BY t.created_at DESC
   `).bind(today).all();
@@ -45,9 +57,11 @@ usageRoutes.get('/history', async (c) => {
   let query = `
     SELECT t.id, t.trans_date as usage_date, t.item_code, t.lot_number,
            ABS(t.quantity) as quantity, t.memo, t.created_at,
-           m.item_name, m.unit
+           COALESCE(m.item_name, s.item_name) as item_name, 
+           COALESCE(m.unit, s.unit) as unit
     FROM transactions t
     LEFT JOIN master m ON t.item_code = m.item_code
+    LEFT JOIN supplies s ON t.item_code = s.item_code
     WHERE t.trans_type = '사용'
   `;
   const params: any[] = [];
@@ -78,12 +92,13 @@ usageRoutes.get('/summary', async (c) => {
   
   let query = `
     SELECT t.item_code, 
-           m.item_name,
-           m.unit,
+           COALESCE(m.item_name, s.item_name) as item_name,
+           COALESCE(m.unit, s.unit) as unit,
            SUM(ABS(t.quantity)) as total_usage,
            COUNT(*) as record_count
     FROM transactions t
     LEFT JOIN master m ON t.item_code = m.item_code
+    LEFT JOIN supplies s ON t.item_code = s.item_code
     WHERE t.trans_type = '사용'
   `;
   const params: any[] = [];
@@ -161,10 +176,22 @@ usageRoutes.post('/single', async (c) => {
       remainingQty -= useQty;
     }
     
-    // 4. master 테이블 current_stock 업데이트
-    await c.env.DB.prepare(`
-      UPDATE master SET current_stock = current_stock - ? WHERE item_code = ?
-    `).bind(quantity, item_code).run();
+    // 4. master 또는 supplies 테이블 current_stock 업데이트
+    // 먼저 master 테이블에서 확인
+    const masterItem = await c.env.DB.prepare(
+      'SELECT item_code FROM master WHERE item_code = ?'
+    ).bind(item_code).first();
+    
+    if (masterItem) {
+      await c.env.DB.prepare(`
+        UPDATE master SET current_stock = current_stock - ? WHERE item_code = ?
+      `).bind(quantity, item_code).run();
+    } else {
+      // supplies 테이블에서 업데이트
+      await c.env.DB.prepare(`
+        UPDATE supplies SET current_stock = current_stock - ? WHERE item_code = ?
+      `).bind(quantity, item_code).run();
+    }
     
     return c.json({ 
       success: true, 
@@ -246,10 +273,20 @@ usageRoutes.post('/', async (c) => {
         remainingQty -= useQty;
       }
       
-      // 4. master 테이블 current_stock 업데이트
-      await c.env.DB.prepare(`
-        UPDATE master SET current_stock = current_stock - ? WHERE item_code = ?
-      `).bind(item.quantity, item.item_code).run();
+      // 4. master 또는 supplies 테이블 current_stock 업데이트
+      const masterItem = await c.env.DB.prepare(
+        'SELECT item_code FROM master WHERE item_code = ?'
+      ).bind(item.item_code).first();
+      
+      if (masterItem) {
+        await c.env.DB.prepare(`
+          UPDATE master SET current_stock = current_stock - ? WHERE item_code = ?
+        `).bind(item.quantity, item.item_code).run();
+      } else {
+        await c.env.DB.prepare(`
+          UPDATE supplies SET current_stock = current_stock - ? WHERE item_code = ?
+        `).bind(item.quantity, item.item_code).run();
+      }
       
       successCount++;
       results.push({ 
@@ -292,10 +329,20 @@ usageRoutes.delete('/:id', async (c) => {
       UPDATE inbound SET remain_qty = remain_qty + ? WHERE lot_number = ?
     `).bind(restoreQty, trans.lot_number).run();
     
-    // 3. master current_stock 복원
-    await c.env.DB.prepare(`
-      UPDATE master SET current_stock = current_stock + ? WHERE item_code = ?
-    `).bind(restoreQty, trans.item_code).run();
+    // 3. master 또는 supplies current_stock 복원
+    const masterItem = await c.env.DB.prepare(
+      'SELECT item_code FROM master WHERE item_code = ?'
+    ).bind(trans.item_code).first();
+    
+    if (masterItem) {
+      await c.env.DB.prepare(`
+        UPDATE master SET current_stock = current_stock + ? WHERE item_code = ?
+      `).bind(restoreQty, trans.item_code).run();
+    } else {
+      await c.env.DB.prepare(`
+        UPDATE supplies SET current_stock = current_stock + ? WHERE item_code = ?
+      `).bind(restoreQty, trans.item_code).run();
+    }
     
     // 4. transactions 삭제
     await c.env.DB.prepare('DELETE FROM transactions WHERE id = ?').bind(id).run();

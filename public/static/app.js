@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.6.3 Build: 20260326
-const APP_VERSION = '1.6.7';
+const APP_VERSION = '1.6.8';
 const APP_BUILD = '20260326';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 

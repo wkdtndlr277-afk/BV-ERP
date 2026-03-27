@@ -764,60 +764,107 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
   
   try {
     // 쿼리 1: 모든 품목 정보 + 기간 집계 (정방향 계산)
-    // 월초재고 계산을 위해 기간 이전 데이터도 조회
+    // master와 supplies 테이블 UNION ALL로 모두 조회
+    
+    // 카테고리 필터 조건 생성
+    let masterCategoryFilter = '';
+    let suppliesCategoryFilter = '';
+    const categoryParams: any[] = [];
+    
+    if (category && category !== '전체') {
+      if (category === '부자재') {
+        // 부자재만 조회 - supplies만 사용
+        masterCategoryFilter = ' AND 1=0'; // master 제외
+        suppliesCategoryFilter = ''; // supplies 전체
+      } else {
+        // 원료 또는 제품 - master만 사용
+        masterCategoryFilter = ' AND m.category = ?';
+        suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
+        categoryParams.push(category);
+      }
+    }
+    
+    // 검색 필터
+    let searchFilter = '';
+    const searchParams: any[] = [];
+    if (search) {
+      searchFilter = ' AND (item_name LIKE ? OR item_code LIKE ?)';
+      searchParams.push(`%${search}%`, `%${search}%`);
+    }
+    
     let itemQuery = `
-      SELECT 
-        m.item_code,
-        m.item_name,
-        m.category,
-        m.unit,
-        m.current_stock,
-        m.expiry_days,
-        COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
-        -- 월초재고 계산용: 기간 이전 입고 합계 (재고조정 LOT 제외)
-        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
-        -- 월초재고 계산용: 기간 이전 사용 합계
-        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
-        -- 월초재고 계산용: 기간 이전 출고 합계
-        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
-        -- 월초재고 계산용: 기간 이전 재고조정 합계
-        COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
-        -- 기간 내 입고량 (재고조정 LOT 제외)
-        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as period_inbound,
-        -- 기간 내 사용량
-        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
-        -- 기간 내 출고량
-        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
-        -- 기간 내 재고조정
-        COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
-      FROM master m
-      WHERE (
-        m.current_stock > 0
-        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ?)
-        OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ?)
-        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
-        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date < ?)
-        OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date < ?)
-      )
+      SELECT * FROM (
+        SELECT 
+          m.item_code,
+          m.item_name,
+          m.category,
+          m.unit,
+          m.current_stock,
+          m.expiry_days,
+          COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
+          COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
+          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
+          COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as period_inbound,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
+          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
+        FROM master m
+        WHERE (
+          m.current_stock > 0
+          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date >= ? AND i.inbound_date <= ?)
+          OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date >= ? AND t.trans_date <= ?)
+          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
+          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date < ?)
+          OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date < ?)
+        )${masterCategoryFilter}
+        
+        UNION ALL
+        
+        SELECT 
+          s.item_code,
+          s.item_name,
+          s.category,
+          s.unit,
+          s.current_stock,
+          s.expiry_days,
+          COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
+          COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
+          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
+          COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as period_inbound,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
+          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
+        FROM supplies s
+        WHERE (
+          s.current_stock > 0
+          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date >= ? AND i.inbound_date <= ?)
+          OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = s.item_code AND t.trans_date >= ? AND t.trans_date <= ?)
+          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.remain_qty > 0)
+          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date < ?)
+          OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = s.item_code AND t.trans_date < ?)
+        )${suppliesCategoryFilter}
+      ) combined
+      WHERE 1=1 ${searchFilter}
+      ORDER BY category, item_name
     `;
     
-    // 파라미터 순서: before(4개) + period(4개) + exists(6개)
-    const itemParams: any[] = [
+    // 파라미터 순서: master(18개) + category + supplies(18개)
+    const baseParams = [
       startDate, startDate, startDate, startDate,  // before queries
       startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate,  // period queries
       startDate, endDate, startDate, endDate, startDate, startDate  // EXISTS queries
     ];
     
-    if (category && category !== '전체') {
-      itemQuery += ' AND m.category = ?';
-      itemParams.push(category);
-    }
-    if (search) {
-      itemQuery += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
-      itemParams.push(`%${search}%`, `%${search}%`);
-    }
-    
-    itemQuery += ' ORDER BY m.category, m.item_name';
+    const itemParams: any[] = [
+      ...baseParams, // master params
+      ...categoryParams, // category filter for master
+      ...baseParams, // supplies params (same structure)
+      ...searchParams // search filter
+    ];
     
     // 쿼리 2: 모든 LOT 정보 한번에 조회 (N+1 문제 해결)
     let lotQuery = `

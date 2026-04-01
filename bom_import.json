@@ -1,0 +1,8642 @@
+{
+  "materials": [
+    {
+      "code": "R001",
+      "name": "I.S.P"
+    },
+    {
+      "code": "R002",
+      "name": "W.P.C"
+    },
+    {
+      "code": "R003",
+      "name": "강낭콩배기"
+    },
+    {
+      "code": "R004",
+      "name": "건조파인애플다이스"
+    },
+    {
+      "code": "R005",
+      "name": "건조파파야다이스"
+    },
+    {
+      "code": "R006",
+      "name": "건크랜베리"
+    },
+    {
+      "code": "R007",
+      "name": "건포도"
+    },
+    {
+      "code": "R008",
+      "name": "검정깨"
+    },
+    {
+      "code": "R009",
+      "name": "그린올리브"
+    },
+    {
+      "code": "R010",
+      "name": "그린올리브슬라이스"
+    },
+    {
+      "code": "R011",
+      "name": "난백"
+    },
+    {
+      "code": "R012",
+      "name": "다크초코칩"
+    },
+    {
+      "code": "R013",
+      "name": "독일유기농강력"
+    },
+    {
+      "code": "R014",
+      "name": "두유"
+    },
+    {
+      "code": "R015",
+      "name": "레몬주스"
+    },
+    {
+      "code": "R016",
+      "name": "롤치즈"
+    },
+    {
+      "code": "R017",
+      "name": "르방"
+    },
+    {
+      "code": "R018",
+      "name": "마요네즈"
+    },
+    {
+      "code": "R019",
+      "name": "멀티그레인"
+    },
+    {
+      "code": "R020",
+      "name": "모짜렐라치즈"
+    },
+    {
+      "code": "R021",
+      "name": "몰트가루"
+    },
+    {
+      "code": "R022",
+      "name": "몰트엑기스"
+    },
+    {
+      "code": "R023",
+      "name": "무화과"
+    },
+    {
+      "code": "R024",
+      "name": "물엿"
+    },
+    {
+      "code": "R025",
+      "name": "바질페스토"
+    },
+    {
+      "code": "R026",
+      "name": "박력"
+    },
+    {
+      "code": "R027",
+      "name": "발효종르방"
+    },
+    {
+      "code": "R028",
+      "name": "백설탕"
+    },
+    {
+      "code": "R029",
+      "name": "버터"
+    },
+    {
+      "code": "R030",
+      "name": "볶음참깨"
+    },
+    {
+      "code": "R031",
+      "name": "분말(코코아)"
+    },
+    {
+      "code": "R032",
+      "name": "블랙올리브슬라이스"
+    },
+    {
+      "code": "R033",
+      "name": "비타민C"
+    },
+    {
+      "code": "R034",
+      "name": "생이스트"
+    },
+    {
+      "code": "R035",
+      "name": "소금"
+    },
+    {
+      "code": "R036",
+      "name": "슬라이스치즈"
+    },
+    {
+      "code": "R037",
+      "name": "슬라이스햄"
+    },
+    {
+      "code": "R038",
+      "name": "아몬드슬라이스"
+    },
+    {
+      "code": "R039",
+      "name": "에멘탈크림치즈"
+    },
+    {
+      "code": "R040",
+      "name": "오징어먹물"
+    },
+    {
+      "code": "R041",
+      "name": "오트밀"
+    },
+    {
+      "code": "R042",
+      "name": "옥수수"
+    },
+    {
+      "code": "R043",
+      "name": "올리고당"
+    },
+    {
+      "code": "R044",
+      "name": "올리브유"
+    },
+    {
+      "code": "R045",
+      "name": "완두배기"
+    },
+    {
+      "code": "R046",
+      "name": "우유"
+    },
+    {
+      "code": "R047",
+      "name": "유기농T55"
+    },
+    {
+      "code": "R048",
+      "name": "유기농T65"
+    },
+    {
+      "code": "R049",
+      "name": "유기농강력"
+    },
+    {
+      "code": "R050",
+      "name": "유기농강력(사조스텔라)"
+    },
+    {
+      "code": "R051",
+      "name": "유기농박력"
+    },
+    {
+      "code": "R052",
+      "name": "유기농설탕"
+    },
+    {
+      "code": "R053",
+      "name": "유기농통밀"
+    },
+    {
+      "code": "R054",
+      "name": "유기농통밀(사조)"
+    },
+    {
+      "code": "R055",
+      "name": "유기농통밀(스테인메츠)"
+    },
+    {
+      "code": "R056",
+      "name": "유기농통밀대한제분"
+    },
+    {
+      "code": "R057",
+      "name": "유기농호밀"
+    },
+    {
+      "code": "R058",
+      "name": "전란"
+    },
+    {
+      "code": "R059",
+      "name": "정제수"
+    },
+    {
+      "code": "R060",
+      "name": "중력분"
+    },
+    {
+      "code": "R061",
+      "name": "참깨"
+    },
+    {
+      "code": "R062",
+      "name": "체다큐브"
+    },
+    {
+      "code": "R063",
+      "name": "초코칩"
+    },
+    {
+      "code": "R064",
+      "name": "카놀라유"
+    },
+    {
+      "code": "R065",
+      "name": "코코넛오일"
+    },
+    {
+      "code": "R066",
+      "name": "크라프트골드"
+    },
+    {
+      "code": "R067",
+      "name": "크랜베리"
+    },
+    {
+      "code": "R068",
+      "name": "크림치즈"
+    },
+    {
+      "code": "R069",
+      "name": "탈지분유"
+    },
+    {
+      "code": "R070",
+      "name": "탕종"
+    },
+    {
+      "code": "R071",
+      "name": "터키유기농강력"
+    },
+    {
+      "code": "R072",
+      "name": "토핑모짜렐라"
+    },
+    {
+      "code": "R073",
+      "name": "통깨"
+    },
+    {
+      "code": "R074",
+      "name": "통밀"
+    },
+    {
+      "code": "R075",
+      "name": "통밀독일"
+    },
+    {
+      "code": "R076",
+      "name": "통밀르방"
+    },
+    {
+      "code": "R077",
+      "name": "통밀사조"
+    },
+    {
+      "code": "R078",
+      "name": "통밀스테인메츠"
+    },
+    {
+      "code": "R079",
+      "name": "통밀탕종"
+    },
+    {
+      "code": "R080",
+      "name": "통밀폴리쉬"
+    },
+    {
+      "code": "R081",
+      "name": "파인소프트-T"
+    },
+    {
+      "code": "R082",
+      "name": "팥배기"
+    },
+    {
+      "code": "R083",
+      "name": "팥앙금"
+    },
+    {
+      "code": "R084",
+      "name": "페파로니"
+    },
+    {
+      "code": "R085",
+      "name": "포도씨유"
+    },
+    {
+      "code": "R086",
+      "name": "포마스올리브유"
+    },
+    {
+      "code": "R087",
+      "name": "폴리쉬"
+    },
+    {
+      "code": "R088",
+      "name": "플레인요거트"
+    },
+    {
+      "code": "R089",
+      "name": "피칸"
+    },
+    {
+      "code": "R090",
+      "name": "할라페뇨"
+    },
+    {
+      "code": "R091",
+      "name": "해바라기씨"
+    },
+    {
+      "code": "R092",
+      "name": "해바라기유"
+    },
+    {
+      "code": "R093",
+      "name": "허브믹스"
+    },
+    {
+      "code": "R094",
+      "name": "호두"
+    },
+    {
+      "code": "R095",
+      "name": "호두분태"
+    },
+    {
+      "code": "R096",
+      "name": "호밀"
+    },
+    {
+      "code": "R097",
+      "name": "호박씨"
+    }
+  ],
+  "products": [
+    {
+      "code": "P001",
+      "name": "8가지잡곡빵  260g*2개입",
+      "alias": "8가지 곡물잡곡 발효종 빵, 2개입, 450g"
+    },
+    {
+      "code": "P002",
+      "name": "B마트통밀잡곡빵  380g_오트밀토핑",
+      "alias": "발효종 저당 멀티그레인 통밀브레드, 360g"
+    },
+    {
+      "code": "P003",
+      "name": "고소한 호밀통밀빵' 1/2g(380g)",
+      "alias": "발효종 고소한 호밀통밀 빵"
+    },
+    {
+      "code": "P004",
+      "name": "고소한 호밀통밀빵' 780g",
+      "alias": "발효종 고소한 호밀통밀 빵, 1개, 710g"
+    },
+    {
+      "code": "P005",
+      "name": "국산단팥빵 54g",
+      "alias": "발효종 호두단팥빵, 3개입, 240g"
+    },
+    {
+      "code": "P006",
+      "name": "국산호두단팥빵 54g",
+      "alias": "천연발효종 호두단팥빵"
+    },
+    {
+      "code": "P007",
+      "name": "그린&블랙 올리브치아바타500g",
+      "alias": "에브리데이 발효종 그린& 블랙올리브 치아바타,430g"
+    },
+    {
+      "code": "P008",
+      "name": "그린올리브롤치즈 식빵450g /컬리",
+      "alias": "발효종 그린올리브 앤 롤치즈 식빵 530g"
+    },
+    {
+      "code": "P009",
+      "name": "단백질을더한 통밀식빵기존(220g*2)",
+      "alias": "단백질을더한 발효종 통밀식빵 "
+    },
+    {
+      "code": "P010",
+      "name": "론도  290g",
+      "alias": ""
+    },
+    {
+      "code": "P011",
+      "name": "멀티그레인 호밀 크렌베리 깜바뉴 460g/120g",
+      "alias": "발효종 멀티그레인 호밀 크렌베리 깜바뉴, 500g"
+    },
+    {
+      "code": "P012",
+      "name": "멀티그레인컨트리깜바뉴 840",
+      "alias": "72시간 발효 저당 멀티그레인 컨트리 깜빠뉴 680g"
+    },
+    {
+      "code": "P013",
+      "name": "멀티그레인컨트리슬랩 840+해바라기씨토핑",
+      "alias": "72시간 발효 저당 멀티그레인 컨트리 슬랩 650g"
+    },
+    {
+      "code": "P014",
+      "name": "멀티그레인컨트리후르츠사워도우 760",
+      "alias": "72시간 발효 잡곡 후르츠 사워도우 깜빠뉴 640g"
+    },
+    {
+      "code": "P015",
+      "name": "모닝빵(6알)      (쿠팡9알)  36g~38g",
+      "alias": "발효종 순수모닝빵, 1봉(9알), 270g"
+    },
+    {
+      "code": "P016",
+      "name": "무염통밀빵(빵오르방) 800 g",
+      "alias": "통밀로만든 무염 발효종 깜바뉴, 1개, 730g"
+    },
+    {
+      "code": "P017",
+      "name": "미니바질선드라이토마토식빵(100gx2)",
+      "alias": "발효종 바질모닝롤, 1봉(9알), 270g"
+    },
+    {
+      "code": "P018",
+      "name": "발효종 그린올리브앤롤치즈식빵/쿠팡",
+      "alias": "발효종 그린올리브 앤 롤치즈 식빵 530g"
+    },
+    {
+      "code": "P019",
+      "name": "발효종 론도크림치즈 깜바뉴270 + 크림치즈90g",
+      "alias": "발효종 크림치즈 깜바뉴, 310g"
+    },
+    {
+      "code": "P020",
+      "name": "발효종 부드러운 통밀식빵550g",
+      "alias": "발효종 부드러운 통밀식빵, 480g"
+    },
+    {
+      "code": "P021",
+      "name": "발효종 부드러운 호밀통밀식빵600g",
+      "alias": "발효종 부드러운호밀통밀식빵 ,540g"
+    },
+    {
+      "code": "P022",
+      "name": "발효종 오트밀통밀식빵 530g오트밀토핑",
+      "alias": "발효종 오트밀통밀식빵, 1개, 500g"
+    },
+    {
+      "code": "P023",
+      "name": "발효종건포도호두식빵 580g",
+      "alias": "발효종 건포도 호두식빵, 500g"
+    },
+    {
+      "code": "P024",
+      "name": "발효종순수통밀빵420g(1/2사이즈)",
+      "alias": "통밀 깜바뉴*350g"
+    },
+    {
+      "code": "P025",
+      "name": "발효종순수통밀빵800g(빵오르빵)",
+      "alias": "발효종 순수 통밀빵, 1개, 700g"
+    },
+    {
+      "code": "P026",
+      "name": "블랙라바  155g",
+      "alias": "블랙라바*190g*생협"
+    },
+    {
+      "code": "P027",
+      "name": "생협잡곡식빵(쿠팡잡곡식빵)220gx2",
+      "alias": "잡곡 발효종 식빵, 1개, 390g"
+    },
+    {
+      "code": "P028",
+      "name": "순수 호밀통밀빵 820g",
+      "alias": "발효종 순수 호밀통밀 빵, 1개, 720g"
+    },
+    {
+      "code": "P029",
+      "name": "순수호밀통밀 롱 바케트 380g 38cm*2개입",
+      "alias": "발효종 저당 호밀통밀 바게트, 320g X 2개입, 640g "
+    },
+    {
+      "code": "P030",
+      "name": "순수호밀통밀450g플레인",
+      "alias": "발효종 저당 순수호밀통밀빵,380g"
+    },
+    {
+      "code": "P031",
+      "name": "순수호밀통밀식빵630g (촉촉이틀)한덩어리로",
+      "alias": "발효종 저당 순수호밀통밀 식빵,550g"
+    },
+    {
+      "code": "P032",
+      "name": "순수호밀통밀포켓  (110g분할) 1호 무스틀",
+      "alias": "저당 호밀통밀 포켓 브레드1, 360g 90g 4개입"
+    },
+    {
+      "code": "P033",
+      "name": "순우유식빵 /쿠팡순수우유     560g",
+      "alias": "발효종 순수우유식빵, 1개, 490g"
+    },
+    {
+      "code": "P034",
+      "name": "아침을 여는 저당 통밀 콜렉션",
+      "alias": "아침을 여는 저당 통밀 베스트 콜렉션,490g"
+    },
+    {
+      "code": "P035",
+      "name": "올리브치아바타 130g(3개)",
+      "alias": "발효종 올리브치아바타, 3개입, 330g"
+    },
+    {
+      "code": "P036",
+      "name": "올리브치아바타 190g,/샌드위치용",
+      "alias": "브런치콜렉션 발효종 바질치즈 치아바타 샌드위치 3개입,780g"
+    },
+    {
+      "code": "P037",
+      "name": "올리브치아바타130g(3개)",
+      "alias": "발효종 올리브치아바타"
+    },
+    {
+      "code": "P038",
+      "name": "올리브치아바타190g / 샌드위치용",
+      "alias": "발효종 바질치즈 치아바타 샌드위치 "
+    },
+    {
+      "code": "P039",
+      "name": "저당 플레인 바게트 190g",
+      "alias": " 에브리데이 저당 플레인 바게트 ,480g 160g x 3개입"
+    },
+    {
+      "code": "P040",
+      "name": "천연발효통밀잡곡빵  670g",
+      "alias": "발효종 통밀잡곡빵, 1개, 600g"
+    },
+    {
+      "code": "P041",
+      "name": "촉촉이식빵/쿠팡고소한 (220gx2)/탕종식빵",
+      "alias": "발효종 고소한우유식빵, 1개, 390g"
+    },
+    {
+      "code": "P042",
+      "name": "치즈가득 브레드 280+40+60+모짜레라토핑",
+      "alias": "발효종 치즈가득 브레드 340g"
+    },
+    {
+      "code": "P043",
+      "name": "치즈가득우유식빵 220+35+45",
+      "alias": "발효종 치즈가득 우유식빵 540g"
+    },
+    {
+      "code": "P044",
+      "name": "카카오통밀크림치즈 깜바뉴270 + 크림치즈90g",
+      "alias": "발효종 카카오 통밀 크림치즈 깜바뉴, 310g"
+    },
+    {
+      "code": "P045",
+      "name": "컨트리통밀깜빠뉴 840",
+      "alias": "72시간 발효 저당 컨트리 통밀 깜빠뉴 680g"
+    },
+    {
+      "code": "P046",
+      "name": "컨트리통밀슬랩 840",
+      "alias": "72시간 발효 저당 컨트리 통밀 슬랩 650g"
+    },
+    {
+      "code": "P047",
+      "name": "콩깜바뉴530g",
+      "alias": "발효종 통밀건강콩깜바뉴,440g 1개"
+    },
+    {
+      "code": "P048",
+      "name": "콩식빵570g",
+      "alias": "발효종 통밀건강콩식빵,500g"
+    },
+    {
+      "code": "P049",
+      "name": "쿠팡 오징어 먹물크런치 (230g)",
+      "alias": ""
+    },
+    {
+      "code": "P050",
+      "name": "크랜베리깜바뉴120g",
+      "alias": "프로틴플러스 크랜베리깜바뉴"
+    },
+    {
+      "code": "P051",
+      "name": "크랜베리치아바타130g*3개",
+      "alias": "발효종 크랜베리치아바타, 3개입, 330g"
+    },
+    {
+      "code": "P052",
+      "name": "크렌베리 호두 치즈깜바뉴 490g",
+      "alias": "발효종 크렌베리 호두통밀 치즈깜바뉴,430g 1개"
+    },
+    {
+      "code": "P053",
+      "name": "크렌베리아몬드/쿠팡   270g",
+      "alias": "발효종 아몬드크렌베리깜바뉴, 1개, 240g"
+    },
+    {
+      "code": "P054",
+      "name": "크렌베리햄&치즈400g+",
+      "alias": "브런치콜렉션 발효종 크랜베리 햄 치즈 치아바타,400g"
+    },
+    {
+      "code": "P055",
+      "name": "크렌베리호두깜바뉴 500g",
+      "alias": "발효종 크렌베리 호두 통밀 깜바뉴,440g"
+    },
+    {
+      "code": "P056",
+      "name": "크렌베리호두통밀식빵 580g",
+      "alias": "발효종 크렌베리 호두통밀식빵,500g"
+    },
+    {
+      "code": "P057",
+      "name": "통밀 롱 바게트380g 38cm",
+      "alias": "발효종 저당 통밀 바게트, 320g x 2개입, 640g"
+    },
+    {
+      "code": "P058",
+      "name": "통밀깜바뉴700g",
+      "alias": "발효종 통밀깜바뉴,620g 1개"
+    },
+    {
+      "code": "P059",
+      "name": "통밀모닝(6알)    (쿠팡9알) 36g~38g",
+      "alias": "단백질을더한 발효종 순수 통밀모닝빵, 1봉(9알), 270g"
+    },
+    {
+      "code": "P060",
+      "name": "통밀베이글 150g (3개)",
+      "alias": "통밀로 만든 발효종 베이글"
+    },
+    {
+      "code": "P061",
+      "name": "통밀식빵긴틀680g",
+      "alias": "발효종 통밀식빵 ,590g 1개"
+    },
+    {
+      "code": "P062",
+      "name": "통밀씨앗베이글120g",
+      "alias": "발효종씨앗통밀베이글 3개입"
+    },
+    {
+      "code": "P063",
+      "name": "통밀올리브  (쿠팡130g/다노110g)",
+      "alias": "단백질을더한 통밀올리브치아바타, 3개입, 330g"
+    },
+    {
+      "code": "P064",
+      "name": "통밀잡곡빵380g+크렌베리40g_흰깨토핑",
+      "alias": "발효종 통밀 잡곡 크랜베리 빵,390g"
+    },
+    {
+      "code": "P065",
+      "name": "통밀크랜베리크림치즈깜바뉴270 + 크림치즈90g",
+      "alias": "발효종 통밀 크랜베리 크림치즈깜바뉴, 310g"
+    },
+    {
+      "code": "P066",
+      "name": "통밀포켓브레드 (110g분할) 1호 무스틀",
+      "alias": "저당 통밀 포켓 브레드1, 360g 90g 4개입"
+    },
+    {
+      "code": "P067",
+      "name": "통밀호두단팥빵 (반죽60g)속 50g",
+      "alias": "발효종 통밀 호두단팥빵, 3개입, 300g"
+    },
+    {
+      "code": "P068",
+      "name": "페페로니치즈올리브치아바타400",
+      "alias": ""
+    },
+    {
+      "code": "P069",
+      "name": "페페로니치즈올리브치아바타400g",
+      "alias": "브런치콜렉션 발효종 페파로니 치즈 올리브 치아바타,400g"
+    },
+    {
+      "code": "P070",
+      "name": "프로틴우유식빵(270*2)-대가다-",
+      "alias": "단백질을더한 발효종 우유식빵, 1개, 490g"
+    },
+    {
+      "code": "P071",
+      "name": "플레인치아바타130g *3",
+      "alias": "발효종 플레인치아바타, 3개입, 330g"
+    },
+    {
+      "code": "P072",
+      "name": "플틴플러스북유럽잡곡빵/밋슈디 300g",
+      "alias": "발효종 밋슈디"
+    },
+    {
+      "code": "P073",
+      "name": "호밀잡곡 340g무화과86g 피칸33g 깜바뉴",
+      "alias": "발효종 호밀잡곡 무화과피칸 깜바뉴, 400g"
+    },
+    {
+      "code": "P074",
+      "name": "호밀잡곡브레드 460g",
+      "alias": "브로드카세 에브리데이 발효종 호밀잡곡 브레드,380g"
+    },
+    {
+      "code": "P075",
+      "name": "호밀잡곡브레드 770g",
+      "alias": "에브리데이 발효종 호밀잡곡 브레드,1개,640g(320*2)"
+    },
+    {
+      "code": "P076",
+      "name": "호밀통밀 레이즌깜바뉴 770g",
+      "alias": "발효종 에브리데이 레이즌 깜바뉴,640g"
+    },
+    {
+      "code": "P077",
+      "name": "호밀통밀 옥수수 깜바뉴770g + 옥수수가루토핑",
+      "alias": "발효종 에브리데이 저당 고소한 옥수수 깜바뉴,640g"
+    },
+    {
+      "code": "P078",
+      "name": "호밀통밀 콩 깜바뉴 770g",
+      "alias": "발효종 에브리데이 건강 콩 깜바뉴,640g"
+    },
+    {
+      "code": "P079",
+      "name": "호밀통밀 흑임자 깜바뉴 770g",
+      "alias": "발효종 에브리데이 저당 흑임자 깜바뉴,640g"
+    },
+    {
+      "code": "P080",
+      "name": "호밀통밀그린올리브로즈마리 770g",
+      "alias": "발효종 에브리데이 저당 그린올리브 로즈마리 깜바뉴,640g"
+    },
+    {
+      "code": "P081",
+      "name": "호밀통밀무화과빵 450g 속 120 g",
+      "alias": "발효종 호밀통밀 무화과 빵, 1개, 510g"
+    },
+    {
+      "code": "P082",
+      "name": "호밀통밀바게트 380g +통밀토핑",
+      "alias": "발효종 에브리데이 저당 호밀통밀바게트 ,640g  320g X 2개입"
+    },
+    {
+      "code": "P083",
+      "name": "호밀통밀바게트 380g 38cm 2개 38cm",
+      "alias": "발효종 에브리데이 저당 호밀통밀바게트 ,640g  320g X 2개입"
+    },
+    {
+      "code": "P084",
+      "name": "호밀통밀바게트380g/ 1개 38cm",
+      "alias": "발효종 에브리데이 저당 호밀통밀바게트 ,320g"
+    },
+    {
+      "code": "P085",
+      "name": "호밀통밀브레드 (뱅오) 770g",
+      "alias": "에브리데이 발효종 호밀통밀 브레드,1개,640g(320*2)"
+    },
+    {
+      "code": "P086",
+      "name": "호밀통밀브레드 (뱅오)460g",
+      "alias": "브로드카세 에브리데이 발효종 호밀통밀 브레드,380g"
+    },
+    {
+      "code": "P087",
+      "name": "호밀통밀크렌베리빵 710g",
+      "alias": "발효종 호밀통밀 크랜베리 빵, 1개, 710g"
+    },
+    {
+      "code": "P088",
+      "name": "호밀통밀포켓 (110g분할) 1호 무스틀",
+      "alias": "저당 포켓 브레드1"
+    },
+    {
+      "code": "P089",
+      "name": "호밀통밀플렛브레드110g",
+      "alias": "저당 발효종 호밀통밀 플랫 브레드, 1개, 352g(88*4)"
+    },
+    {
+      "code": "P090",
+      "name": "호밀통밀피칸&호두450g",
+      "alias": "발효종 저당 피칸 호밀통밀 깜바뉴,360g"
+    },
+    {
+      "code": "P091",
+      "name": "흑임자 씨앗 통밀식빵550g",
+      "alias": "발효종 흑임자씨앗통밀식빵, 490g"
+    }
+  ],
+  "bom": [
+    {
+      "product_code": "P001",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 130.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 55.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R019",
+      "item_name": "멀티그레인",
+      "quantity": 46.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 21.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 51.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 28.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R088",
+      "item_name": "플레인요거트",
+      "quantity": 26.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R097",
+      "item_name": "호박씨",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P001",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 85.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 64.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 38.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R075",
+      "item_name": "통밀독일",
+      "quantity": 26.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R066",
+      "item_name": "크라프트골드",
+      "quantity": 32.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 27.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R085",
+      "item_name": "포도씨유",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R097",
+      "item_name": "호박씨",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R041",
+      "item_name": "오트밀",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 21.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P002",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 117.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 69.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 46.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 115.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 99.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 82.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R097",
+      "item_name": "호박씨",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 31.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P003",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 207.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 69.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 46.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 115.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 99.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 82.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R097",
+      "item_name": "호박씨",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 31.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P004",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 207.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R049",
+      "item_name": "유기농강력",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R026",
+      "item_name": "박력",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 0.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R092",
+      "item_name": "해바라기유",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R024",
+      "item_name": "물엿",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 0.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R083",
+      "item_name": "팥앙금",
+      "quantity": 48.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R030",
+      "item_name": "볶음참깨",
+      "quantity": 0.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R008",
+      "item_name": "검정깨",
+      "quantity": 0.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P005",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 18.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 16.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 6.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R051",
+      "item_name": "유기농박력",
+      "quantity": 2.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 3.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 0.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 4.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 5.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 0.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 0.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 4.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 5.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R092",
+      "item_name": "해바라기유",
+      "quantity": 1.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R024",
+      "item_name": "물엿",
+      "quantity": 0.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R083",
+      "item_name": "팥앙금",
+      "quantity": 48.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R061",
+      "item_name": "참깨",
+      "quantity": 0.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R008",
+      "item_name": "검정깨",
+      "quantity": 0.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P006",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 18.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 97.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 97.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 3.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 38.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 5.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R044",
+      "item_name": "올리브유",
+      "quantity": 9.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R032",
+      "item_name": "블랙올리브슬라이스",
+      "quantity": 51.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R010",
+      "item_name": "그린올리브슬라이스",
+      "quantity": 51.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P007",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 161.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 142.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 61.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 25.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 64.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 110.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 43.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 21.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R009",
+      "item_name": "그린올리브",
+      "quantity": 49.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R016",
+      "item_name": "롤치즈",
+      "quantity": 34.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P008",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 65.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 87.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 65.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R043",
+      "item_name": "올리고당",
+      "quantity": 20.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 16.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R001",
+      "item_name": "I.S.P",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.03,
+      "unit": "g"
+    },
+    {
+      "product_code": "P009",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 144.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 39.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 17.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R069",
+      "item_name": "탈지분유",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 77.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R007",
+      "item_name": "건포도",
+      "quantity": 31.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P010",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 39.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 157.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R066",
+      "item_name": "크라프트골드",
+      "quantity": 34.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 414.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 64.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 24.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.05,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 120.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P011",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 117.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 194.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 34.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 68.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R019",
+      "item_name": "멀티그레인",
+      "quantity": 53.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 103.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 91.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P012",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 240.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 194.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 34.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 68.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R019",
+      "item_name": "멀티그레인",
+      "quantity": 53.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 103.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 91.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P013",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 274.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 148.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 26.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 52.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R019",
+      "item_name": "멀티그레인",
+      "quantity": 40.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R021",
+      "item_name": "몰트가루",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 78.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 70.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 17.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 209.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R067",
+      "item_name": "크랜베리",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R007",
+      "item_name": "건포도",
+      "quantity": 26.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P014",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 35.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R049",
+      "item_name": "유기농강력",
+      "quantity": 15.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R060",
+      "item_name": "중력분",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 0.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R092",
+      "item_name": "해바라기유",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R024",
+      "item_name": "물엿",
+      "quantity": 0.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 0.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R017",
+      "item_name": "르방",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P015",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 30.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P016",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 82.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P016",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 246.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P016",
+      "item_code": "R075",
+      "item_name": "통밀독일",
+      "quantity": 82.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P016",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P016",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P016",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P016",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 102.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P016",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P016",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 256.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R049",
+      "item_name": "유기농강력",
+      "quantity": 124.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 13.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 22.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 22.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R092",
+      "item_name": "해바라기유",
+      "quantity": 8.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R024",
+      "item_name": "물엿",
+      "quantity": 2.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R025",
+      "item_name": "바질페스토",
+      "quantity": 4.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R093",
+      "item_name": "허브믹스",
+      "quantity": 2.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 27.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 0.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 22.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 27.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P017",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 27.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 142.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 61.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 25.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 64.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 110.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 43.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 21.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R009",
+      "item_name": "그린올리브",
+      "quantity": 65.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R016",
+      "item_name": "롤치즈",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P018",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 17.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R049",
+      "item_name": "유기농강력",
+      "quantity": 50.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R069",
+      "item_name": "탈지분유",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R094",
+      "item_name": "호두",
+      "quantity": 20.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R007",
+      "item_name": "건포도",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 72.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R068",
+      "item_name": "크림치즈",
+      "quantity": 90.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P019",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 83.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 231.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 47.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 43.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R043",
+      "item_name": "올리고당",
+      "quantity": 42.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 38.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 36.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R092",
+      "item_name": "해바라기유",
+      "quantity": 14.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R001",
+      "item_name": "I.S.P",
+      "quantity": 3.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P020",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 51.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 87.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 116.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R075",
+      "item_name": "통밀독일",
+      "quantity": 87.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R064",
+      "item_name": "카놀라유",
+      "quantity": 17.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 58.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R043",
+      "item_name": "올리고당",
+      "quantity": 52.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 47.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 35.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P021",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 56.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R075",
+      "item_name": "통밀독일",
+      "quantity": 51.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 85.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 34.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R014",
+      "item_name": "두유",
+      "quantity": 73.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R065",
+      "item_name": "코코넛오일",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 170.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R097",
+      "item_name": "호박씨",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 51.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R041",
+      "item_name": "오트밀",
+      "quantity": 17.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P022",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 96.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 39.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 17.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R069",
+      "item_name": "탈지분유",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R094",
+      "item_name": "호두",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R007",
+      "item_name": "건포도",
+      "quantity": 31.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P023",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 87.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P024",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 178.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P024",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P024",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P024",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P024",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P024",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P024",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 56.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P024",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P024",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 127.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P025",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 316.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P025",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 79.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P025",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P025",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P025",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.03,
+      "unit": "g"
+    },
+    {
+      "product_code": "P025",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 39.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P025",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 99.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P025",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P025",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 246.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 39.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 17.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R004",
+      "item_name": "건조파인애플다이스",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R005",
+      "item_name": "건조파파야다이스",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R007",
+      "item_name": "건포도",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R040",
+      "item_name": "오징어먹물",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R036",
+      "item_name": "슬라이스치즈",
+      "quantity": 30.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P026",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 21.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 1414.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 606.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R019",
+      "item_name": "멀티그레인",
+      "quantity": 505.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 224.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 210.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 66.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 561.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 309.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R088",
+      "item_name": "플레인요거트",
+      "quantity": 281.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P027",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 81.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 85.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 57.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 141.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 121.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 40.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 101.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.05,
+      "unit": "g"
+    },
+    {
+      "product_code": "P028",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 283.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 39.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 26.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 65.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 56.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 47.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P029",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 210.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 51.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 34.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 86.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 73.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 24.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 61.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.03,
+      "unit": "g"
+    },
+    {
+      "product_code": "P030",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 283.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 68.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 114.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 97.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 32.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 81.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.04,
+      "unit": "g"
+    },
+    {
+      "product_code": "P031",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 228.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 50.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 83.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 71.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 24.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 59.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.03,
+      "unit": "g"
+    },
+    {
+      "product_code": "P032",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 150.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 162.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 70.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 73.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 126.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 49.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 24.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P033",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 13.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 163.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 28.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 13.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 68.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R066",
+      "item_name": "크라프트골드",
+      "quantity": 14.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 15.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 20.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 4.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 8.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R085",
+      "item_name": "포도씨유",
+      "quantity": 3.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R097",
+      "item_name": "호박씨",
+      "quantity": 6.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R041",
+      "item_name": "오트밀",
+      "quantity": 2.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 3.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 1.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R014",
+      "item_name": "두유",
+      "quantity": 12.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R065",
+      "item_name": "코코넛오일",
+      "quantity": 2.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R092",
+      "item_name": "해바라기유",
+      "quantity": 1.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 5.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 4.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R043",
+      "item_name": "올리고당",
+      "quantity": 5.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 4.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R001",
+      "item_name": "I.S.P",
+      "quantity": 0.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P034",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 156.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 97.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 97.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 39.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R044",
+      "item_name": "올리브유",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R032",
+      "item_name": "블랙올리브슬라이스",
+      "quantity": 52.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P035",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 65.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 105.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R044",
+      "item_name": "올리브유",
+      "quantity": 7.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 30.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R032",
+      "item_name": "블랙올리브슬라이스",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.05,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R020",
+      "item_name": "모짜렐라치즈",
+      "quantity": 125.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R025",
+      "item_name": "바질페스토",
+      "quantity": 13.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R018",
+      "item_name": "마요네즈",
+      "quantity": 38.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R036",
+      "item_name": "슬라이스치즈",
+      "quantity": 20.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P036",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 125.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R013",
+      "item_name": "독일유기농강력",
+      "quantity": 37.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R071",
+      "item_name": "터키유기농강력",
+      "quantity": 16.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 10.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.01,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 1.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R086",
+      "item_name": "포마스올리브유",
+      "quantity": 2.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 5.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R032",
+      "item_name": "블랙올리브슬라이스",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P037",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 65.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R013",
+      "item_name": "독일유기농강력",
+      "quantity": 54.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R071",
+      "item_name": "터키유기농강력",
+      "quantity": 23.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 16.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R086",
+      "item_name": "포마스올리브유",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 5.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R032",
+      "item_name": "블랙올리브슬라이스",
+      "quantity": 21.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P038",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 125.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P039",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 252.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P039",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 63.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P039",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 5.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P039",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 5.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P039",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 31.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P039",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P039",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P039",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 208.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 113.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 68.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R075",
+      "item_name": "통밀독일",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R066",
+      "item_name": "크라프트골드",
+      "quantity": 56.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 47.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.03,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R085",
+      "item_name": "포도씨유",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R097",
+      "item_name": "호박씨",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R041",
+      "item_name": "오트밀",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 38.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P040",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 207.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 129.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 53.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R081",
+      "item_name": "파인소프트-T",
+      "quantity": 16.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R069",
+      "item_name": "탈지분유",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 66.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 53.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P041",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 46.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 142.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 61.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 25.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 64.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 110.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 43.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 21.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R062",
+      "item_name": "체다큐브",
+      "quantity": 40.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R039",
+      "item_name": "에멘탈크림치즈",
+      "quantity": 60.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R072",
+      "item_name": "토핑모짜렐라",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P042",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 142.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 61.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 25.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 64.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 110.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 43.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 21.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R062",
+      "item_name": "체다큐브",
+      "quantity": 80.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R039",
+      "item_name": "에멘탈크림치즈",
+      "quantity": 120.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P043",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 15.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R068",
+      "item_name": "크림치즈",
+      "quantity": 90.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 87.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R012",
+      "item_name": "다크초코칩",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R028",
+      "item_name": "백설탕",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R031",
+      "item_name": "분말(코코아)",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R015",
+      "item_name": "레몬주스",
+      "quantity": 3.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P044",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 66.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P045",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 118.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P045",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 275.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P045",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P045",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P045",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 49.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P045",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P046",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 118.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P046",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 275.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P046",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P046",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P046",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 49.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P046",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P046",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 367.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 118.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 147.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 9.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R003",
+      "item_name": "강낭콩배기",
+      "quantity": 26.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R082",
+      "item_name": "팥배기",
+      "quantity": 26.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R045",
+      "item_name": "완두배기",
+      "quantity": 26.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P047",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 82.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 127.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 32.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 159.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 48.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R003",
+      "item_name": "강낭콩배기",
+      "quantity": 26.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R082",
+      "item_name": "팥배기",
+      "quantity": 26.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R045",
+      "item_name": "완두배기",
+      "quantity": 26.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P048",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 88.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R049",
+      "item_name": "유기농강력",
+      "quantity": 83.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 12.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 34.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 28.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 18.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R004",
+      "item_name": "건조파인애플다이스",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R005",
+      "item_name": "건조파파야다이스",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R007",
+      "item_name": "건포도",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R040",
+      "item_name": "오징어먹물",
+      "quantity": 1.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 3.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R017",
+      "item_name": "르방",
+      "quantity": 4.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 8.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 20.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R036",
+      "item_name": "슬라이스치즈",
+      "quantity": 40.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R011",
+      "item_name": "난백",
+      "quantity": 5.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P049",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 24.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R071",
+      "item_name": "터키유기농강력",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 9.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R001",
+      "item_name": "I.S.P",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 10.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 17.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 0.23,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 0.23,
+      "unit": "g"
+    },
+    {
+      "product_code": "P050",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 93.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 27.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 27.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.14,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 1.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R086",
+      "item_name": "포마스올리브유",
+      "quantity": 2.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 14.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 137.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 82.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 82.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 3.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R044",
+      "item_name": "올리브유",
+      "quantity": 8.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P051",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 137.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 100.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 25.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 125.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 38.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 11.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R016",
+      "item_name": "롤치즈",
+      "quantity": 40.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 31.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R067",
+      "item_name": "크랜베리",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P052",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 70.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 73.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R063",
+      "item_name": "초코칩",
+      "quantity": 12.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R038",
+      "item_name": "아몬드슬라이스",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 28.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P053",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 67.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 84.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 84.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R028",
+      "item_name": "백설탕",
+      "quantity": 3.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 33.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 5.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R086",
+      "item_name": "포마스올리브유",
+      "quantity": 8.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R037",
+      "item_name": "슬라이스햄",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R036",
+      "item_name": "슬라이스치즈",
+      "quantity": 30.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R020",
+      "item_name": "모짜렐라치즈",
+      "quantity": 20.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 140.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 84.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 84.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 3.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 33.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 5.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R044",
+      "item_name": "올리브유",
+      "quantity": 8.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R037",
+      "item_name": "슬라이스햄",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R036",
+      "item_name": "슬라이스치즈",
+      "quantity": 30.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R020",
+      "item_name": "모짜렐라치즈",
+      "quantity": 20.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P054",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 140.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 111.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 28.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 139.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 31.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R067",
+      "item_name": "크랜베리",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P055",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 77.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 129.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 32.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 161.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 48.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 15.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R067",
+      "item_name": "크랜베리",
+      "quantity": 48.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 36.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P056",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 90.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P057",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 300.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P057",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 75.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P057",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P057",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 9.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P057",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 38.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P057",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 94.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P057",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P057",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 210.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 46.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 182.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 228.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 68.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 21.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P058",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 127.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 116.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 3.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R092",
+      "item_name": "해바라기유",
+      "quantity": 6.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 0.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 16.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 20.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R043",
+      "item_name": "올리고당",
+      "quantity": 18.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 16.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R001",
+      "item_name": "I.S.P",
+      "quantity": 1.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P059",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 31.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R056",
+      "item_name": "유기농통밀대한제분",
+      "quantity": 29.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 44.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 0.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 9.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 5.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R085",
+      "item_name": "포도씨유",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R079",
+      "item_name": "통밀탕종",
+      "quantity": 12.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P060",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 45.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 177.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 221.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 66.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 20.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P061",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 144.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R056",
+      "item_name": "유기농통밀대한제분",
+      "quantity": 29.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 44.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 0.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 9.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 5.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R085",
+      "item_name": "포도씨유",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R079",
+      "item_name": "통밀탕종",
+      "quantity": 12.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R073",
+      "item_name": "통깨",
+      "quantity": 0.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 0.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P062",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 36.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R043",
+      "item_name": "올리고당",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R044",
+      "item_name": "올리브유",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R032",
+      "item_name": "블랙올리브슬라이스",
+      "quantity": 15.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R002",
+      "item_name": "W.P.C",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.01,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 10.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P063",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 133.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 64.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 38.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R075",
+      "item_name": "통밀독일",
+      "quantity": 26.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R066",
+      "item_name": "크라프트골드",
+      "quantity": 32.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 27.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R085",
+      "item_name": "포도씨유",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R097",
+      "item_name": "호박씨",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R041",
+      "item_name": "오트밀",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 21.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 42.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R061",
+      "item_name": "참깨",
+      "quantity": 16.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P064",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 117.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 75.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R068",
+      "item_name": "크림치즈",
+      "quantity": 90.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 75.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R028",
+      "item_name": "백설탕",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 17.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R015",
+      "item_name": "레몬주스",
+      "quantity": 5.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P065",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P066",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 178.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P066",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P066",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P066",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P066",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 24.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P066",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 59.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P066",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P066",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P066",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 148.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R083",
+      "item_name": "팥앙금",
+      "quantity": 67.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R094",
+      "item_name": "호두",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 0.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R064",
+      "item_name": "카놀라유",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 0.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R058",
+      "item_name": "전란",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R043",
+      "item_name": "올리고당",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R001",
+      "item_name": "I.S.P",
+      "quantity": 0.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P067",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 12.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 80.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 3.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 32.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R044",
+      "item_name": "올리브유",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R032",
+      "item_name": "블랙올리브슬라이스",
+      "quantity": 43.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R010",
+      "item_name": "그린올리브슬라이스",
+      "quantity": 43.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R084",
+      "item_name": "페파로니",
+      "quantity": 35.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R016",
+      "item_name": "롤치즈",
+      "quantity": 30.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R090",
+      "item_name": "할라페뇨",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P068",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 134.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P069",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 80.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 168.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 99.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R002",
+      "item_name": "W.P.C",
+      "quantity": 23.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R046",
+      "item_name": "우유",
+      "quantity": 49.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 47.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R029",
+      "item_name": "버터",
+      "quantity": 28.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P070",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 67.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 30.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 30.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 1.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 12.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.16,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 1.8,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R086",
+      "item_name": "포마스올리브유",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 154.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 92.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 92.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R052",
+      "item_name": "유기농설탕",
+      "quantity": 3.7,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 37.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.5,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 5.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R044",
+      "item_name": "올리브유",
+      "quantity": 9.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P071",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 154.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R049",
+      "item_name": "유기농강력",
+      "quantity": 61.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R071",
+      "item_name": "터키유기농강력",
+      "quantity": 26.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R066",
+      "item_name": "크라프트골드",
+      "quantity": 37.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R001",
+      "item_name": "I.S.P",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 12.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R085",
+      "item_name": "포도씨유",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R007",
+      "item_name": "건포도",
+      "quantity": 31.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R006",
+      "item_name": "건크랜베리",
+      "quantity": 12.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P072",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 100.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 191.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 82.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R066",
+      "item_name": "크라프트골드",
+      "quantity": 59.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 74.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 110.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R089",
+      "item_name": "피칸",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R023",
+      "item_name": "무화과",
+      "quantity": 86.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P073",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 91.9,
+      "unit": "g"
+    },
+    {
+      "product_code": "P074",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 110.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P074",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 47.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 110.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 47.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R066",
+      "item_name": "크라프트골드",
+      "quantity": 34.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 64.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R070",
+      "item_name": "탕종",
+      "quantity": 25.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 13.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.05,
+      "unit": "g"
+    },
+    {
+      "product_code": "P075",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 83.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 161.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 69.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 36.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 72.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R007",
+      "item_name": "건포도",
+      "quantity": 190.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P076",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 179.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 161.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 69.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 36.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 72.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R042",
+      "item_name": "옥수수",
+      "quantity": 190.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P077",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 179.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 198.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 85.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 27.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 35.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 89.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R003",
+      "item_name": "강낭콩배기",
+      "quantity": 190.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P078",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 221.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 198.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 85.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 27.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 44.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 35.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 89.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R008",
+      "item_name": "검정깨",
+      "quantity": 55.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P079",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 96.2,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 183.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R048",
+      "item_name": "유기농T65",
+      "quantity": 78.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 25.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 7.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 82.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R009",
+      "item_name": "그린올리브",
+      "quantity": 110.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P080",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 204.4,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 51.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 34.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 86.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 73.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 24.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 61.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.03,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R023",
+      "item_name": "무화과",
+      "quantity": 120.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P081",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 171.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P082",
+      "item_code": "R055",
+      "item_name": "유기농통밀(스테인메츠)",
+      "quantity": 134.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P082",
+      "item_code": "R054",
+      "item_name": "유기농통밀(사조)",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P082",
+      "item_code": "R057",
+      "item_name": "유기농호밀",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P082",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P082",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P082",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 17.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P082",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P082",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 2.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P082",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 117.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 105.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R050",
+      "item_name": "유기농강력(사조스텔라)",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 24.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 47.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P083",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 117.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 105.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R050",
+      "item_name": "유기농강력(사조스텔라)",
+      "quantity": 45.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 24.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 19.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 47.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P084",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 117.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 214.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R050",
+      "item_name": "유기농강력(사조스텔라)",
+      "quantity": 92.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 48.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 38.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 95.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.04,
+      "unit": "g"
+    },
+    {
+      "product_code": "P085",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 207.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 214.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R050",
+      "item_name": "유기농강력(사조스텔라)",
+      "quantity": 92.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 48.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 38.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 95.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.04,
+      "unit": "g"
+    },
+    {
+      "product_code": "P086",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 207.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R053",
+      "item_name": "유기농통밀",
+      "quantity": 69.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R078",
+      "item_name": "통밀스테인메츠",
+      "quantity": 46.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R077",
+      "item_name": "통밀사조",
+      "quantity": 115.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 99.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 6.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 33.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 82.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R097",
+      "item_name": "호박씨",
+      "quantity": 41.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 31.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R067",
+      "item_name": "크랜베리",
+      "quantity": 59.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P087",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 188.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 214.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R050",
+      "item_name": "유기농강력(사조스텔라)",
+      "quantity": 92.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 29.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 48.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 8.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 38.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 95.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.04,
+      "unit": "g"
+    },
+    {
+      "product_code": "P088",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 148.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R047",
+      "item_name": "유기농T55",
+      "quantity": 133.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R050",
+      "item_name": "유기농강력(사조스텔라)",
+      "quantity": 57.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R074",
+      "item_name": "통밀",
+      "quantity": 18.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R096",
+      "item_name": "호밀",
+      "quantity": 30.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 5.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R027",
+      "item_name": "발효종르방",
+      "quantity": 24.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R087",
+      "item_name": "폴리쉬",
+      "quantity": 59.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.02,
+      "unit": "g"
+    },
+    {
+      "product_code": "P089",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 136.6,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R054",
+      "item_name": "유기농통밀(사조)",
+      "quantity": 113.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R055",
+      "item_name": "유기농통밀(스테인메츠)",
+      "quantity": 28.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R057",
+      "item_name": "유기농호밀",
+      "quantity": 36.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 14.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R080",
+      "item_name": "통밀폴리쉬",
+      "quantity": 35.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 1.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R089",
+      "item_name": "피칸",
+      "quantity": 42.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R094",
+      "item_name": "호두",
+      "quantity": 71.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P090",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 88.3,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R054",
+      "item_name": "유기농통밀(사조)",
+      "quantity": 146.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R055",
+      "item_name": "유기농통밀(스테인메츠)",
+      "quantity": 36.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R035",
+      "item_name": "소금",
+      "quantity": 3.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R034",
+      "item_name": "생이스트",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R095",
+      "item_name": "호두분태",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R091",
+      "item_name": "해바라기씨",
+      "quantity": 51.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R008",
+      "item_name": "검정깨",
+      "quantity": 20.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R022",
+      "item_name": "몰트엑기스",
+      "quantity": 4.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R076",
+      "item_name": "통밀르방",
+      "quantity": 73.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R079",
+      "item_name": "통밀탕종",
+      "quantity": 55.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R092",
+      "item_name": "해바라기유",
+      "quantity": 15.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R043",
+      "item_name": "올리고당",
+      "quantity": 22.0,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R033",
+      "item_name": "비타민C",
+      "quantity": 0.1,
+      "unit": "g"
+    },
+    {
+      "product_code": "P091",
+      "item_code": "R059",
+      "item_name": "정제수",
+      "quantity": 100.0,
+      "unit": "g"
+    }
+  ]
+}

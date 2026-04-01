@@ -1573,4 +1573,100 @@ admin.post('/migrate/create-supplies-table', async (c) => {
   }
 })
 
+// BOM 일괄 등록 API
+admin.post('/import-bom', async (c) => {
+  const { env } = c
+  const body = await c.req.json()
+  const { materials, products, bom } = body
+  
+  if (!materials || !products || !bom) {
+    return c.json({ success: false, message: '필수 데이터가 없습니다 (materials, products, bom)' }, 400)
+  }
+  
+  try {
+    const results = {
+      materials: { inserted: 0, skipped: 0 },
+      products: { inserted: 0, skipped: 0 },
+      bom: { inserted: 0, skipped: 0 }
+    }
+    
+    // 1. 원료 등록
+    for (const mat of materials) {
+      try {
+        const existing = await env.DB.prepare(
+          'SELECT item_code FROM master WHERE item_code = ?'
+        ).bind(mat.code).first()
+        
+        if (!existing) {
+          await env.DB.prepare(`
+            INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
+            VALUES (?, ?, '원료', 'kg', 0, 0, 365)
+          `).bind(mat.code, mat.name).run()
+          results.materials.inserted++
+        } else {
+          results.materials.skipped++
+        }
+      } catch (e) {
+        results.materials.skipped++
+      }
+    }
+    
+    // 2. 제품 등록
+    for (const prod of products) {
+      try {
+        const existing = await env.DB.prepare(
+          'SELECT item_code FROM master WHERE item_code = ?'
+        ).bind(prod.code).first()
+        
+        if (!existing) {
+          const displayName = prod.alias && prod.alias.length > 0 ? prod.alias.substring(0, 100) : prod.name.substring(0, 100)
+          await env.DB.prepare(`
+            INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
+            VALUES (?, ?, '제품', 'ea', 0, 0, 30)
+          `).bind(prod.code, displayName).run()
+          results.products.inserted++
+        } else {
+          results.products.skipped++
+        }
+      } catch (e) {
+        results.products.skipped++
+      }
+    }
+    
+    // 3. BOM 등록
+    for (const item of bom) {
+      try {
+        const existing = await env.DB.prepare(
+          'SELECT id FROM bom WHERE product_code = ? AND item_code = ?'
+        ).bind(item.product_code, item.item_code).first()
+        
+        if (!existing) {
+          await env.DB.prepare(`
+            INSERT INTO bom (product_code, item_code, quantity, unit, notes)
+            VALUES (?, ?, ?, 'g', '')
+          `).bind(item.product_code, item.item_code, item.quantity).run()
+          results.bom.inserted++
+        } else {
+          results.bom.skipped++
+        }
+      } catch (e) {
+        results.bom.skipped++
+      }
+    }
+    
+    // 로그 기록
+    await env.DB.prepare(
+      'INSERT INTO admin_logs (action_type, target_table, reason) VALUES (?, ?, ?)'
+    ).bind('BOM 일괄등록', 'master, bom', `원료 ${results.materials.inserted}개, 제품 ${results.products.inserted}개, BOM ${results.bom.inserted}개 등록`).run()
+    
+    return c.json({ 
+      success: true, 
+      message: 'BOM 일괄 등록 완료',
+      results
+    })
+  } catch (error: any) {
+    return c.json({ success: false, message: `등록 실패: ${error.message}` }, 500)
+  }
+})
+
 export default admin

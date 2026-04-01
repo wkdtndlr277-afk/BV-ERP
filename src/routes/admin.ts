@@ -1634,6 +1634,7 @@ admin.post('/import-bom', async (c) => {
     }
     
     // 3. BOM 등록
+    const errors: string[] = []
     for (const item of bom) {
       try {
         const existing = await env.DB.prepare(
@@ -1642,16 +1643,21 @@ admin.post('/import-bom', async (c) => {
         
         if (!existing) {
           await env.DB.prepare(`
-            INSERT INTO bom (product_code, item_code, quantity, unit, notes)
+            INSERT INTO bom (product_code, item_code, quantity, unit, memo)
             VALUES (?, ?, ?, 'g', '')
           `).bind(item.product_code, item.item_code, item.quantity).run()
           results.bom.inserted++
         } else {
           results.bom.skipped++
         }
-      } catch (e) {
+      } catch (e: any) {
+        errors.push(`${item.product_code}/${item.item_code}: ${e.message}`)
         results.bom.skipped++
       }
+    }
+    
+    if (errors.length > 0) {
+      console.error('BOM insert errors:', errors.slice(0, 5))
     }
     
     // 로그 기록
@@ -1662,7 +1668,8 @@ admin.post('/import-bom', async (c) => {
     return c.json({ 
       success: true, 
       message: 'BOM 일괄 등록 완료',
-      results
+      results,
+      errors: errors.slice(0, 10)
     })
   } catch (error: any) {
     return c.json({ success: false, message: `등록 실패: ${error.message}` }, 500)

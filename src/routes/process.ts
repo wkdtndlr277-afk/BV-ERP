@@ -189,33 +189,38 @@ process.post('/quality', async (c) => {
     let fermentation_judgment = '적합'
     let fermentation_standard = '기준없음'
     
+    // 헬퍼 함수: 기준값이 유효한지 확인 (null, undefined, 0-0 범위 제외)
+    const hasValidRange = (min: any, max: any) => {
+      return min !== null && min !== undefined && max !== null && max !== undefined && !(min === 0 && max === 0)
+    }
+    
     if (doughMaster) {
-      // 온도 판정
-      if (doughMaster.temp_min !== null && doughMaster.temp_max !== null) {
+      // 온도 판정 (0-0 범위는 기준없음으로 처리)
+      if (hasValidRange(doughMaster.temp_min, doughMaster.temp_max)) {
         dough_temp_standard = `${doughMaster.temp_min}-${doughMaster.temp_max}°C`
         if (dough_temp !== null && dough_temp !== undefined) {
           dough_temp_judgment = (dough_temp >= (doughMaster.temp_min as number) && dough_temp <= (doughMaster.temp_max as number)) ? '적합' : '부적합'
         }
       }
       
-      // pH 판정
-      if (doughMaster.ph_min !== null && doughMaster.ph_max !== null) {
+      // pH 판정 (0-0 범위는 기준없음으로 처리)
+      if (hasValidRange(doughMaster.ph_min, doughMaster.ph_max)) {
         ph_standard = `${doughMaster.ph_min}-${doughMaster.ph_max}`
         if (ph_value !== null && ph_value !== undefined) {
           ph_judgment = (ph_value >= (doughMaster.ph_min as number) && ph_value <= (doughMaster.ph_max as number)) ? '적합' : '부적합'
         }
       }
       
-      // 습도 판정
-      if (doughMaster.humidity_min !== null && doughMaster.humidity_max !== null) {
+      // 습도 판정 (0-0 범위는 기준없음으로 처리)
+      if (hasValidRange(doughMaster.humidity_min, doughMaster.humidity_max)) {
         humidity_standard = `${doughMaster.humidity_min}-${doughMaster.humidity_max}%`
         if (humidity !== null && humidity !== undefined) {
           humidity_judgment = (humidity >= (doughMaster.humidity_min as number) && humidity <= (doughMaster.humidity_max as number)) ? '적합' : '부적합'
         }
       }
       
-      // 발효시간 판정
-      if (doughMaster.fermentation_min !== null && doughMaster.fermentation_max !== null) {
+      // 발효시간 판정 (0-0 범위는 기준없음으로 처리)
+      if (hasValidRange(doughMaster.fermentation_min, doughMaster.fermentation_max)) {
         fermentation_standard = `${doughMaster.fermentation_min}-${doughMaster.fermentation_max}분`
         if (fermentation_time !== null && fermentation_time !== undefined) {
           fermentation_judgment = (fermentation_time >= (doughMaster.fermentation_min as number) && fermentation_time <= (doughMaster.fermentation_max as number)) ? '적합' : '부적합'
@@ -294,6 +299,11 @@ process.put('/quality/:id', async (c) => {
       'SELECT * FROM dough_master WHERE dough_name = ?'
     ).bind(dough_name).first()
     
+    // 헬퍼 함수: 기준값이 유효한지 확인 (null, undefined, 0-0 범위 제외)
+    const hasValidRange = (min: any, max: any) => {
+      return min !== null && min !== undefined && max !== null && max !== undefined && !(min === 0 && max === 0)
+    }
+    
     // 판정 재계산
     let dough_temp_judgment = '적합'
     let ph_judgment = '적합'
@@ -301,16 +311,16 @@ process.put('/quality/:id', async (c) => {
     let fermentation_judgment = '적합'
     
     if (doughMaster) {
-      if (dough_temp !== null && doughMaster.temp_min !== null && doughMaster.temp_max !== null) {
+      if (dough_temp !== null && hasValidRange(doughMaster.temp_min, doughMaster.temp_max)) {
         dough_temp_judgment = (dough_temp >= (doughMaster.temp_min as number) && dough_temp <= (doughMaster.temp_max as number)) ? '적합' : '부적합'
       }
-      if (ph_value !== null && doughMaster.ph_min !== null && doughMaster.ph_max !== null) {
+      if (ph_value !== null && hasValidRange(doughMaster.ph_min, doughMaster.ph_max)) {
         ph_judgment = (ph_value >= (doughMaster.ph_min as number) && ph_value <= (doughMaster.ph_max as number)) ? '적합' : '부적합'
       }
-      if (humidity !== null && doughMaster.humidity_min !== null && doughMaster.humidity_max !== null) {
+      if (humidity !== null && hasValidRange(doughMaster.humidity_min, doughMaster.humidity_max)) {
         humidity_judgment = (humidity >= (doughMaster.humidity_min as number) && humidity <= (doughMaster.humidity_max as number)) ? '적합' : '부적합'
       }
-      if (fermentation_time !== null && doughMaster.fermentation_min !== null && doughMaster.fermentation_max !== null) {
+      if (fermentation_time !== null && hasValidRange(doughMaster.fermentation_min, doughMaster.fermentation_max)) {
         fermentation_judgment = (fermentation_time >= (doughMaster.fermentation_min as number) && fermentation_time <= (doughMaster.fermentation_max as number)) ? '적합' : '부적합'
       }
     }

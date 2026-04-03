@@ -11,10 +11,11 @@
 /api/*
   Cache-Control: no-cache, no-store, must-revalidate
 
-# 정적 JS/CSS 파일 - 버전 쿼리스트링 사용시 캐시 가능
-# 버전이 바뀌면 URL이 바뀌므로 새로 로드됨
+# 정적 JS/CSS 파일 - 캐시 비활성화 (개발 중)
 /static/*
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: no-cache, no-store, must-revalidate
+  Pragma: no-cache
+  Expires: 0
 
 # _worker.js - 캐시 안함 (서버 코드)
 /_worker.js

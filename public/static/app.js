@@ -28852,6 +28852,7 @@ function renderProductionItemsManagement(container) {
               <th class="px-4 py-3 text-left">생산명</th>
               <th class="px-4 py-3 text-left">유사명칭</th>
               <th class="px-4 py-3 text-center">BOM</th>
+              <th class="px-4 py-3 text-center">바코드</th>
               <th class="px-4 py-3 text-center">관리</th>
             </tr>
           </thead>
@@ -28869,12 +28870,20 @@ function renderProductionItemsManagement(container) {
                     : `<span class="px-2 py-1 bg-red-100 text-red-600 rounded text-xs">없음</span>`}
                 </td>
                 <td class="px-4 py-3 text-center">
+                  ${(item.barcode_count || 0) > 0 
+                    ? `<span class="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs">${item.barcode_count}개</span>`
+                    : `<span class="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">없음</span>`}
+                </td>
+                <td class="px-4 py-3 text-center">
                   <div class="flex justify-center gap-1">
                     <button onclick="showEditProductionItemModal('${item.production_code}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="수정">
                       <i class="fas fa-edit"></i>
                     </button>
                     <button onclick="showEditBomModal('${item.production_code}')" class="p-1.5 text-green-600 hover:bg-green-50 rounded" title="BOM">
                       <i class="fas fa-list-ul"></i>
+                    </button>
+                    <button onclick="showBarcodeModal('${item.production_code}', '${(item.production_name || '').replace(/'/g, "\\'")}')" class="p-1.5 text-orange-600 hover:bg-orange-50 rounded" title="바코드">
+                      <i class="fas fa-barcode"></i>
                     </button>
                     <button onclick="deleteProductionItem('${item.production_code}')" class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="삭제">
                       <i class="fas fa-trash"></i>
@@ -28959,6 +28968,127 @@ async function updateProductionItem(code) {
     switchSystemTab('production-items');
   } catch (e) {
     showToast('수정 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// ===== 바코드 관리 모달 =====
+async function showBarcodeModal(productionCode, productionName) {
+  // 기존 바코드 로드
+  let barcodes = [];
+  try {
+    const res = await api(`/daily-report/barcodes?production_code=${productionCode}`);
+    barcodes = res.data || [];
+  } catch (e) {
+    console.error('바코드 로드 실패:', e);
+  }
+  
+  showModal(`바코드 관리 - ${productionName}`, `
+    <div class="space-y-4">
+      <div class="bg-orange-50 border border-orange-200 rounded-lg p-3">
+        <p class="text-sm text-orange-700">
+          <i class="fas fa-info-circle mr-1"></i>
+          생산명 <strong>${productionName}</strong>에 연결된 바코드를 관리합니다.
+        </p>
+      </div>
+      
+      <!-- 기존 바코드 목록 -->
+      <div>
+        <h4 class="font-medium text-gray-700 mb-2">등록된 바코드 (${barcodes.length}개)</h4>
+        <div id="barcode-list" class="border rounded-lg divide-y max-h-48 overflow-y-auto">
+          ${barcodes.length === 0 ? `
+            <div class="text-center py-4 text-gray-400">등록된 바코드가 없습니다.</div>
+          ` : barcodes.map(b => `
+            <div class="flex items-center justify-between px-3 py-2 hover:bg-gray-50">
+              <div>
+                <span class="font-mono text-sm">${b.barcode}</span>
+                ${b.product_name ? `<span class="text-gray-400 text-xs ml-2">(${b.product_name})</span>` : ''}
+                ${b.channel ? `<span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded ml-2">${b.channel}</span>` : ''}
+              </div>
+              <button onclick="deleteBarcode(${b.id}, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 p-1">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      
+      <!-- 새 바코드 추가 -->
+      <div class="border-t pt-4">
+        <h4 class="font-medium text-gray-700 mb-2">새 바코드 추가</h4>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">바코드 <span class="text-red-500">*</span></label>
+            <input type="text" id="new-barcode" class="w-full border rounded-lg px-4 py-2" placeholder="바코드 입력 (예: 8801234567890)">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">주문 제품명 (선택)</label>
+            <input type="text" id="new-barcode-product-name" class="w-full border rounded-lg px-4 py-2" placeholder="주문서에 표시되는 제품명">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-600 mb-1">판매 채널 (선택)</label>
+            <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2">
+              <option value="">선택안함</option>
+              <option value="쿠팡">쿠팡</option>
+              <option value="컬리">컬리</option>
+              <option value="한살림">한살림</option>
+              <option value="아이쿱">아이쿱</option>
+              <option value="네이버">네이버</option>
+              <option value="자사몰">자사몰</option>
+              <option value="기타">기타</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+    <button onclick="addBarcode('${productionCode}', '${productionName.replace(/'/g, "\\'")}')" class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700">
+      <i class="fas fa-plus mr-1"></i> 바코드 추가
+    </button>
+  `);
+}
+
+// 바코드 추가
+async function addBarcode(productionCode, productionName) {
+  const barcode = document.getElementById('new-barcode').value.trim();
+  const productName = document.getElementById('new-barcode-product-name').value.trim();
+  const channel = document.getElementById('new-barcode-channel').value;
+  
+  if (!barcode) {
+    showToast('바코드를 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/daily-report/barcodes', 'POST', {
+      production_code: productionCode,
+      barcode: barcode,
+      product_name: productName || null,
+      channel: channel || null
+    });
+    showToast('바코드가 추가되었습니다', 'success');
+    // 모달 새로고침
+    showBarcodeModal(productionCode, productionName);
+    // 데이터 새로고침
+    await loadSystemMgmtData();
+  } catch (e) {
+    showToast('추가 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+
+// 바코드 삭제
+async function deleteBarcode(id, productionCode, productionName) {
+  if (!confirm('이 바코드를 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/daily-report/barcodes/${id}`, 'DELETE');
+    showToast('바코드가 삭제되었습니다', 'success');
+    // 모달 새로고침
+    showBarcodeModal(productionCode, productionName);
+    // 데이터 새로고침
+    await loadSystemMgmtData();
+  } catch (e) {
+    showToast('삭제 실패', 'error');
   }
 }
 
@@ -29425,6 +29555,9 @@ window.recalculateSystemStock = recalculateSystemStock;
 window.filterSystemBom = filterSystemBom;
 window.showBomDetailModal = showBomDetailModal;
 window.deleteBomForItem = deleteBomForItem;
+window.showBarcodeModal = showBarcodeModal;
+window.addBarcode = addBarcode;
+window.deleteBarcode = deleteBarcode;
 
 // ========== ERP 시스템 설정 관리 ==========
 

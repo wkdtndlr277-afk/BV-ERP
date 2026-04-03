@@ -4,6 +4,39 @@ import type { Bindings, StockAdjustmentRequest } from '../types';
 
 const stockRoutes = new Hono<{ Bindings: Bindings }>();
 
+// 전체 재고 조회 (기본 루트)
+stockRoutes.get('/', async (c) => {
+  const category = c.req.query('category');
+  
+  try {
+    // master 테이블에서 재고 조회
+    let query = `
+      SELECT m.item_code, m.item_name, m.category, m.unit, 
+             m.current_stock as quantity, m.safety_stock,
+             m.created_at, m.updated_at
+      FROM master m
+    `;
+    
+    const params: any[] = [];
+    
+    if (category && category !== '전체') {
+      query += ' WHERE m.category = ?';
+      params.push(category);
+    }
+    
+    query += ' ORDER BY m.category, m.item_name';
+    
+    const result = params.length > 0 
+      ? await c.env.DB.prepare(query).bind(...params).all()
+      : await c.env.DB.prepare(query).all();
+    
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    console.error('Stock query error:', error);
+    return c.json({ success: false, error: error.message, data: [] }, 500);
+  }
+});
+
 // 현재 재고 현황 (원료, 제품, 부자재 통합)
 stockRoutes.get('/current', async (c) => {
   const category = c.req.query('category');

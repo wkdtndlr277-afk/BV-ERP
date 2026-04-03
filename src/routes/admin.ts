@@ -1676,4 +1676,1326 @@ admin.post('/import-bom', async (c) => {
   }
 })
 
+// ========== 생산명 기반 BOM 관리 ==========
+
+// DB 마이그레이션: production_items, production_bom 테이블 생성
+admin.post('/migrate-production-items', async (c) => {
+  const { env } = c
+  
+  try {
+    // production_items 테이블 생성
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        production_code TEXT UNIQUE NOT NULL,
+        production_name TEXT NOT NULL,
+        alias1 TEXT,
+        alias2 TEXT,
+        category TEXT DEFAULT '빵',
+        unit TEXT DEFAULT 'g',
+        standard_weight REAL,
+        is_active INTEGER DEFAULT 1,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // production_bom 테이블 생성
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_bom (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        production_code TEXT NOT NULL,
+        material_code TEXT NOT NULL,
+        material_name TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        unit TEXT DEFAULT 'g',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // 인덱스 생성
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_items_name ON production_items(production_name)`).run()
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_items_alias1 ON production_items(alias1)`).run()
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_bom_code ON production_bom(production_code)`).run()
+    
+    return c.json({ success: true, message: '생산명 테이블 마이그레이션 완료' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 생산명 목록 조회
+admin.get('/production-items', async (c) => {
+  const { env } = c
+  
+  try {
+    const result = await env.DB.prepare(`
+      SELECT pi.*, 
+             (SELECT COUNT(*) FROM production_bom pb WHERE pb.production_code = pi.production_code) as bom_count
+      FROM production_items pi 
+      WHERE pi.is_active = 1
+      ORDER BY pi.production_name
+    `).all()
+    
+    return c.json({ success: true, data: result.results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 생산명 BOM 일괄 등록 (엑셀 데이터 기반)
+admin.post('/import-production-bom', async (c) => {
+  const { items } = await c.req.json()
+  const { env } = c
+  
+  // items 구조: [{ production_name, alias1, alias2, materials: [{name, quantity}] }]
+  
+  const results = {
+    production_items: { inserted: 0, updated: 0, skipped: 0 },
+    bom: { inserted: 0, skipped: 0 }
+  }
+  const errors: string[] = []
+  
+  try {
+    // 기존 원재료 마스터 조회 (매칭용)
+    const materialsResult = await env.DB.prepare(`
+      SELECT item_code, item_name FROM master WHERE category = '원료'
+    `).all()
+    const materialMap = new Map<string, string>()
+    for (const m of materialsResult.results as any[]) {
+      // 원재료명 정규화하여 매핑
+      const normalizedName = m.item_name.replace(/\s+/g, '').toLowerCase()
+      materialMap.set(normalizedName, m.item_code)
+      materialMap.set(m.item_name, m.item_code)
+    }
+    
+    let codeCounter = 1
+    // 기존 최대 코드 조회
+    const maxCode = await env.DB.prepare(`
+      SELECT MAX(CAST(SUBSTR(production_code, 3) AS INTEGER)) as max_num 
+      FROM production_items
+    `).first() as { max_num: number | null }
+    if (maxCode?.max_num) {
+      codeCounter = maxCode.max_num + 1
+    }
+    
+    for (const item of items) {
+      try {
+        const productionName = item.production_name?.trim()
+        if (!productionName) continue
+        
+        // 생산명 코드 생성 또는 조회
+        let productionCode: string
+        const existing = await env.DB.prepare(`
+          SELECT production_code FROM production_items WHERE production_name = ?
+        `).bind(productionName).first() as { production_code: string } | null
+        
+        if (existing) {
+          productionCode = existing.production_code
+          results.production_items.updated++
+        } else {
+          productionCode = `PR${String(codeCounter++).padStart(3, '0')}`
+          
+          // 중량 추출 시도 (예: "300g", "150g (3개)")
+          const weightMatch = productionName.match(/(\d+)g/i)
+          const standardWeight = weightMatch ? parseFloat(weightMatch[1]) : null
+          
+          await env.DB.prepare(`
+            INSERT INTO production_items (production_code, production_name, alias1, alias2, standard_weight)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(productionCode, productionName, item.alias1 || null, item.alias2 || null, standardWeight).run()
+          
+          results.production_items.inserted++
+        }
+        
+        // BOM 등록 (기존 BOM 삭제 후 새로 등록)
+        await env.DB.prepare(`DELETE FROM production_bom WHERE production_code = ?`).bind(productionCode).run()
+        
+        for (const mat of item.materials || []) {
+          const materialName = mat.name?.trim()
+          if (!materialName || !mat.quantity) continue
+          
+          // 원재료 코드 찾기
+          const normalizedMatName = materialName.replace(/\s+/g, '').toLowerCase()
+          let materialCode = materialMap.get(normalizedMatName) || materialMap.get(materialName)
+          
+          // 매칭 안되면 유사 매칭 시도
+          if (!materialCode) {
+            for (const [key, code] of materialMap.entries()) {
+              if (key.includes(normalizedMatName) || normalizedMatName.includes(key)) {
+                materialCode = code
+                break
+              }
+            }
+          }
+          
+          // 그래도 없으면 새 원재료 등록
+          if (!materialCode) {
+            // 새 원재료 코드 생성
+            const maxMat = await env.DB.prepare(`
+              SELECT MAX(CAST(SUBSTR(item_code, 2) AS INTEGER)) as max_num 
+              FROM master WHERE item_code LIKE 'R%' AND category = '원료'
+            `).first() as { max_num: number | null }
+            const nextNum = (maxMat?.max_num || 0) + 1
+            materialCode = `R${String(nextNum).padStart(3, '0')}`
+            
+            await env.DB.prepare(`
+              INSERT OR IGNORE INTO master (item_code, item_name, category, unit, safety_stock)
+              VALUES (?, ?, '원료', 'kg', 10)
+            `).bind(materialCode, materialName).run()
+            
+            materialMap.set(normalizedMatName, materialCode)
+            materialMap.set(materialName, materialCode)
+          }
+          
+          // BOM 등록
+          await env.DB.prepare(`
+            INSERT INTO production_bom (production_code, material_code, material_name, quantity, unit)
+            VALUES (?, ?, ?, ?, 'g')
+          `).bind(productionCode, materialCode, materialName, mat.quantity).run()
+          
+          results.bom.inserted++
+        }
+      } catch (e: any) {
+        errors.push(`${item.production_name}: ${e.message}`)
+      }
+    }
+    
+    // 로그 기록
+    await env.DB.prepare(
+      'INSERT INTO admin_logs (action_type, target_table, reason) VALUES (?, ?, ?)'
+    ).bind('생산명BOM등록', 'production_items, production_bom', 
+      `생산명 ${results.production_items.inserted}개 등록, BOM ${results.bom.inserted}개 등록`).run()
+    
+    return c.json({ 
+      success: true, 
+      message: '생산명 BOM 등록 완료',
+      results,
+      errors: errors.slice(0, 10)
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 생산명으로 검색 (발주서 매칭용)
+admin.get('/match-production', async (c) => {
+  const { env } = c
+  const name = c.req.query('name') || ''
+  
+  try {
+    // 정확히 일치하는 생산명 찾기
+    let result = await env.DB.prepare(`
+      SELECT * FROM production_items 
+      WHERE production_name = ? OR alias1 = ? OR alias2 = ?
+    `).bind(name, name, name).first()
+    
+    if (!result) {
+      // LIKE 검색
+      const searchName = `%${name}%`
+      result = await env.DB.prepare(`
+        SELECT * FROM production_items 
+        WHERE production_name LIKE ? OR alias1 LIKE ? OR alias2 LIKE ?
+        LIMIT 1
+      `).bind(searchName, searchName, searchName).first()
+    }
+    
+    return c.json({ success: true, data: result })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 생산명 BOM 조회
+admin.get('/production-bom/:code', async (c) => {
+  const { env } = c
+  const code = c.req.param('code')
+  
+  try {
+    const bom = await env.DB.prepare(`
+      SELECT pb.*, m.item_name as master_name, m.unit as master_unit
+      FROM production_bom pb
+      LEFT JOIN master m ON pb.material_code = m.item_code
+      WHERE pb.production_code = ?
+      ORDER BY pb.id
+    `).bind(code).all()
+    
+    const item = await env.DB.prepare(`
+      SELECT * FROM production_items WHERE production_code = ?
+    `).bind(code).first()
+    
+    return c.json({ success: true, data: { item, bom: bom.results } })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 생산명 수동 등록
+admin.post('/production-items', async (c) => {
+  const { env } = c
+  const body = await c.req.json()
+  const { production_name, alias1, alias2 } = body
+  
+  if (!production_name) {
+    return c.json({ success: false, error: '생산명은 필수입니다' }, 400)
+  }
+  
+  try {
+    // 중복 체크
+    const existing = await env.DB.prepare(`
+      SELECT production_code FROM production_items WHERE production_name = ?
+    `).bind(production_name).first()
+    
+    if (existing) {
+      return c.json({ success: false, error: '이미 등록된 생산명입니다' }, 400)
+    }
+    
+    // 새 코드 생성
+    const maxCode = await env.DB.prepare(`
+      SELECT MAX(CAST(SUBSTR(production_code, 3) AS INTEGER)) as max_num 
+      FROM production_items
+    `).first() as { max_num: number | null }
+    const nextNum = (maxCode?.max_num || 0) + 1
+    const productionCode = `PR${String(nextNum).padStart(3, '0')}`
+    
+    // 중량 추출
+    const weightMatch = production_name.match(/(\d+)g/i)
+    const standardWeight = weightMatch ? parseFloat(weightMatch[1]) : null
+    
+    await env.DB.prepare(`
+      INSERT INTO production_items (production_code, production_name, alias1, alias2, standard_weight)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(productionCode, production_name, alias1 || null, alias2 || null, standardWeight).run()
+    
+    return c.json({ 
+      success: true, 
+      message: '생산명이 등록되었습니다',
+      production_code: productionCode 
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 생산명 단일 조회
+admin.get('/production-items/:code', async (c) => {
+  const { env } = c
+  const code = c.req.param('code')
+  
+  try {
+    const item = await env.DB.prepare(`
+      SELECT * FROM production_items WHERE production_code = ?
+    `).bind(code).first()
+    
+    if (!item) {
+      return c.json({ success: false, error: '생산명을 찾을 수 없습니다' }, 404)
+    }
+    
+    const bom = await env.DB.prepare(`
+      SELECT * FROM production_bom WHERE production_code = ? ORDER BY id
+    `).bind(code).all()
+    
+    return c.json({ success: true, data: { item, bom: bom.results } })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 생산명 수정
+admin.put('/production-items/:code', async (c) => {
+  const { env } = c
+  const code = c.req.param('code')
+  const body = await c.req.json()
+  const { production_name, alias1, alias2 } = body
+  
+  if (!production_name) {
+    return c.json({ success: false, error: '생산명은 필수입니다' }, 400)
+  }
+  
+  try {
+    await env.DB.prepare(`
+      UPDATE production_items 
+      SET production_name = ?, alias1 = ?, alias2 = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE production_code = ?
+    `).bind(production_name, alias1 || null, alias2 || null, code).run()
+    
+    return c.json({ success: true, message: '생산명이 수정되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 생산명 삭제
+admin.delete('/production-items/:code', async (c) => {
+  const { env } = c
+  const code = c.req.param('code')
+  
+  try {
+    // 관련 BOM 삭제
+    await env.DB.prepare(`DELETE FROM production_bom WHERE production_code = ?`).bind(code).run()
+    
+    // 관련 바코드 삭제
+    await env.DB.prepare(`DELETE FROM production_barcodes WHERE production_code = ?`).bind(code).run()
+    
+    // 생산명 삭제
+    await env.DB.prepare(`DELETE FROM production_items WHERE production_code = ?`).bind(code).run()
+    
+    // 로그 기록
+    await env.DB.prepare(
+      'INSERT INTO admin_logs (action_type, target_table, reason) VALUES (?, ?, ?)'
+    ).bind('생산명삭제', 'production_items', `생산명 ${code} 삭제`).run()
+    
+    return c.json({ success: true, message: '삭제되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// BOM 수동 등록 (단일 생산명)
+admin.post('/production-bom', async (c) => {
+  const { env } = c
+  const body = await c.req.json()
+  const { production_code, materials } = body
+  
+  if (!production_code || !materials || materials.length === 0) {
+    return c.json({ success: false, error: '생산명 코드와 원료 목록이 필요합니다' }, 400)
+  }
+  
+  try {
+    // 생산명 존재 확인
+    const item = await env.DB.prepare(`
+      SELECT production_code FROM production_items WHERE production_code = ?
+    `).bind(production_code).first()
+    
+    if (!item) {
+      return c.json({ success: false, error: '존재하지 않는 생산명입니다' }, 404)
+    }
+    
+    // 기존 원재료 마스터 조회 (매칭용)
+    const materialsResult = await env.DB.prepare(`
+      SELECT item_code, item_name FROM master WHERE category = '원료'
+    `).all()
+    const materialMap = new Map<string, string>()
+    for (const m of materialsResult.results as any[]) {
+      materialMap.set(m.item_name.toLowerCase(), m.item_code)
+    }
+    
+    // 기존 BOM 삭제
+    await env.DB.prepare(`DELETE FROM production_bom WHERE production_code = ?`).bind(production_code).run()
+    
+    // 새 BOM 등록
+    let insertCount = 0
+    for (const mat of materials) {
+      const materialName = mat.material_name?.trim()
+      const quantity = parseFloat(mat.quantity) || 0
+      
+      if (!materialName || quantity <= 0) continue
+      
+      // 원재료 코드 찾기
+      let materialCode = materialMap.get(materialName.toLowerCase())
+      
+      // 매칭 안되면 새 원재료 등록
+      if (!materialCode) {
+        const maxMat = await env.DB.prepare(`
+          SELECT MAX(CAST(SUBSTR(item_code, 2) AS INTEGER)) as max_num 
+          FROM master WHERE item_code LIKE 'R%' AND category = '원료'
+        `).first() as { max_num: number | null }
+        const nextNum = (maxMat?.max_num || 0) + 1
+        materialCode = `R${String(nextNum).padStart(3, '0')}`
+        
+        await env.DB.prepare(`
+          INSERT OR IGNORE INTO master (item_code, item_name, category, unit, safety_stock)
+          VALUES (?, ?, '원료', 'kg', 10)
+        `).bind(materialCode, materialName).run()
+      }
+      
+      await env.DB.prepare(`
+        INSERT INTO production_bom (production_code, material_code, material_name, quantity, unit)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(production_code, materialCode, materialName, quantity, mat.unit || 'g').run()
+      
+      insertCount++
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: `BOM ${insertCount}개 등록 완료`,
+      inserted: insertCount
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// BOM 삭제 (특정 생산명)
+admin.delete('/production-bom/:code', async (c) => {
+  const { env } = c
+  const code = c.req.param('code')
+  
+  try {
+    await env.DB.prepare(`DELETE FROM production_bom WHERE production_code = ?`).bind(code).run()
+    
+    return c.json({ success: true, message: 'BOM이 삭제되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 생산일보 관련 테이블 생성
+admin.post('/create-daily-report-tables', async (c) => {
+  const { env } = c
+  
+  try {
+    // 바코드 매핑 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_barcodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        production_code TEXT NOT NULL,
+        barcode TEXT NOT NULL,
+        product_name TEXT,
+        channel TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(production_code, barcode)
+      )
+    `).run()
+    
+    // 생산일보 헤더 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_daily_report (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_date DATE NOT NULL,
+        report_no TEXT,
+        order_file_name TEXT,
+        status TEXT DEFAULT 'draft',
+        total_products INTEGER DEFAULT 0,
+        total_quantity INTEGER DEFAULT 0,
+        notes TEXT,
+        created_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // 생산일보 품목 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_daily_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_id INTEGER NOT NULL,
+        production_code TEXT NOT NULL,
+        production_name TEXT NOT NULL,
+        barcode TEXT,
+        order_product_name TEXT,
+        quantity INTEGER NOT NULL,
+        unit TEXT DEFAULT 'EA',
+        has_bom INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'pending',
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (report_id) REFERENCES production_daily_report(id) ON DELETE CASCADE
+      )
+    `).run()
+    
+    // 생산일보 원재료 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_daily_materials (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_id INTEGER NOT NULL,
+        item_id INTEGER,
+        material_code TEXT,
+        material_name TEXT NOT NULL,
+        required_quantity REAL NOT NULL,
+        unit TEXT DEFAULT 'g',
+        production_code TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (report_id) REFERENCES production_daily_report(id) ON DELETE CASCADE
+      )
+    `).run()
+    
+    return c.json({ success: true, message: '생산일보 테이블 생성 완료' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ========== 시스템 설정 관리 API ==========
+
+// 시스템 설정 테이블 생성/마이그레이션
+admin.post('/system/migrate', async (c) => {
+  const { env } = c
+  
+  try {
+    // 시스템 설정 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS system_config (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        config_key TEXT UNIQUE NOT NULL,
+        config_value TEXT,
+        config_type TEXT DEFAULT 'string',
+        category TEXT DEFAULT 'general',
+        description TEXT,
+        is_editable INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // 양식 템플릿 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS form_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        form_type TEXT UNIQUE NOT NULL,
+        form_name TEXT NOT NULL,
+        template_html TEXT,
+        template_css TEXT,
+        fields TEXT,
+        is_active INTEGER DEFAULT 1,
+        version INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // 품질검사 항목 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS quality_check_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category TEXT NOT NULL,
+        check_type TEXT NOT NULL,
+        check_name TEXT NOT NULL,
+        check_method TEXT,
+        standard_value TEXT,
+        min_value REAL,
+        max_value REAL,
+        unit TEXT,
+        is_required INTEGER DEFAULT 1,
+        display_order INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // 코드 생성 규칙 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS code_rules (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        rule_type TEXT UNIQUE NOT NULL,
+        rule_name TEXT NOT NULL,
+        prefix TEXT,
+        separator TEXT DEFAULT '',
+        date_format TEXT,
+        sequence_digits INTEGER DEFAULT 3,
+        example TEXT,
+        description TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    
+    // 카테고리 관리 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category_type TEXT NOT NULL,
+        category_name TEXT NOT NULL,
+        parent_id INTEGER,
+        display_order INTEGER DEFAULT 0,
+        color TEXT,
+        icon TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(category_type, category_name)
+      )
+    `).run()
+    
+    // 기본 시스템 설정 삽입
+    const defaultConfigs = [
+      ['company_name', '(주)본비반트', 'string', 'company', '회사명'],
+      ['company_address', '', 'string', 'company', '회사 주소'],
+      ['company_tel', '', 'string', 'company', '회사 전화번호'],
+      ['company_fax', '', 'string', 'company', '회사 팩스번호'],
+      ['company_email', '', 'string', 'company', '회사 이메일'],
+      ['company_ceo', '', 'string', 'company', '대표자명'],
+      ['company_business_number', '', 'string', 'company', '사업자등록번호'],
+      ['company_haccp_number', '', 'string', 'company', 'HACCP 인증번호'],
+      ['default_unit', 'kg', 'string', 'general', '기본 단위'],
+      ['default_expiry_days', '365', 'number', 'general', '기본 유통기한(일)'],
+      ['stock_warning_percent', '20', 'number', 'general', '재고 경고 기준(%)'],
+      ['lot_expiry_warning_days', '30', 'number', 'general', 'LOT 만료 경고 기준(일)'],
+      ['notify_low_stock', 'true', 'boolean', 'notification', '재고 부족 알림'],
+      ['notify_expiry_soon', 'true', 'boolean', 'notification', '유통기한 임박 알림'],
+      ['date_format', 'YYYY-MM-DD', 'string', 'general', '날짜 형식'],
+      ['timezone', 'Asia/Seoul', 'string', 'general', '시간대'],
+      ['language', 'ko', 'string', 'general', '언어']
+    ]
+    
+    for (const config of defaultConfigs) {
+      await env.DB.prepare(`
+        INSERT OR IGNORE INTO system_config (config_key, config_value, config_type, category, description)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(...config).run()
+    }
+    
+    // 기본 코드 규칙 삽입
+    const defaultCodeRules = [
+      ['material', '원료 코드', 'R', 3, 'R001, R002', '원료 품목 코드 생성 규칙'],
+      ['submaterial', '부자재 코드', 'S', 3, 'S001, S002', '부자재 품목 코드 생성 규칙'],
+      ['product', '제품 코드', 'P', 3, 'P001, P002', '제품 품목 코드 생성 규칙'],
+      ['production', '생산명 코드', 'PR', 3, 'PR001, PR002', '생산명 코드 생성 규칙'],
+      ['lot', 'LOT 번호', 'LOT', 4, 'LOT240403-0001', 'LOT 번호 생성 규칙'],
+      ['document', '문서 번호', 'DOC', 4, 'DOC-2024-0001', '문서 번호 생성 규칙']
+    ]
+    
+    for (const rule of defaultCodeRules) {
+      await env.DB.prepare(`
+        INSERT OR IGNORE INTO code_rules (rule_type, rule_name, prefix, sequence_digits, example, description)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).bind(...rule).run()
+    }
+    
+    // 기본 품질검사 항목 삽입
+    const defaultQualityItems = [
+      ['원료', '외관', '외관 검사', '육안 검사', '이상 없음', 1, 1],
+      ['원료', '이물', '이물질 검사', '육안 검사', '이물 없음', 1, 2],
+      ['원료', '냄새', '냄새 검사', '관능 검사', '이취 없음', 1, 3],
+      ['원료', '포장상태', '포장 상태', '육안 검사', '양호', 1, 4],
+      ['부자재', '외관', '외관 검사', '육안 검사', '이상 없음', 1, 1],
+      ['부자재', '이물', '이물질 검사', '육안 검사', '이물 없음', 1, 2],
+      ['부자재', '파손', '파손 여부', '육안 검사', '파손 없음', 1, 3],
+      ['제품', '외관', '외관 검사', '육안 검사', '이상 없음', 1, 1],
+      ['제품', '이물', '이물질 검사', '육안 검사', '이물 없음', 1, 2],
+      ['제품', '맛', '맛 검사', '관능 검사', '양호', 1, 3],
+      ['제품', '색상', '색상 검사', '육안 검사', '양호', 1, 4]
+    ]
+    
+    for (const item of defaultQualityItems) {
+      await env.DB.prepare(`
+        INSERT OR IGNORE INTO quality_check_items (category, check_type, check_name, check_method, standard_value, is_required, display_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(...item).run()
+    }
+    
+    // 기본 카테고리 삽입
+    const defaultCategories = [
+      ['item', '원료', 1, 'blue', 'fa-flask'],
+      ['item', '부자재', 2, 'gray', 'fa-box'],
+      ['item', '소모품', 3, 'yellow', 'fa-tools'],
+      ['item', '제품', 4, 'green', 'fa-bread-slice'],
+      ['supplier', '원료 공급사', 1, 'blue', 'fa-truck'],
+      ['supplier', '부자재 공급사', 2, 'gray', 'fa-boxes'],
+      ['supplier', '기타', 3, 'yellow', 'fa-building']
+    ]
+    
+    for (const cat of defaultCategories) {
+      await env.DB.prepare(`
+        INSERT OR IGNORE INTO categories (category_type, category_name, display_order, color, icon)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(...cat).run()
+    }
+    
+    return c.json({ success: true, message: '시스템 설정 테이블 마이그레이션 완료' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 시스템 설정 조회
+admin.get('/system/config', async (c) => {
+  const { env } = c
+  const category = c.req.query('category')
+  
+  try {
+    let query = 'SELECT * FROM system_config'
+    let params: any[] = []
+    
+    if (category) {
+      query += ' WHERE category = ?'
+      params.push(category)
+    }
+    
+    query += ' ORDER BY category, config_key'
+    
+    const data = await env.DB.prepare(query).bind(...params).all()
+    return c.json({ success: true, data: data.results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 시스템 설정 수정
+admin.put('/system/config/:key', async (c) => {
+  const { env } = c
+  const key = c.req.param('key')
+  const { value } = await c.req.json()
+  
+  try {
+    await env.DB.prepare(`
+      UPDATE system_config SET config_value = ?, updated_at = CURRENT_TIMESTAMP WHERE config_key = ?
+    `).bind(value, key).run()
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, target_id, reason)
+      VALUES ('설정변경', 'system_config', ?, ?)
+    `).bind(key, `설정값 변경: ${value}`).run()
+    
+    return c.json({ success: true, message: '설정이 변경되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 시스템 설정 일괄 수정
+admin.put('/system/config-bulk', async (c) => {
+  const { env } = c
+  const { configs } = await c.req.json()
+  
+  try {
+    for (const config of configs) {
+      await env.DB.prepare(`
+        INSERT INTO system_config (config_key, config_value, config_type, category, description)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(config_key) DO UPDATE SET
+        config_value = excluded.config_value,
+        updated_at = CURRENT_TIMESTAMP
+      `).bind(config.key, config.value, config.type || 'string', config.category || 'general', config.description || '').run()
+    }
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES ('설정변경', 'system_config', ?)
+    `).bind(`일괄 설정 변경: ${configs.length}개 항목`).run()
+    
+    return c.json({ success: true, message: '설정이 저장되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ========== 양식 템플릿 관리 API ==========
+
+// 양식 템플릿 목록 조회
+admin.get('/system/forms', async (c) => {
+  const { env } = c
+  
+  try {
+    const data = await env.DB.prepare(`
+      SELECT * FROM form_templates ORDER BY form_type
+    `).all()
+    return c.json({ success: true, data: data.results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 양식 템플릿 상세 조회
+admin.get('/system/forms/:type', async (c) => {
+  const { env } = c
+  const formType = c.req.param('type')
+  
+  try {
+    const data = await env.DB.prepare(`
+      SELECT * FROM form_templates WHERE form_type = ?
+    `).bind(formType).first()
+    
+    if (!data) {
+      return c.json({ success: false, message: '양식을 찾을 수 없습니다' }, 404)
+    }
+    
+    return c.json({ success: true, data })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 양식 템플릿 생성/수정
+admin.post('/system/forms', async (c) => {
+  const { env } = c
+  const { form_type, form_name, template_html, template_css, fields } = await c.req.json()
+  
+  try {
+    await env.DB.prepare(`
+      INSERT INTO form_templates (form_type, form_name, template_html, template_css, fields, version)
+      VALUES (?, ?, ?, ?, ?, 1)
+      ON CONFLICT(form_type) DO UPDATE SET
+      form_name = excluded.form_name,
+      template_html = excluded.template_html,
+      template_css = excluded.template_css,
+      fields = excluded.fields,
+      version = form_templates.version + 1,
+      updated_at = CURRENT_TIMESTAMP
+    `).bind(form_type, form_name, template_html || '', template_css || '', JSON.stringify(fields || [])).run()
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, target_id, reason)
+      VALUES ('양식수정', 'form_templates', ?, ?)
+    `).bind(form_type, `양식 저장: ${form_name}`).run()
+    
+    return c.json({ success: true, message: '양식이 저장되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 양식 템플릿 삭제
+admin.delete('/system/forms/:type', async (c) => {
+  const { env } = c
+  const formType = c.req.param('type')
+  
+  try {
+    await env.DB.prepare(`DELETE FROM form_templates WHERE form_type = ?`).bind(formType).run()
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, target_id, reason)
+      VALUES ('양식삭제', 'form_templates', ?, '양식 삭제')
+    `).bind(formType).run()
+    
+    return c.json({ success: true, message: '양식이 삭제되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ========== 품질검사 항목 관리 API ==========
+
+// 품질검사 항목 목록 조회
+admin.get('/system/quality-items', async (c) => {
+  const { env } = c
+  const category = c.req.query('category')
+  
+  try {
+    let query = 'SELECT * FROM quality_check_items'
+    let params: any[] = []
+    
+    if (category) {
+      query += ' WHERE category = ?'
+      params.push(category)
+    }
+    
+    query += ' ORDER BY category, display_order, check_name'
+    
+    const data = await env.DB.prepare(query).bind(...params).all()
+    return c.json({ success: true, data: data.results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 품질검사 항목 추가
+admin.post('/system/quality-items', async (c) => {
+  const { env } = c
+  const { category, check_type, check_name, check_method, standard_value, min_value, max_value, unit, is_required, display_order } = await c.req.json()
+  
+  try {
+    const result = await env.DB.prepare(`
+      INSERT INTO quality_check_items (category, check_type, check_name, check_method, standard_value, min_value, max_value, unit, is_required, display_order)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(category, check_type, check_name, check_method || '', standard_value || '', min_value || null, max_value || null, unit || '', is_required ? 1 : 0, display_order || 0).run()
+    
+    return c.json({ success: true, message: '검사 항목이 추가되었습니다', id: result.meta.last_row_id })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 품질검사 항목 수정
+admin.put('/system/quality-items/:id', async (c) => {
+  const { env } = c
+  const id = c.req.param('id')
+  const { category, check_type, check_name, check_method, standard_value, min_value, max_value, unit, is_required, display_order, is_active } = await c.req.json()
+  
+  try {
+    await env.DB.prepare(`
+      UPDATE quality_check_items SET
+        category = ?, check_type = ?, check_name = ?, check_method = ?,
+        standard_value = ?, min_value = ?, max_value = ?, unit = ?,
+        is_required = ?, display_order = ?, is_active = ?
+      WHERE id = ?
+    `).bind(category, check_type, check_name, check_method || '', standard_value || '', min_value || null, max_value || null, unit || '', is_required ? 1 : 0, display_order || 0, is_active ? 1 : 0, id).run()
+    
+    return c.json({ success: true, message: '검사 항목이 수정되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 품질검사 항목 삭제
+admin.delete('/system/quality-items/:id', async (c) => {
+  const { env } = c
+  const id = c.req.param('id')
+  
+  try {
+    await env.DB.prepare(`DELETE FROM quality_check_items WHERE id = ?`).bind(id).run()
+    return c.json({ success: true, message: '검사 항목이 삭제되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ========== 코드 규칙 관리 API ==========
+
+// 코드 규칙 목록 조회
+admin.get('/system/code-rules', async (c) => {
+  const { env } = c
+  
+  try {
+    const data = await env.DB.prepare(`SELECT * FROM code_rules ORDER BY rule_type`).all()
+    return c.json({ success: true, data: data.results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 코드 규칙 수정
+admin.put('/system/code-rules/:type', async (c) => {
+  const { env } = c
+  const ruleType = c.req.param('type')
+  const { rule_name, prefix, separator, date_format, sequence_digits, example, description } = await c.req.json()
+  
+  try {
+    await env.DB.prepare(`
+      UPDATE code_rules SET
+        rule_name = ?, prefix = ?, separator = ?, date_format = ?,
+        sequence_digits = ?, example = ?, description = ?
+      WHERE rule_type = ?
+    `).bind(rule_name, prefix || '', separator || '', date_format || '', sequence_digits || 3, example || '', description || '', ruleType).run()
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, target_id, reason)
+      VALUES ('규칙변경', 'code_rules', ?, ?)
+    `).bind(ruleType, `코드 규칙 변경: ${rule_name}`).run()
+    
+    return c.json({ success: true, message: '코드 규칙이 수정되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ========== 카테고리 관리 API ==========
+
+// 카테고리 목록 조회
+admin.get('/system/categories', async (c) => {
+  const { env } = c
+  const categoryType = c.req.query('type')
+  
+  try {
+    let query = 'SELECT * FROM categories'
+    let params: any[] = []
+    
+    if (categoryType) {
+      query += ' WHERE category_type = ?'
+      params.push(categoryType)
+    }
+    
+    query += ' ORDER BY category_type, display_order, category_name'
+    
+    const data = await env.DB.prepare(query).bind(...params).all()
+    return c.json({ success: true, data: data.results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 카테고리 추가
+admin.post('/system/categories', async (c) => {
+  const { env } = c
+  const { category_type, category_name, display_order, color, icon } = await c.req.json()
+  
+  try {
+    const result = await env.DB.prepare(`
+      INSERT INTO categories (category_type, category_name, display_order, color, icon)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(category_type, category_name, display_order || 0, color || 'gray', icon || 'fa-tag').run()
+    
+    return c.json({ success: true, message: '카테고리가 추가되었습니다', id: result.meta.last_row_id })
+  } catch (error: any) {
+    if (error.message.includes('UNIQUE constraint')) {
+      return c.json({ success: false, message: '이미 존재하는 카테고리입니다' }, 400)
+    }
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 카테고리 수정
+admin.put('/system/categories/:id', async (c) => {
+  const { env } = c
+  const id = c.req.param('id')
+  const { category_name, display_order, color, icon, is_active } = await c.req.json()
+  
+  try {
+    await env.DB.prepare(`
+      UPDATE categories SET
+        category_name = ?, display_order = ?, color = ?, icon = ?, is_active = ?
+      WHERE id = ?
+    `).bind(category_name, display_order || 0, color || 'gray', icon || 'fa-tag', is_active ? 1 : 0, id).run()
+    
+    return c.json({ success: true, message: '카테고리가 수정되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 카테고리 삭제
+admin.delete('/system/categories/:id', async (c) => {
+  const { env } = c
+  const id = c.req.param('id')
+  
+  try {
+    await env.DB.prepare(`DELETE FROM categories WHERE id = ?`).bind(id).run()
+    return c.json({ success: true, message: '카테고리가 삭제되었습니다' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ========== 관리자 활동 로그 조회 API ==========
+
+// 활동 로그 조회 (상세)
+admin.get('/system/logs', async (c) => {
+  const { env } = c
+  const page = parseInt(c.req.query('page') || '1')
+  const limit = parseInt(c.req.query('limit') || '50')
+  const offset = (page - 1) * limit
+  const actionType = c.req.query('action_type')
+  const targetTable = c.req.query('target_table')
+  const startDate = c.req.query('start_date')
+  const endDate = c.req.query('end_date')
+  
+  try {
+    let query = `SELECT * FROM admin_logs WHERE 1=1`
+    let countQuery = `SELECT COUNT(*) as total FROM admin_logs WHERE 1=1`
+    let params: any[] = []
+    let countParams: any[] = []
+    
+    if (actionType) {
+      query += ' AND action_type = ?'
+      countQuery += ' AND action_type = ?'
+      params.push(actionType)
+      countParams.push(actionType)
+    }
+    
+    if (targetTable) {
+      query += ' AND target_table = ?'
+      countQuery += ' AND target_table = ?'
+      params.push(targetTable)
+      countParams.push(targetTable)
+    }
+    
+    if (startDate) {
+      query += ' AND DATE(created_at) >= ?'
+      countQuery += ' AND DATE(created_at) >= ?'
+      params.push(startDate)
+      countParams.push(startDate)
+    }
+    
+    if (endDate) {
+      query += ' AND DATE(created_at) <= ?'
+      countQuery += ' AND DATE(created_at) <= ?'
+      params.push(endDate)
+      countParams.push(endDate)
+    }
+    
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+    params.push(limit, offset)
+    
+    const data = await env.DB.prepare(query).bind(...params).all()
+    const countResult = await env.DB.prepare(countQuery).bind(...countParams).first()
+    
+    return c.json({
+      success: true,
+      data: data.results,
+      pagination: {
+        page,
+        limit,
+        total: countResult?.total || 0,
+        totalPages: Math.ceil((countResult?.total as number || 0) / limit)
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 로그 통계 조회
+admin.get('/system/logs/stats', async (c) => {
+  const { env } = c
+  
+  try {
+    // 오늘 활동 수
+    const todayCount = await env.DB.prepare(`
+      SELECT COUNT(*) as count FROM admin_logs WHERE DATE(created_at) = DATE('now')
+    `).first()
+    
+    // 최근 7일 일별 활동 수
+    const weeklyStats = await env.DB.prepare(`
+      SELECT DATE(created_at) as date, COUNT(*) as count
+      FROM admin_logs
+      WHERE created_at >= DATE('now', '-7 days')
+      GROUP BY DATE(created_at)
+      ORDER BY date DESC
+    `).all()
+    
+    // 액션 타입별 통계
+    const actionStats = await env.DB.prepare(`
+      SELECT action_type, COUNT(*) as count
+      FROM admin_logs
+      GROUP BY action_type
+      ORDER BY count DESC
+      LIMIT 10
+    `).all()
+    
+    // 테이블별 통계
+    const tableStats = await env.DB.prepare(`
+      SELECT target_table, COUNT(*) as count
+      FROM admin_logs
+      WHERE target_table IS NOT NULL
+      GROUP BY target_table
+      ORDER BY count DESC
+      LIMIT 10
+    `).all()
+    
+    return c.json({
+      success: true,
+      data: {
+        todayCount: todayCount?.count || 0,
+        weeklyStats: weeklyStats.results,
+        actionStats: actionStats.results,
+        tableStats: tableStats.results
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ========== 데이터 백업/복원 API ==========
+
+// 테이블 데이터 내보내기
+admin.get('/system/export/:table', async (c) => {
+  const { env } = c
+  const table = c.req.param('table')
+  
+  // 허용된 테이블만
+  const allowedTables = ['master', 'supplies', 'production_items', 'production_bom', 'production_barcodes', 'suppliers', 'system_config', 'form_templates', 'quality_check_items', 'code_rules', 'categories']
+  
+  if (!allowedTables.includes(table)) {
+    return c.json({ success: false, message: '내보내기가 허용되지 않는 테이블입니다' }, 400)
+  }
+  
+  try {
+    const data = await env.DB.prepare(`SELECT * FROM ${table}`).all()
+    
+    return c.json({
+      success: true,
+      table,
+      count: data.results.length,
+      data: data.results,
+      exportedAt: new Date().toISOString()
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 테이블 데이터 가져오기
+admin.post('/system/import/:table', async (c) => {
+  const { env } = c
+  const table = c.req.param('table')
+  const { data, mode } = await c.req.json() // mode: 'replace' | 'merge'
+  
+  const allowedTables = ['master', 'supplies', 'production_items', 'production_bom', 'production_barcodes', 'suppliers', 'system_config', 'form_templates', 'quality_check_items', 'code_rules', 'categories']
+  
+  if (!allowedTables.includes(table)) {
+    return c.json({ success: false, message: '가져오기가 허용되지 않는 테이블입니다' }, 400)
+  }
+  
+  if (!Array.isArray(data) || data.length === 0) {
+    return c.json({ success: false, message: '가져올 데이터가 없습니다' }, 400)
+  }
+  
+  try {
+    let inserted = 0
+    let updated = 0
+    let skipped = 0
+    
+    // replace 모드면 기존 데이터 삭제
+    if (mode === 'replace') {
+      await env.DB.prepare(`DELETE FROM ${table}`).run()
+    }
+    
+    // 데이터 삽입
+    for (const row of data) {
+      const columns = Object.keys(row).filter(k => k !== 'id')
+      const values = columns.map(k => row[k])
+      const placeholders = columns.map(() => '?').join(', ')
+      
+      try {
+        if (mode === 'merge') {
+          // UPSERT 시도
+          const result = await env.DB.prepare(`
+            INSERT INTO ${table} (${columns.join(', ')})
+            VALUES (${placeholders})
+          `).bind(...values).run()
+          
+          if (result.meta.changes > 0) {
+            inserted++
+          }
+        } else {
+          await env.DB.prepare(`
+            INSERT INTO ${table} (${columns.join(', ')})
+            VALUES (${placeholders})
+          `).bind(...values).run()
+          inserted++
+        }
+      } catch (e: any) {
+        if (e.message.includes('UNIQUE constraint')) {
+          skipped++
+        } else {
+          throw e
+        }
+      }
+    }
+    
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES ('데이터가져오기', ?, ?)
+    `).bind(table, `${data.length}건 가져오기 (삽입: ${inserted}, 중복: ${skipped})`).run()
+    
+    return c.json({
+      success: true,
+      message: '데이터 가져오기 완료',
+      stats: { total: data.length, inserted, updated, skipped }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 전체 시스템 설정 백업
+admin.get('/system/backup', async (c) => {
+  const { env } = c
+  
+  try {
+    const backup: any = {}
+    const tables = ['system_config', 'form_templates', 'quality_check_items', 'code_rules', 'categories']
+    
+    for (const table of tables) {
+      try {
+        const data = await env.DB.prepare(`SELECT * FROM ${table}`).all()
+        backup[table] = data.results
+      } catch (e) {
+        backup[table] = []
+      }
+    }
+    
+    return c.json({
+      success: true,
+      backup,
+      backupAt: new Date().toISOString(),
+      version: '1.0'
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

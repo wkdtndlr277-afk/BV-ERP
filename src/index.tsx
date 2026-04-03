@@ -24,6 +24,8 @@ import productionRoutes from './routes/production';
 import { productionPlanRoutes } from './routes/production-plan';
 import { frozenStockRoutes } from './routes/frozen-stock';
 import costRoutes from './routes/cost';
+import dailyReportRoutes from './routes/daily-report';
+import systemConfigRoutes from './routes/system-config';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -52,9 +54,11 @@ app.route('/api/production', productionRoutes);
 app.route('/api/production-plan', productionPlanRoutes);
 app.route('/api/frozen-stock', frozenStockRoutes);
 app.route('/api/cost', costRoutes);
+app.route('/api/daily-report', dailyReportRoutes);
+app.route('/api/system-config', systemConfigRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '1.7.4';
+const SYSTEM_VERSION = '1.7.9';
 const SYSTEM_BUILD_DATE = '2026-03-27';
 
 // Health check

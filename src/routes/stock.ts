@@ -211,4 +211,96 @@ stockRoutes.get('/summary', async (c) => {
   return c.json({ success: true, data: result.results });
 });
 
+// 재고 수동 조정
+stockRoutes.post('/adjust', async (c) => {
+  const body = await c.req.json();
+  const { item_code, adjustment, reason, new_quantity } = body;
+  
+  if (!item_code || new_quantity === undefined) {
+    return c.json({ success: false, error: '품목코드와 변경할 재고량이 필요합니다' }, 400);
+  }
+  
+  if (!reason) {
+    return c.json({ success: false, error: '사유가 필요합니다' }, 400);
+  }
+  
+  try {
+    // 현재 재고 조회
+    const current = await c.env.DB.prepare(`
+      SELECT current_stock FROM master WHERE item_code = ?
+    `).bind(item_code).first() as { current_stock: number } | null;
+    
+    const oldQty = current?.current_stock || 0;
+    const diff = new_quantity - oldQty;
+    
+    // 재고 업데이트
+    await c.env.DB.prepare(`
+      UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+    `).bind(new_quantity, item_code).run();
+    
+    // 트랜잭션 기록 (조정)
+    await c.env.DB.prepare(`
+      INSERT INTO transactions (item_code, transaction_type, quantity, lot_number, notes, transaction_date)
+      VALUES (?, '조정', ?, ?, ?, datetime('now', '+9 hours'))
+    `).bind(item_code, diff, 'ADJUST-' + Date.now(), `재고조정: ${reason} (${oldQty} → ${new_quantity})`).run();
+    
+    // 로그 기록
+    await c.env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES (?, ?, ?)
+    `).bind('재고조정', 'master', `${item_code}: ${oldQty} → ${new_quantity} (${reason})`).run();
+    
+    return c.json({ 
+      success: true, 
+      message: '재고가 조정되었습니다',
+      old_quantity: oldQty,
+      new_quantity: new_quantity,
+      adjustment: diff
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 재고 재계산
+stockRoutes.post('/recalculate', async (c) => {
+  try {
+    // 모든 품목의 재고를 트랜잭션 기반으로 재계산
+    const items = await c.env.DB.prepare(`
+      SELECT item_code FROM master
+    `).all();
+    
+    let updated = 0;
+    for (const item of items.results as any[]) {
+      const code = item.item_code;
+      
+      // 트랜잭션 합계 계산
+      const result = await c.env.DB.prepare(`
+        SELECT 
+          COALESCE(SUM(CASE WHEN transaction_type = '입고' THEN quantity ELSE 0 END), 0) as total_in,
+          COALESCE(SUM(CASE WHEN transaction_type = '사용' THEN quantity ELSE 0 END), 0) as total_usage,
+          COALESCE(SUM(CASE WHEN transaction_type = '출고' THEN quantity ELSE 0 END), 0) as total_out,
+          COALESCE(SUM(CASE WHEN transaction_type = '조정' THEN quantity ELSE 0 END), 0) as total_adjust
+        FROM transactions WHERE item_code = ?
+      `).bind(code).first() as { total_in: number, total_usage: number, total_out: number, total_adjust: number };
+      
+      const calculatedStock = (result.total_in || 0) - (result.total_usage || 0) - (result.total_out || 0) + (result.total_adjust || 0);
+      
+      await c.env.DB.prepare(`
+        UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+      `).bind(calculatedStock, code).run();
+      
+      updated++;
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: `${updated}개 품목의 재고가 재계산되었습니다`,
+      updated: updated
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default stockRoutes;

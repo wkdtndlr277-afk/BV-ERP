@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
-// Version: 1.6.3 Build: 20260326
-const APP_VERSION = '1.7.4';
-const APP_BUILD = '20260326';
+// Version: 1.8.3 Build: 20260403
+const APP_VERSION = '2.0.0';
+const APP_BUILD = '20260403-meta';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -850,6 +850,7 @@ function renderPage(page) {
     case 'process-quality': renderProcessQuality(); break;
     case 'product-catalog': renderProductCatalog(); break;
     case 'microbial-test': renderMicrobialTest(); break;
+    case 'system-management': renderSystemManagement(); break;
     default: renderDashboard();
   }
 }
@@ -11465,6 +11466,15 @@ async function renderAdminDashboard() {
             <button onclick="switchAdminTab('inspection-form')" class="admin-tab px-6 py-4 text-gray-600 font-medium hover:bg-gray-50 border-b-2 border-transparent" data-tab="inspection-form">
               <i class="fas fa-file-alt mr-2"></i> 검사일지 양식
             </button>
+            <button onclick="switchAdminTab('system')" class="admin-tab px-6 py-4 text-indigo-600 font-medium hover:bg-indigo-50 border-b-2 border-transparent" data-tab="system">
+              <i class="fas fa-cogs mr-2"></i> 통합 시스템 관리
+            </button>
+            <button onclick="switchAdminTab('config')" class="admin-tab px-6 py-4 text-teal-600 font-medium hover:bg-teal-50 border-b-2 border-transparent" data-tab="config">
+              <i class="fas fa-sliders-h mr-2"></i> ERP 설정
+            </button>
+            <button onclick="switchAdminTab('auditlog')" class="admin-tab px-6 py-4 text-orange-600 font-medium hover:bg-orange-50 border-b-2 border-transparent" data-tab="auditlog">
+              <i class="fas fa-shield-alt mr-2"></i> 감사 로그
+            </button>
             ${isSuperAdmin ? `
             <button onclick="switchAdminTab('super')" class="admin-tab px-6 py-4 text-purple-600 font-medium hover:bg-purple-50 border-b-2 border-transparent" data-tab="super">
               <i class="fas fa-crown mr-2"></i> 최고관리자
@@ -11504,6 +11514,9 @@ function switchAdminTab(tab) {
     case 'users': loadAdminUsers(); break;
     case 'master': loadAdminMaster(); break;
     case 'inspection-form': loadAdminInspectionForm(); break;
+    case 'system': loadSystemManagementTab(); break;
+    case 'config': loadErpConfigTab(); break;
+    case 'auditlog': loadAuditLogTab(); break;
     case 'super': loadSuperAdminPanel(); break;
   }
 }
@@ -13273,6 +13286,7 @@ async function loadProcessQualityData() {
               <tr>
                 <th class="px-3 py-2 text-left">시간</th>
                 <th class="px-3 py-2 text-left">반죽명</th>
+                <th class="px-3 py-2 text-center">회차</th>
                 <th class="px-3 py-2 text-center">반죽온도</th>
                 <th class="px-3 py-2 text-center">pH</th>
                 <th class="px-3 py-2 text-center">습도</th>
@@ -13287,6 +13301,16 @@ async function loadProcessQualityData() {
                 <tr class="hover:bg-gray-50">
                   <td class="px-3 py-2">${rec.record_time || '-'}</td>
                   <td class="px-3 py-2 font-medium">${rec.dough_name}</td>
+                  <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded text-xs font-semibold ${
+                      rec.inspection_no === 1 ? 'bg-blue-100 text-blue-800' : 
+                      rec.inspection_no === 2 ? 'bg-purple-100 text-purple-800' :
+                      rec.inspection_no === 3 ? 'bg-orange-100 text-orange-800' :
+                      'bg-gray-100 text-gray-800'
+                    }">
+                      ${rec.inspection_stage || rec.inspection_no + '차' || '1차'}
+                    </span>
+                  </td>
                   <td class="px-3 py-2 text-center">
                     <span class="px-2 py-1 rounded text-xs ${rec.dough_temp_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
                       ${rec.dough_temp !== null ? rec.dough_temp + '°C' : '-'}
@@ -13643,11 +13667,16 @@ function showProcessQualityModal(record = null) {
     `<option value="${d.dough_name}" ${record?.dough_name === d.dough_name ? 'selected' : ''}>${d.dough_name} (${d.dough_code})</option>`
   ).join('');
   
+  // 검사회차 옵션 (1차 ~ 5차)
+  const inspectionOptions = [1,2,3,4,5].map(n => 
+    `<option value="${n}" ${record?.inspection_no === n ? 'selected' : ''}>${n}차 검사</option>`
+  ).join('');
+  
   showModal(isEdit ? '공정 품질 수정' : '공정 품질 기록', `
     <form id="process-quality-form" class="space-y-4">
       <input type="hidden" id="pq-id" value="${record?.id || ''}">
       
-      <div class="grid grid-cols-2 gap-4">
+      <div class="grid grid-cols-3 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">기록일자 <span class="text-red-500">*</span></label>
           <input type="date" id="pq-date" value="${record?.record_date || today}" required
@@ -13658,12 +13687,20 @@ function showProcessQualityModal(record = null) {
           <input type="time" id="pq-time" value="${record?.record_time || now}"
                  class="w-full px-3 py-2 border rounded-lg">
         </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">검사회차</label>
+          <select id="pq-inspection-no" class="w-full px-3 py-2 border rounded-lg bg-blue-50">
+            <option value="auto">자동 (다음 회차)</option>
+            ${inspectionOptions}
+          </select>
+          <p class="text-xs text-gray-500 mt-1">자동: 같은 반죽의 다음 회차로 자동 설정</p>
+        </div>
       </div>
       
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">반죽명 <span class="text-red-500">*</span></label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">반좽명 <span class="text-red-500">*</span></label>
         <select id="pq-dough" required class="w-full px-3 py-2 border rounded-lg">
-          <option value="">-- 반죽 선택 --</option>
+          <option value="">-- 반좽 선택 --</option>
           ${doughOptions}
         </select>
       </div>
@@ -13715,6 +13752,8 @@ function showProcessQualityModal(record = null) {
 // 공정 품질 저장
 async function saveProcessQuality() {
   const id = document.getElementById('pq-id').value;
+  const inspectionNoVal = document.getElementById('pq-inspection-no').value;
+  
   const data = {
     record_date: document.getElementById('pq-date').value,
     record_time: document.getElementById('pq-time').value,
@@ -13724,7 +13763,10 @@ async function saveProcessQuality() {
     humidity: document.getElementById('pq-humidity').value ? parseFloat(document.getElementById('pq-humidity').value) : null,
     fermentation_time: document.getElementById('pq-fermentation').value ? parseInt(document.getElementById('pq-fermentation').value) : null,
     worker_name: document.getElementById('pq-worker').value,
-    memo: document.getElementById('pq-memo').value
+    memo: document.getElementById('pq-memo').value,
+    // 검사회차: auto면 null (백엔드에서 자동 계산), 숫자면 해당 회차 지정
+    inspection_no: inspectionNoVal === 'auto' ? null : parseInt(inspectionNoVal),
+    inspection_stage: inspectionNoVal === 'auto' ? null : `${inspectionNoVal}차`
   };
   
   if (!data.dough_name) {
@@ -16009,6 +16051,10 @@ async function renderProduction() {
                 <button onclick="cancelOrderUpload()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">
                   취소
                 </button>
+                <button onclick="convertToDailyReport()" class="px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600">
+                  <i class="fas fa-clipboard-list mr-1"></i>
+                  생산일보 변환
+                </button>
                 <button onclick="executeOrderProduction()" id="order-execute-btn" class="px-6 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50">
                   <i class="fas fa-play mr-1"></i>
                   일괄 생산 등록
@@ -16620,8 +16666,19 @@ async function processOrderFile(file) {
     showToast('마스터 데이터 로드 중...', 'info');
     await loadMasterData();
   }
+  
+  // 생산명 데이터 로드 (발주서 매칭용)
+  try {
+    const prodResult = await api('/admin/production-items');
+    window.productionItemsData = prodResult.data || [];
+    console.log('생산명 데이터 로드:', window.productionItemsData.length, '개');
+  } catch (e) {
+    console.log('생산명 데이터 로드 실패 (기존 방식으로 매칭)');
+    window.productionItemsData = [];
+  }
+  
   console.log('발주서 처리 - 마스터 데이터:', state.masterItems.length, '항목 (제품:', 
-    state.masterItems.filter(m => m.category === '제품').length, ')');
+    state.masterItems.filter(m => m.category === '제품').length, '), 생산명:', window.productionItemsData?.length || 0);
   
   showToast('발주서 분석 중...', 'info');
   
@@ -17571,19 +17628,23 @@ function parseOasisOrder(rows) {
   return items;
 }
 
-// 일반 발주서 파싱 (형식 불명확)
+// 일반 발주서 파싱 (형식 불명확) - 바코드 컬럼 추가
 function parseGenericOrder(rows) {
   const items = [];
   
-  // 상품명/수량 열 찾기
-  let nameCol = -1, qtyCol = -1;
+  // 상품명/수량/바코드 열 찾기
+  let nameCol = -1, qtyCol = -1, barcodeCol = -1, headerRow = 0;
   
   for (let i = 0; i < Math.min(10, rows.length); i++) {
     const row = rows[i];
     for (let j = 0; j < row.length; j++) {
       const cell = String(row[j]).toLowerCase();
-      if (cell.includes('상품') || cell.includes('제품') || cell.includes('품명')) nameCol = j;
+      if (cell.includes('상품') || cell.includes('제품') || cell.includes('품명')) {
+        nameCol = j;
+        headerRow = i;
+      }
       if (cell.includes('수량') || cell.includes('qty')) qtyCol = j;
+      if (cell.includes('바코드') || cell.includes('sku') || cell.includes('상품코드')) barcodeCol = j;
     }
     if (nameCol !== -1 && qtyCol !== -1) break;
   }
@@ -17591,16 +17652,20 @@ function parseGenericOrder(rows) {
   if (nameCol === -1) return items;
   if (qtyCol === -1) qtyCol = nameCol + 1;
   
-  for (let i = 1; i < rows.length; i++) {
+  console.log(`일반 파싱: 상품명=${nameCol}, 수량=${qtyCol}, 바코드=${barcodeCol}`);
+  
+  for (let i = headerRow + 1; i < rows.length; i++) {
     const row = rows[i];
     const name = String(row[nameCol] || '').trim();
     const qty = parseInt(row[qtyCol]) || 0;
+    const barcode = barcodeCol !== -1 ? String(row[barcodeCol] || '').trim() : '';
     
     if (name && qty > 0) {
       items.push({
         originalName: name,
         cleanName: name,
-        quantity: qty
+        quantity: qty,
+        barcode: barcode || null  // 바코드 추가
       });
     }
   }
@@ -17632,7 +17697,134 @@ function matchOrderToProducts(items) {
     // cleanName에서 추가 정제
     const cleanedName = cleanOrderProductName(item.originalName);
     
-    // 직접 매칭 시도
+    // 1. 생산명 매칭 먼저 시도 (production_items 테이블에서 검색)
+    // 생산명은 미리 로드된 productionItemsData에서 검색
+    let productionMatch = null;
+    if (window.productionItemsData && window.productionItemsData.length > 0) {
+      // 정규화: 한글만 남김 (숫자, 특수문자, 영문 모두 제거 - g, ml 등 단위 제거)
+      const normalize = (s) => String(s || '').replace(/[^가-힣]/g, '');
+      // 핵심 키워드 추출: 2글자 이상 한글 단어
+      const extractKeywords = (s) => {
+        const norm = normalize(s);
+        return norm.match(/[가-힣]{2,}/g) || [];
+      };
+      
+      const searchNorm = normalize(cleanedName);
+      const searchKeywords = extractKeywords(cleanedName);
+      
+      let bestMatch = null;
+      let bestScore = 0;
+      
+      for (const pi of window.productionItemsData) {
+        const piNorm = normalize(pi.production_name);
+        const alias1Norm = pi.alias1 ? normalize(pi.alias1) : '';
+        const piKeywords = extractKeywords(pi.production_name);
+        const alias1Keywords = pi.alias1 ? extractKeywords(pi.alias1) : [];
+        
+        let score = 0;
+        
+        // 1단계: 정규화된 이름이 정확히 일치 (점수 1.0)
+        if (searchNorm === piNorm) {
+          score = 1.0;
+        }
+        // 2단계: 유사명칭과 정확히 일치 (점수 0.98)
+        else if (alias1Norm && searchNorm === alias1Norm) {
+          score = 0.98;
+        }
+        // 3단계: 포함 관계 (긴 쪽이 짧은 쪽 포함)
+        else if (piNorm.length > 3 && searchNorm.length > 3) {
+          if (piNorm.includes(searchNorm)) {
+            // 생산명이 검색어를 포함
+            score = 0.95 * (searchNorm.length / piNorm.length);
+          } else if (searchNorm.includes(piNorm)) {
+            // 검색어가 생산명을 포함
+            score = 0.95 * (piNorm.length / searchNorm.length);
+          }
+          // 유사명칭도 확인
+          if (alias1Norm && alias1Norm.length > 3) {
+            if (alias1Norm.includes(searchNorm)) {
+              score = Math.max(score, 0.9 * (searchNorm.length / alias1Norm.length));
+            } else if (searchNorm.includes(alias1Norm)) {
+              score = Math.max(score, 0.9 * (alias1Norm.length / searchNorm.length));
+            }
+          }
+        }
+        
+        // 4단계: 키워드 기반 매칭 (searchKeywords, piKeywords, alias1Keywords 사용)
+        if (score < 0.5 && searchKeywords.length >= 2) {
+          // 생산명 키워드 매칭
+          if (piKeywords.length >= 2) {
+            let matches = 0;
+            for (const sk of searchKeywords) {
+              for (const pk of piKeywords) {
+                // 정확 일치 또는 포함 관계
+                if (sk === pk || (sk.length >= 2 && pk.length >= 2 && (sk.includes(pk) || pk.includes(sk)))) {
+                  matches++;
+                  break;
+                }
+              }
+            }
+            const matchRatio = matches / Math.max(searchKeywords.length, piKeywords.length);
+            // 50% 이상 키워드 일치 시 매칭
+            if (matchRatio >= 0.5) {
+              score = Math.max(score, 0.85 * matchRatio);
+            } else if (matches >= 2) {
+              // 최소 2개 키워드 일치 시에도 인정
+              score = Math.max(score, 0.7);
+            }
+          }
+          
+          // 유사명칭 키워드 매칭
+          if (alias1Keywords.length >= 2 && score < 0.5) {
+            let matches = 0;
+            for (const sk of searchKeywords) {
+              for (const ak of alias1Keywords) {
+                if (sk === ak || (sk.length >= 2 && ak.length >= 2 && (sk.includes(ak) || ak.includes(sk)))) {
+                  matches++;
+                  break;
+                }
+              }
+            }
+            const matchRatio = matches / Math.max(searchKeywords.length, alias1Keywords.length);
+            if (matchRatio >= 0.5) {
+              score = Math.max(score, 0.8 * matchRatio);
+            } else if (matches >= 2) {
+              score = Math.max(score, 0.65);
+            }
+          }
+        }
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = pi;
+        }
+      }
+      
+      // 점수가 0.4 이상이면 매칭으로 인정 (더 관대하게)
+      if (bestMatch && bestScore >= 0.4) {
+        productionMatch = bestMatch;
+        console.log(`생산명 매칭: "${cleanedName}" → "${bestMatch.production_name}" (점수: ${bestScore.toFixed(2)})`);
+      } else {
+        console.log(`생산명 매칭 실패: "${cleanedName}" (최고점수: ${bestScore.toFixed(2)})`);
+      }
+    }
+    
+    // 생산명 매칭된 경우
+    if (productionMatch) {
+      return {
+        ...item,
+        cleanName: cleanedName,
+        matchedProduct: {
+          item_code: productionMatch.production_code,
+          item_name: productionMatch.production_name,
+          matchType: 'production'  // 생산명 매칭 표시
+        },
+        productionItem: productionMatch,
+        hasBOM: productionMatch.bom_count > 0
+      };
+    }
+    
+    // 2. 기존 제품 마스터에서 직접 매칭 시도
     let match = productMap.get(normalizeProductName(cleanedName));
     
     // cleanName으로도 시도
@@ -17640,7 +17832,7 @@ function matchOrderToProducts(items) {
       match = productMap.get(normalizeProductName(item.cleanName));
     }
     
-    // 퍼지 매칭
+    // 3. 퍼지 매칭
     if (!match) {
       match = fuzzyMatchProduct(cleanedName, products);
     }
@@ -17650,7 +17842,8 @@ function matchOrderToProducts(items) {
       cleanName: cleanedName,
       matchedProduct: match ? {
         item_code: match.item_code,
-        item_name: match.item_name
+        item_name: match.item_name,
+        matchType: 'master'  // 제품 마스터 매칭 표시
       } : null,
       hasBOM: match ? checkHasBOM(match.item_code) : false
     };
@@ -17716,6 +17909,25 @@ function normalizeProductName(name) {
     .toLowerCase()
     .replace(/[^\w가-힣]/g, '')
     .replace(/\s+/g, '');
+}
+
+// 생산명 매칭 (production_items 테이블에서 검색)
+async function matchProductionItem(searchName) {
+  try {
+    const result = await api(`/admin/match-production?name=${encodeURIComponent(searchName)}`);
+    if (result.data) {
+      return {
+        production_code: result.data.production_code,
+        production_name: result.data.production_name,
+        alias1: result.data.alias1,
+        standard_weight: result.data.standard_weight,
+        matchType: 'production'  // 생산명 매칭임을 표시
+      };
+    }
+  } catch (e) {
+    console.log('생산명 매칭 실패:', e.message);
+  }
+  return null;
 }
 
 // 퍼지 매칭 (엄격한 버전 - 핵심 키워드가 모두 일치해야 함)
@@ -18015,6 +18227,364 @@ function cancelOrderUpload() {
   document.getElementById('order-drop-zone').classList.remove('hidden');
   document.getElementById('order-file-input').value = '';
   window.orderUploadData = null;
+}
+
+// ========== 생산일보 변환 기능 ==========
+
+// 발주서 → 생산일보 변환
+async function convertToDailyReport() {
+  if (!window.orderUploadData) {
+    showToast('먼저 발주서를 업로드하세요', 'warning');
+    return;
+  }
+  
+  const reportDate = document.getElementById('order-prod-date').value;
+  if (!reportDate) {
+    showToast('생산일을 선택해주세요', 'warning');
+    return;
+  }
+  
+  const items = window.orderUploadData.items;
+  const selectedItems = items.filter((item, idx) => {
+    const checkbox = document.querySelector(`.order-item-check[data-idx="${idx}"]`);
+    return checkbox && checkbox.checked;
+  });
+  
+  if (selectedItems.length === 0) {
+    showToast('변환할 품목을 선택해주세요', 'warning');
+    return;
+  }
+  
+  // 바코드 또는 생산명 코드로 매핑
+  const reportItems = selectedItems.map(item => ({
+    barcode: item.barcode || null,
+    product_name: item.originalName,
+    quantity: item.quantity,
+    production_code: item.productionItem?.production_code || null
+  }));
+  
+  showToast('생산일보 생성 중...', 'info');
+  
+  try {
+    const result = await api('/daily-report/reports/from-order', 'POST', {
+      report_date: reportDate,
+      order_file_name: window.orderUploadData.fileName,
+      items: reportItems,
+      created_by: state.currentUser?.name || 'system'
+    });
+    
+    if (result.success) {
+      showToast(`생산일보 ${result.data.report_no} 생성 완료!`, 'success');
+      
+      // 생산일보 상세 모달 표시
+      showDailyReportModal(result.data);
+    } else {
+      showToast(result.error || '생산일보 생성 실패', 'error');
+    }
+  } catch (e) {
+    console.error('생산일보 변환 오류:', e);
+    showToast('생산일보 변환 중 오류 발생', 'error');
+  }
+}
+
+// 생산일보 결과 모달
+function showDailyReportModal(reportData) {
+  const { report_no, report_date, total_products, total_quantity, items, materials_summary } = reportData;
+  
+  const matchedItems = items.filter(i => i.production_code !== 'UNKNOWN');
+  const unmatchedItems = items.filter(i => i.production_code === 'UNKNOWN');
+  const bomItems = items.filter(i => i.has_bom);
+  
+  const modalHtml = `
+    <div id="daily-report-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-hidden">
+        <div class="bg-haccp-primary text-white p-4 flex justify-between items-center">
+          <div>
+            <h2 class="text-xl font-bold"><i class="fas fa-clipboard-list mr-2"></i>생산일보 생성 완료</h2>
+            <p class="text-sm opacity-90">${report_no} | ${report_date}</p>
+          </div>
+          <button onclick="closeDailyReportModal()" class="text-white hover:text-gray-200">
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+        
+        <div class="p-4 overflow-y-auto max-h-[70vh]">
+          <!-- 요약 카드 -->
+          <div class="grid grid-cols-4 gap-4 mb-6">
+            <div class="bg-blue-50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-blue-600">${total_products}</div>
+              <div class="text-sm text-gray-600">총 품목</div>
+            </div>
+            <div class="bg-green-50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-green-600">${matchedItems.length}</div>
+              <div class="text-sm text-gray-600">매칭 성공</div>
+            </div>
+            <div class="bg-yellow-50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-yellow-600">${bomItems.length}</div>
+              <div class="text-sm text-gray-600">BOM 보유</div>
+            </div>
+            <div class="bg-purple-50 rounded-lg p-3 text-center">
+              <div class="text-2xl font-bold text-purple-600">${formatNumber(total_quantity)}</div>
+              <div class="text-sm text-gray-600">총 생산량</div>
+            </div>
+          </div>
+          
+          <!-- 탭 -->
+          <div class="border-b mb-4">
+            <button onclick="switchReportTab('items')" id="tab-items" class="px-4 py-2 border-b-2 border-haccp-primary text-haccp-primary font-medium">
+              생산 품목 (${total_products})
+            </button>
+            <button onclick="switchReportTab('materials')" id="tab-materials" class="px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+              원재료 소요량 (${materials_summary?.length || 0})
+            </button>
+          </div>
+          
+          <!-- 품목 목록 -->
+          <div id="report-items-tab">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-100">
+                <tr>
+                  <th class="px-3 py-2 text-left">생산명</th>
+                  <th class="px-3 py-2 text-left">발주서 상품명</th>
+                  <th class="px-3 py-2 text-center">수량</th>
+                  <th class="px-3 py-2 text-center">BOM</th>
+                  <th class="px-3 py-2 text-center">상태</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${items.map(item => `
+                  <tr class="${item.production_code === 'UNKNOWN' ? 'bg-red-50' : ''}">
+                    <td class="px-3 py-2">
+                      <span class="font-medium">${item.production_name}</span>
+                      ${item.production_code !== 'UNKNOWN' ? `<span class="text-xs text-gray-400 ml-1">[${item.production_code}]</span>` : ''}
+                    </td>
+                    <td class="px-3 py-2 text-gray-600 text-xs">${item.barcode || '-'}</td>
+                    <td class="px-3 py-2 text-center font-medium">${formatNumber(item.quantity)}</td>
+                    <td class="px-3 py-2 text-center">
+                      ${item.has_bom 
+                        ? '<span class="text-green-600"><i class="fas fa-check"></i></span>' 
+                        : '<span class="text-gray-400">-</span>'}
+                    </td>
+                    <td class="px-3 py-2 text-center">
+                      ${item.production_code === 'UNKNOWN'
+                        ? '<span class="text-red-500 text-xs">미매칭</span>'
+                        : '<span class="text-green-500 text-xs">매칭</span>'}
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+            
+            ${unmatchedItems.length > 0 ? `
+              <div class="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <p class="text-yellow-800 text-sm">
+                  <i class="fas fa-exclamation-triangle mr-1"></i>
+                  ${unmatchedItems.length}개 품목이 생산명과 매칭되지 않았습니다. 
+                  <button onclick="showBarcodeMapping()" class="text-blue-600 underline ml-1">바코드 매핑 설정</button>
+                </p>
+              </div>
+            ` : ''}
+          </div>
+          
+          <!-- 원재료 소요량 -->
+          <div id="report-materials-tab" class="hidden">
+            ${materials_summary && materials_summary.length > 0 ? `
+              <table class="w-full text-sm">
+                <thead class="bg-gray-100">
+                  <tr>
+                    <th class="px-3 py-2 text-left">원재료명</th>
+                    <th class="px-3 py-2 text-right">필요 수량</th>
+                    <th class="px-3 py-2 text-center">단위</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${materials_summary.map(mat => `
+                    <tr>
+                      <td class="px-3 py-2 font-medium">${mat.material_name}</td>
+                      <td class="px-3 py-2 text-right">${formatNumber(mat.total_quantity.toFixed(1))}</td>
+                      <td class="px-3 py-2 text-center">${mat.unit}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+              
+              <div class="mt-4 flex gap-2">
+                <button onclick="exportMaterialsToExcel()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg">
+                  <i class="fas fa-file-excel mr-1"></i> 엑셀 다운로드
+                </button>
+                <button onclick="printMaterials()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg">
+                  <i class="fas fa-print mr-1"></i> 인쇄
+                </button>
+              </div>
+            ` : '<p class="text-gray-500 text-center py-8">BOM이 등록된 품목이 없어 원재료 소요량을 계산할 수 없습니다.</p>'}
+          </div>
+        </div>
+        
+        <div class="border-t p-4 flex justify-end gap-2">
+          <button onclick="closeDailyReportModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">
+            닫기
+          </button>
+          <button onclick="confirmDailyReport(${reportData.report_id})" class="bg-haccp-primary hover:bg-haccp-dark text-white px-4 py-2 rounded-lg">
+            <i class="fas fa-check mr-1"></i> 생산일보 확정
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  
+  // 전역에 저장 (엑셀 다운로드용)
+  window.currentDailyReport = reportData;
+}
+
+function closeDailyReportModal() {
+  document.getElementById('daily-report-modal')?.remove();
+}
+
+function switchReportTab(tab) {
+  document.getElementById('report-items-tab').classList.toggle('hidden', tab !== 'items');
+  document.getElementById('report-materials-tab').classList.toggle('hidden', tab !== 'materials');
+  document.getElementById('tab-items').classList.toggle('border-haccp-primary', tab === 'items');
+  document.getElementById('tab-items').classList.toggle('text-haccp-primary', tab === 'items');
+  document.getElementById('tab-materials').classList.toggle('border-haccp-primary', tab === 'materials');
+  document.getElementById('tab-materials').classList.toggle('text-haccp-primary', tab === 'materials');
+}
+
+async function confirmDailyReport(reportId) {
+  try {
+    await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'confirmed' });
+    showToast('생산일보가 확정되었습니다', 'success');
+    closeDailyReportModal();
+  } catch (e) {
+    showToast('상태 변경 실패', 'error');
+  }
+}
+
+// 원재료 소요량 엑셀 다운로드
+function exportMaterialsToExcel() {
+  if (!window.currentDailyReport?.materials_summary) return;
+  
+  const data = window.currentDailyReport.materials_summary.map(mat => ({
+    '원재료명': mat.material_name,
+    '필요수량': mat.total_quantity,
+    '단위': mat.unit
+  }));
+  
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '원재료소요량');
+  
+  const fileName = `원재료소요량_${window.currentDailyReport.report_no}.xlsx`;
+  XLSX.writeFile(wb, fileName);
+  showToast('엑셀 다운로드 완료', 'success');
+}
+
+// 바코드 매핑 설정 모달
+async function showBarcodeMapping() {
+  closeDailyReportModal();
+  
+  // 생산명 목록 로드
+  try {
+    const piRes = await api('/admin/production-items');
+    const productionItems = piRes.data || [];
+    
+    // 미매칭 항목만 표시
+    const unmatchedItems = window.currentDailyReport?.items?.filter(i => i.production_code === 'UNKNOWN') || [];
+    
+    const modalHtml = `
+      <div id="barcode-mapping-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+          <div class="bg-orange-500 text-white p-4 flex justify-between items-center">
+            <h2 class="text-xl font-bold"><i class="fas fa-barcode mr-2"></i>바코드-생산명 매핑</h2>
+            <button onclick="closeBarcodeMapping()" class="text-white hover:text-gray-200">
+              <i class="fas fa-times text-xl"></i>
+            </button>
+          </div>
+          
+          <div class="p-4 overflow-y-auto max-h-[60vh]">
+            <p class="text-gray-600 mb-4">
+              미매칭된 발주서 상품에 생산명을 연결하세요. 바코드가 있는 경우 자동 매핑됩니다.
+            </p>
+            
+            <table class="w-full text-sm">
+              <thead class="bg-gray-100">
+                <tr>
+                  <th class="px-3 py-2 text-left">발주서 상품명</th>
+                  <th class="px-3 py-2 text-left">바코드</th>
+                  <th class="px-3 py-2 text-left">생산명 선택</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${unmatchedItems.map((item, idx) => `
+                  <tr>
+                    <td class="px-3 py-2">${item.production_name}</td>
+                    <td class="px-3 py-2">
+                      <input type="text" id="barcode-${idx}" value="${item.barcode || ''}" 
+                             class="border rounded px-2 py-1 w-32" placeholder="바코드 입력">
+                    </td>
+                    <td class="px-3 py-2">
+                      <select id="production-${idx}" class="border rounded px-2 py-1 w-full">
+                        <option value="">-- 생산명 선택 --</option>
+                        ${productionItems.map(pi => `
+                          <option value="${pi.production_code}">${pi.production_name}</option>
+                        `).join('')}
+                      </select>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          
+          <div class="border-t p-4 flex justify-end gap-2">
+            <button onclick="closeBarcodeMapping()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+            <button onclick="saveBarcodeMapping(${unmatchedItems.length})" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg">
+              <i class="fas fa-save mr-1"></i> 매핑 저장
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', modalHtml);
+  } catch (e) {
+    showToast('데이터 로드 실패', 'error');
+  }
+}
+
+function closeBarcodeMapping() {
+  document.getElementById('barcode-mapping-modal')?.remove();
+}
+
+async function saveBarcodeMapping(count) {
+  const mappings = [];
+  
+  for (let i = 0; i < count; i++) {
+    const barcode = document.getElementById(`barcode-${i}`)?.value?.trim();
+    const productionCode = document.getElementById(`production-${i}`)?.value;
+    
+    if (barcode && productionCode) {
+      mappings.push({
+        production_code: productionCode,
+        barcode: barcode,
+        product_name: window.currentDailyReport?.items?.[i]?.production_name
+      });
+    }
+  }
+  
+  if (mappings.length === 0) {
+    showToast('저장할 매핑이 없습니다', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/daily-report/barcodes/bulk', 'POST', { items: mappings });
+    showToast(`${mappings.length}개 바코드 매핑 저장됨`, 'success');
+    closeBarcodeMapping();
+  } catch (e) {
+    showToast('매핑 저장 실패', 'error');
+  }
 }
 
 // 일괄 생산 등록 실행 (배치 API 사용으로 속도 개선)
@@ -18620,18 +19190,34 @@ function parseBOMExcelData(rows) {
   // 헤더 행 분석 - 컬럼 인덱스 자동 감지
   let productCol = -1, materialCol = -1, quantityCol = -1;
   let startRow = 0;
+  let isProductionFormat = false; // 생산명 형식 여부
   
   if (rows.length > 0) {
     const firstRow = rows[0].map(c => String(c || '').toLowerCase());
     
-    // 헤더 행인지 확인
+    // 생산명 형식 감지 (생산명, 유사명칭, 원료명, 수량(g))
+    const hasProductionName = firstRow.some(c => c.includes('생산명'));
+    const hasMaterialName = firstRow.some(c => c.includes('원료명'));
+    
+    if (hasProductionName && hasMaterialName) {
+      isProductionFormat = true;
+      startRow = 1;
+      firstRow.forEach((col, idx) => {
+        if (col.includes('생산명') && productCol === -1) productCol = idx;
+        if (col.includes('원료명') && materialCol === -1) materialCol = idx;
+        if ((col.includes('수량') || col.includes('(g)')) && quantityCol === -1) quantityCol = idx;
+      });
+      console.log('생산명 BOM 형식 감지됨');
+    }
+    
+    // 헤더 행인지 확인 (기존 형식)
     const hasHeader = firstRow.some(c => 
       c.includes('제품') || c.includes('product') || 
       c.includes('원재료') || c.includes('material') ||
       c.includes('함량') || c.includes('사용량')
     );
     
-    if (hasHeader) {
+    if (!isProductionFormat && hasHeader) {
       startRow = 1;
       // 컬럼 인덱스 찾기
       firstRow.forEach((col, idx) => {
@@ -18649,20 +19235,32 @@ function parseBOMExcelData(rows) {
   if (quantityCol === -1) quantityCol = 4; // E열: 함량
   
   // 3열만 있는 간단 형식 감지 (제품, 원재료, 수량) - 열이 정확히 3개일 때만
-  if (rows.length > 1 && rows[1] && rows[1].length === 3) {
+  if (!isProductionFormat && rows.length > 1 && rows[1] && rows[1].length === 3) {
     productCol = 0;
     materialCol = 1;
     quantityCol = 2;
   }
   
   console.log('파싱 컬럼 설정: 제품=' + productCol + ', 원재료=' + materialCol + ', 수량=' + quantityCol);
-  console.log('시작 행:', startRow, '총 행수:', rows.length);
+  console.log('시작 행:', startRow, '총 행수:', rows.length, '생산명형식:', isProductionFormat);
+  
+  // 생산명 형식일 때 이전 제품명을 기억
+  let currentProductName = '';
   
   for (let i = startRow; i < rows.length; i++) {
     const row = rows[i];
     if (!row || row.length < 3) continue;
     
-    const productName = String(row[productCol] || '').trim();
+    // 제품명/생산명 처리 - 생산명 형식에서는 비어있으면 이전 값 사용
+    let productName = String(row[productCol] || '').trim();
+    if (isProductionFormat) {
+      if (productName) {
+        currentProductName = productName; // 새 생산명이면 저장
+      } else {
+        productName = currentProductName; // 비어있으면 이전 값 사용
+      }
+    }
+    
     const materialName = String(row[materialCol] || '').trim();
     const quantity = parseFloat(row[quantityCol]) || 0;
     
@@ -21539,6 +22137,27 @@ async function loadSuperAdminPanel() {
         </div>
       </div>
       
+      <!-- 생산명 BOM 관리 -->
+      <div class="bg-white border border-green-200 rounded-lg p-4">
+        <h4 class="font-bold text-green-700 mb-3">
+          <i class="fas fa-clipboard-list mr-2"></i> 생산명 BOM 관리
+        </h4>
+        <p class="text-sm text-gray-500 mb-4">
+          발주서 상품명 대신 <b>생산명</b> 기준으로 BOM을 관리합니다.
+        </p>
+        <div class="space-y-3">
+          <div class="flex flex-wrap gap-2">
+            <button onclick="openProductionManagement()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-medium">
+              <i class="fas fa-cogs mr-1"></i> 생산명 통합 관리
+            </button>
+            <button onclick="showProductionBomUpload()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm">
+              <i class="fas fa-upload mr-1"></i> 엑셀 일괄 업로드
+            </button>
+          </div>
+          <div id="production-bom-result" class="hidden bg-gray-50 rounded-lg p-3 text-sm"></div>
+        </div>
+      </div>
+      
       <!-- 경고 메시지 -->
       <div class="bg-red-50 border border-red-300 rounded-lg p-4">
         <div class="flex items-start gap-3">
@@ -21559,6 +22178,935 @@ async function loadSuperAdminPanel() {
   
   // DB 통계 로드
   loadDbStats();
+}
+
+// 생산명 테이블 마이그레이션
+async function migrateProductionItemsTable() {
+  try {
+    const result = await api('/admin/migrate-production-items', 'POST');
+    showToast(result.message || '테이블 생성 완료', 'success');
+  } catch (e) {
+    showToast('테이블 생성 실패', 'error');
+  }
+}
+
+// 생산명 BOM 엑셀 업로드 모달
+function showProductionBomUpload() {
+  showModal('생산명 BOM 엑셀 업로드', `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+        <p class="font-bold text-blue-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 엑셀 파일 형식</p>
+        <ul class="text-blue-700 space-y-1">
+          <li>• <b>생산명</b>: 발주서에서 사용하는 상품명 (필수)</li>
+          <li>• <b>유사명칭1</b>: 대체 이름 (선택)</li>
+          <li>• <b>유사명칭2</b>: 대체 이름 (선택)</li>
+          <li>• <b>원료명</b>: 원재료 이름 (필수)</li>
+          <li>• <b>수량(g)</b>: 투입량 (필수)</li>
+        </ul>
+      </div>
+      
+      <div id="production-bom-drop" class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-green-500 hover:bg-green-50 transition-colors"
+           onclick="document.getElementById('production-bom-file').click()">
+        <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-3"></i>
+        <p class="text-gray-600">엑셀 파일을 드래그하거나 클릭하여 선택</p>
+        <p class="text-xs text-gray-400 mt-1">xlsx, xls 파일 지원</p>
+        <input type="file" id="production-bom-file" accept=".xlsx,.xls" class="hidden" onchange="parseProductionBomFile(this)">
+      </div>
+      
+      <div id="production-bom-preview" class="hidden">
+        <div class="flex justify-between items-center mb-2">
+          <span class="font-medium text-gray-700">파싱 결과</span>
+          <span id="production-bom-count" class="text-sm text-gray-500"></span>
+        </div>
+        <div class="max-h-60 overflow-y-auto border rounded-lg">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100 sticky top-0">
+              <tr>
+                <th class="px-3 py-2 text-left">생산명</th>
+                <th class="px-3 py-2 text-left">유사명칭</th>
+                <th class="px-3 py-2 text-center">원료 수</th>
+              </tr>
+            </thead>
+            <tbody id="production-bom-table" class="divide-y"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="uploadProductionBom()" id="btn-upload-production-bom" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50" disabled>
+      <i class="fas fa-upload mr-1"></i> 등록
+    </button>
+  `);
+}
+
+// 생산명 BOM 엑셀 파싱
+let parsedProductionBomData = [];
+async function parseProductionBomFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+  
+  try {
+    const data = await file.arrayBuffer();
+    const workbook = XLSX.read(data, { type: 'array' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    
+    // 헤더 찾기
+    let headerIdx = 0;
+    for (let i = 0; i < Math.min(5, rows.length); i++) {
+      const row = rows[i];
+      if (row && row.some(cell => String(cell).includes('생산명') || String(cell).includes('원료명'))) {
+        headerIdx = i;
+        break;
+      }
+    }
+    
+    const headers = rows[headerIdx].map(h => String(h || '').trim());
+    const colIdx = {
+      production_name: headers.findIndex(h => h.includes('생산명')),
+      alias1: headers.findIndex(h => h.includes('유사명칭1')),
+      alias2: headers.findIndex(h => h.includes('유사명칭2')),
+      material_name: headers.findIndex(h => h.includes('원료명')),
+      quantity: headers.findIndex(h => h.includes('수량') || h.includes('(g)'))
+    };
+    
+    // 생산명별로 그룹핑
+    const productionMap = new Map();
+    let currentProductionName = null;
+    let currentAlias1 = null;
+    let currentAlias2 = null;
+    
+    for (let i = headerIdx + 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || row.length === 0) continue;
+      
+      // 생산명이 있으면 현재 생산명 업데이트 (새 제품 시작)
+      const rowProductionName = row[colIdx.production_name]?.toString().trim();
+      if (rowProductionName) {
+        currentProductionName = rowProductionName;
+        currentAlias1 = row[colIdx.alias1]?.toString().trim() || null;
+        currentAlias2 = row[colIdx.alias2]?.toString().trim() || null;
+      }
+      
+      const materialName = row[colIdx.material_name]?.toString().trim();
+      const quantity = parseFloat(row[colIdx.quantity]) || 0;
+      
+      // 원료명과 수량이 없으면 건너뜀
+      if (!materialName || quantity <= 0) continue;
+      // 현재 생산명이 없으면 건너뜀
+      if (!currentProductionName) continue;
+      
+      if (!productionMap.has(currentProductionName)) {
+        productionMap.set(currentProductionName, {
+          production_name: currentProductionName,
+          alias1: currentAlias1,
+          alias2: currentAlias2,
+          materials: []
+        });
+      }
+      
+      productionMap.get(currentProductionName).materials.push({
+        name: materialName,
+        quantity: quantity
+      });
+    }
+    
+    parsedProductionBomData = Array.from(productionMap.values());
+    
+    // 미리보기 표시
+    document.getElementById('production-bom-preview').classList.remove('hidden');
+    document.getElementById('production-bom-count').textContent = 
+      parsedProductionBomData.length + '개 생산명, ' + 
+      parsedProductionBomData.reduce((s, p) => s + p.materials.length, 0) + '개 BOM';
+    
+    document.getElementById('production-bom-table').innerHTML = parsedProductionBomData.slice(0, 50).map(p => `
+      <tr>
+        <td class="px-3 py-2">${p.production_name}</td>
+        <td class="px-3 py-2 text-gray-500">${p.alias1 || '-'}</td>
+        <td class="px-3 py-2 text-center">${p.materials.length}</td>
+      </tr>
+    `).join('');
+    
+    document.getElementById('btn-upload-production-bom').disabled = false;
+    showToast(parsedProductionBomData.length + '개 생산명 파싱 완료', 'success');
+  } catch (e) {
+    console.error(e);
+    showToast('파일 파싱 실패: ' + e.message, 'error');
+  }
+}
+
+// 생산명 BOM 등록
+async function uploadProductionBom() {
+  if (parsedProductionBomData.length === 0) {
+    showToast('업로드할 데이터가 없습니다', 'warning');
+    return;
+  }
+  
+  try {
+    showToast('등록 중...', 'info');
+    const result = await api('/admin/import-production-bom', 'POST', { items: parsedProductionBomData });
+    
+    const resultEl = document.getElementById('production-bom-result');
+    resultEl.classList.remove('hidden');
+    resultEl.innerHTML = `
+      <div class="text-green-700">
+        <i class="fas fa-check-circle mr-1"></i> 등록 완료<br>
+        생산명: ${result.results?.production_items?.inserted || 0}개 등록, ${result.results?.production_items?.updated || 0}개 업데이트<br>
+        BOM: ${result.results?.bom?.inserted || 0}개 등록
+      </div>
+    `;
+    
+    closeModal();
+    showToast('생산명 BOM 등록 완료', 'success');
+    parsedProductionBomData = [];
+  } catch (e) {
+    showToast('등록 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+
+// ========== 생산명 통합 관리 ==========
+
+// 생산명 통합 관리 페이지 열기
+async function openProductionManagement() {
+  const content = document.getElementById('content');
+  
+  content.innerHTML = `
+    <div class="max-w-7xl mx-auto">
+      <!-- 헤더 -->
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-800">
+            <i class="fas fa-cogs mr-2 text-green-600"></i>생산명 통합 관리
+          </h1>
+          <p class="text-gray-500 mt-1">생산명 등록, BOM(원료사용량) 관리, 바코드 매핑을 한 곳에서 관리합니다.</p>
+        </div>
+        <button onclick="renderPage('admin')" class="px-4 py-2 border rounded-lg hover:bg-gray-50">
+          <i class="fas fa-arrow-left mr-1"></i> 관리자로 돌아가기
+        </button>
+      </div>
+      
+      <!-- 통계 카드 -->
+      <div id="production-stats" class="grid grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-box text-blue-600 text-xl"></i>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-gray-800" id="stat-production-count">-</div>
+              <div class="text-sm text-gray-500">등록된 생산명</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-list-ul text-green-600 text-xl"></i>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-gray-800" id="stat-bom-count">-</div>
+              <div class="text-sm text-gray-500">BOM 항목</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-barcode text-purple-600 text-xl"></i>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-gray-800" id="stat-barcode-count">-</div>
+              <div class="text-sm text-gray-500">바코드 매핑</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-exclamation-triangle text-yellow-600 text-xl"></i>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-gray-800" id="stat-nobom-count">-</div>
+              <div class="text-sm text-gray-500">BOM 미등록</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 액션 버튼 -->
+      <div class="bg-white rounded-xl shadow p-4 mb-6">
+        <div class="flex flex-wrap gap-3">
+          <button onclick="showAddProductionModal()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium">
+            <i class="fas fa-plus mr-1"></i> 생산명 등록
+          </button>
+          <button onclick="showAddBomModal()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium">
+            <i class="fas fa-list-ul mr-1"></i> BOM 등록
+          </button>
+          <button onclick="showAddBarcodeModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg font-medium">
+            <i class="fas fa-barcode mr-1"></i> 바코드 등록
+          </button>
+          <div class="border-l mx-2"></div>
+          <button onclick="showProductionBomUpload()" class="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀 일괄 업로드
+          </button>
+        </div>
+      </div>
+      
+      <!-- 검색 및 필터 -->
+      <div class="bg-white rounded-xl shadow p-4 mb-6">
+        <div class="flex gap-4 items-center">
+          <div class="flex-1">
+            <input type="text" id="production-search" placeholder="생산명 또는 유사명칭 검색..." 
+                   class="w-full border rounded-lg px-4 py-2" onkeyup="filterProductionList()">
+          </div>
+          <select id="production-filter" class="border rounded-lg px-4 py-2" onchange="filterProductionList()">
+            <option value="all">전체</option>
+            <option value="with-bom">BOM 있음</option>
+            <option value="without-bom">BOM 없음</option>
+            <option value="with-barcode">바코드 있음</option>
+          </select>
+          <button onclick="loadProductionManagementData()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">
+            <i class="fas fa-sync-alt"></i>
+          </button>
+        </div>
+      </div>
+      
+      <!-- 생산명 목록 -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead class="bg-gray-50 border-b">
+              <tr>
+                <th class="px-4 py-3 text-left text-sm font-medium text-gray-600">코드</th>
+                <th class="px-4 py-3 text-left text-sm font-medium text-gray-600">생산명</th>
+                <th class="px-4 py-3 text-left text-sm font-medium text-gray-600">유사명칭</th>
+                <th class="px-4 py-3 text-center text-sm font-medium text-gray-600">BOM</th>
+                <th class="px-4 py-3 text-center text-sm font-medium text-gray-600">바코드</th>
+                <th class="px-4 py-3 text-center text-sm font-medium text-gray-600">관리</th>
+              </tr>
+            </thead>
+            <tbody id="production-list-body" class="divide-y">
+              <tr><td colspan="6" class="text-center py-8 text-gray-500">로딩 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 데이터 로드
+  loadProductionManagementData();
+}
+
+// 생산명 관리 데이터 로드
+async function loadProductionManagementData() {
+  try {
+    // 생산명 목록 로드
+    const productionRes = await api('/admin/production-items');
+    window.productionManagementData = productionRes.data || [];
+    
+    // 바코드 목록 로드
+    const barcodeRes = await api('/daily-report/barcodes');
+    window.barcodeManagementData = barcodeRes.data || [];
+    
+    // 통계 업데이트
+    const items = window.productionManagementData;
+    const withBom = items.filter(i => (i.bom_count || 0) > 0).length;
+    const barcodes = window.barcodeManagementData.length;
+    const totalBom = items.reduce((sum, i) => sum + (i.bom_count || 0), 0);
+    
+    document.getElementById('stat-production-count').textContent = items.length;
+    document.getElementById('stat-bom-count').textContent = totalBom;
+    document.getElementById('stat-barcode-count').textContent = barcodes;
+    document.getElementById('stat-nobom-count').textContent = items.length - withBom;
+    
+    // 목록 렌더링
+    renderProductionList();
+  } catch (e) {
+    console.error('데이터 로드 실패:', e);
+    showToast('데이터 로드 실패', 'error');
+  }
+}
+
+// 생산명 목록 렌더링
+function renderProductionList() {
+  const items = window.productionManagementData || [];
+  const barcodes = window.barcodeManagementData || [];
+  
+  // 바코드 맵 생성
+  const barcodeMap = {};
+  barcodes.forEach(b => {
+    if (!barcodeMap[b.production_code]) barcodeMap[b.production_code] = [];
+    barcodeMap[b.production_code].push(b);
+  });
+  
+  const tbody = document.getElementById('production-list-body');
+  
+  if (items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-gray-500">등록된 생산명이 없습니다.</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = items.map(item => {
+    const itemBarcodes = barcodeMap[item.production_code] || [];
+    const hasBom = (item.bom_count || 0) > 0;
+    const hasBarcode = itemBarcodes.length > 0;
+    
+    return `
+      <tr class="hover:bg-gray-50" data-code="${item.production_code}" data-name="${item.production_name}" data-alias="${item.alias1 || ''}">
+        <td class="px-4 py-3 text-sm font-mono text-gray-500">${item.production_code}</td>
+        <td class="px-4 py-3">
+          <div class="font-medium text-gray-800">${item.production_name}</div>
+        </td>
+        <td class="px-4 py-3 text-sm text-gray-500">${item.alias1 || '-'}</td>
+        <td class="px-4 py-3 text-center">
+          ${hasBom 
+            ? `<span class="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
+                 <i class="fas fa-check"></i> ${item.bom_count}개
+               </span>`
+            : `<span class="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-600 rounded-full text-xs font-medium">
+                 <i class="fas fa-times"></i> 없음
+               </span>`
+          }
+        </td>
+        <td class="px-4 py-3 text-center">
+          ${hasBarcode 
+            ? `<span class="inline-flex items-center gap-1 px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+                 <i class="fas fa-barcode"></i> ${itemBarcodes.length}개
+               </span>`
+            : `<span class="text-gray-400 text-xs">-</span>`
+          }
+        </td>
+        <td class="px-4 py-3 text-center">
+          <div class="flex justify-center gap-1">
+            <button onclick="showProductionDetail('${item.production_code}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="상세보기">
+              <i class="fas fa-eye"></i>
+            </button>
+            <button onclick="showEditBomModal('${item.production_code}')" class="p-1.5 text-green-600 hover:bg-green-50 rounded" title="BOM 편집">
+              <i class="fas fa-list-ul"></i>
+            </button>
+            <button onclick="showEditBarcodeModal('${item.production_code}')" class="p-1.5 text-purple-600 hover:bg-purple-50 rounded" title="바코드 편집">
+              <i class="fas fa-barcode"></i>
+            </button>
+            <button onclick="deleteProductionItem('${item.production_code}')" class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="삭제">
+              <i class="fas fa-trash"></i>
+            </button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// 목록 필터링
+function filterProductionList() {
+  const search = document.getElementById('production-search').value.toLowerCase();
+  const filter = document.getElementById('production-filter').value;
+  
+  const rows = document.querySelectorAll('#production-list-body tr');
+  
+  rows.forEach(row => {
+    const name = row.dataset.name?.toLowerCase() || '';
+    const alias = row.dataset.alias?.toLowerCase() || '';
+    const code = row.dataset.code?.toLowerCase() || '';
+    
+    const matchSearch = !search || name.includes(search) || alias.includes(search) || code.includes(search);
+    
+    let matchFilter = true;
+    if (filter === 'with-bom') {
+      matchFilter = row.querySelector('.bg-green-100') !== null;
+    } else if (filter === 'without-bom') {
+      matchFilter = row.querySelector('.bg-red-100') !== null;
+    } else if (filter === 'with-barcode') {
+      matchFilter = row.querySelector('.bg-purple-100') !== null;
+    }
+    
+    row.style.display = (matchSearch && matchFilter) ? '' : 'none';
+  });
+}
+
+// 생산명 등록 모달
+function showAddProductionModal() {
+  showModal('새 생산명 등록', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">생산명 <span class="text-red-500">*</span></label>
+        <input type="text" id="new-production-name" class="w-full border rounded-lg px-4 py-2" 
+               placeholder="예: 통밀호두단팥빵 (반죽60g)속 50g">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">유사명칭1 (ERP 제품명)</label>
+        <input type="text" id="new-production-alias1" class="w-full border rounded-lg px-4 py-2" 
+               placeholder="예: 발효종 호두단팥빵, 3개입, 240g">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">유사명칭2</label>
+        <input type="text" id="new-production-alias2" class="w-full border rounded-lg px-4 py-2" 
+               placeholder="선택사항">
+      </div>
+      <div class="bg-blue-50 rounded-lg p-3 text-sm text-blue-700">
+        <i class="fas fa-info-circle mr-1"></i>
+        생산명을 먼저 등록한 후 BOM과 바코드를 추가할 수 있습니다.
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveNewProduction()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">등록</button>
+  `);
+}
+
+// 생산명 저장
+async function saveNewProduction() {
+  const name = document.getElementById('new-production-name').value.trim();
+  const alias1 = document.getElementById('new-production-alias1').value.trim();
+  const alias2 = document.getElementById('new-production-alias2').value.trim();
+  
+  if (!name) {
+    showToast('생산명을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/admin/production-items', 'POST', {
+      production_name: name,
+      alias1: alias1 || null,
+      alias2: alias2 || null
+    });
+    
+    showToast('생산명이 등록되었습니다', 'success');
+    closeModal();
+    loadProductionManagementData();
+  } catch (e) {
+    showToast('등록 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// BOM 등록 모달
+async function showAddBomModal(productionCode = null) {
+  // 생산명 목록 로드
+  const items = window.productionManagementData || [];
+  
+  // 원료 목록 로드
+  if (!window.materialsList) {
+    const masterRes = await api('/master?category=원료');
+    window.materialsList = masterRes.data || [];
+  }
+  
+  showModal('BOM(원료사용량) 등록', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">생산명 선택 <span class="text-red-500">*</span></label>
+        <select id="bom-production-select" class="w-full border rounded-lg px-4 py-2">
+          <option value="">-- 생산명 선택 --</option>
+          ${items.map(i => `<option value="${i.production_code}" ${productionCode === i.production_code ? 'selected' : ''}>${i.production_name}</option>`).join('')}
+        </select>
+      </div>
+      
+      <div class="border-t pt-4">
+        <label class="block text-sm font-medium text-gray-700 mb-2">원료 추가</label>
+        <div class="flex gap-2 mb-3">
+          <div class="flex-1 relative">
+            <input type="text" id="bom-material-search" class="w-full border rounded-lg px-4 py-2" 
+                   placeholder="원료명 검색..." oninput="searchMaterials(this.value)">
+            <div id="material-search-results" class="absolute z-10 left-0 right-0 bg-white border rounded-lg shadow-lg max-h-40 overflow-y-auto hidden mt-1"></div>
+          </div>
+          <input type="number" id="bom-material-qty" class="w-32 border rounded-lg px-4 py-2" placeholder="수량(g)" step="0.1">
+          <button onclick="addBomMaterial()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+            <i class="fas fa-plus"></i>
+          </button>
+        </div>
+        
+        <div id="bom-materials-list" class="border rounded-lg overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-3 py-2 text-left">원료명</th>
+                <th class="px-3 py-2 text-right">수량(g)</th>
+                <th class="px-3 py-2 text-center w-16">삭제</th>
+              </tr>
+            </thead>
+            <tbody id="bom-materials-tbody">
+              <tr><td colspan="3" class="text-center py-4 text-gray-400">원료를 추가하세요</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveBomMaterials()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">저장</button>
+  `);
+  
+  window.bomMaterialsToAdd = [];
+}
+
+// 원료 검색
+function searchMaterials(query) {
+  const results = document.getElementById('material-search-results');
+  
+  if (!query || query.length < 1) {
+    results.classList.add('hidden');
+    return;
+  }
+  
+  const materials = window.materialsList || [];
+  const filtered = materials.filter(m => 
+    m.item_name.toLowerCase().includes(query.toLowerCase())
+  ).slice(0, 10);
+  
+  if (filtered.length === 0) {
+    results.innerHTML = '<div class="p-2 text-gray-500 text-sm">검색 결과 없음</div>';
+  } else {
+    results.innerHTML = filtered.map(m => `
+      <div class="p-2 hover:bg-gray-100 cursor-pointer text-sm" onclick="selectMaterial('${m.item_code}', '${m.item_name}')">
+        <span class="font-medium">${m.item_name}</span>
+        <span class="text-gray-400 text-xs ml-2">${m.item_code}</span>
+      </div>
+    `).join('');
+  }
+  
+  results.classList.remove('hidden');
+}
+
+// 원료 선택
+function selectMaterial(code, name) {
+  document.getElementById('bom-material-search').value = name;
+  document.getElementById('bom-material-search').dataset.code = code;
+  document.getElementById('material-search-results').classList.add('hidden');
+  document.getElementById('bom-material-qty').focus();
+}
+
+// BOM에 원료 추가
+function addBomMaterial() {
+  const input = document.getElementById('bom-material-search');
+  const name = input.value.trim();
+  const code = input.dataset.code || '';
+  const qty = parseFloat(document.getElementById('bom-material-qty').value) || 0;
+  
+  if (!name) {
+    showToast('원료를 선택하세요', 'warning');
+    return;
+  }
+  if (qty <= 0) {
+    showToast('수량을 입력하세요', 'warning');
+    return;
+  }
+  
+  // 중복 체크
+  if (window.bomMaterialsToAdd.some(m => m.name === name)) {
+    showToast('이미 추가된 원료입니다', 'warning');
+    return;
+  }
+  
+  window.bomMaterialsToAdd.push({ code, name, quantity: qty });
+  
+  // 목록 업데이트
+  renderBomMaterialsList();
+  
+  // 입력 초기화
+  input.value = '';
+  input.dataset.code = '';
+  document.getElementById('bom-material-qty').value = '';
+}
+
+// BOM 원료 목록 렌더링
+function renderBomMaterialsList() {
+  const tbody = document.getElementById('bom-materials-tbody');
+  const materials = window.bomMaterialsToAdd || [];
+  
+  if (materials.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" class="text-center py-4 text-gray-400">원료를 추가하세요</td></tr>';
+    return;
+  }
+  
+  tbody.innerHTML = materials.map((m, idx) => `
+    <tr>
+      <td class="px-3 py-2">${m.name}</td>
+      <td class="px-3 py-2 text-right">${m.quantity}</td>
+      <td class="px-3 py-2 text-center">
+        <button onclick="removeBomMaterial(${idx})" class="text-red-500 hover:text-red-700">
+          <i class="fas fa-times"></i>
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+// BOM 원료 삭제
+function removeBomMaterial(idx) {
+  window.bomMaterialsToAdd.splice(idx, 1);
+  renderBomMaterialsList();
+}
+
+// BOM 저장
+async function saveBomMaterials() {
+  const productionCode = document.getElementById('bom-production-select').value;
+  const materials = window.bomMaterialsToAdd || [];
+  
+  if (!productionCode) {
+    showToast('생산명을 선택하세요', 'warning');
+    return;
+  }
+  if (materials.length === 0) {
+    showToast('원료를 추가하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/admin/production-bom', 'POST', {
+      production_code: productionCode,
+      materials: materials.map(m => ({
+        material_name: m.name,
+        quantity: m.quantity,
+        unit: 'g'
+      }))
+    });
+    
+    showToast('BOM이 등록되었습니다', 'success');
+    closeModal();
+    loadProductionManagementData();
+  } catch (e) {
+    showToast('등록 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// 바코드 등록 모달
+function showAddBarcodeModal(productionCode = null) {
+  const items = window.productionManagementData || [];
+  
+  showModal('바코드 등록', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">생산명 선택 <span class="text-red-500">*</span></label>
+        <select id="barcode-production-select" class="w-full border rounded-lg px-4 py-2">
+          <option value="">-- 생산명 선택 --</option>
+          ${items.map(i => `<option value="${i.production_code}" ${productionCode === i.production_code ? 'selected' : ''}>${i.production_name}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">바코드/SKU <span class="text-red-500">*</span></label>
+        <input type="text" id="new-barcode" class="w-full border rounded-lg px-4 py-2" placeholder="예: 8801234567890">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">발주서 상품명</label>
+        <input type="text" id="new-barcode-product-name" class="w-full border rounded-lg px-4 py-2" placeholder="발주서에 표시되는 상품명">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">판매채널</label>
+        <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2">
+          <option value="">선택</option>
+          <option value="쿠팡">쿠팡</option>
+          <option value="컬리">컬리</option>
+          <option value="생협">생협</option>
+          <option value="네이버">네이버</option>
+          <option value="기타">기타</option>
+        </select>
+      </div>
+      <div class="bg-purple-50 rounded-lg p-3 text-sm text-purple-700">
+        <i class="fas fa-info-circle mr-1"></i>
+        바코드를 등록하면 발주서 업로드 시 자동으로 매칭됩니다.
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveNewBarcode()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">등록</button>
+  `);
+}
+
+// 바코드 저장
+async function saveNewBarcode() {
+  const productionCode = document.getElementById('barcode-production-select').value;
+  const barcode = document.getElementById('new-barcode').value.trim();
+  const productName = document.getElementById('new-barcode-product-name').value.trim();
+  const channel = document.getElementById('new-barcode-channel').value;
+  
+  if (!productionCode) {
+    showToast('생산명을 선택하세요', 'warning');
+    return;
+  }
+  if (!barcode) {
+    showToast('바코드를 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/daily-report/barcodes', 'POST', {
+      production_code: productionCode,
+      barcode: barcode,
+      product_name: productName || null,
+      channel: channel || null
+    });
+    
+    showToast('바코드가 등록되었습니다', 'success');
+    closeModal();
+    loadProductionManagementData();
+  } catch (e) {
+    showToast('등록 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// 생산명 상세보기
+async function showProductionDetail(code) {
+  try {
+    const result = await api(`/admin/production-items/${code}`);
+    const item = result.data?.item;
+    const bom = result.data?.bom || [];
+    
+    // 바코드 조회
+    const barcodeRes = await api(`/daily-report/barcodes?production_code=${code}`);
+    const barcodes = barcodeRes.data || [];
+    
+    showModal(`생산명 상세: ${item.production_name}`, `
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="text-sm text-gray-500">코드</label>
+            <div class="font-mono">${item.production_code}</div>
+          </div>
+          <div>
+            <label class="text-sm text-gray-500">등록일</label>
+            <div>${item.created_at?.slice(0, 10) || '-'}</div>
+          </div>
+          <div class="col-span-2">
+            <label class="text-sm text-gray-500">유사명칭1</label>
+            <div>${item.alias1 || '-'}</div>
+          </div>
+          <div class="col-span-2">
+            <label class="text-sm text-gray-500">유사명칭2</label>
+            <div>${item.alias2 || '-'}</div>
+          </div>
+        </div>
+        
+        <div class="border-t pt-4">
+          <h4 class="font-medium mb-2">BOM (${bom.length}개)</h4>
+          ${bom.length > 0 ? `
+            <div class="max-h-40 overflow-y-auto border rounded-lg">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-100 sticky top-0">
+                  <tr>
+                    <th class="px-3 py-2 text-left">원료명</th>
+                    <th class="px-3 py-2 text-right">수량</th>
+                    <th class="px-3 py-2 text-center">단위</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${bom.map(b => `
+                    <tr class="border-t">
+                      <td class="px-3 py-2">${b.material_name}</td>
+                      <td class="px-3 py-2 text-right">${b.quantity}</td>
+                      <td class="px-3 py-2 text-center">${b.unit || 'g'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : '<p class="text-gray-400 text-sm">BOM이 등록되지 않았습니다.</p>'}
+        </div>
+        
+        <div class="border-t pt-4">
+          <h4 class="font-medium mb-2">바코드 (${barcodes.length}개)</h4>
+          ${barcodes.length > 0 ? `
+            <div class="space-y-2">
+              ${barcodes.map(b => `
+                <div class="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                  <div>
+                    <span class="font-mono text-sm">${b.barcode}</span>
+                    ${b.product_name ? `<span class="text-gray-500 text-xs ml-2">${b.product_name}</span>` : ''}
+                  </div>
+                  ${b.channel ? `<span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">${b.channel}</span>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          ` : '<p class="text-gray-400 text-sm">바코드가 등록되지 않았습니다.</p>'}
+        </div>
+      </div>
+    `, `
+      <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+    `);
+  } catch (e) {
+    showToast('상세 정보 로드 실패', 'error');
+  }
+}
+
+// BOM 편집 모달
+async function showEditBomModal(code) {
+  await showAddBomModal(code);
+  
+  // 기존 BOM 로드
+  try {
+    const result = await api(`/admin/production-items/${code}`);
+    const bom = result.data?.bom || [];
+    
+    window.bomMaterialsToAdd = bom.map(b => ({
+      code: '',
+      name: b.material_name,
+      quantity: b.quantity
+    }));
+    
+    renderBomMaterialsList();
+  } catch (e) {
+    console.error('BOM 로드 실패:', e);
+  }
+}
+
+// 바코드 편집 모달
+function showEditBarcodeModal(code) {
+  showAddBarcodeModal(code);
+}
+
+// 생산명 삭제
+async function deleteProductionItem(code) {
+  if (!confirm('이 생산명과 관련 BOM, 바코드가 모두 삭제됩니다. 계속하시겠습니까?')) return;
+  
+  try {
+    await api(`/admin/production-items/${code}`, 'DELETE');
+    showToast('삭제되었습니다', 'success');
+    loadProductionManagementData();
+  } catch (e) {
+    showToast('삭제 실패', 'error');
+  }
+}
+
+// 생산명 목록 보기
+async function showProductionItemsList() {
+  try {
+    const result = await api('/admin/production-items');
+    const items = result.data || [];
+    
+    showModal('생산명 목록 (' + items.length + '개)', `
+      <div class="max-h-96 overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 sticky top-0">
+            <tr>
+              <th class="px-3 py-2 text-left">코드</th>
+              <th class="px-3 py-2 text-left">생산명</th>
+              <th class="px-3 py-2 text-left">유사명칭</th>
+              <th class="px-3 py-2 text-center">BOM</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${items.map(item => `
+              <tr class="hover:bg-gray-50">
+                <td class="px-3 py-2 font-mono text-xs">${item.production_code}</td>
+                <td class="px-3 py-2">${item.production_name}</td>
+                <td class="px-3 py-2 text-gray-500 text-xs">${item.alias1 || '-'}</td>
+                <td class="px-3 py-2 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${item.bom_count > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">
+                    ${item.bom_count || 0}
+                  </span>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `, `
+      <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+    `);
+  } catch (e) {
+    showToast('목록 로드 실패', 'error');
+  }
 }
 
 // DB 통계 로드
@@ -21830,6 +23378,32 @@ window.deleteBomData = deleteBomData;
 window.deleteAllProducts = deleteAllProducts;
 window.deleteItemForce = deleteItemForce;
 window.deleteProductionRecord = deleteProductionRecord;
+
+// 생산명 통합 관리 관련 함수 전역 노출
+window.openProductionManagement = openProductionManagement;
+window.loadProductionManagementData = loadProductionManagementData;
+window.renderProductionList = renderProductionList;
+window.filterProductionList = filterProductionList;
+window.showAddProductionModal = showAddProductionModal;
+window.saveNewProduction = saveNewProduction;
+window.showAddBomModal = showAddBomModal;
+window.searchMaterials = searchMaterials;
+window.selectMaterial = selectMaterial;
+window.addBomMaterial = addBomMaterial;
+window.renderBomMaterialsList = renderBomMaterialsList;
+window.removeBomMaterial = removeBomMaterial;
+window.saveBomMaterials = saveBomMaterials;
+window.showAddBarcodeModal = showAddBarcodeModal;
+window.saveNewBarcode = saveNewBarcode;
+window.showProductionDetail = showProductionDetail;
+window.showEditBomModal = showEditBomModal;
+window.showEditBarcodeModal = showEditBarcodeModal;
+window.deleteProductionItem = deleteProductionItem;
+window.showProductionItemsList = showProductionItemsList;
+window.showProductionBomUpload = showProductionBomUpload;
+window.parseProductionBomFile = parseProductionBomFile;
+window.uploadProductionBom = uploadProductionBom;
+window.migrateProductionItemsTable = migrateProductionItemsTable;
 
 // LOT 이력 검색 함수 전역 노출
 window.printLotHistoryFromSearch = printLotHistoryFromSearch;
@@ -26324,7 +27898,7 @@ function renderMatchingPreview(matchResults, masters) {
                         <div class="px-2 py-1 text-xs hover:bg-blue-50 cursor-pointer material-option" 
                              data-code="${m.item_code}" 
                              data-name="${m.item_name}"
-                             onclick="selectMaterial(${idx}, '${m.item_code}', '${m.item_name.replace(/'/g, "\\'")}')">
+                             onclick="selectBulkMaterial(${idx}, '${m.item_code}', '${m.item_name.replace(/'/g, "\\'")}')">
                           <span class="font-medium">${m.item_name}</span>
                           <span class="text-gray-400 ml-1">(${m.item_code})</span>
                         </div>
@@ -26478,8 +28052,8 @@ function filterMaterialDropdown(idx, searchText) {
   }
 }
 
-// 원료 선택
-function selectMaterial(idx, itemCode, itemName) {
+// 원료 선택 (일괄사용량 매칭용)
+function selectBulkMaterial(idx, itemCode, itemName) {
   // 입력 필드 업데이트
   const input = document.getElementById('search-input-' + idx);
   if (input) {
@@ -26640,9 +28214,2403 @@ window.showMaterialDropdown = showMaterialDropdown;
 window.showMaterialDropdownWithFilter = showMaterialDropdownWithFilter;
 window.filterMaterialDropdown = filterMaterialDropdown;
 window.selectMaterial = selectMaterial;
+window.selectBulkMaterial = selectBulkMaterial;
 window.loadBulkUsageForDelete = loadBulkUsageForDelete;
 window.deleteBulkUsage = deleteBulkUsage;
 window.loadAdjustmentsForDelete = loadAdjustmentsForDelete;
 window.toggleAllAdjustments = toggleAllAdjustments;
 window.deleteSelectedAdjustments = deleteSelectedAdjustments;
 window.recalculateStock = recalculateStock;
+
+// ========== 통합 시스템 관리 모드 ==========
+
+// 통합 관리 데이터
+let systemManagementData = {
+  materials: [],
+  products: [],
+  productionItems: [],
+  stock: [],
+  bom: []
+};
+
+// 통합 시스템 관리 페이지 렌더링
+async function renderSystemManagement() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="max-w-7xl mx-auto space-y-6">
+      <!-- 헤더 -->
+      <div class="flex justify-between items-center">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-800">
+            <i class="fas fa-cogs mr-2 text-indigo-600"></i>통합 시스템 관리
+          </h1>
+          <p class="text-gray-500 mt-1">제품, 원료, 재고, BOM을 한 곳에서 관리합니다.</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="loadSystemManagementData()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">
+            <i class="fas fa-sync-alt mr-1"></i> 새로고침
+          </button>
+        </div>
+      </div>
+      
+      <!-- 빠른 통계 -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div class="bg-white rounded-xl shadow p-4 cursor-pointer hover:shadow-lg transition-shadow" onclick="switchSystemTab('materials')">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-cubes text-blue-600 text-xl"></i>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-gray-800" id="sys-stat-materials">-</div>
+              <div class="text-sm text-gray-500">원료/부자재</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 cursor-pointer hover:shadow-lg transition-shadow" onclick="switchSystemTab('products')">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-box text-green-600 text-xl"></i>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-gray-800" id="sys-stat-products">-</div>
+              <div class="text-sm text-gray-500">제품 마스터</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 cursor-pointer hover:shadow-lg transition-shadow" onclick="switchSystemTab('production-items')">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-industry text-purple-600 text-xl"></i>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-gray-800" id="sys-stat-production">-</div>
+              <div class="text-sm text-gray-500">생산명</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 cursor-pointer hover:shadow-lg transition-shadow" onclick="switchSystemTab('stock')">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-warehouse text-yellow-600 text-xl"></i>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-gray-800" id="sys-stat-stock">-</div>
+              <div class="text-sm text-gray-500">재고 품목</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4 cursor-pointer hover:shadow-lg transition-shadow" onclick="switchSystemTab('bom')">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-list-alt text-red-600 text-xl"></i>
+            </div>
+            <div>
+              <div class="text-2xl font-bold text-gray-800" id="sys-stat-bom">-</div>
+              <div class="text-sm text-gray-500">BOM</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 탭 메뉴 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="border-b">
+          <nav class="flex -mb-px">
+            <button onclick="switchSystemTab('materials')" id="sys-tab-materials" class="sys-tab px-6 py-4 border-b-2 border-transparent hover:border-gray-300 font-medium text-gray-500 hover:text-gray-700">
+              <i class="fas fa-cubes mr-2"></i>원료/부자재 관리
+            </button>
+            <button onclick="switchSystemTab('products')" id="sys-tab-products" class="sys-tab px-6 py-4 border-b-2 border-transparent hover:border-gray-300 font-medium text-gray-500 hover:text-gray-700">
+              <i class="fas fa-box mr-2"></i>제품 관리
+            </button>
+            <button onclick="switchSystemTab('production-items')" id="sys-tab-production-items" class="sys-tab px-6 py-4 border-b-2 border-transparent hover:border-gray-300 font-medium text-gray-500 hover:text-gray-700">
+              <i class="fas fa-industry mr-2"></i>생산명 관리
+            </button>
+            <button onclick="switchSystemTab('stock')" id="sys-tab-stock" class="sys-tab px-6 py-4 border-b-2 border-transparent hover:border-gray-300 font-medium text-gray-500 hover:text-gray-700">
+              <i class="fas fa-warehouse mr-2"></i>재고 수정
+            </button>
+            <button onclick="switchSystemTab('bom')" id="sys-tab-bom" class="sys-tab px-6 py-4 border-b-2 border-transparent hover:border-gray-300 font-medium text-gray-500 hover:text-gray-700">
+              <i class="fas fa-list-alt mr-2"></i>BOM 관리
+            </button>
+          </nav>
+        </div>
+        
+        <!-- 탭 컨텐츠 -->
+        <div id="sys-tab-content" class="p-6">
+          <div class="text-center py-8 text-gray-500">
+            <i class="fas fa-spinner fa-spin text-3xl mb-3"></i>
+            <p>데이터 로딩 중...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 데이터 로드 및 첫 탭 표시
+  await loadSystemManagementData();
+  switchSystemTab('materials');
+}
+
+// 시스템 관리 데이터 로드
+async function loadSystemManagementData() {
+  try {
+    // 병렬로 모든 데이터 로드
+    const [materialsRes, productsRes, productionRes, stockRes] = await Promise.all([
+      api('/master'),
+      api('/master?category=제품'),
+      api('/admin/production-items'),
+      api('/stock')
+    ]);
+    
+    systemManagementData.materials = (materialsRes.data || []).filter(m => m.category !== '제품');
+    systemManagementData.products = productsRes.data || [];
+    systemManagementData.productionItems = productionRes.data || [];
+    systemManagementData.stock = stockRes.data || [];
+    
+    // 통계 업데이트
+    document.getElementById('sys-stat-materials').textContent = systemManagementData.materials.length;
+    document.getElementById('sys-stat-products').textContent = systemManagementData.products.length;
+    document.getElementById('sys-stat-production').textContent = systemManagementData.productionItems.length;
+    document.getElementById('sys-stat-stock').textContent = systemManagementData.stock.length;
+    document.getElementById('sys-stat-bom').textContent = systemManagementData.productionItems.filter(p => (p.bom_count || 0) > 0).length;
+    
+  } catch (e) {
+    console.error('데이터 로드 실패:', e);
+    showToast('데이터 로드 실패', 'error');
+  }
+}
+
+// 탭 전환
+function switchSystemTab(tab) {
+  // 탭 버튼 스타일 업데이트
+  document.querySelectorAll('.sys-tab').forEach(el => {
+    el.classList.remove('border-indigo-500', 'text-indigo-600');
+    el.classList.add('border-transparent', 'text-gray-500');
+  });
+  const activeTab = document.getElementById(`sys-tab-${tab}`);
+  if (activeTab) {
+    activeTab.classList.remove('border-transparent', 'text-gray-500');
+    activeTab.classList.add('border-indigo-500', 'text-indigo-600');
+  }
+  
+  // 컨텐츠 렌더링
+  const content = document.getElementById('sys-tab-content');
+  switch(tab) {
+    case 'materials': renderMaterialsManagement(content); break;
+    case 'products': renderProductsManagement(content); break;
+    case 'production-items': renderProductionItemsManagement(content); break;
+    case 'stock': renderStockManagement(content); break;
+    case 'bom': renderBomManagement(content); break;
+  }
+}
+
+// ===== 원료/부자재 관리 =====
+function renderMaterialsManagement(container) {
+  const materials = systemManagementData.materials;
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <!-- 액션 바 -->
+      <div class="flex justify-between items-center">
+        <div class="flex gap-2">
+          <input type="text" id="material-search" placeholder="원료명 검색..." 
+                 class="border rounded-lg px-4 py-2 w-64" oninput="filterSystemMaterials()">
+          <select id="material-category-filter" class="border rounded-lg px-4 py-2" onchange="filterSystemMaterials()">
+            <option value="">전체 카테고리</option>
+            <option value="원료">원료</option>
+            <option value="부자재">부자재</option>
+            <option value="소모품">소모품</option>
+          </select>
+        </div>
+        <button onclick="showAddSystemMaterialModal()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+          <i class="fas fa-plus mr-1"></i> 원료 추가
+        </button>
+      </div>
+      
+      <!-- 테이블 -->
+      <div class="overflow-x-auto border rounded-lg">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left">코드</th>
+              <th class="px-4 py-3 text-left">품목명</th>
+              <th class="px-4 py-3 text-center">카테고리</th>
+              <th class="px-4 py-3 text-center">단위</th>
+              <th class="px-4 py-3 text-right">안전재고</th>
+              <th class="px-4 py-3 text-center">관리</th>
+            </tr>
+          </thead>
+          <tbody id="materials-table-body" class="divide-y">
+            ${materials.slice(0, 100).map(m => `
+              <tr class="hover:bg-gray-50 material-row" 
+                  data-name="${m.item_name?.toLowerCase() || ''}" 
+                  data-category="${m.category || ''}">
+                <td class="px-4 py-3 font-mono text-xs text-gray-500">${m.item_code}</td>
+                <td class="px-4 py-3 font-medium">${m.item_name}</td>
+                <td class="px-4 py-3 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${m.category === '원료' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}">${m.category || '-'}</span>
+                </td>
+                <td class="px-4 py-3 text-center">${m.unit || '-'}</td>
+                <td class="px-4 py-3 text-right">${m.safety_stock || 0}</td>
+                <td class="px-4 py-3 text-center">
+                  <div class="flex justify-center gap-1">
+                    <button onclick="showEditMaterialModal('${m.item_code}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="수정">
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="deleteSystemMaterial('${m.item_code}')" class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="삭제">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${materials.length > 100 ? `<p class="text-sm text-gray-500 text-center">처음 100개만 표시됩니다. 검색을 사용하세요.</p>` : ''}
+    </div>
+  `;
+}
+
+// 원료 필터링
+function filterSystemMaterials() {
+  const search = document.getElementById('material-search').value.toLowerCase();
+  const category = document.getElementById('material-category-filter').value;
+  
+  document.querySelectorAll('.material-row').forEach(row => {
+    const name = row.dataset.name || '';
+    const cat = row.dataset.category || '';
+    const matchSearch = !search || name.includes(search);
+    const matchCategory = !category || cat === category;
+    row.style.display = (matchSearch && matchCategory) ? '' : 'none';
+  });
+}
+
+// 원료 추가 모달 (시스템 관리용)
+function showAddSystemMaterialModal() {
+  showModal('원료/부자재 추가', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">품목명 <span class="text-red-500">*</span></label>
+        <input type="text" id="new-material-name" class="w-full border rounded-lg px-4 py-2" placeholder="예: 유기농강력분">
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">카테고리</label>
+          <select id="new-material-category" class="w-full border rounded-lg px-4 py-2">
+            <option value="원료">원료</option>
+            <option value="부자재">부자재</option>
+            <option value="소모품">소모품</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+          <select id="new-material-unit" class="w-full border rounded-lg px-4 py-2">
+            <option value="kg">kg</option>
+            <option value="g">g</option>
+            <option value="L">L</option>
+            <option value="EA">EA</option>
+            <option value="BOX">BOX</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">안전재고</label>
+        <input type="number" id="new-material-safety" class="w-full border rounded-lg px-4 py-2" value="10">
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveNewMaterial()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">추가</button>
+  `);
+}
+
+// 원료 저장
+async function saveNewMaterial() {
+  const name = document.getElementById('new-material-name').value.trim();
+  const category = document.getElementById('new-material-category').value;
+  const unit = document.getElementById('new-material-unit').value;
+  const safety = parseInt(document.getElementById('new-material-safety').value) || 10;
+  
+  if (!name) {
+    showToast('품목명을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/master', 'POST', {
+      item_name: name,
+      category: category,
+      unit: unit,
+      safety_stock: safety
+    });
+    showToast('원료가 추가되었습니다', 'success');
+    closeModal();
+    await loadSystemManagementData();
+    switchSystemTab('materials');
+  } catch (e) {
+    showToast('추가 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// 원료 수정 모달
+async function showEditMaterialModal(code) {
+  const material = systemManagementData.materials.find(m => m.item_code === code);
+  if (!material) {
+    showToast('원료를 찾을 수 없습니다', 'error');
+    return;
+  }
+  
+  showModal('원료/부자재 수정', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">코드</label>
+        <input type="text" value="${material.item_code}" class="w-full border rounded-lg px-4 py-2 bg-gray-100" disabled>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">품목명 <span class="text-red-500">*</span></label>
+        <input type="text" id="edit-material-name" class="w-full border rounded-lg px-4 py-2" value="${material.item_name || ''}">
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">카테고리</label>
+          <select id="edit-material-category" class="w-full border rounded-lg px-4 py-2">
+            <option value="원료" ${material.category === '원료' ? 'selected' : ''}>원료</option>
+            <option value="부자재" ${material.category === '부자재' ? 'selected' : ''}>부자재</option>
+            <option value="소모품" ${material.category === '소모품' ? 'selected' : ''}>소모품</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+          <select id="edit-material-unit" class="w-full border rounded-lg px-4 py-2">
+            <option value="kg" ${material.unit === 'kg' ? 'selected' : ''}>kg</option>
+            <option value="g" ${material.unit === 'g' ? 'selected' : ''}>g</option>
+            <option value="L" ${material.unit === 'L' ? 'selected' : ''}>L</option>
+            <option value="EA" ${material.unit === 'EA' ? 'selected' : ''}>EA</option>
+            <option value="BOX" ${material.unit === 'BOX' ? 'selected' : ''}>BOX</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">안전재고</label>
+        <input type="number" id="edit-material-safety" class="w-full border rounded-lg px-4 py-2" value="${material.safety_stock || 10}">
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="updateMaterial('${code}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+  `);
+}
+
+// 원료 업데이트
+async function updateMaterial(code) {
+  const name = document.getElementById('edit-material-name').value.trim();
+  const category = document.getElementById('edit-material-category').value;
+  const unit = document.getElementById('edit-material-unit').value;
+  const safety = parseInt(document.getElementById('edit-material-safety').value) || 10;
+  
+  if (!name) {
+    showToast('품목명을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/master/${code}`, 'PUT', {
+      item_name: name,
+      category: category,
+      unit: unit,
+      safety_stock: safety
+    });
+    showToast('원료가 수정되었습니다', 'success');
+    closeModal();
+    await loadSystemManagementData();
+    switchSystemTab('materials');
+  } catch (e) {
+    showToast('수정 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// 원료 삭제
+async function deleteSystemMaterial(code) {
+  if (!confirm('이 원료를 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/master/${code}`, 'DELETE');
+    showToast('삭제되었습니다', 'success');
+    await loadSystemManagementData();
+    switchSystemTab('materials');
+  } catch (e) {
+    showToast('삭제 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// ===== 제품 관리 =====
+function renderProductsManagement(container) {
+  const products = systemManagementData.products;
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex justify-between items-center">
+        <div class="flex gap-2">
+          <input type="text" id="product-search" placeholder="제품명 검색..." 
+                 class="border rounded-lg px-4 py-2 w-64" oninput="filterSystemProducts()">
+        </div>
+        <button onclick="showAddProductModal()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+          <i class="fas fa-plus mr-1"></i> 제품 추가
+        </button>
+      </div>
+      
+      <div class="overflow-x-auto border rounded-lg">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left">코드</th>
+              <th class="px-4 py-3 text-left">제품명</th>
+              <th class="px-4 py-3 text-center">단위</th>
+              <th class="px-4 py-3 text-center">관리</th>
+            </tr>
+          </thead>
+          <tbody id="products-table-body" class="divide-y">
+            ${products.slice(0, 100).map(p => `
+              <tr class="hover:bg-gray-50 product-row" data-name="${p.item_name?.toLowerCase() || ''}">
+                <td class="px-4 py-3 font-mono text-xs text-gray-500">${p.item_code}</td>
+                <td class="px-4 py-3 font-medium">${p.item_name}</td>
+                <td class="px-4 py-3 text-center">${p.unit || '-'}</td>
+                <td class="px-4 py-3 text-center">
+                  <div class="flex justify-center gap-1">
+                    <button onclick="showEditProductModal('${p.item_code}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="수정">
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="deleteSystemProduct('${p.item_code}')" class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="삭제">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${products.length > 100 ? `<p class="text-sm text-gray-500 text-center">처음 100개만 표시됩니다. 검색을 사용하세요.</p>` : ''}
+    </div>
+  `;
+}
+
+function filterSystemProducts() {
+  const search = document.getElementById('product-search').value.toLowerCase();
+  document.querySelectorAll('.product-row').forEach(row => {
+    const name = row.dataset.name || '';
+    row.style.display = (!search || name.includes(search)) ? '' : 'none';
+  });
+}
+
+function showAddProductModal() {
+  showModal('제품 추가', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제품명 <span class="text-red-500">*</span></label>
+        <input type="text" id="new-product-name" class="w-full border rounded-lg px-4 py-2" placeholder="예: 발효종 통밀식빵 550g">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+        <select id="new-product-unit" class="w-full border rounded-lg px-4 py-2">
+          <option value="EA">EA (개)</option>
+          <option value="BOX">BOX</option>
+          <option value="kg">kg</option>
+        </select>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveNewSystemProduct()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">추가</button>
+  `);
+}
+
+async function saveNewSystemProduct() {
+  const name = document.getElementById('new-product-name').value.trim();
+  const unit = document.getElementById('new-product-unit').value;
+  
+  if (!name) {
+    showToast('제품명을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/master', 'POST', {
+      item_name: name,
+      category: '제품',
+      unit: unit
+    });
+    showToast('제품이 추가되었습니다', 'success');
+    closeModal();
+    await loadSystemManagementData();
+    switchSystemTab('products');
+  } catch (e) {
+    showToast('추가 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+async function showEditProductModal(code) {
+  const product = systemManagementData.products.find(p => p.item_code === code);
+  if (!product) {
+    showToast('제품을 찾을 수 없습니다', 'error');
+    return;
+  }
+  
+  showModal('제품 수정', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">코드</label>
+        <input type="text" value="${product.item_code}" class="w-full border rounded-lg px-4 py-2 bg-gray-100" disabled>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제품명 <span class="text-red-500">*</span></label>
+        <input type="text" id="edit-product-name" class="w-full border rounded-lg px-4 py-2" value="${product.item_name || ''}">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+        <select id="edit-product-unit" class="w-full border rounded-lg px-4 py-2">
+          <option value="EA" ${product.unit === 'EA' ? 'selected' : ''}>EA (개)</option>
+          <option value="BOX" ${product.unit === 'BOX' ? 'selected' : ''}>BOX</option>
+          <option value="kg" ${product.unit === 'kg' ? 'selected' : ''}>kg</option>
+        </select>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="updateProduct('${code}')" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">저장</button>
+  `);
+}
+
+async function updateProduct(code) {
+  const name = document.getElementById('edit-product-name').value.trim();
+  const unit = document.getElementById('edit-product-unit').value;
+  
+  if (!name) {
+    showToast('제품명을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/master/${code}`, 'PUT', {
+      item_name: name,
+      unit: unit
+    });
+    showToast('제품이 수정되었습니다', 'success');
+    closeModal();
+    await loadSystemManagementData();
+    switchSystemTab('products');
+  } catch (e) {
+    showToast('수정 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+async function deleteSystemProduct(code) {
+  if (!confirm('이 제품을 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/master/${code}`, 'DELETE');
+    showToast('삭제되었습니다', 'success');
+    await loadSystemManagementData();
+    switchSystemTab('products');
+  } catch (e) {
+    showToast('삭제 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// ===== 생산명 관리 =====
+function renderProductionItemsManagement(container) {
+  const items = systemManagementData.productionItems;
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex justify-between items-center">
+        <div class="flex gap-2">
+          <input type="text" id="production-item-search" placeholder="생산명 검색..." 
+                 class="border rounded-lg px-4 py-2 w-64" oninput="filterSystemProductionItems()">
+          <select id="production-item-filter" class="border rounded-lg px-4 py-2" onchange="filterSystemProductionItems()">
+            <option value="">전체</option>
+            <option value="with-bom">BOM 있음</option>
+            <option value="without-bom">BOM 없음</option>
+          </select>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="showProductionBomUpload()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀 업로드
+          </button>
+          <button onclick="showAddProductionModal()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700">
+            <i class="fas fa-plus mr-1"></i> 생산명 추가
+          </button>
+        </div>
+      </div>
+      
+      <div class="overflow-x-auto border rounded-lg">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left">코드</th>
+              <th class="px-4 py-3 text-left">생산명</th>
+              <th class="px-4 py-3 text-left">유사명칭</th>
+              <th class="px-4 py-3 text-center">BOM</th>
+              <th class="px-4 py-3 text-center">관리</th>
+            </tr>
+          </thead>
+          <tbody id="production-items-table-body" class="divide-y">
+            ${items.map(item => `
+              <tr class="hover:bg-gray-50 production-item-row" 
+                  data-name="${item.production_name?.toLowerCase() || ''}"
+                  data-bom="${(item.bom_count || 0) > 0 ? 'yes' : 'no'}">
+                <td class="px-4 py-3 font-mono text-xs text-gray-500">${item.production_code}</td>
+                <td class="px-4 py-3 font-medium">${item.production_name}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${item.alias1 || '-'}</td>
+                <td class="px-4 py-3 text-center">
+                  ${(item.bom_count || 0) > 0 
+                    ? `<span class="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">${item.bom_count}개</span>`
+                    : `<span class="px-2 py-1 bg-red-100 text-red-600 rounded text-xs">없음</span>`}
+                </td>
+                <td class="px-4 py-3 text-center">
+                  <div class="flex justify-center gap-1">
+                    <button onclick="showEditProductionItemModal('${item.production_code}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="수정">
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="showEditBomModal('${item.production_code}')" class="p-1.5 text-green-600 hover:bg-green-50 rounded" title="BOM">
+                      <i class="fas fa-list-ul"></i>
+                    </button>
+                    <button onclick="deleteProductionItem('${item.production_code}')" class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="삭제">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function filterSystemProductionItems() {
+  const search = document.getElementById('production-item-search').value.toLowerCase();
+  const filter = document.getElementById('production-item-filter').value;
+  
+  document.querySelectorAll('.production-item-row').forEach(row => {
+    const name = row.dataset.name || '';
+    const hasBom = row.dataset.bom === 'yes';
+    const matchSearch = !search || name.includes(search);
+    let matchFilter = true;
+    if (filter === 'with-bom') matchFilter = hasBom;
+    if (filter === 'without-bom') matchFilter = !hasBom;
+    row.style.display = (matchSearch && matchFilter) ? '' : 'none';
+  });
+}
+
+async function showEditProductionItemModal(code) {
+  const item = systemManagementData.productionItems.find(p => p.production_code === code);
+  if (!item) {
+    showToast('생산명을 찾을 수 없습니다', 'error');
+    return;
+  }
+  
+  showModal('생산명 수정', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">코드</label>
+        <input type="text" value="${item.production_code}" class="w-full border rounded-lg px-4 py-2 bg-gray-100" disabled>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">생산명 <span class="text-red-500">*</span></label>
+        <input type="text" id="edit-production-name" class="w-full border rounded-lg px-4 py-2" value="${item.production_name || ''}">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">유사명칭1 (ERP 제품명)</label>
+        <input type="text" id="edit-production-alias1" class="w-full border rounded-lg px-4 py-2" value="${item.alias1 || ''}">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">유사명칭2</label>
+        <input type="text" id="edit-production-alias2" class="w-full border rounded-lg px-4 py-2" value="${item.alias2 || ''}">
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="updateProductionItem('${code}')" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">저장</button>
+  `);
+}
+
+async function updateProductionItem(code) {
+  const name = document.getElementById('edit-production-name').value.trim();
+  const alias1 = document.getElementById('edit-production-alias1').value.trim();
+  const alias2 = document.getElementById('edit-production-alias2').value.trim();
+  
+  if (!name) {
+    showToast('생산명을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/admin/production-items/${code}`, 'PUT', {
+      production_name: name,
+      alias1: alias1 || null,
+      alias2: alias2 || null
+    });
+    showToast('생산명이 수정되었습니다', 'success');
+    closeModal();
+    await loadSystemManagementData();
+    switchSystemTab('production-items');
+  } catch (e) {
+    showToast('수정 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// ===== 재고 수정 =====
+function renderStockManagement(container) {
+  const stock = systemManagementData.stock;
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+          <i class="fas fa-exclamation-triangle text-yellow-600 text-xl"></i>
+          <div>
+            <h4 class="font-bold text-yellow-800">재고 수동 조정</h4>
+            <p class="text-sm text-yellow-700 mt-1">실물 재고와 시스템 재고가 맞지 않을 때 직접 수정할 수 있습니다. 모든 조정은 기록됩니다.</p>
+          </div>
+        </div>
+      </div>
+      
+      <div class="flex justify-between items-center">
+        <div class="flex gap-2">
+          <input type="text" id="stock-search" placeholder="품목명 검색..." 
+                 class="border rounded-lg px-4 py-2 w-64" oninput="filterSystemStock()">
+          <select id="stock-category-filter" class="border rounded-lg px-4 py-2" onchange="filterSystemStock()">
+            <option value="">전체</option>
+            <option value="원료">원료</option>
+            <option value="부자재">부자재</option>
+            <option value="제품">제품</option>
+          </select>
+        </div>
+        <button onclick="recalculateSystemStock()" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">
+          <i class="fas fa-calculator mr-1"></i> 재고 재계산
+        </button>
+      </div>
+      
+      <div class="overflow-x-auto border rounded-lg">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left">코드</th>
+              <th class="px-4 py-3 text-left">품목명</th>
+              <th class="px-4 py-3 text-center">카테고리</th>
+              <th class="px-4 py-3 text-right">현재 재고</th>
+              <th class="px-4 py-3 text-center">단위</th>
+              <th class="px-4 py-3 text-center">수정</th>
+            </tr>
+          </thead>
+          <tbody id="stock-table-body" class="divide-y">
+            ${stock.slice(0, 100).map(s => `
+              <tr class="hover:bg-gray-50 stock-row" 
+                  data-name="${s.item_name?.toLowerCase() || ''}"
+                  data-category="${s.category || ''}">
+                <td class="px-4 py-3 font-mono text-xs text-gray-500">${s.item_code}</td>
+                <td class="px-4 py-3 font-medium">${s.item_name}</td>
+                <td class="px-4 py-3 text-center">
+                  <span class="px-2 py-1 rounded text-xs ${s.category === '원료' ? 'bg-blue-100 text-blue-700' : s.category === '제품' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}">${s.category || '-'}</span>
+                </td>
+                <td class="px-4 py-3 text-right font-medium ${(s.quantity || 0) < 0 ? 'text-red-600' : ''}">${formatNumber(s.quantity || 0)}</td>
+                <td class="px-4 py-3 text-center">${s.unit || '-'}</td>
+                <td class="px-4 py-3 text-center">
+                  <button onclick="showAdjustStockModal('${s.item_code}', '${s.item_name}', ${s.quantity || 0}, '${s.unit || ''}')" 
+                          class="px-3 py-1 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-xs">
+                    <i class="fas fa-edit mr-1"></i>수정
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${stock.length > 100 ? `<p class="text-sm text-gray-500 text-center">처음 100개만 표시됩니다. 검색을 사용하세요.</p>` : ''}
+    </div>
+  `;
+}
+
+function filterSystemStock() {
+  const search = document.getElementById('stock-search').value.toLowerCase();
+  const category = document.getElementById('stock-category-filter').value;
+  
+  document.querySelectorAll('.stock-row').forEach(row => {
+    const name = row.dataset.name || '';
+    const cat = row.dataset.category || '';
+    const matchSearch = !search || name.includes(search);
+    const matchCategory = !category || cat === category;
+    row.style.display = (matchSearch && matchCategory) ? '' : 'none';
+  });
+}
+
+function showAdjustStockModal(code, name, currentQty, unit) {
+  showModal('재고 수정', `
+    <div class="space-y-4">
+      <div class="bg-gray-50 rounded-lg p-4">
+        <div class="text-sm text-gray-500">품목</div>
+        <div class="font-medium text-lg">${name}</div>
+        <div class="text-sm text-gray-500 mt-1">코드: ${code}</div>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">현재 재고</label>
+          <input type="text" value="${formatNumber(currentQty)} ${unit}" class="w-full border rounded-lg px-4 py-2 bg-gray-100" disabled>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">변경할 재고 <span class="text-red-500">*</span></label>
+          <input type="number" id="adjust-stock-qty" class="w-full border rounded-lg px-4 py-2" value="${currentQty}" step="0.01">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">사유 <span class="text-red-500">*</span></label>
+        <textarea id="adjust-stock-reason" class="w-full border rounded-lg px-4 py-2" rows="2" placeholder="재고 조정 사유를 입력하세요"></textarea>
+      </div>
+      <div class="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+        <i class="fas fa-exclamation-triangle mr-1"></i>
+        재고 조정은 기록되며, 실제 재고와 시스템 재고의 차이를 확인한 후 수정하세요.
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="adjustStock('${code}', ${currentQty})" class="px-4 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600">수정</button>
+  `);
+}
+
+async function adjustStock(code, currentQty) {
+  const newQty = parseFloat(document.getElementById('adjust-stock-qty').value);
+  const reason = document.getElementById('adjust-stock-reason').value.trim();
+  
+  if (isNaN(newQty)) {
+    showToast('유효한 수량을 입력하세요', 'warning');
+    return;
+  }
+  if (!reason) {
+    showToast('사유를 입력하세요', 'warning');
+    return;
+  }
+  
+  const diff = newQty - currentQty;
+  
+  try {
+    await api('/stock/adjust', 'POST', {
+      item_code: code,
+      adjustment: diff,
+      reason: reason,
+      new_quantity: newQty
+    });
+    showToast('재고가 수정되었습니다', 'success');
+    closeModal();
+    await loadSystemManagementData();
+    switchSystemTab('stock');
+  } catch (e) {
+    showToast('수정 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+async function recalculateSystemStock() {
+  if (!confirm('모든 재고를 트랜잭션 기반으로 재계산하시겠습니까?')) return;
+  
+  try {
+    showToast('재계산 중...', 'info');
+    await api('/stock/recalculate', 'POST');
+    showToast('재고가 재계산되었습니다', 'success');
+    await loadSystemManagementData();
+    switchSystemTab('stock');
+  } catch (e) {
+    showToast('재계산 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// ===== BOM 관리 =====
+function renderBomManagement(container) {
+  const items = systemManagementData.productionItems.filter(p => (p.bom_count || 0) > 0);
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex justify-between items-center">
+        <div class="flex gap-2">
+          <input type="text" id="bom-search" placeholder="생산명 검색..." 
+                 class="border rounded-lg px-4 py-2 w-64" oninput="filterSystemBom()">
+        </div>
+        <div class="flex gap-2">
+          <button onclick="showProductionBomUpload()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀 업로드
+          </button>
+          <button onclick="showAddBomModal()" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700">
+            <i class="fas fa-plus mr-1"></i> BOM 추가
+          </button>
+        </div>
+      </div>
+      
+      <div class="overflow-x-auto border rounded-lg">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left">코드</th>
+              <th class="px-4 py-3 text-left">생산명</th>
+              <th class="px-4 py-3 text-center">원료 수</th>
+              <th class="px-4 py-3 text-center">관리</th>
+            </tr>
+          </thead>
+          <tbody id="bom-table-body" class="divide-y">
+            ${items.map(item => `
+              <tr class="hover:bg-gray-50 bom-row" data-name="${item.production_name?.toLowerCase() || ''}">
+                <td class="px-4 py-3 font-mono text-xs text-gray-500">${item.production_code}</td>
+                <td class="px-4 py-3 font-medium">${item.production_name}</td>
+                <td class="px-4 py-3 text-center">
+                  <span class="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">${item.bom_count}개</span>
+                </td>
+                <td class="px-4 py-3 text-center">
+                  <div class="flex justify-center gap-1">
+                    <button onclick="showBomDetailModal('${item.production_code}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="상세보기">
+                      <i class="fas fa-eye"></i>
+                    </button>
+                    <button onclick="showEditBomModal('${item.production_code}')" class="p-1.5 text-green-600 hover:bg-green-50 rounded" title="수정">
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button onclick="deleteBomForItem('${item.production_code}')" class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="삭제">
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function filterSystemBom() {
+  const search = document.getElementById('bom-search').value.toLowerCase();
+  document.querySelectorAll('.bom-row').forEach(row => {
+    const name = row.dataset.name || '';
+    row.style.display = (!search || name.includes(search)) ? '' : 'none';
+  });
+}
+
+async function showBomDetailModal(code) {
+  try {
+    const result = await api(`/admin/production-items/${code}`);
+    const item = result.data?.item;
+    const bom = result.data?.bom || [];
+    
+    showModal(`BOM 상세: ${item?.production_name || code}`, `
+      <div class="space-y-4">
+        <div class="bg-gray-50 rounded-lg p-4">
+          <div class="text-sm text-gray-500">생산명</div>
+          <div class="font-medium">${item?.production_name || '-'}</div>
+          ${item?.alias1 ? `<div class="text-sm text-gray-500 mt-1">유사명칭: ${item.alias1}</div>` : ''}
+        </div>
+        
+        <div class="border rounded-lg overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-4 py-2 text-left">원료명</th>
+                <th class="px-4 py-2 text-right">수량</th>
+                <th class="px-4 py-2 text-center">단위</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y">
+              ${bom.map(b => `
+                <tr>
+                  <td class="px-4 py-2">${b.material_name}</td>
+                  <td class="px-4 py-2 text-right">${b.quantity}</td>
+                  <td class="px-4 py-2 text-center">${b.unit || 'g'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `, `
+      <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+      <button onclick="closeModal(); showEditBomModal('${code}')" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">수정</button>
+    `);
+  } catch (e) {
+    showToast('BOM 로드 실패', 'error');
+  }
+}
+
+async function deleteBomForItem(code) {
+  if (!confirm('이 생산명의 BOM을 모두 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/admin/production-bom/${code}`, 'DELETE');
+    showToast('BOM이 삭제되었습니다', 'success');
+    await loadSystemManagementData();
+    switchSystemTab('bom');
+  } catch (e) {
+    showToast('삭제 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// 관리자 탭에서 시스템 관리 로드 (탭용)
+async function loadSystemManagementTab() {
+  const container = document.getElementById('admin-tab-content');
+  
+  container.innerHTML = `
+    <div class="space-y-6">
+      <!-- 빠른 통계 -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div class="bg-blue-50 rounded-lg p-4 cursor-pointer hover:bg-blue-100 transition-colors" onclick="switchSystemMgmtTab('materials')">
+          <div class="flex items-center gap-3">
+            <i class="fas fa-cubes text-blue-600 text-2xl"></i>
+            <div>
+              <div class="text-xl font-bold text-gray-800" id="smgmt-stat-materials">-</div>
+              <div class="text-sm text-gray-500">원료/부자재</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-4 cursor-pointer hover:bg-green-100 transition-colors" onclick="switchSystemMgmtTab('products')">
+          <div class="flex items-center gap-3">
+            <i class="fas fa-box text-green-600 text-2xl"></i>
+            <div>
+              <div class="text-xl font-bold text-gray-800" id="smgmt-stat-products">-</div>
+              <div class="text-sm text-gray-500">제품 마스터</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-purple-50 rounded-lg p-4 cursor-pointer hover:bg-purple-100 transition-colors" onclick="switchSystemMgmtTab('production')">
+          <div class="flex items-center gap-3">
+            <i class="fas fa-industry text-purple-600 text-2xl"></i>
+            <div>
+              <div class="text-xl font-bold text-gray-800" id="smgmt-stat-production">-</div>
+              <div class="text-sm text-gray-500">생산명/BOM</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-yellow-50 rounded-lg p-4 cursor-pointer hover:bg-yellow-100 transition-colors" onclick="switchSystemMgmtTab('stock')">
+          <div class="flex items-center gap-3">
+            <i class="fas fa-warehouse text-yellow-600 text-2xl"></i>
+            <div>
+              <div class="text-xl font-bold text-gray-800" id="smgmt-stat-stock">-</div>
+              <div class="text-sm text-gray-500">재고 품목</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-red-50 rounded-lg p-4 cursor-pointer hover:bg-red-100 transition-colors" onclick="switchSystemMgmtTab('bom')">
+          <div class="flex items-center gap-3">
+            <i class="fas fa-list-alt text-red-600 text-2xl"></i>
+            <div>
+              <div class="text-xl font-bold text-gray-800" id="smgmt-stat-bom">-</div>
+              <div class="text-sm text-gray-500">BOM 등록</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 서브 탭 -->
+      <div class="border-b flex">
+        <button onclick="switchSystemMgmtTab('materials')" id="smgmt-tab-materials" class="smgmt-tab px-4 py-2 border-b-2 border-indigo-500 text-indigo-600 font-medium">
+          <i class="fas fa-cubes mr-1"></i> 원료/부자재
+        </button>
+        <button onclick="switchSystemMgmtTab('products')" id="smgmt-tab-products" class="smgmt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          <i class="fas fa-box mr-1"></i> 제품
+        </button>
+        <button onclick="switchSystemMgmtTab('production')" id="smgmt-tab-production" class="smgmt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          <i class="fas fa-industry mr-1"></i> 생산명/BOM
+        </button>
+        <button onclick="switchSystemMgmtTab('stock')" id="smgmt-tab-stock" class="smgmt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          <i class="fas fa-warehouse mr-1"></i> 재고 수정
+        </button>
+      </div>
+      
+      <!-- 탭 컨텐츠 -->
+      <div id="smgmt-tab-content">
+        <div class="text-center py-8 text-gray-500">
+          <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+          <p>로딩 중...</p>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 데이터 로드 및 첫 탭 표시
+  await loadSystemMgmtData();
+  switchSystemMgmtTab('materials');
+}
+
+// 시스템 관리 데이터 로드 (탭용)
+async function loadSystemMgmtData() {
+  try {
+    const [materialsRes, productsRes, productionRes, stockRes] = await Promise.all([
+      api('/master'),
+      api('/master?category=제품'),
+      api('/admin/production-items'),
+      api('/stock')
+    ]);
+    
+    systemManagementData.materials = (materialsRes.data || []).filter(m => m.category !== '제품');
+    systemManagementData.products = productsRes.data || [];
+    systemManagementData.productionItems = productionRes.data || [];
+    systemManagementData.stock = stockRes.data || [];
+    
+    // 통계 업데이트
+    const els = {
+      materials: document.getElementById('smgmt-stat-materials'),
+      products: document.getElementById('smgmt-stat-products'),
+      production: document.getElementById('smgmt-stat-production'),
+      stock: document.getElementById('smgmt-stat-stock'),
+      bom: document.getElementById('smgmt-stat-bom')
+    };
+    
+    if (els.materials) els.materials.textContent = systemManagementData.materials.length;
+    if (els.products) els.products.textContent = systemManagementData.products.length;
+    if (els.production) els.production.textContent = systemManagementData.productionItems.length;
+    if (els.stock) els.stock.textContent = systemManagementData.stock.length;
+    if (els.bom) els.bom.textContent = systemManagementData.productionItems.filter(p => (p.bom_count || 0) > 0).length;
+    
+  } catch (e) {
+    console.error('시스템 관리 데이터 로드 실패:', e);
+    showToast('데이터 로드 실패', 'error');
+  }
+}
+
+// 시스템 관리 탭 전환 (관리자 패널용)
+function switchSystemMgmtTab(tab) {
+  // 탭 버튼 스타일
+  document.querySelectorAll('.smgmt-tab').forEach(el => {
+    el.classList.remove('border-indigo-500', 'text-indigo-600');
+    el.classList.add('border-transparent', 'text-gray-500');
+  });
+  const activeTab = document.getElementById(`smgmt-tab-${tab}`);
+  if (activeTab) {
+    activeTab.classList.remove('border-transparent', 'text-gray-500');
+    activeTab.classList.add('border-indigo-500', 'text-indigo-600');
+  }
+  
+  const content = document.getElementById('smgmt-tab-content');
+  switch(tab) {
+    case 'materials': renderMaterialsManagement(content); break;
+    case 'products': renderProductsManagement(content); break;
+    case 'production': renderProductionItemsManagement(content); break;
+    case 'stock': renderStockManagement(content); break;
+    case 'bom': renderBomManagement(content); break;
+  }
+}
+
+// 전역 함수 노출
+window.loadSystemManagementTab = loadSystemManagementTab;
+window.loadSystemMgmtData = loadSystemMgmtData;
+window.switchSystemMgmtTab = switchSystemMgmtTab;
+window.renderSystemManagement = renderSystemManagement;
+window.loadSystemManagementData = loadSystemManagementData;
+window.switchSystemTab = switchSystemTab;
+window.filterSystemMaterials = filterSystemMaterials;
+window.showAddSystemMaterialModal = showAddSystemMaterialModal;
+window.saveNewMaterial = saveNewMaterial;
+window.showEditMaterialModal = showEditMaterialModal;
+window.updateMaterial = updateMaterial;
+window.deleteSystemMaterial = deleteSystemMaterial;
+window.filterSystemProducts = filterSystemProducts;
+window.showAddProductModal = showAddProductModal;
+window.saveNewSystemProduct = saveNewSystemProduct;
+window.showEditProductModal = showEditProductModal;
+window.updateProduct = updateProduct;
+window.deleteSystemProduct = deleteSystemProduct;
+window.filterSystemProductionItems = filterSystemProductionItems;
+window.showEditProductionItemModal = showEditProductionItemModal;
+window.updateProductionItem = updateProductionItem;
+window.filterSystemStock = filterSystemStock;
+window.showAdjustStockModal = showAdjustStockModal;
+window.adjustStock = adjustStock;
+window.recalculateSystemStock = recalculateSystemStock;
+window.filterSystemBom = filterSystemBom;
+window.showBomDetailModal = showBomDetailModal;
+window.deleteBomForItem = deleteBomForItem;
+
+// ========== ERP 시스템 설정 관리 ==========
+
+// 시스템 설정 데이터
+let erpConfigData = {
+  settings: [],
+  forms: [],
+  qualityItems: [],
+  codeRules: [],
+  categories: []
+};
+
+// ERP 설정 페이지 렌더링 (관리자 탭용)
+async function loadErpConfigTab() {
+  const container = document.getElementById('admin-tab-content');
+  
+  container.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-bold text-gray-800">
+            <i class="fas fa-sliders-h mr-2 text-purple-600"></i>ERP 시스템 설정
+          </h3>
+          <p class="text-sm text-gray-500 mt-1">회사정보, 양식, 검사항목, 코드규칙 등을 설정합니다.</p>
+        </div>
+        <button onclick="initErpConfigTables()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm">
+          <i class="fas fa-database mr-1"></i> 테이블 초기화
+        </button>
+      </div>
+      
+      <!-- 설정 서브 탭 -->
+      <div class="border-b flex flex-wrap">
+        <button onclick="switchErpConfigTab('company')" id="erp-tab-company" class="erp-config-tab px-4 py-2 border-b-2 border-purple-500 text-purple-600 font-medium">
+          <i class="fas fa-building mr-1"></i> 회사정보
+        </button>
+        <button onclick="switchErpConfigTab('general')" id="erp-tab-general" class="erp-config-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          <i class="fas fa-cog mr-1"></i> 일반설정
+        </button>
+        <button onclick="switchErpConfigTab('quality')" id="erp-tab-quality" class="erp-config-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          <i class="fas fa-clipboard-check mr-1"></i> 검사항목
+        </button>
+        <button onclick="switchErpConfigTab('codes')" id="erp-tab-codes" class="erp-config-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          <i class="fas fa-barcode mr-1"></i> 코드규칙
+        </button>
+        <button onclick="switchErpConfigTab('categories')" id="erp-tab-categories" class="erp-config-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          <i class="fas fa-tags mr-1"></i> 카테고리
+        </button>
+        <button onclick="switchErpConfigTab('forms')" id="erp-tab-forms" class="erp-config-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          <i class="fas fa-file-alt mr-1"></i> 양식관리
+        </button>
+      </div>
+      
+      <!-- 설정 컨텐츠 -->
+      <div id="erp-config-content">
+        <div class="text-center py-8 text-gray-500">
+          <i class="fas fa-spinner fa-spin text-2xl mb-2"></i>
+          <p>로딩 중...</p>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  await loadErpConfigData();
+  switchErpConfigTab('company');
+}
+
+// 시스템 설정 데이터 로드
+async function loadErpConfigData() {
+  try {
+    const [settingsRes, qualityRes, codesRes, categoriesRes] = await Promise.all([
+      api('/admin/system/config'),
+      api('/admin/system/quality-items'),
+      api('/admin/system/code-rules'),
+      api('/admin/system/categories')
+    ]);
+    
+    erpConfigData.settings = settingsRes.data || [];
+    erpConfigData.qualityItems = qualityRes.data || [];
+    erpConfigData.codeRules = codesRes.data || [];
+    erpConfigData.categories = categoriesRes.data || [];
+    
+  } catch (e) {
+    console.error('설정 로드 실패:', e);
+  }
+}
+
+// ERP 설정 탭 전환
+function switchErpConfigTab(tab) {
+  document.querySelectorAll('.erp-config-tab').forEach(el => {
+    el.classList.remove('border-purple-500', 'text-purple-600');
+    el.classList.add('border-transparent', 'text-gray-500');
+  });
+  const activeTab = document.getElementById(`erp-tab-${tab}`);
+  if (activeTab) {
+    activeTab.classList.remove('border-transparent', 'text-gray-500');
+    activeTab.classList.add('border-purple-500', 'text-purple-600');
+  }
+  
+  const content = document.getElementById('erp-config-content');
+  switch(tab) {
+    case 'company': renderCompanySettings(content); break;
+    case 'general': renderGeneralSettings(content); break;
+    case 'quality': renderQualitySettings(content); break;
+    case 'codes': renderCodeSettings(content); break;
+    case 'categories': renderCategorySettings(content); break;
+    case 'forms': renderFormSettings(content); break;
+  }
+}
+
+// 테이블 초기화
+async function initErpConfigTables() {
+  if (!confirm('시스템 설정 테이블을 초기화하시겠습니까?')) return;
+  
+  try {
+    showToast('테이블 생성 중...', 'info');
+    await api('/admin/system/migrate', 'POST');
+    await api('/admin/system/migrate', 'POST');
+    showToast('테이블이 초기화되었습니다', 'success');
+    await loadErpConfigData();
+    switchErpConfigTab('company');
+  } catch (e) {
+    showToast('초기화 실패: ' + e.message, 'error');
+  }
+}
+
+// ===== 회사 정보 설정 =====
+function renderCompanySettings(container) {
+  const settings = erpConfigData.settings.filter(s => s.category === 'company');
+  const getValue = (key) => settings.find(s => s.config_key === key)?.config_value || '';
+  
+  container.innerHTML = `
+    <div class="max-w-2xl">
+      <div class="bg-white border rounded-lg p-6 space-y-4">
+        <h4 class="font-bold text-gray-800 border-b pb-2">
+          <i class="fas fa-building mr-2 text-blue-600"></i>회사 기본 정보
+        </h4>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">회사명</label>
+            <input type="text" id="cfg-company_name" value="${getValue('company_name')}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">대표자명</label>
+            <input type="text" id="cfg-company_ceo" value="${getValue('company_ceo')}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">사업자등록번호</label>
+          <input type="text" id="cfg-company_business_number" value="${getValue('company_business_number')}" class="w-full border rounded-lg px-4 py-2" placeholder="000-00-00000">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">회사 주소</label>
+          <input type="text" id="cfg-company_address" value="${getValue('company_address')}" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">전화번호</label>
+            <input type="text" id="cfg-company_tel" value="${getValue('company_tel')}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">팩스번호</label>
+            <input type="text" id="cfg-company_fax" value="${getValue('company_fax')}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">이메일</label>
+          <input type="email" id="cfg-company_email" value="${getValue('company_email')}" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">HACCP 인증번호</label>
+          <input type="text" id="cfg-company_haccp_number" value="${getValue('company_haccp_number')}" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        
+        <div class="pt-4 border-t">
+          <button onclick="saveCompanySettings()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
+            <i class="fas fa-save mr-1"></i> 저장
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function saveCompanySettings() {
+  const keys = ['company_name', 'company_ceo', 'company_business_number', 'company_address', 'company_tel', 'company_fax', 'company_email', 'company_haccp_number'];
+  const settings = keys.map(key => ({
+    key: key,
+    value: document.getElementById(`cfg-${key}`)?.value || ''
+  }));
+  
+  try {
+    await api('/admin/system/config-bulk', 'POST', { settings });
+    showToast('회사 정보가 저장되었습니다', 'success');
+    await loadErpConfigData();
+  } catch (e) {
+    showToast('저장 실패', 'error');
+  }
+}
+
+// ===== 일반 설정 =====
+function renderGeneralSettings(container) {
+  const settings = erpConfigData.settings.filter(s => s.category === 'general' || s.category === 'notification');
+  const getValue = (key) => settings.find(s => s.config_key === key)?.config_value || '';
+  
+  container.innerHTML = `
+    <div class="max-w-2xl space-y-6">
+      <!-- 기본 설정 -->
+      <div class="bg-white border rounded-lg p-6 space-y-4">
+        <h4 class="font-bold text-gray-800 border-b pb-2">
+          <i class="fas fa-cog mr-2 text-green-600"></i>기본 설정
+        </h4>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">기본 단위</label>
+            <select id="cfg-default_unit" class="w-full border rounded-lg px-4 py-2">
+              <option value="kg" ${getValue('default_unit') === 'kg' ? 'selected' : ''}>kg</option>
+              <option value="g" ${getValue('default_unit') === 'g' ? 'selected' : ''}>g</option>
+              <option value="L" ${getValue('default_unit') === 'L' ? 'selected' : ''}>L</option>
+              <option value="EA" ${getValue('default_unit') === 'EA' ? 'selected' : ''}>EA</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">기본 유통기한(일)</label>
+            <input type="number" id="cfg-default_expiry_days" value="${getValue('default_expiry_days') || 365}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">재고 경고 기준(%)</label>
+            <input type="number" id="cfg-stock_warning_percent" value="${getValue('stock_warning_percent') || 20}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">LOT 만료 경고(일)</label>
+            <input type="number" id="cfg-lot_expiry_warning_days" value="${getValue('lot_expiry_warning_days') || 30}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+        </div>
+      </div>
+      
+      <!-- 알림 설정 -->
+      <div class="bg-white border rounded-lg p-6 space-y-4">
+        <h4 class="font-bold text-gray-800 border-b pb-2">
+          <i class="fas fa-bell mr-2 text-yellow-600"></i>알림 설정
+        </h4>
+        
+        <div class="space-y-3">
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" id="cfg-notify_low_stock" ${getValue('notify_low_stock') === 'true' ? 'checked' : ''} class="w-5 h-5 text-blue-600 rounded">
+            <span>재고 부족 알림</span>
+          </label>
+          <label class="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" id="cfg-notify_expiry_soon" ${getValue('notify_expiry_soon') === 'true' ? 'checked' : ''} class="w-5 h-5 text-blue-600 rounded">
+            <span>유통기한 임박 알림</span>
+          </label>
+        </div>
+      </div>
+      
+      <div>
+        <button onclick="saveGeneralSettings()" class="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700">
+          <i class="fas fa-save mr-1"></i> 저장
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function saveGeneralSettings() {
+  const settings = [
+    { key: 'default_unit', value: document.getElementById('cfg-default_unit')?.value },
+    { key: 'default_expiry_days', value: document.getElementById('cfg-default_expiry_days')?.value },
+    { key: 'stock_warning_percent', value: document.getElementById('cfg-stock_warning_percent')?.value },
+    { key: 'lot_expiry_warning_days', value: document.getElementById('cfg-lot_expiry_warning_days')?.value },
+    { key: 'notify_low_stock', value: document.getElementById('cfg-notify_low_stock')?.checked ? 'true' : 'false' },
+    { key: 'notify_expiry_soon', value: document.getElementById('cfg-notify_expiry_soon')?.checked ? 'true' : 'false' },
+  ];
+  
+  try {
+    await api('/admin/system/config-bulk', 'POST', { settings });
+    showToast('설정이 저장되었습니다', 'success');
+    await loadErpConfigData();
+  } catch (e) {
+    showToast('저장 실패', 'error');
+  }
+}
+
+// ===== 품질검사 항목 =====
+function renderQualitySettings(container) {
+  const items = erpConfigData.qualityItems;
+  const categories = [...new Set(items.map(i => i.category))];
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex justify-between items-center">
+        <div class="flex gap-2">
+          <select id="quality-category-filter" class="border rounded-lg px-4 py-2" onchange="filterQualityItems()">
+            <option value="">전체 카테고리</option>
+            ${categories.map(c => `<option value="${c}">${c}</option>`).join('')}
+          </select>
+        </div>
+        <button onclick="showAddQualityItemModal()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700">
+          <i class="fas fa-plus mr-1"></i> 검사항목 추가
+        </button>
+      </div>
+      
+      <div class="bg-white border rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left">카테고리</th>
+              <th class="px-4 py-3 text-left">검사유형</th>
+              <th class="px-4 py-3 text-left">검사명</th>
+              <th class="px-4 py-3 text-left">검사방법</th>
+              <th class="px-4 py-3 text-left">기준값</th>
+              <th class="px-4 py-3 text-center">필수</th>
+              <th class="px-4 py-3 text-center">관리</th>
+            </tr>
+          </thead>
+          <tbody id="quality-items-body" class="divide-y">
+            ${items.map(item => `
+              <tr class="quality-item-row hover:bg-gray-50" data-category="${item.category}">
+                <td class="px-4 py-3">
+                  <span class="px-2 py-1 rounded text-xs ${item.category === '원료' ? 'bg-blue-100 text-blue-700' : item.category === '제품' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-700'}">${item.category}</span>
+                </td>
+                <td class="px-4 py-3">${item.check_type}</td>
+                <td class="px-4 py-3 font-medium">${item.check_name}</td>
+                <td class="px-4 py-3 text-gray-500">${item.check_method || '-'}</td>
+                <td class="px-4 py-3">${item.standard_value || '-'}</td>
+                <td class="px-4 py-3 text-center">
+                  ${item.is_required ? '<i class="fas fa-check text-green-600"></i>' : '<i class="fas fa-minus text-gray-400"></i>'}
+                </td>
+                <td class="px-4 py-3 text-center">
+                  <button onclick="showEditQualityItemModal(${item.id})" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded">
+                    <i class="fas fa-edit"></i>
+                  </button>
+                  <button onclick="deleteQualityItem(${item.id})" class="p-1.5 text-red-600 hover:bg-red-50 rounded">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function filterQualityItems() {
+  const category = document.getElementById('quality-category-filter').value;
+  document.querySelectorAll('.quality-item-row').forEach(row => {
+    row.style.display = (!category || row.dataset.category === category) ? '' : 'none';
+  });
+}
+
+function showAddQualityItemModal() {
+  showModal('검사항목 추가', `
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">카테고리 <span class="text-red-500">*</span></label>
+          <select id="qi-category" class="w-full border rounded-lg px-4 py-2">
+            <option value="원료">원료</option>
+            <option value="부자재">부자재</option>
+            <option value="제품">제품</option>
+            <option value="공정">공정</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">검사유형 <span class="text-red-500">*</span></label>
+          <input type="text" id="qi-check_type" class="w-full border rounded-lg px-4 py-2" placeholder="예: 외관, 이물, 맛">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">검사명 <span class="text-red-500">*</span></label>
+        <input type="text" id="qi-check_name" class="w-full border rounded-lg px-4 py-2" placeholder="예: 외관 검사">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">검사방법</label>
+        <input type="text" id="qi-check_method" class="w-full border rounded-lg px-4 py-2" placeholder="예: 육안 검사">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">기준값</label>
+        <input type="text" id="qi-standard_value" class="w-full border rounded-lg px-4 py-2" placeholder="예: 이상 없음">
+      </div>
+      <div class="grid grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">최소값</label>
+          <input type="number" id="qi-min_value" class="w-full border rounded-lg px-4 py-2" step="0.01">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">최대값</label>
+          <input type="number" id="qi-max_value" class="w-full border rounded-lg px-4 py-2" step="0.01">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+          <input type="text" id="qi-unit" class="w-full border rounded-lg px-4 py-2" placeholder="예: %, °C">
+        </div>
+      </div>
+      <label class="flex items-center gap-2">
+        <input type="checkbox" id="qi-is_required" checked class="w-4 h-4 text-blue-600 rounded">
+        <span class="text-sm">필수 검사항목</span>
+      </label>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveQualityItem()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">추가</button>
+  `);
+}
+
+async function saveQualityItem() {
+  const data = {
+    category: document.getElementById('qi-category').value,
+    check_type: document.getElementById('qi-check_type').value,
+    check_name: document.getElementById('qi-check_name').value,
+    check_method: document.getElementById('qi-check_method').value,
+    standard_value: document.getElementById('qi-standard_value').value,
+    min_value: document.getElementById('qi-min_value').value || null,
+    max_value: document.getElementById('qi-max_value').value || null,
+    unit: document.getElementById('qi-unit').value,
+    is_required: document.getElementById('qi-is_required').checked
+  };
+  
+  if (!data.check_type || !data.check_name) {
+    showToast('필수 항목을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/admin/system/quality-items', 'POST', data);
+    showToast('검사항목이 추가되었습니다', 'success');
+    closeModal();
+    await loadErpConfigData();
+    switchErpConfigTab('quality');
+  } catch (e) {
+    showToast('추가 실패', 'error');
+  }
+}
+
+async function showEditQualityItemModal(id) {
+  const item = erpConfigData.qualityItems.find(i => i.id === id);
+  if (!item) return;
+  
+  showModal('검사항목 수정', `
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">카테고리</label>
+          <input type="text" value="${item.category}" class="w-full border rounded-lg px-4 py-2 bg-gray-100" disabled>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">검사유형</label>
+          <input type="text" id="eqi-check_type" value="${item.check_type}" class="w-full border rounded-lg px-4 py-2">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">검사명</label>
+        <input type="text" id="eqi-check_name" value="${item.check_name}" class="w-full border rounded-lg px-4 py-2">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">검사방법</label>
+        <input type="text" id="eqi-check_method" value="${item.check_method || ''}" class="w-full border rounded-lg px-4 py-2">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">기준값</label>
+        <input type="text" id="eqi-standard_value" value="${item.standard_value || ''}" class="w-full border rounded-lg px-4 py-2">
+      </div>
+      <label class="flex items-center gap-2">
+        <input type="checkbox" id="eqi-is_required" ${item.is_required ? 'checked' : ''} class="w-4 h-4 text-blue-600 rounded">
+        <span class="text-sm">필수 검사항목</span>
+      </label>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="updateQualityItem(${id})" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">저장</button>
+  `);
+}
+
+async function updateQualityItem(id) {
+  const data = {
+    check_type: document.getElementById('eqi-check_type').value,
+    check_name: document.getElementById('eqi-check_name').value,
+    check_method: document.getElementById('eqi-check_method').value,
+    standard_value: document.getElementById('eqi-standard_value').value,
+    is_required: document.getElementById('eqi-is_required').checked
+  };
+  
+  try {
+    await api(`/system-config/quality-items/${id}`, 'PUT', data);
+    showToast('검사항목이 수정되었습니다', 'success');
+    closeModal();
+    await loadErpConfigData();
+    switchErpConfigTab('quality');
+  } catch (e) {
+    showToast('수정 실패', 'error');
+  }
+}
+
+async function deleteQualityItem(id) {
+  if (!confirm('이 검사항목을 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/system-config/quality-items/${id}`, 'DELETE');
+    showToast('삭제되었습니다', 'success');
+    await loadErpConfigData();
+    switchErpConfigTab('quality');
+  } catch (e) {
+    showToast('삭제 실패', 'error');
+  }
+}
+
+// ===== 코드 규칙 =====
+function renderCodeSettings(container) {
+  const rules = erpConfigData.codeRules;
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-700">
+        <i class="fas fa-info-circle mr-1"></i>
+        코드 생성 규칙을 설정합니다. 변경 시 기존 데이터에는 영향을 주지 않습니다.
+      </div>
+      
+      <div class="grid gap-4">
+        ${rules.map(rule => `
+          <div class="bg-white border rounded-lg p-4">
+            <div class="flex justify-between items-start">
+              <div>
+                <h5 class="font-medium text-gray-800">${rule.rule_name}</h5>
+                <p class="text-sm text-gray-500 mt-1">${rule.description || ''}</p>
+              </div>
+              <button onclick="showEditCodeRuleModal('${rule.rule_type}')" class="p-2 text-blue-600 hover:bg-blue-50 rounded">
+                <i class="fas fa-edit"></i>
+              </button>
+            </div>
+            <div class="mt-3 flex gap-4 text-sm">
+              <div><span class="text-gray-500">접두사:</span> <span class="font-mono bg-gray-100 px-2 py-0.5 rounded">${rule.prefix || '-'}</span></div>
+              <div><span class="text-gray-500">자릿수:</span> <span class="font-mono">${rule.sequence_digits}</span></div>
+              <div><span class="text-gray-500">예시:</span> <span class="font-mono text-blue-600">${rule.example || '-'}</span></div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function showEditCodeRuleModal(type) {
+  const rule = erpConfigData.codeRules.find(r => r.rule_type === type);
+  if (!rule) return;
+  
+  showModal(`코드 규칙 수정: ${rule.rule_name}`, `
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">접두사</label>
+          <input type="text" id="cr-prefix" value="${rule.prefix || ''}" class="w-full border rounded-lg px-4 py-2" placeholder="예: R, P, PR">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">일련번호 자릿수</label>
+          <input type="number" id="cr-sequence_digits" value="${rule.sequence_digits || 3}" class="w-full border rounded-lg px-4 py-2" min="1" max="10">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">예시</label>
+        <input type="text" id="cr-example" value="${rule.example || ''}" class="w-full border rounded-lg px-4 py-2">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">설명</label>
+        <input type="text" id="cr-description" value="${rule.description || ''}" class="w-full border rounded-lg px-4 py-2">
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="updateCodeRule('${type}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+  `);
+}
+
+async function updateCodeRule(type) {
+  const data = {
+    prefix: document.getElementById('cr-prefix').value,
+    sequence_digits: parseInt(document.getElementById('cr-sequence_digits').value) || 3,
+    example: document.getElementById('cr-example').value,
+    description: document.getElementById('cr-description').value
+  };
+  
+  try {
+    await api(`/system-config/code-rules/${type}`, 'PUT', data);
+    showToast('코드 규칙이 저장되었습니다', 'success');
+    closeModal();
+    await loadErpConfigData();
+    switchErpConfigTab('codes');
+  } catch (e) {
+    showToast('저장 실패', 'error');
+  }
+}
+
+// ===== 카테고리 관리 =====
+function renderCategorySettings(container) {
+  const categories = erpConfigData.categories;
+  const types = [...new Set(categories.map(c => c.category_type))];
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="flex justify-between items-center">
+        <select id="cat-type-filter" class="border rounded-lg px-4 py-2" onchange="filterCategories()">
+          <option value="">전체 유형</option>
+          ${types.map(t => `<option value="${t}">${t}</option>`).join('')}
+        </select>
+        <button onclick="showAddCategoryModal()" class="bg-yellow-600 text-white px-4 py-2 rounded-lg hover:bg-yellow-700">
+          <i class="fas fa-plus mr-1"></i> 카테고리 추가
+        </button>
+      </div>
+      
+      <div class="bg-white border rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left">유형</th>
+              <th class="px-4 py-3 text-left">카테고리명</th>
+              <th class="px-4 py-3 text-center">순서</th>
+              <th class="px-4 py-3 text-center">색상</th>
+              <th class="px-4 py-3 text-center">관리</th>
+            </tr>
+          </thead>
+          <tbody id="categories-body" class="divide-y">
+            ${categories.map(cat => `
+              <tr class="category-row hover:bg-gray-50" data-type="${cat.category_type}">
+                <td class="px-4 py-3 text-gray-500">${cat.category_type}</td>
+                <td class="px-4 py-3 font-medium">
+                  <i class="fas ${cat.icon || 'fa-tag'} mr-2 text-${cat.color || 'gray'}-500"></i>${cat.category_name}
+                </td>
+                <td class="px-4 py-3 text-center">${cat.display_order || 0}</td>
+                <td class="px-4 py-3 text-center">
+                  <span class="w-4 h-4 inline-block rounded bg-${cat.color || 'gray'}-500"></span>
+                </td>
+                <td class="px-4 py-3 text-center">
+                  <button onclick="showEditCategoryModal(${cat.id})" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded">
+                    <i class="fas fa-edit"></i>
+                  </button>
+                  <button onclick="deleteCategory(${cat.id})" class="p-1.5 text-red-600 hover:bg-red-50 rounded">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function filterCategories() {
+  const type = document.getElementById('cat-type-filter').value;
+  document.querySelectorAll('.category-row').forEach(row => {
+    row.style.display = (!type || row.dataset.type === type) ? '' : 'none';
+  });
+}
+
+function showAddCategoryModal() {
+  showModal('카테고리 추가', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">유형</label>
+        <select id="ncat-type" class="w-full border rounded-lg px-4 py-2">
+          <option value="item">품목(item)</option>
+          <option value="supplier">공급사(supplier)</option>
+          <option value="quality">품질(quality)</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">카테고리명 <span class="text-red-500">*</span></label>
+        <input type="text" id="ncat-name" class="w-full border rounded-lg px-4 py-2">
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">순서</label>
+          <input type="number" id="ncat-order" value="0" class="w-full border rounded-lg px-4 py-2">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">색상</label>
+          <select id="ncat-color" class="w-full border rounded-lg px-4 py-2">
+            <option value="blue">파랑</option>
+            <option value="green">초록</option>
+            <option value="yellow">노랑</option>
+            <option value="red">빨강</option>
+            <option value="purple">보라</option>
+            <option value="gray">회색</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="saveCategory()" class="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700">추가</button>
+  `);
+}
+
+async function saveCategory() {
+  const data = {
+    category_type: document.getElementById('ncat-type').value,
+    category_name: document.getElementById('ncat-name').value,
+    display_order: parseInt(document.getElementById('ncat-order').value) || 0,
+    color: document.getElementById('ncat-color').value
+  };
+  
+  if (!data.category_name) {
+    showToast('카테고리명을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api('/admin/system/categories', 'POST', data);
+    showToast('카테고리가 추가되었습니다', 'success');
+    closeModal();
+    await loadErpConfigData();
+    switchErpConfigTab('categories');
+  } catch (e) {
+    showToast('추가 실패', 'error');
+  }
+}
+
+async function deleteCategory(id) {
+  if (!confirm('이 카테고리를 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(`/system-config/categories/${id}`, 'DELETE');
+    showToast('삭제되었습니다', 'success');
+    await loadErpConfigData();
+    switchErpConfigTab('categories');
+  } catch (e) {
+    showToast('삭제 실패', 'error');
+  }
+}
+
+// ===== 양식 관리 =====
+function renderFormSettings(container) {
+  container.innerHTML = `
+    <div class="space-y-4">
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-700">
+        <i class="fas fa-info-circle mr-1"></i>
+        양식 관리 기능은 추후 업데이트 예정입니다. 현재는 기본 양식이 사용됩니다.
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div class="bg-white border rounded-lg p-4">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-clipboard-check text-blue-600"></i>
+            </div>
+            <div>
+              <h5 class="font-medium">입고검사표</h5>
+              <p class="text-xs text-gray-500">원료/부자재 입고 시 검사 양식</p>
+            </div>
+          </div>
+          <span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">기본 양식 사용</span>
+        </div>
+        
+        <div class="bg-white border rounded-lg p-4">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-industry text-green-600"></i>
+            </div>
+            <div>
+              <h5 class="font-medium">생산일보</h5>
+              <p class="text-xs text-gray-500">일일 생산 기록 양식</p>
+            </div>
+          </div>
+          <span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">기본 양식 사용</span>
+        </div>
+        
+        <div class="bg-white border rounded-lg p-4">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-barcode text-purple-600"></i>
+            </div>
+            <div>
+              <h5 class="font-medium">LOT 라벨</h5>
+              <p class="text-xs text-gray-500">제품 LOT 라벨 출력 양식</p>
+            </div>
+          </div>
+          <span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">기본 양식 사용</span>
+        </div>
+        
+        <div class="bg-white border rounded-lg p-4">
+          <div class="flex items-center gap-3 mb-3">
+            <div class="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-file-alt text-yellow-600"></i>
+            </div>
+            <div>
+              <h5 class="font-medium">품질검사일지</h5>
+              <p class="text-xs text-gray-500">제품 품질검사 양식</p>
+            </div>
+          </div>
+          <span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">기본 양식 사용</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 전역 함수 노출
+window.loadErpConfigTab = loadErpConfigTab;
+window.loadErpConfigData = loadErpConfigData;
+window.switchErpConfigTab = switchErpConfigTab;
+window.initErpConfigTables = initErpConfigTables;
+window.saveCompanySettings = saveCompanySettings;
+window.saveGeneralSettings = saveGeneralSettings;
+window.filterQualityItems = filterQualityItems;
+window.showAddQualityItemModal = showAddQualityItemModal;
+window.saveQualityItem = saveQualityItem;
+window.showEditQualityItemModal = showEditQualityItemModal;
+window.updateQualityItem = updateQualityItem;
+window.deleteQualityItem = deleteQualityItem;
+window.showEditCodeRuleModal = showEditCodeRuleModal;
+window.updateCodeRule = updateCodeRule;
+window.filterCategories = filterCategories;
+window.showAddCategoryModal = showAddCategoryModal;
+window.saveCategory = saveCategory;
+window.deleteCategory = deleteCategory;
+window.showEditCategoryModal = showEditCategoryModal || function() {};
+
+// ========== 감사 로그 탭 ==========
+
+// 감사 로그 데이터
+let auditLogData = {
+  logs: [],
+  stats: null,
+  page: 1,
+  totalPages: 1
+};
+
+// 감사 로그 탭 로드
+async function loadAuditLogTab() {
+  const container = document.getElementById('admin-tab-content');
+  
+  container.innerHTML = `
+    <div class="space-y-6">
+      <!-- 헤더 -->
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-bold text-gray-800">
+            <i class="fas fa-shield-alt mr-2 text-orange-600"></i>감사 로그
+          </h3>
+          <p class="text-sm text-gray-500 mt-1">시스템 변경 이력 및 관리 활동을 추적합니다.</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="exportAuditLogs()" class="px-4 py-2 border rounded-lg hover:bg-gray-100 text-sm">
+            <i class="fas fa-download mr-1"></i> 내보내기
+          </button>
+          <button onclick="loadAuditLogStats()" class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm">
+            <i class="fas fa-sync mr-1"></i> 새로고침
+          </button>
+        </div>
+      </div>
+      
+      <!-- 통계 카드 -->
+      <div id="audit-stats-container" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white border rounded-lg p-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-calendar-day text-blue-600"></i>
+            </div>
+            <div>
+              <div class="text-xl font-bold text-gray-800" id="audit-stat-today">-</div>
+              <div class="text-sm text-gray-500">오늘 활동</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white border rounded-lg p-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-edit text-green-600"></i>
+            </div>
+            <div>
+              <div class="text-xl font-bold text-gray-800" id="audit-stat-changes">-</div>
+              <div class="text-sm text-gray-500">데이터 변경</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white border rounded-lg p-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-sign-in-alt text-yellow-600"></i>
+            </div>
+            <div>
+              <div class="text-xl font-bold text-gray-800" id="audit-stat-logins">-</div>
+              <div class="text-sm text-gray-500">로그인</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white border rounded-lg p-4">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+              <i class="fas fa-trash text-red-600"></i>
+            </div>
+            <div>
+              <div class="text-xl font-bold text-gray-800" id="audit-stat-deletes">-</div>
+              <div class="text-sm text-gray-500">삭제 작업</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 필터 -->
+      <div class="bg-white border rounded-lg p-4">
+        <div class="flex flex-wrap gap-4 items-end">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">액션 유형</label>
+            <select id="audit-filter-action" class="border rounded-lg px-4 py-2" onchange="loadAuditLogs()">
+              <option value="">전체</option>
+              <option value="로그인">로그인</option>
+              <option value="입고">입고</option>
+              <option value="사용">사용</option>
+              <option value="출고">출고</option>
+              <option value="재고조정">재고조정</option>
+              <option value="삭제">삭제</option>
+              <option value="설정변경">설정변경</option>
+              <option value="생산">생산</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">대상 테이블</label>
+            <select id="audit-filter-table" class="border rounded-lg px-4 py-2" onchange="loadAuditLogs()">
+              <option value="">전체</option>
+              <option value="master">마스터</option>
+              <option value="inbound">입고</option>
+              <option value="transactions">트랜잭션</option>
+              <option value="production">생산</option>
+              <option value="system_config">시스템설정</option>
+              <option value="production_items">생산명</option>
+              <option value="production_bom">BOM</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">시작일</label>
+            <input type="date" id="audit-filter-start" class="border rounded-lg px-4 py-2" onchange="loadAuditLogs()">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">종료일</label>
+            <input type="date" id="audit-filter-end" class="border rounded-lg px-4 py-2" onchange="loadAuditLogs()">
+          </div>
+          <button onclick="clearAuditFilters()" class="px-4 py-2 border rounded-lg hover:bg-gray-100 text-sm">
+            <i class="fas fa-times mr-1"></i> 필터 초기화
+          </button>
+        </div>
+      </div>
+      
+      <!-- 로그 테이블 -->
+      <div class="bg-white border rounded-lg overflow-hidden">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left">시간</th>
+              <th class="px-4 py-3 text-left">액션</th>
+              <th class="px-4 py-3 text-left">대상 테이블</th>
+              <th class="px-4 py-3 text-left">대상 ID</th>
+              <th class="px-4 py-3 text-left">사유</th>
+            </tr>
+          </thead>
+          <tbody id="audit-logs-body" class="divide-y">
+            <tr>
+              <td colspan="5" class="text-center py-8 text-gray-400">
+                <i class="fas fa-spinner fa-spin mr-2"></i>로딩 중...
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <!-- 페이지네이션 -->
+      <div id="audit-pagination" class="flex justify-center gap-2"></div>
+    </div>
+  `;
+  
+  // 데이터 로드
+  await Promise.all([
+    loadAuditLogStats(),
+    loadAuditLogs()
+  ]);
+}
+
+// 감사 로그 통계 로드
+async function loadAuditLogStats() {
+  try {
+    const res = await api('/admin/system/logs/stats');
+    const stats = res.data;
+    
+    document.getElementById('audit-stat-today').textContent = stats.todayCount || 0;
+    
+    // 액션별 통계에서 특정 항목 추출
+    const actionStats = stats.actionStats || [];
+    const changes = actionStats.filter(a => ['입고', '사용', '출고', '재고조정', '생산'].includes(a.action_type))
+      .reduce((sum, a) => sum + a.count, 0);
+    const logins = actionStats.find(a => a.action_type === '로그인')?.count || 0;
+    const deletes = actionStats.find(a => a.action_type === '삭제')?.count || 0;
+    
+    document.getElementById('audit-stat-changes').textContent = changes;
+    document.getElementById('audit-stat-logins').textContent = logins;
+    document.getElementById('audit-stat-deletes').textContent = deletes;
+    
+  } catch (e) {
+    console.error('통계 로드 실패:', e);
+  }
+}
+
+// 감사 로그 목록 로드
+async function loadAuditLogs(page = 1) {
+  const body = document.getElementById('audit-logs-body');
+  
+  const actionType = document.getElementById('audit-filter-action')?.value || '';
+  const targetTable = document.getElementById('audit-filter-table')?.value || '';
+  const startDate = document.getElementById('audit-filter-start')?.value || '';
+  const endDate = document.getElementById('audit-filter-end')?.value || '';
+  
+  const params = new URLSearchParams();
+  params.append('page', page);
+  params.append('limit', 50);
+  if (actionType) params.append('action_type', actionType);
+  if (targetTable) params.append('target_table', targetTable);
+  if (startDate) params.append('start_date', startDate);
+  if (endDate) params.append('end_date', endDate);
+  
+  try {
+    const res = await api(`/admin/system/logs?${params.toString()}`);
+    const logs = res.data || [];
+    const pagination = res.pagination || { page: 1, totalPages: 1 };
+    
+    auditLogData.logs = logs;
+    auditLogData.page = pagination.page;
+    auditLogData.totalPages = pagination.totalPages;
+    
+    if (logs.length === 0) {
+      body.innerHTML = `
+        <tr>
+          <td colspan="5" class="text-center py-8 text-gray-400">
+            <i class="fas fa-inbox text-2xl mb-2"></i>
+            <p>기록된 로그가 없습니다.</p>
+          </td>
+        </tr>
+      `;
+    } else {
+      body.innerHTML = logs.map(log => {
+        const actionColors = {
+          '로그인': 'bg-blue-100 text-blue-700',
+          '입고': 'bg-green-100 text-green-700',
+          '사용': 'bg-yellow-100 text-yellow-700',
+          '출고': 'bg-purple-100 text-purple-700',
+          '삭제': 'bg-red-100 text-red-700',
+          '재고조정': 'bg-orange-100 text-orange-700',
+          '설정변경': 'bg-teal-100 text-teal-700'
+        };
+        const actionColor = actionColors[log.action_type] || 'bg-gray-100 text-gray-700';
+        
+        return `
+          <tr class="hover:bg-gray-50">
+            <td class="px-4 py-3 text-gray-500">
+              ${formatDateTime(log.created_at)}
+            </td>
+            <td class="px-4 py-3">
+              <span class="px-2 py-1 rounded text-xs font-medium ${actionColor}">${log.action_type}</span>
+            </td>
+            <td class="px-4 py-3 font-mono text-sm">${log.target_table || '-'}</td>
+            <td class="px-4 py-3 font-mono text-sm">${log.target_id || '-'}</td>
+            <td class="px-4 py-3 text-gray-600 max-w-xs truncate" title="${log.reason || ''}">${log.reason || '-'}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+    
+    // 페이지네이션 렌더링
+    renderAuditPagination(pagination);
+    
+  } catch (e) {
+    console.error('로그 로드 실패:', e);
+    body.innerHTML = `
+      <tr>
+        <td colspan="5" class="text-center py-8 text-red-500">
+          로그를 불러오는데 실패했습니다.
+        </td>
+      </tr>
+    `;
+  }
+}
+
+// 페이지네이션 렌더링
+function renderAuditPagination(pagination) {
+  const container = document.getElementById('audit-pagination');
+  if (!container) return;
+  
+  const { page, totalPages } = pagination;
+  
+  if (totalPages <= 1) {
+    container.innerHTML = '';
+    return;
+  }
+  
+  let html = '';
+  
+  // 이전 버튼
+  if (page > 1) {
+    html += `<button onclick="loadAuditLogs(${page - 1})" class="px-3 py-1 border rounded hover:bg-gray-100">
+      <i class="fas fa-chevron-left"></i>
+    </button>`;
+  }
+  
+  // 페이지 번호
+  const start = Math.max(1, page - 2);
+  const end = Math.min(totalPages, page + 2);
+  
+  for (let i = start; i <= end; i++) {
+    const isActive = i === page;
+    html += `<button onclick="loadAuditLogs(${i})" class="px-3 py-1 border rounded ${isActive ? 'bg-orange-600 text-white' : 'hover:bg-gray-100'}">${i}</button>`;
+  }
+  
+  // 다음 버튼
+  if (page < totalPages) {
+    html += `<button onclick="loadAuditLogs(${page + 1})" class="px-3 py-1 border rounded hover:bg-gray-100">
+      <i class="fas fa-chevron-right"></i>
+    </button>`;
+  }
+  
+  container.innerHTML = html;
+}
+
+// 필터 초기화
+function clearAuditFilters() {
+  document.getElementById('audit-filter-action').value = '';
+  document.getElementById('audit-filter-table').value = '';
+  document.getElementById('audit-filter-start').value = '';
+  document.getElementById('audit-filter-end').value = '';
+  loadAuditLogs(1);
+}
+
+// 로그 내보내기
+async function exportAuditLogs() {
+  try {
+    const res = await api('/admin/system/logs?limit=1000');
+    const logs = res.data || [];
+    
+    // CSV 생성
+    const headers = ['시간', '액션', '대상테이블', '대상ID', '사유'];
+    const rows = logs.map(log => [
+      log.created_at,
+      log.action_type,
+      log.target_table || '',
+      log.target_id || '',
+      log.reason || ''
+    ]);
+    
+    const csv = [headers.join(','), ...rows.map(r => r.map(v => `"${v}"`).join(','))].join('\n');
+    
+    // 다운로드
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `audit_logs_${new Date().toISOString().split('T')[0]}.csv`;
+    link.click();
+    
+    showToast('로그가 다운로드되었습니다', 'success');
+  } catch (e) {
+    showToast('내보내기 실패', 'error');
+  }
+}
+
+// 날짜시간 포맷팅
+function formatDateTime(dateStr) {
+  if (!dateStr) return '-';
+  const date = new Date(dateStr);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mi = String(date.getMinutes()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+}
+
+// 전역 함수 노출
+window.loadAuditLogTab = loadAuditLogTab;
+window.loadAuditLogStats = loadAuditLogStats;
+window.loadAuditLogs = loadAuditLogs;
+window.clearAuditFilters = clearAuditFilters;
+window.exportAuditLogs = exportAuditLogs;

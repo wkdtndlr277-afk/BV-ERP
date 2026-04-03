@@ -110,7 +110,7 @@ process.get('/quality', async (c) => {
       params.push(dough_name)
     }
     
-    query += ' ORDER BY pq.record_date DESC, pq.record_time DESC'
+    query += ' ORDER BY pq.record_date DESC, pq.dough_name, pq.inspection_no, pq.record_time DESC'
     
     const result = await env.DB.prepare(query).bind(...params).all()
     
@@ -147,6 +147,9 @@ process.get('/quality', async (c) => {
       
       return {
         ...rec,
+        // 기존 데이터에 inspection_no/inspection_stage가 없을 경우 기본값 적용
+        inspection_no: rec.inspection_no || 1,
+        inspection_stage: rec.inspection_stage || '1차',
         dough_temp_judgment,
         ph_judgment,
         humidity_judgment,
@@ -166,7 +169,7 @@ process.post('/quality', async (c) => {
   const { 
     record_date, record_time, dough_name, 
     dough_temp, ph_value, humidity, fermentation_time,
-    worker_name, memo 
+    worker_name, memo, inspection_no, inspection_stage 
   } = await c.req.json()
   const { env } = c
   
@@ -224,6 +227,23 @@ process.post('/quality', async (c) => {
     const overall_judgment = (dough_temp_judgment === '적합' && ph_judgment === '적합' && 
                               humidity_judgment === '적합' && fermentation_judgment === '적합') ? '적합' : '부적합'
     
+    // 검사회차 결정: 지정되지 않은 경우 자동 계산
+    let finalInspectionNo = inspection_no || 1;
+    let finalInspectionStage = inspection_stage || '1차';
+    
+    if (!inspection_no) {
+      // 같은 날짜, 같은 반죽의 최대 검사회차 조회
+      const maxResult = await env.DB.prepare(`
+        SELECT MAX(inspection_no) as max_no FROM process_quality 
+        WHERE record_date = ? AND dough_name = ?
+      `).bind(record_date, dough_name).first() as { max_no: number | null }
+      
+      if (maxResult && maxResult.max_no) {
+        finalInspectionNo = maxResult.max_no + 1
+        finalInspectionStage = `${finalInspectionNo}차`
+      }
+    }
+    
     await env.DB.prepare(`
       INSERT INTO process_quality (
         record_date, record_time, dough_name,
@@ -231,15 +251,15 @@ process.post('/quality', async (c) => {
         ph_value, ph_standard, ph_judgment,
         humidity, humidity_standard, humidity_judgment,
         fermentation_time, fermentation_standard, fermentation_judgment,
-        worker_name, memo, overall_judgment
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        worker_name, memo, overall_judgment, inspection_no, inspection_stage
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       record_date, record_time, dough_name,
       dough_temp, dough_temp_standard, dough_temp_judgment,
       ph_value, ph_standard, ph_judgment,
       humidity, humidity_standard, humidity_judgment,
       fermentation_time, fermentation_standard, fermentation_judgment,
-      worker_name, memo, overall_judgment
+      worker_name, memo, overall_judgment, finalInspectionNo, finalInspectionStage
     ).run()
     
     return c.json({ 
@@ -402,6 +422,36 @@ process.get('/quality/summary/monthly', async (c) => {
     })
   } catch (error) {
     return c.json({ success: false, error: '조회 실패' }, 500)
+  }
+})
+
+// DB 마이그레이션: inspection_no, inspection_stage 컬럼 추가
+process.post('/migrate-inspection', async (c) => {
+  const { env } = c
+  
+  try {
+    // inspection_no 컬럼 추가 시도
+    try {
+      await env.DB.prepare(`ALTER TABLE process_quality ADD COLUMN inspection_no INTEGER DEFAULT 1`).run()
+    } catch (e: any) {
+      // 이미 존재하면 무시
+      if (!e.message?.includes('duplicate column')) {
+        console.log('inspection_no column already exists or error:', e.message)
+      }
+    }
+    
+    // inspection_stage 컬럼 추가 시도
+    try {
+      await env.DB.prepare(`ALTER TABLE process_quality ADD COLUMN inspection_stage TEXT DEFAULT '1차'`).run()
+    } catch (e: any) {
+      if (!e.message?.includes('duplicate column')) {
+        console.log('inspection_stage column already exists or error:', e.message)
+      }
+    }
+    
+    return c.json({ success: true, message: '마이그레이션 완료' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
   }
 })
 

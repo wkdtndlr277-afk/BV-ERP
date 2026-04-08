@@ -29072,8 +29072,26 @@ function showAddSystemMaterialModal() {
   `);
 }
 
+// 버튼 로딩 상태 설정 헬퍼
+function setButtonLoading(btn, isLoading, originalHtml = null) {
+  if (!btn) return;
+  if (isLoading) {
+    btn._originalHtml = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> 저장 중...';
+    btn.disabled = true;
+    btn.classList.add('opacity-50', 'cursor-not-allowed');
+  } else {
+    btn.innerHTML = originalHtml || btn._originalHtml || '저장';
+    btn.disabled = false;
+    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+  }
+}
+
 // 원료 저장
+let isSavingMaterial = false;
 async function saveNewMaterial() {
+  if (isSavingMaterial) return;
+  
   const name = document.getElementById('new-material-name').value.trim();
   const category = document.getElementById('new-material-category').value;
   const unit = document.getElementById('new-material-unit').value;
@@ -29083,6 +29101,10 @@ async function saveNewMaterial() {
     showToast('품목명을 입력하세요', 'warning');
     return;
   }
+  
+  isSavingMaterial = true;
+  const btn = document.querySelector('[onclick*="saveNewMaterial"]');
+  setButtonLoading(btn, true);
   
   try {
     await api('/master', 'POST', {
@@ -29097,6 +29119,9 @@ async function saveNewMaterial() {
     switchSystemTab('materials');
   } catch (e) {
     showToast('추가 실패: ' + (e.message || '오류 발생'), 'error');
+    setButtonLoading(btn, false);
+  } finally {
+    isSavingMaterial = false;
   }
 }
 
@@ -29150,7 +29175,10 @@ async function showEditMaterialModal(code) {
 }
 
 // 원료 업데이트
+let isUpdatingMaterial = false;
 async function updateMaterial(code) {
+  if (isUpdatingMaterial) return;
+  
   const name = document.getElementById('edit-material-name').value.trim();
   const category = document.getElementById('edit-material-category').value;
   const unit = document.getElementById('edit-material-unit').value;
@@ -29160,6 +29188,10 @@ async function updateMaterial(code) {
     showToast('품목명을 입력하세요', 'warning');
     return;
   }
+  
+  isUpdatingMaterial = true;
+  const btn = document.querySelector('[onclick*="updateMaterial"]');
+  setButtonLoading(btn, true);
   
   try {
     await api(`/master/${code}`, 'PUT', {
@@ -29174,6 +29206,9 @@ async function updateMaterial(code) {
     switchSystemTab('materials');
   } catch (e) {
     showToast('수정 실패: ' + (e.message || '오류 발생'), 'error');
+    setButtonLoading(btn, false);
+  } finally {
+    isUpdatingMaterial = false;
   }
 }
 
@@ -29498,7 +29533,10 @@ async function showEditProductionItemModal(code) {
   `);
 }
 
+let isUpdatingProductionItem = false;
 async function updateProductionItem(code) {
+  if (isUpdatingProductionItem) return;
+  
   const name = document.getElementById('edit-production-name').value.trim();
   const alias1 = document.getElementById('edit-production-alias1').value.trim();
   const alias2 = document.getElementById('edit-production-alias2').value.trim();
@@ -29507,6 +29545,10 @@ async function updateProductionItem(code) {
     showToast('생산명을 입력하세요', 'warning');
     return;
   }
+  
+  isUpdatingProductionItem = true;
+  const btn = document.querySelector('[onclick*="updateProductionItem"]');
+  setButtonLoading(btn, true);
   
   try {
     await api(`/admin/production-items/${code}`, 'PUT', {
@@ -29520,6 +29562,9 @@ async function updateProductionItem(code) {
     switchSystemTab('production-items');
   } catch (e) {
     showToast('수정 실패: ' + (e.message || '오류 발생'), 'error');
+    setButtonLoading(btn, false);
+  } finally {
+    isUpdatingProductionItem = false;
   }
 }
 
@@ -29601,7 +29646,10 @@ async function showBarcodeModal(productionCode, productionName) {
 }
 
 // 바코드 추가
+let isAddingBarcode = false;
 async function addBarcode(productionCode, productionName) {
+  if (isAddingBarcode) return; // 중복 클릭 방지
+  
   const barcode = document.getElementById('new-barcode').value.trim();
   const productName = document.getElementById('new-barcode-product-name').value.trim();
   const channel = document.getElementById('new-barcode-channel').value;
@@ -29609,6 +29657,17 @@ async function addBarcode(productionCode, productionName) {
   if (!barcode) {
     showToast('바코드를 입력하세요', 'warning');
     return;
+  }
+  
+  isAddingBarcode = true;
+  
+  // 버튼 로딩 상태로 변경
+  const addBtn = document.querySelector('[onclick*="addBarcode"]');
+  const originalBtnHtml = addBtn ? addBtn.innerHTML : '';
+  if (addBtn) {
+    addBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> 저장 중...';
+    addBtn.disabled = true;
+    addBtn.classList.add('opacity-50', 'cursor-not-allowed');
   }
   
   try {
@@ -29619,28 +29678,69 @@ async function addBarcode(productionCode, productionName) {
       channel: channel || null
     });
     showToast('바코드가 추가되었습니다', 'success');
+    // 데이터 새로고침 (UI 업데이트 위해)
+    await loadSystemMgmtData();
+    // 테이블의 해당 행 바코드 카운트 즉시 업데이트
+    updateBarcodeCountInTable(productionCode);
     // 모달 새로고침
     showBarcodeModal(productionCode, productionName);
-    // 데이터 새로고침
-    await loadSystemMgmtData();
   } catch (e) {
     showToast('추가 실패: ' + (e.response?.data?.error || e.message), 'error');
+    // 버튼 복원
+    if (addBtn) {
+      addBtn.innerHTML = originalBtnHtml;
+      addBtn.disabled = false;
+      addBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
+  } finally {
+    isAddingBarcode = false;
   }
 }
 
+// 테이블에서 바코드 카운트 즉시 업데이트
+function updateBarcodeCountInTable(productionCode) {
+  const item = systemManagementData.productionItems?.find(p => p.production_code === productionCode);
+  if (!item) return;
+  
+  // 테이블에서 해당 행 찾기
+  const rows = document.querySelectorAll('.production-item-row');
+  rows.forEach(row => {
+    const codeCell = row.querySelector('td:first-child');
+    if (codeCell && codeCell.textContent.trim() === productionCode) {
+      // 바코드 카운트 셀 업데이트 (5번째 열)
+      const barcodeCell = row.querySelector('td:nth-child(5)');
+      if (barcodeCell) {
+        const count = item.barcode_count || 0;
+        barcodeCell.innerHTML = count > 0 
+          ? `<span class="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs">${count}개</span>`
+          : `<span class="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">없음</span>`;
+      }
+    }
+  });
+}
+
 // 바코드 삭제
+let isDeletingBarcode = false;
 async function deleteBarcode(id, productionCode, productionName) {
+  if (isDeletingBarcode) return; // 중복 클릭 방지
   if (!confirm('이 바코드를 삭제하시겠습니까?')) return;
+  
+  isDeletingBarcode = true;
+  showToast('삭제 중...', 'info');
   
   try {
     await api(`/daily-report/barcodes/${id}`, 'DELETE');
     showToast('바코드가 삭제되었습니다', 'success');
-    // 모달 새로고침
-    showBarcodeModal(productionCode, productionName);
     // 데이터 새로고침
     await loadSystemMgmtData();
+    // 테이블 업데이트
+    updateBarcodeCountInTable(productionCode);
+    // 모달 새로고침
+    showBarcodeModal(productionCode, productionName);
   } catch (e) {
     showToast('삭제 실패', 'error');
+  } finally {
+    isDeletingBarcode = false;
   }
 }
 
@@ -30112,6 +30212,8 @@ window.deleteBomForItem = deleteBomForItem;
 window.showBarcodeModal = showBarcodeModal;
 window.addBarcode = addBarcode;
 window.deleteBarcode = deleteBarcode;
+window.updateBarcodeCountInTable = updateBarcodeCountInTable;
+window.setButtonLoading = setButtonLoading;
 
 // ========== ERP 시스템 설정 관리 ==========
 

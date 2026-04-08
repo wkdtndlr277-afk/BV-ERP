@@ -23438,6 +23438,9 @@ async function renderProductionPlan() {
           생산계획
         </h2>
         <div class="flex gap-2 flex-wrap">
+          <button onclick="showBarcodeProductionPlanModal()" class="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700">
+            <i class="fas fa-barcode mr-1"></i> 바코드 계획표
+          </button>
           <button onclick="showFrozenStockModal()" class="bg-cyan-600 text-white px-4 py-2 rounded-lg hover:bg-cyan-700">
             <i class="fas fa-snowflake mr-1"></i> 냉동재고
           </button>
@@ -24537,6 +24540,383 @@ async function deleteFrozenStockLot(id) {
   }
 }
 
+// ===== 바코드 기반 생산계획표 생성 =====
+
+// 쿠팡 발주서 파싱 (바코드 추출)
+function parseCoupangOrderWithBarcode(workbook) {
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+  
+  const items = [];
+  let currentItem = null;
+  
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i] || [];
+    const no = row[0];
+    const col2 = String(row[2] || '').trim();
+    
+    // 상품 행 (숫자로 시작)
+    if (no && String(no).trim().match(/^\d+$/)) {
+      if (currentItem) items.push(currentItem);
+      
+      const qty = parseInt(row[6]) || 0;
+      if (qty > 0) {
+        currentItem = {
+          no: parseInt(no),
+          product_code: String(row[1] || ''),
+          product_name: col2,
+          quantity: qty,
+          barcode: null
+        };
+      } else {
+        currentItem = null;
+      }
+    }
+    // 바코드 행 (880으로 시작)
+    else if (currentItem && col2.startsWith('880')) {
+      currentItem.barcode = col2;
+    }
+    // 합계 행이면 종료
+    else if (no && String(no).includes('합계')) {
+      if (currentItem) items.push(currentItem);
+      break;
+    }
+  }
+  
+  return items;
+}
+
+// 바코드 기반 생산계획표 업로드 모달
+function showBarcodeProductionPlanModal() {
+  showModal('바코드 기반 생산계획표', `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <p class="text-sm text-blue-700">
+          <i class="fas fa-info-circle mr-1"></i>
+          쿠팡 발주서(엑셀)를 업로드하면 바코드를 추출하여 BOM 데이터와 매칭합니다.
+          매칭 결과로 원재료 소요량이 자동 계산됩니다.
+        </p>
+      </div>
+      
+      <div class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center" id="barcode-plan-dropzone">
+        <i class="fas fa-file-excel text-4xl text-green-500 mb-3"></i>
+        <p class="text-gray-600 mb-2">발주서 엑셀 파일을 드래그하거나 클릭하여 선택하세요</p>
+        <input type="file" id="barcode-plan-file" accept=".xlsx,.xls" class="hidden" onchange="handleBarcodeOrderUpload(event)">
+        <button onclick="document.getElementById('barcode-plan-file').click()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+          <i class="fas fa-upload mr-1"></i> 파일 선택
+        </button>
+      </div>
+      
+      <div id="barcode-plan-result" class="hidden"></div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+  `);
+}
+
+// 발주서 업로드 처리 (바코드 매칭)
+async function handleBarcodeOrderUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  if (typeof XLSX === 'undefined') {
+    showToast('엑셀 라이브러리 로드 중...', 'info');
+    return;
+  }
+  
+  showToast('파일 분석 중...', 'info');
+  
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+    
+    // 쿠팡 발주서 파싱 (바코드 포함)
+    const items = parseCoupangOrderWithBarcode(workbook);
+    
+    if (items.length === 0) {
+      showToast('파싱된 데이터가 없습니다', 'warning');
+      return;
+    }
+    
+    showToast(`${items.length}개 품목 발견, 바코드 매칭 중...`, 'info');
+    
+    // API 호출 - 바코드 매칭 및 생산계획표 생성
+    const result = await api('/daily-report/production-plan', 'POST', {
+      items: items.map(i => ({
+        product_name: i.product_name,
+        barcode: i.barcode,
+        quantity: i.quantity
+      })),
+      order_no: file.name.match(/\d+/)?.[0] || null,
+      order_date: formatDate(new Date())
+    });
+    
+    if (result.success) {
+      renderBarcodeProductionPlanResult(result.data, file.name);
+    } else {
+      showToast(result.error || '생산계획표 생성 실패', 'error');
+    }
+    
+  } catch (e) {
+    console.error(e);
+    showToast('파일 처리 오류: ' + e.message, 'error');
+  }
+  
+  event.target.value = '';
+}
+
+// 생산계획표 결과 렌더링
+function renderBarcodeProductionPlanResult(data, fileName) {
+  const { summary, matched_items, unmatched_items, materials_summary } = data;
+  
+  const resultContainer = document.getElementById('barcode-plan-result');
+  if (!resultContainer) return;
+  
+  resultContainer.classList.remove('hidden');
+  resultContainer.innerHTML = `
+    <div class="space-y-4">
+      <!-- 요약 -->
+      <div class="grid grid-cols-4 gap-3">
+        <div class="bg-blue-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-blue-600">${summary.total_items}</div>
+          <div class="text-xs text-gray-500">총 품목</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-green-600">${summary.matched_count}</div>
+          <div class="text-xs text-gray-500">매칭 성공</div>
+        </div>
+        <div class="bg-red-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-red-600">${summary.unmatched_count}</div>
+          <div class="text-xs text-gray-500">매칭 실패</div>
+        </div>
+        <div class="bg-purple-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-purple-600">${summary.total_quantity}</div>
+          <div class="text-xs text-gray-500">총 수량</div>
+        </div>
+      </div>
+      
+      <!-- 탭 -->
+      <div class="border-b">
+        <button onclick="switchPlanResultTab('matched')" id="plan-tab-matched" class="plan-result-tab px-4 py-2 border-b-2 border-indigo-500 text-indigo-600 font-medium">
+          매칭 품목 (${matched_items.length})
+        </button>
+        <button onclick="switchPlanResultTab('unmatched')" id="plan-tab-unmatched" class="plan-result-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          미매칭 (${unmatched_items.length})
+        </button>
+        <button onclick="switchPlanResultTab('materials')" id="plan-tab-materials" class="plan-result-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          원재료 소요량 (${materials_summary.length})
+        </button>
+      </div>
+      
+      <!-- 탭 컨텐츠 -->
+      <div id="plan-result-content" class="max-h-96 overflow-y-auto">
+        ${renderMatchedItemsTable(matched_items)}
+      </div>
+      
+      <!-- 액션 버튼 -->
+      <div class="flex justify-end gap-2 pt-2 border-t">
+        ${unmatched_items.length > 0 ? `
+          <button onclick="showAutoRegisterBarcodeModal()" class="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 text-sm">
+            <i class="fas fa-barcode mr-1"></i> 미매칭 바코드 등록
+          </button>
+        ` : ''}
+        <button onclick="downloadProductionPlanExcel()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
+          <i class="fas fa-file-excel mr-1"></i> 엑셀 다운로드
+        </button>
+      </div>
+    </div>
+  `;
+  
+  // 데이터 저장
+  window.barcodeProductionPlanData = data;
+  window.barcodeProductionPlanFileName = fileName;
+}
+
+// 매칭 품목 테이블
+function renderMatchedItemsTable(items) {
+  if (items.length === 0) {
+    return '<div class="text-center py-4 text-gray-400">매칭된 품목이 없습니다</div>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">발주상품</th>
+          <th class="px-3 py-2 text-left">매칭생산명</th>
+          <th class="px-3 py-2 text-center">수량</th>
+          <th class="px-3 py-2 text-center">BOM</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${items.map(item => `
+          <tr class="hover:bg-gray-50">
+            <td class="px-3 py-2">
+              <div class="font-medium">${item.product_name}</div>
+              <div class="text-xs text-gray-400">${item.barcode || '-'}</div>
+            </td>
+            <td class="px-3 py-2">
+              <div class="text-indigo-600">${item.production_name}</div>
+              <div class="text-xs text-gray-400">${item.production_code} (${item.match_type === 'barcode' ? '바코드' : '이름'})</div>
+            </td>
+            <td class="px-3 py-2 text-center font-bold">${item.quantity}</td>
+            <td class="px-3 py-2 text-center">
+              ${item.bom_count > 0 ? 
+                `<span class="text-green-600">${item.bom_count}개</span>` : 
+                `<span class="text-red-500">없음</span>`}
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 미매칭 품목 테이블
+function renderUnmatchedItemsTable(items) {
+  if (items.length === 0) {
+    return '<div class="text-center py-4 text-green-600"><i class="fas fa-check-circle mr-1"></i> 모든 품목이 매칭되었습니다!</div>';
+  }
+  
+  return `
+    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+      <p class="text-sm text-yellow-700">
+        <i class="fas fa-exclamation-triangle mr-1"></i>
+        아래 품목들은 바코드/생산명이 등록되지 않아 매칭되지 않았습니다.
+        관리자 → 시스템 → 생산명/BOM에서 등록해주세요.
+      </p>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">발주상품</th>
+          <th class="px-3 py-2 text-left">바코드</th>
+          <th class="px-3 py-2 text-center">수량</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${items.map(item => `
+          <tr class="hover:bg-red-50">
+            <td class="px-3 py-2 font-medium">${item.product_name}</td>
+            <td class="px-3 py-2 font-mono text-xs">${item.barcode || '-'}</td>
+            <td class="px-3 py-2 text-center font-bold">${item.quantity}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 원재료 소요량 테이블
+function renderMaterialsSummaryTable(materials) {
+  if (materials.length === 0) {
+    return '<div class="text-center py-4 text-gray-400">원재료 소요량 데이터가 없습니다</div>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">원재료명</th>
+          <th class="px-3 py-2 text-right">소요량</th>
+          <th class="px-3 py-2 text-right">kg 환산</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${materials.map(m => `
+          <tr class="hover:bg-gray-50">
+            <td class="px-3 py-2 font-medium">${m.material_name}</td>
+            <td class="px-3 py-2 text-right">${formatNumber(m.quantity)}${m.unit}</td>
+            <td class="px-3 py-2 text-right text-gray-500">
+              ${m.quantity_kg ? formatNumber(m.quantity_kg, 2) + 'kg' : '-'}
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 탭 전환
+function switchPlanResultTab(tab) {
+  document.querySelectorAll('.plan-result-tab').forEach(el => {
+    el.classList.remove('border-indigo-500', 'text-indigo-600');
+    el.classList.add('border-transparent', 'text-gray-500');
+  });
+  
+  const activeTab = document.getElementById(`plan-tab-${tab}`);
+  if (activeTab) {
+    activeTab.classList.remove('border-transparent', 'text-gray-500');
+    activeTab.classList.add('border-indigo-500', 'text-indigo-600');
+  }
+  
+  const content = document.getElementById('plan-result-content');
+  const data = window.barcodeProductionPlanData;
+  if (!content || !data) return;
+  
+  switch(tab) {
+    case 'matched':
+      content.innerHTML = renderMatchedItemsTable(data.matched_items);
+      break;
+    case 'unmatched':
+      content.innerHTML = renderUnmatchedItemsTable(data.unmatched_items);
+      break;
+    case 'materials':
+      content.innerHTML = renderMaterialsSummaryTable(data.materials_summary);
+      break;
+  }
+}
+
+// 엑셀 다운로드
+function downloadProductionPlanExcel() {
+  const data = window.barcodeProductionPlanData;
+  if (!data) {
+    showToast('다운로드할 데이터가 없습니다', 'warning');
+    return;
+  }
+  
+  const wb = XLSX.utils.book_new();
+  
+  // 매칭 품목 시트
+  const matchedData = data.matched_items.map(item => ({
+    '발주상품': item.product_name,
+    '바코드': item.barcode || '',
+    '생산명': item.production_name,
+    '생산코드': item.production_code,
+    '매칭방식': item.match_type === 'barcode' ? '바코드' : '이름',
+    '수량': item.quantity,
+    'BOM개수': item.bom_count
+  }));
+  const ws1 = XLSX.utils.json_to_sheet(matchedData);
+  XLSX.utils.book_append_sheet(wb, ws1, '매칭품목');
+  
+  // 미매칭 품목 시트
+  if (data.unmatched_items.length > 0) {
+    const unmatchedData = data.unmatched_items.map(item => ({
+      '발주상품': item.product_name,
+      '바코드': item.barcode || '',
+      '수량': item.quantity
+    }));
+    const ws2 = XLSX.utils.json_to_sheet(unmatchedData);
+    XLSX.utils.book_append_sheet(wb, ws2, '미매칭품목');
+  }
+  
+  // 원재료 소요량 시트
+  const materialsData = data.materials_summary.map(m => ({
+    '원재료명': m.material_name,
+    '소요량': m.quantity,
+    '단위': m.unit,
+    'kg환산': m.quantity_kg || ''
+  }));
+  const ws3 = XLSX.utils.json_to_sheet(materialsData);
+  XLSX.utils.book_append_sheet(wb, ws3, '원재료소요량');
+  
+  // 다운로드
+  const fileName = `생산계획표_${formatDate(new Date())}.xlsx`;
+  XLSX.writeFile(wb, fileName);
+  showToast('엑셀 다운로드 완료', 'success');
+}
+
 // 전역 함수 노출
 window.renderProductionPlan = renderProductionPlan;
 window.handlePlanFileUpload = handlePlanFileUpload;
@@ -24555,6 +24935,10 @@ window.selectFrozenProduct = selectFrozenProduct;
 window.saveFrozenInbound = saveFrozenInbound;
 window.saveFrozenOutbound = saveFrozenOutbound;
 window.deleteFrozenStockLot = deleteFrozenStockLot;
+window.showBarcodeProductionPlanModal = showBarcodeProductionPlanModal;
+window.handleBarcodeOrderUpload = handleBarcodeOrderUpload;
+window.switchPlanResultTab = switchPlanResultTab;
+window.downloadProductionPlanExcel = downloadProductionPlanExcel;
 
 // ==================== 원가 계산 ====================
 

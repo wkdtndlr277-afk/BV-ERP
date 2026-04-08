@@ -381,4 +381,212 @@ dailyReport.delete('/reports/:id', async (c) => {
   return c.json({ success: true, message: '삭제되었습니다.' })
 })
 
+// ===== 생산계획표 생성 API (발주서 기반) =====
+
+// 발주서 데이터로 생산계획표 생성 (바코드 매칭 + BOM 계산)
+dailyReport.post('/production-plan', async (c) => {
+  const { items, order_no, order_date } = await c.req.json()
+  // items: [{ product_name, barcode, quantity }]
+  
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return c.json({ success: false, error: '품목 정보가 필요합니다.' }, 400)
+  }
+  
+  const env = c.env
+  
+  // 1. 바코드 매핑 데이터 조회
+  const barcodeResult = await env.DB.prepare(`
+    SELECT pb.barcode, pb.production_code, pb.product_name as mapped_name,
+           pi.production_name, pi.alias1, pi.alias2
+    FROM production_barcodes pb
+    LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+  `).all()
+  
+  const barcodeMap = new Map<string, any>()
+  for (const b of barcodeResult.results as any[]) {
+    barcodeMap.set(b.barcode, b)
+  }
+  
+  // 2. 생산명 데이터 조회 (바코드 매칭 실패 시 이름 매칭용)
+  const productionResult = await env.DB.prepare(`
+    SELECT production_code, production_name, alias1, alias2,
+           (SELECT COUNT(*) FROM production_bom WHERE production_code = production_items.production_code) as bom_count
+    FROM production_items WHERE is_active = 1
+  `).all()
+  
+  const productionItems = productionResult.results as any[]
+  
+  // 3. 각 품목 매칭 처리
+  const matchedItems: any[] = []
+  const unmatchedItems: any[] = []
+  const totalMaterials = new Map<string, { quantity: number, unit: string }>()
+  
+  for (const item of items) {
+    const result: any = {
+      product_name: item.product_name,
+      barcode: item.barcode,
+      quantity: item.quantity,
+      matched: false,
+      match_type: null,
+      production_code: null,
+      production_name: null,
+      bom: [],
+      bom_count: 0
+    }
+    
+    // 바코드로 매칭 시도
+    if (item.barcode && barcodeMap.has(item.barcode)) {
+      const bcInfo = barcodeMap.get(item.barcode)
+      result.matched = true
+      result.match_type = 'barcode'
+      result.production_code = bcInfo.production_code
+      result.production_name = bcInfo.production_name
+    }
+    
+    // 바코드 매칭 실패 시 상품명으로 매칭 시도
+    if (!result.matched && item.product_name) {
+      const cleanName = item.product_name
+        .replace(/\[로켓프레시\]/g, '')
+        .replace(/\[.*?\]/g, '')
+        .toLowerCase()
+        .trim()
+      
+      const keywords = cleanName.split(/[\s,]+/).filter((k: string) => k.length > 1)
+      
+      let bestMatch = null
+      let bestScore = 0
+      
+      for (const pi of productionItems) {
+        const combined = `${pi.production_name || ''} ${pi.alias1 || ''} ${pi.alias2 || ''}`.toLowerCase()
+        const score = keywords.reduce((acc: number, kw: string) => acc + (combined.includes(kw) ? 1 : 0), 0)
+        
+        if (score > bestScore && score >= 2) {
+          bestScore = score
+          bestMatch = pi
+        }
+      }
+      
+      if (bestMatch) {
+        result.matched = true
+        result.match_type = 'name'
+        result.production_code = bestMatch.production_code
+        result.production_name = bestMatch.production_name
+        result.bom_count = bestMatch.bom_count
+      }
+    }
+    
+    // BOM 조회 및 원재료 계산
+    if (result.matched && result.production_code) {
+      const bomResult = await env.DB.prepare(`
+        SELECT material_code, material_name, quantity, unit
+        FROM production_bom WHERE production_code = ?
+      `).bind(result.production_code).all()
+      
+      result.bom = bomResult.results
+      result.bom_count = bomResult.results.length
+      
+      // 원재료 소요량 집계
+      for (const bom of bomResult.results as any[]) {
+        const requiredQty = (bom.quantity || 0) * item.quantity
+        const key = `${bom.material_name}|${bom.unit || 'g'}`
+        
+        const existing = totalMaterials.get(key)
+        if (existing) {
+          existing.quantity += requiredQty
+        } else {
+          totalMaterials.set(key, { quantity: requiredQty, unit: bom.unit || 'g' })
+        }
+      }
+      
+      matchedItems.push(result)
+    } else {
+      unmatchedItems.push(result)
+    }
+  }
+  
+  // 4. 원재료 합계 정리
+  const materialsSummary = Array.from(totalMaterials.entries())
+    .map(([key, val]) => {
+      const [name, unit] = key.split('|')
+      return {
+        material_name: name,
+        quantity: val.quantity,
+        unit: unit,
+        quantity_kg: unit === 'g' ? val.quantity / 1000 : null
+      }
+    })
+    .sort((a, b) => a.material_name.localeCompare(b.material_name))
+  
+  // 5. 결과 반환
+  return c.json({
+    success: true,
+    data: {
+      order_no: order_no || null,
+      order_date: order_date || null,
+      summary: {
+        total_items: items.length,
+        matched_count: matchedItems.length,
+        unmatched_count: unmatchedItems.length,
+        total_quantity: items.reduce((sum: number, i: any) => sum + (i.quantity || 0), 0)
+      },
+      matched_items: matchedItems,
+      unmatched_items: unmatchedItems,
+      materials_summary: materialsSummary
+    }
+  })
+})
+
+// 바코드 일괄 자동 등록 (발주서 기반)
+dailyReport.post('/auto-register-barcodes', async (c) => {
+  const { items } = await c.req.json()
+  // items: [{ barcode, production_code, product_name, channel }]
+  
+  if (!items || !Array.isArray(items)) {
+    return c.json({ success: false, error: '등록할 바코드 정보가 필요합니다.' }, 400)
+  }
+  
+  const env = c.env
+  let registered = 0
+  let skipped = 0
+  const errors: string[] = []
+  
+  for (const item of items) {
+    if (!item.barcode || !item.production_code) {
+      skipped++
+      continue
+    }
+    
+    try {
+      // 이미 등록된 바코드인지 확인
+      const existing = await env.DB.prepare(
+        'SELECT id FROM production_barcodes WHERE barcode = ?'
+      ).bind(item.barcode).first()
+      
+      if (existing) {
+        skipped++
+        continue
+      }
+      
+      await env.DB.prepare(`
+        INSERT INTO production_barcodes (production_code, barcode, product_name, channel)
+        VALUES (?, ?, ?, ?)
+      `).bind(
+        item.production_code,
+        item.barcode,
+        item.product_name || null,
+        item.channel || '쿠팡'
+      ).run()
+      
+      registered++
+    } catch (e: any) {
+      errors.push(`${item.barcode}: ${e.message}`)
+    }
+  }
+  
+  return c.json({
+    success: true,
+    data: { registered, skipped, errors: errors.length > 0 ? errors : undefined }
+  })
+})
+
 export default dailyReport

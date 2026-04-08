@@ -29627,10 +29627,8 @@ async function showBarcodeModal(productionCode, productionName) {
               <option value="">선택안함</option>
               <option value="쿠팡">쿠팡</option>
               <option value="컬리">컬리</option>
-              <option value="한살림">한살림</option>
-              <option value="아이쿱">아이쿱</option>
+              <option value="오아시스">오아시스</option>
               <option value="네이버">네이버</option>
-              <option value="자사몰">자사몰</option>
               <option value="기타">기타</option>
             </select>
           </div>

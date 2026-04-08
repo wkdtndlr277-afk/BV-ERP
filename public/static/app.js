@@ -28406,7 +28406,8 @@ function switchSystemTab(tab) {
 
 // ===== 원료/부자재 관리 =====
 function renderMaterialsManagement(container) {
-  const materials = systemManagementData.materials;
+  if (!container) { console.error('renderMaterialsManagement: container is null'); return; }
+  const materials = systemManagementData.materials || [];
   
   container.innerHTML = `
     <div class="space-y-4">
@@ -28646,7 +28647,8 @@ async function deleteSystemMaterial(code) {
 
 // ===== 제품 관리 =====
 function renderProductsManagement(container) {
-  const products = systemManagementData.products;
+  if (!container) { console.error('renderProductsManagement: container is null'); return; }
+  const products = systemManagementData.products || [];
   
   container.innerHTML = `
     <div class="space-y-4">
@@ -28820,7 +28822,11 @@ async function deleteSystemProduct(code) {
 
 // ===== 생산명 관리 =====
 function renderProductionItemsManagement(container) {
-  const items = systemManagementData.productionItems;
+  if (!container) {
+    console.error('renderProductionItemsManagement: container is null');
+    return;
+  }
+  const items = systemManagementData.productionItems || [];
   
   container.innerHTML = `
     <div class="space-y-4">
@@ -29094,7 +29100,8 @@ async function deleteBarcode(id, productionCode, productionName) {
 
 // ===== 재고 수정 =====
 function renderStockManagement(container) {
-  const stock = systemManagementData.stock;
+  if (!container) { console.error('renderStockManagement: container is null'); return; }
+  const stock = systemManagementData.stock || [];
   
   container.innerHTML = `
     <div class="space-y-4">
@@ -29257,7 +29264,8 @@ async function recalculateSystemStock() {
 
 // ===== BOM 관리 =====
 function renderBomManagement(container) {
-  const items = systemManagementData.productionItems.filter(p => (p.bom_count || 0) > 0);
+  if (!container) { console.error('renderBomManagement: container is null'); return; }
+  const items = (systemManagementData.productionItems || []).filter(p => (p.bom_count || 0) > 0);
   
   container.innerHTML = `
     <div class="space-y-4">

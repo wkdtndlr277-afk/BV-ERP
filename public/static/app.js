@@ -24713,16 +24713,30 @@ function renderBarcodeProductionPlanResult(data, fileName) {
         ${renderMatchedItemsTable(matched_items)}
       </div>
       
+      <!-- 생산일 선택 -->
+      <div class="flex items-center gap-3 pt-2 border-t">
+        <label class="text-sm font-medium text-gray-700">생산일:</label>
+        <input type="date" id="production-plan-date" value="${new Date().toISOString().split('T')[0]}" 
+               class="border rounded-lg px-3 py-1.5 text-sm">
+      </div>
+      
       <!-- 액션 버튼 -->
-      <div class="flex justify-end gap-2 pt-2 border-t">
-        ${unmatched_items.length > 0 ? `
-          <button onclick="showAutoRegisterBarcodeModal()" class="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 text-sm">
-            <i class="fas fa-barcode mr-1"></i> 미매칭 바코드 등록
+      <div class="flex justify-between gap-2 pt-2">
+        <div class="flex gap-2">
+          ${unmatched_items.length > 0 ? `
+            <button onclick="showAutoRegisterBarcodeModal()" class="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 text-sm">
+              <i class="fas fa-barcode mr-1"></i> 미매칭 바코드 등록
+            </button>
+          ` : ''}
+        </div>
+        <div class="flex gap-2">
+          <button onclick="downloadProductionPlanExcel()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
+            <i class="fas fa-file-excel mr-1"></i> 엑셀
           </button>
-        ` : ''}
-        <button onclick="downloadProductionPlanExcel()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
-          <i class="fas fa-file-excel mr-1"></i> 엑셀 다운로드
-        </button>
+          <button onclick="convertToProductionReport()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm ${matched_items.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}" ${matched_items.length === 0 ? 'disabled' : ''}>
+            <i class="fas fa-clipboard-list mr-1"></i> 생산일보 전환
+          </button>
+        </div>
       </div>
     </div>
   `;
@@ -24917,6 +24931,152 @@ function downloadProductionPlanExcel() {
   showToast('엑셀 다운로드 완료', 'success');
 }
 
+// 바코드 생산계획 → 생산일보 변환
+async function convertToProductionReport() {
+  const data = window.barcodeProductionPlanData;
+  const fileName = window.barcodeProductionPlanFileName;
+  
+  if (!data || !data.matched_items || data.matched_items.length === 0) {
+    showToast('매칭된 품목이 없어 생산일보로 전환할 수 없습니다', 'warning');
+    return;
+  }
+  
+  // 생산일 가져오기
+  const dateInput = document.getElementById('production-plan-date');
+  const reportDate = dateInput ? dateInput.value : new Date().toISOString().split('T')[0];
+  
+  if (!reportDate) {
+    showToast('생산일을 선택해주세요', 'warning');
+    return;
+  }
+  
+  // 확인 다이얼로그
+  const matchedCount = data.matched_items.length;
+  const unmatchedCount = data.unmatched_items.length;
+  const totalQty = data.summary.total_quantity;
+  
+  const confirmMsg = unmatchedCount > 0 
+    ? `매칭 ${matchedCount}개 품목(수량 ${totalQty}개)을 생산일보로 저장합니다.\n\n⚠️ 미매칭 ${unmatchedCount}개 품목은 제외됩니다.\n\n계속하시겠습니까?`
+    : `${matchedCount}개 품목(수량 ${totalQty}개)을 생산일보로 저장합니다.\n\n계속하시겠습니까?`;
+  
+  if (!confirm(confirmMsg)) return;
+  
+  showToast('생산일보 생성 중...', 'info');
+  
+  try {
+    // 매칭된 품목만 생산일보 API로 전송
+    const items = data.matched_items.map(item => ({
+      barcode: item.barcode,
+      product_name: item.product_name,
+      quantity: item.quantity,
+      production_code: item.production_code
+    }));
+    
+    const result = await api('/daily-report/reports/from-order', 'POST', {
+      report_date: reportDate,
+      order_file_name: fileName || '바코드계획표',
+      items: items,
+      created_by: window.currentUser?.name || '시스템'
+    });
+    
+    if (result.success) {
+      showToast(`생산일보 ${result.data.report_no} 생성 완료!`, 'success');
+      
+      // 모달 닫기
+      closeModal();
+      
+      // 생산일보 상세 모달 표시
+      showDailyReportDetailModal(result.data);
+    } else {
+      showToast(result.error || '생산일보 생성 실패', 'error');
+    }
+  } catch (e) {
+    console.error(e);
+    showToast('생산일보 생성 오류: ' + e.message, 'error');
+  }
+}
+
+// 생산일보 상세 모달
+function showDailyReportDetailModal(reportData) {
+  const { report_id, report_no, report_date, total_products, total_quantity, items, materials_summary } = reportData;
+  
+  // 매칭된 품목 수 (UNKNOWN 제외)
+  const matchedItems = items ? items.filter(i => i.production_code !== 'UNKNOWN') : [];
+  const bomItems = items ? items.filter(i => i.has_bom) : [];
+  
+  showModal('생산일보 저장 완료', `
+    <div class="space-y-4">
+      <!-- 기본 정보 -->
+      <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+        <div class="flex items-center gap-2 text-green-700 font-medium mb-2">
+          <i class="fas fa-check-circle"></i> 생산일보가 성공적으로 생성되었습니다!
+        </div>
+        <div class="grid grid-cols-2 gap-4 text-sm">
+          <div><span class="text-gray-500">일보번호:</span> <span class="font-medium">${report_no}</span></div>
+          <div><span class="text-gray-500">생산일:</span> <span class="font-medium">${report_date}</span></div>
+          <div><span class="text-gray-500">총 품목수:</span> <span class="font-medium">${total_products}개</span></div>
+          <div><span class="text-gray-500">총 수량:</span> <span class="font-medium">${total_quantity}개</span></div>
+        </div>
+      </div>
+      
+      <!-- 요약 카드 -->
+      <div class="grid grid-cols-3 gap-3">
+        <div class="bg-blue-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-blue-600">${matchedItems.length}</div>
+          <div class="text-xs text-gray-500">매칭 품목</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-green-600">${bomItems.length}</div>
+          <div class="text-xs text-gray-500">BOM 보유</div>
+        </div>
+        <div class="bg-purple-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-purple-600">${materials_summary ? materials_summary.length : 0}</div>
+          <div class="text-xs text-gray-500">원재료 종류</div>
+        </div>
+      </div>
+      
+      <!-- 품목 리스트 미리보기 -->
+      <div class="border rounded-lg max-h-60 overflow-y-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50 sticky top-0">
+            <tr>
+              <th class="px-3 py-2 text-left">생산명</th>
+              <th class="px-3 py-2 text-center">수량</th>
+              <th class="px-3 py-2 text-center">BOM</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${items ? items.slice(0, 10).map(item => `
+              <tr class="hover:bg-gray-50">
+                <td class="px-3 py-2">
+                  <div class="font-medium">${item.production_name}</div>
+                  <div class="text-xs text-gray-400">${item.production_code}</div>
+                </td>
+                <td class="px-3 py-2 text-center font-bold">${item.quantity}</td>
+                <td class="px-3 py-2 text-center">
+                  ${item.has_bom ? '<span class="text-green-600">✓</span>' : '<span class="text-gray-400">-</span>'}
+                </td>
+              </tr>
+            `).join('') : '<tr><td colspan="3" class="text-center py-4 text-gray-400">데이터 없음</td></tr>'}
+            ${items && items.length > 10 ? `<tr><td colspan="3" class="text-center py-2 text-gray-400">... 외 ${items.length - 10}개 품목</td></tr>` : ''}
+          </tbody>
+        </table>
+      </div>
+      
+      <!-- 안내 -->
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
+        <i class="fas fa-info-circle mr-1"></i>
+        생산일보 메뉴에서 상세 내역을 확인하고 상태를 변경할 수 있습니다.
+      </div>
+    </div>
+  `, `
+    <button onclick="closeModal(); navigateTo('daily-report');" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700">
+      <i class="fas fa-clipboard-list mr-1"></i> 생산일보 바로가기
+    </button>
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+  `);
+}
+
 // 전역 함수 노출
 window.renderProductionPlan = renderProductionPlan;
 window.handlePlanFileUpload = handlePlanFileUpload;
@@ -24939,6 +25099,8 @@ window.showBarcodeProductionPlanModal = showBarcodeProductionPlanModal;
 window.handleBarcodeOrderUpload = handleBarcodeOrderUpload;
 window.switchPlanResultTab = switchPlanResultTab;
 window.downloadProductionPlanExcel = downloadProductionPlanExcel;
+window.convertToProductionReport = convertToProductionReport;
+window.showDailyReportDetailModal = showDailyReportDetailModal;
 
 // ==================== 원가 계산 ====================
 

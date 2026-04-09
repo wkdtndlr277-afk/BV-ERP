@@ -1756,6 +1756,79 @@ admin.get('/migrate-shelf-life', async (c) => {
   return c.json({ success: true, message: '소비기한 컬럼 마이그레이션 완료' })
 })
 
+// BOM 테이블 동기화 (bom → production_bom) - 누락 생산명 자동 등록 포함
+admin.get('/sync-bom-tables', async (c) => {
+  const { env } = c
+  
+  try {
+    // 1. 누락된 제품을 production_items에 자동 등록
+    const missingProducts = await env.DB.prepare(`
+      SELECT DISTINCT pm.item_name
+      FROM bom b
+      JOIN master pm ON b.product_code = pm.item_code
+      WHERE NOT EXISTS (
+        SELECT 1 FROM production_items pi 
+        WHERE pi.production_name = pm.item_name OR pi.alias1 = pm.item_name
+      )
+    `).all()
+    
+    // 새 생산코드 생성을 위한 최대값 조회
+    const maxCode = await env.DB.prepare(`
+      SELECT MAX(CAST(SUBSTR(production_code, 3) AS INTEGER)) as max_num FROM production_items
+    `).first() as any
+    let nextNum = (maxCode?.max_num || 0) + 1
+    
+    let addedCount = 0
+    for (const product of missingProducts.results as any[]) {
+      const productionCode = `PR${String(nextNum).padStart(3, '0')}`
+      await env.DB.prepare(`
+        INSERT INTO production_items (production_code, production_name, category, is_active)
+        VALUES (?, ?, '빵', 1)
+      `).bind(productionCode, product.item_name).run()
+      nextNum++
+      addedCount++
+    }
+    
+    // 2. 기존 production_bom 전체 삭제
+    await env.DB.prepare(`DELETE FROM production_bom`).run()
+    
+    // 3. 한번의 쿼리로 bom → production_bom 복사 (production_name 매칭)
+    await env.DB.prepare(`
+      INSERT INTO production_bom (production_code, material_code, material_name, quantity, unit)
+      SELECT 
+        pi.production_code,
+        b.item_code,
+        COALESCE(mm.item_name, '알수없음'),
+        b.quantity,
+        b.unit
+      FROM bom b
+      JOIN master pm ON b.product_code = pm.item_code
+      JOIN production_items pi ON pi.production_name = pm.item_name OR pi.alias1 = pm.item_name
+      LEFT JOIN master mm ON b.item_code = mm.item_code
+      WHERE pi.is_active = 1
+    `).run()
+    
+    // 4. 동기화 결과 확인
+    const syncedProducts = await env.DB.prepare(`
+      SELECT COUNT(DISTINCT production_code) as count FROM production_bom
+    `).first() as any
+    
+    const totalBomRows = await env.DB.prepare(`
+      SELECT COUNT(*) as count FROM production_bom
+    `).first() as any
+    
+    return c.json({ 
+      success: true, 
+      message: `BOM 동기화 완료`,
+      added_production_items: addedCount,
+      synced_products: syncedProducts?.count || 0,
+      synced_bom_rows: totalBomRows?.count || 0
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 // 생산명 목록 조회
 admin.get('/production-items', async (c) => {
   const { env } = c

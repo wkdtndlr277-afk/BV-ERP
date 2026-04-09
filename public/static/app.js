@@ -24746,6 +24746,15 @@ function renderBarcodeProductionPlanResult(data, fileName) {
   window.barcodeProductionPlanFileName = fileName;
 }
 
+// 소비기한 계산 헬퍼 (생산일 + 소비기한일수)
+function calculateExpiryDate(shelfLifeDays) {
+  if (!shelfLifeDays) return null;
+  const dateInput = document.getElementById('production-plan-date');
+  const baseDate = dateInput ? new Date(dateInput.value) : new Date();
+  baseDate.setDate(baseDate.getDate() + shelfLifeDays);
+  return baseDate.toISOString().split('T')[0];
+}
+
 // 매칭 품목 테이블
 function renderMatchedItemsTable(items) {
   if (items.length === 0) {
@@ -24760,10 +24769,13 @@ function renderMatchedItemsTable(items) {
           <th class="px-3 py-2 text-left">매칭생산명</th>
           <th class="px-3 py-2 text-center">수량</th>
           <th class="px-3 py-2 text-center">BOM</th>
+          <th class="px-3 py-2 text-center">소비기한</th>
         </tr>
       </thead>
       <tbody class="divide-y">
-        ${items.map(item => `
+        ${items.map(item => {
+          const expiryDate = calculateExpiryDate(item.shelf_life_days);
+          return `
           <tr class="hover:bg-gray-50">
             <td class="px-3 py-2">
               <div class="font-medium">${item.product_name}</div>
@@ -24779,8 +24791,14 @@ function renderMatchedItemsTable(items) {
                 `<span class="text-green-600">${item.bom_count}개</span>` : 
                 `<span class="text-red-500">없음</span>`}
             </td>
+            <td class="px-3 py-2 text-center">
+              ${item.shelf_life_days ? 
+                `<span class="text-blue-600 font-medium">${expiryDate}</span>
+                 <div class="text-xs text-gray-400">(+${item.shelf_life_days}일)</div>` : 
+                `<span class="text-gray-400">-</span>`}
+            </td>
           </tr>
-        `).join('')}
+        `}).join('')}
       </tbody>
     </table>
   `;
@@ -29440,6 +29458,7 @@ function renderProductionItemsManagement(container) {
               <th class="px-4 py-3 text-left">유사명칭</th>
               <th class="px-4 py-3 text-center">BOM</th>
               <th class="px-4 py-3 text-center">바코드</th>
+              <th class="px-4 py-3 text-center">소비기한</th>
               <th class="px-4 py-3 text-center">관리</th>
             </tr>
           </thead>
@@ -29460,6 +29479,11 @@ function renderProductionItemsManagement(container) {
                   ${(item.barcode_count || 0) > 0 
                     ? `<span class="px-2 py-1 bg-orange-100 text-orange-700 rounded text-xs">${item.barcode_count}개</span>`
                     : `<span class="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">없음</span>`}
+                </td>
+                <td class="px-4 py-3 text-center">
+                  ${item.shelf_life_days 
+                    ? `<span class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">${item.shelf_life_days}일</span>`
+                    : `<span class="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">-</span>`}
                 </td>
                 <td class="px-4 py-3 text-center">
                   <div class="flex justify-center gap-1">
@@ -29526,6 +29550,14 @@ async function showEditProductionItemModal(code) {
         <label class="block text-sm font-medium text-gray-700 mb-1">유사명칭2</label>
         <input type="text" id="edit-production-alias2" class="w-full border rounded-lg px-4 py-2" value="${item.alias2 || ''}">
       </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 (일)</label>
+        <div class="flex items-center gap-2">
+          <input type="number" id="edit-production-shelf-life" class="w-32 border rounded-lg px-4 py-2" 
+                 value="${item.shelf_life_days || ''}" placeholder="예: 3" min="0">
+          <span class="text-sm text-gray-500">생산일 기준 (예: 3일 → 생산일+3일이 소비기한)</span>
+        </div>
+      </div>
     </div>
   `, `
     <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
@@ -29540,6 +29572,8 @@ async function updateProductionItem(code) {
   const name = document.getElementById('edit-production-name').value.trim();
   const alias1 = document.getElementById('edit-production-alias1').value.trim();
   const alias2 = document.getElementById('edit-production-alias2').value.trim();
+  const shelfLifeInput = document.getElementById('edit-production-shelf-life').value;
+  const shelfLifeDays = shelfLifeInput ? parseInt(shelfLifeInput) : null;
   
   if (!name) {
     showToast('생산명을 입력하세요', 'warning');
@@ -29554,7 +29588,8 @@ async function updateProductionItem(code) {
     await api(`/admin/production-items/${code}`, 'PUT', {
       production_name: name,
       alias1: alias1 || null,
-      alias2: alias2 || null
+      alias2: alias2 || null,
+      shelf_life_days: shelfLifeDays
     });
     showToast('생산명이 수정되었습니다', 'success');
     closeModal();

@@ -1725,6 +1725,37 @@ admin.post('/migrate-production-items', async (c) => {
   }
 })
 
+// 소비기한 컬럼 마이그레이션
+admin.get('/migrate-shelf-life', async (c) => {
+  const { env } = c
+  
+  try {
+    // production_items에 shelf_life_days 컬럼 추가
+    await env.DB.prepare(`
+      ALTER TABLE production_items ADD COLUMN shelf_life_days INTEGER DEFAULT NULL
+    `).run()
+  } catch (e: any) {
+    // 이미 존재하면 무시
+    if (!e.message?.includes('duplicate column')) {
+      console.log('shelf_life_days column may already exist')
+    }
+  }
+  
+  try {
+    // production_daily_items에 expiry_date 컬럼 추가
+    await env.DB.prepare(`
+      ALTER TABLE production_daily_items ADD COLUMN expiry_date TEXT DEFAULT NULL
+    `).run()
+  } catch (e: any) {
+    // 이미 존재하면 무시
+    if (!e.message?.includes('duplicate column')) {
+      console.log('expiry_date column may already exist')
+    }
+  }
+  
+  return c.json({ success: true, message: '소비기한 컬럼 마이그레이션 완료' })
+})
+
 // 생산명 목록 조회
 admin.get('/production-items', async (c) => {
   const { env } = c
@@ -2008,7 +2039,7 @@ admin.put('/production-items/:code', async (c) => {
   const { env } = c
   const code = c.req.param('code')
   const body = await c.req.json()
-  const { production_name, alias1, alias2 } = body
+  const { production_name, alias1, alias2, shelf_life_days } = body
   
   if (!production_name) {
     return c.json({ success: false, error: '생산명은 필수입니다' }, 400)
@@ -2017,9 +2048,9 @@ admin.put('/production-items/:code', async (c) => {
   try {
     await env.DB.prepare(`
       UPDATE production_items 
-      SET production_name = ?, alias1 = ?, alias2 = ?, updated_at = CURRENT_TIMESTAMP
+      SET production_name = ?, alias1 = ?, alias2 = ?, shelf_life_days = ?, updated_at = CURRENT_TIMESTAMP
       WHERE production_code = ?
-    `).bind(production_name, alias1 || null, alias2 || null, code).run()
+    `).bind(production_name, alias1 || null, alias2 || null, shelf_life_days || null, code).run()
     
     return c.json({ success: true, message: '생산명이 수정되었습니다' })
   } catch (error: any) {

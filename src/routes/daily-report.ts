@@ -240,7 +240,7 @@ dailyReport.post('/reports/from-order', async (c) => {
     
     if (item.barcode) {
       productionInfo = await c.env.DB.prepare(`
-        SELECT pb.production_code, pi.production_name,
+        SELECT pb.production_code, pi.production_name, pi.shelf_life_days,
                (SELECT COUNT(*) FROM production_bom WHERE production_code = pi.production_code) as bom_count
         FROM production_barcodes pb
         JOIN production_items pi ON pb.production_code = pi.production_code
@@ -251,7 +251,7 @@ dailyReport.post('/reports/from-order', async (c) => {
     // 바코드 매칭 실패 시 상품명으로 시도
     if (!productionInfo && item.production_code) {
       productionInfo = await c.env.DB.prepare(`
-        SELECT production_code, production_name,
+        SELECT production_code, production_name, shelf_life_days,
                (SELECT COUNT(*) FROM production_bom WHERE production_code = production_items.production_code) as bom_count
         FROM production_items
         WHERE production_code = ?
@@ -261,12 +261,21 @@ dailyReport.post('/reports/from-order', async (c) => {
     const productionCode = productionInfo?.production_code || 'UNKNOWN'
     const productionName = productionInfo?.production_name || item.product_name || '미등록 품목'
     const hasBom = (productionInfo?.bom_count || 0) > 0 ? 1 : 0
+    const shelfLifeDays = productionInfo?.shelf_life_days || null
+    
+    // 소비기한 계산 (생산일 + 소비기한 일수)
+    let expiryDate: string | null = null
+    if (shelfLifeDays && report_date) {
+      const prodDate = new Date(report_date)
+      prodDate.setDate(prodDate.getDate() + shelfLifeDays)
+      expiryDate = prodDate.toISOString().split('T')[0]
+    }
     
     // 품목 등록
     const itemResult = await c.env.DB.prepare(`
       INSERT INTO production_daily_items 
-      (report_id, production_code, production_name, barcode, order_product_name, quantity, has_bom)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      (report_id, production_code, production_name, barcode, order_product_name, quantity, has_bom, expiry_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       reportId, 
       productionCode, 
@@ -274,7 +283,8 @@ dailyReport.post('/reports/from-order', async (c) => {
       item.barcode || null, 
       item.product_name || null, 
       item.quantity, 
-      hasBom
+      hasBom,
+      expiryDate
     ).run()
     
     const itemId = itemResult.meta.last_row_id
@@ -397,7 +407,7 @@ dailyReport.post('/production-plan', async (c) => {
   // 1. 바코드 매핑 데이터 조회
   const barcodeResult = await env.DB.prepare(`
     SELECT pb.barcode, pb.production_code, pb.product_name as mapped_name,
-           pi.production_name, pi.alias1, pi.alias2
+           pi.production_name, pi.alias1, pi.alias2, pi.shelf_life_days
     FROM production_barcodes pb
     LEFT JOIN production_items pi ON pb.production_code = pi.production_code
   `).all()
@@ -409,7 +419,7 @@ dailyReport.post('/production-plan', async (c) => {
   
   // 2. 생산명 데이터 조회 (바코드 매칭 실패 시 이름 매칭용)
   const productionResult = await env.DB.prepare(`
-    SELECT production_code, production_name, alias1, alias2,
+    SELECT production_code, production_name, alias1, alias2, shelf_life_days,
            (SELECT COUNT(*) FROM production_bom WHERE production_code = production_items.production_code) as bom_count
     FROM production_items WHERE is_active = 1
   `).all()
@@ -430,6 +440,7 @@ dailyReport.post('/production-plan', async (c) => {
       match_type: null,
       production_code: null,
       production_name: null,
+      shelf_life_days: null,
       bom: [],
       bom_count: 0
     }
@@ -441,6 +452,7 @@ dailyReport.post('/production-plan', async (c) => {
       result.match_type = 'barcode'
       result.production_code = bcInfo.production_code
       result.production_name = bcInfo.production_name
+      result.shelf_life_days = bcInfo.shelf_life_days
     }
     
     // 바코드 매칭 실패 시 상품명으로 매칭 시도
@@ -472,6 +484,7 @@ dailyReport.post('/production-plan', async (c) => {
         result.production_code = bestMatch.production_code
         result.production_name = bestMatch.production_name
         result.bom_count = bestMatch.bom_count
+        result.shelf_life_days = bestMatch.shelf_life_days
       }
     }
     

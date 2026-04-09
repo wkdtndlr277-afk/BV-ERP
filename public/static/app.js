@@ -28930,16 +28930,31 @@ async function loadSystemManagementData() {
     systemManagementData.productionItems = productionRes.data || [];
     systemManagementData.stock = stockRes.data || [];
     
-    // 통계 업데이트
-    document.getElementById('sys-stat-materials').textContent = systemManagementData.materials.length;
-    document.getElementById('sys-stat-products').textContent = systemManagementData.products.length;
-    document.getElementById('sys-stat-production').textContent = systemManagementData.productionItems.length;
-    document.getElementById('sys-stat-stock').textContent = systemManagementData.stock.length;
-    document.getElementById('sys-stat-bom').textContent = systemManagementData.productionItems.filter(p => (p.bom_count || 0) > 0).length;
+    // 통계 업데이트 (요소가 존재할 때만)
+    const statMaterials = document.getElementById('sys-stat-materials');
+    const statProducts = document.getElementById('sys-stat-products');
+    const statProduction = document.getElementById('sys-stat-production');
+    const statStock = document.getElementById('sys-stat-stock');
+    const statBom = document.getElementById('sys-stat-bom');
+    
+    if (statMaterials) statMaterials.textContent = systemManagementData.materials.length;
+    if (statProducts) statProducts.textContent = systemManagementData.products.length;
+    if (statProduction) statProduction.textContent = systemManagementData.productionItems.length;
+    if (statStock) statStock.textContent = systemManagementData.stock.length;
+    if (statBom) statBom.textContent = systemManagementData.productionItems.filter(p => (p.bom_count || 0) > 0).length;
+    
+    console.log('시스템 관리 데이터 로드 완료:', {
+      materials: systemManagementData.materials.length,
+      products: systemManagementData.products.length,
+      productionItems: systemManagementData.productionItems.length,
+      stock: systemManagementData.stock.length
+    });
     
   } catch (e) {
     console.error('데이터 로드 실패:', e);
-    showToast('데이터 로드 실패', 'error');
+    // 에러 상세 정보 표시
+    const errorMsg = e.message || e.toString();
+    showToast('데이터 로드 실패: ' + errorMsg, 'error');
   }
 }
 

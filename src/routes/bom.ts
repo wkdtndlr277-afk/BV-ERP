@@ -14,12 +14,33 @@ async function syncToProductionBom(db: any, productCode: string) {
     
     if (!product) return;
     
-    const productionItem = await db.prepare(`
+    let productionItem = await db.prepare(`
       SELECT production_code FROM production_items 
       WHERE production_name = ? OR alias1 = ?
     `).bind(product.item_name, product.item_name).first() as any;
     
-    if (!productionItem) return;
+    // production_items에 없으면 자동 추가
+    if (!productionItem) {
+      // 새 생산코드 생성
+      const maxCode = await db.prepare(
+        "SELECT production_code FROM production_items ORDER BY production_code DESC LIMIT 1"
+      ).first() as any;
+      
+      let newCode = 'PR001';
+      if (maxCode?.production_code) {
+        const num = parseInt(maxCode.production_code.replace('PR', '')) + 1;
+        newCode = `PR${String(num).padStart(3, '0')}`;
+      }
+      
+      // production_items에 새 제품 추가
+      await db.prepare(`
+        INSERT INTO production_items (production_code, production_name, category, unit, is_active)
+        VALUES (?, ?, '제품', 'ea', 1)
+      `).bind(newCode, product.item_name).run();
+      
+      productionItem = { production_code: newCode };
+      console.log(`Auto-created production_item: ${newCode} - ${product.item_name}`);
+    }
     
     // 2. 기존 production_bom 삭제
     await db.prepare(

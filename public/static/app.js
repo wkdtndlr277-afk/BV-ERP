@@ -23062,9 +23062,22 @@ async function deleteProductionItem(code) {
   try {
     await api(`/admin/production-items/${code}`, 'DELETE');
     showToast('삭제되었습니다', 'success');
-    loadProductionManagementData();
+    
+    // 현재 페이지에 맞는 데이터 리로드
+    if (document.getElementById('sys-tab-content')) {
+      // 통합 시스템 관리 페이지
+      await loadSystemManagementData();
+      switchSystemTab('production-items');
+    } else if (document.getElementById('smgmt-tab-content')) {
+      // 관리자 > 시스템 탭
+      await loadSystemMgmtData();
+      switchSystemMgmtTab('production');
+    } else {
+      // 생산계획 페이지
+      loadProductionManagementData();
+    }
   } catch (e) {
-    showToast('삭제 실패', 'error');
+    showToast('삭제 실패: ' + (e.message || '오류'), 'error');
   }
 }
 

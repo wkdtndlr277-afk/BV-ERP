@@ -309,9 +309,13 @@ inboundRoutes.post('/', async (c) => {
     let hasSanitaryColumn = false;
     try {
       const tableInfo = await c.env.DB.prepare("PRAGMA table_info(inbound)").all();
-      hasSampleColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sample');
-      hasSanitaryColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sanitary');
+      const columns = (tableInfo.results || []).map((col: any) => col.name);
+      console.log('inbound columns:', columns);
+      hasSampleColumn = columns.includes('is_sample');
+      hasSanitaryColumn = columns.includes('is_sanitary');
+      console.log('hasSampleColumn:', hasSampleColumn, 'hasSanitaryColumn:', hasSanitaryColumn);
     } catch (e) {
+      console.error('PRAGMA error:', e);
       hasSampleColumn = false;
       hasSanitaryColumn = false;
     }
@@ -363,7 +367,7 @@ inboundRoutes.post('/', async (c) => {
   const expiryDateValue = expiry_date || null;
   
   if (hasSampleColumn && hasSanitaryColumn) {
-    // 샘플 + 위생자재 컬럼이 있는 경우 (신규 스키마)
+    // 샘플 + 위생자재 컬럼 둘 다 있는 경우
     await c.env.DB.prepare(`
       INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, is_sanitary, storage_location)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -379,6 +383,22 @@ inboundRoutes.post('/', async (c) => {
       is_sample ? 1 : 0,
       is_sanitary ? 1 : 0,
       is_sample ? storage_location : null
+    ).run();
+  } else if (hasSanitaryColumn) {
+    // 위생자재 컬럼만 있는 경우 (is_sample 컬럼 없음)
+    await c.env.DB.prepare(`
+      INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sanitary)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      lot_number, 
+      item_code, 
+      inbound_date, 
+      expiryDateValue, 
+      quantity, 
+      quantity, 
+      quality_status || '합격', 
+      supplier || null,
+      is_sanitary ? 1 : 0
     ).run();
   } else if (hasSampleColumn) {
     // 샘플 컬럼만 있는 경우
@@ -659,6 +679,22 @@ inboundRoutes.post('/migrate-sanitary', async (c) => {
     }
     
     return c.json({ success: true, message: '위생자재 컬럼 마이그레이션 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 디버그: 테이블 컬럼 확인
+inboundRoutes.get('/debug-columns', async (c) => {
+  try {
+    const tableInfo = await c.env.DB.prepare("PRAGMA table_info(inbound)").all();
+    const columns = (tableInfo.results || []).map((col: any) => col.name);
+    return c.json({ 
+      success: true, 
+      columns,
+      has_is_sample: columns.includes('is_sample'),
+      has_is_sanitary: columns.includes('is_sanitary')
+    });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }

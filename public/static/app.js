@@ -29607,13 +29607,55 @@ async function updateProductionItem(code) {
     });
     showToast('생산명이 수정되었습니다', 'success');
     closeModal();
-    await loadSystemManagementData();
-    switchSystemTab('production-items');
+    
+    // 즉시 UI 업데이트 (새로고침 없이)
+    updateProductionItemInTable(code, name, alias1, shelfLifeDays);
+    
+    // 백그라운드에서 데이터 동기화 (UI 블록 없음)
+    loadSystemManagementData();
   } catch (e) {
     showToast('수정 실패: ' + (e.message || '오류 발생'), 'error');
     setButtonLoading(btn, false);
   } finally {
     isUpdatingProductionItem = false;
+  }
+}
+
+// 생산명 테이블 즉시 업데이트 함수
+function updateProductionItemInTable(code, name, alias1, shelfLifeDays) {
+  // systemManagementData 업데이트
+  const item = systemManagementData.productionItems?.find(p => p.production_code === code);
+  if (item) {
+    item.production_name = name;
+    item.alias1 = alias1;
+    item.shelf_life_days = shelfLifeDays;
+  }
+  
+  // 테이블 행 찾아서 업데이트
+  const rows = document.querySelectorAll('.production-item-row');
+  for (const row of rows) {
+    const codeCell = row.querySelector('td:first-child');
+    if (codeCell && codeCell.textContent.trim() === code) {
+      // 생산명 업데이트
+      const nameCell = row.querySelector('td:nth-child(2)');
+      if (nameCell) nameCell.textContent = name;
+      
+      // 유사명칭 업데이트
+      const aliasCell = row.querySelector('td:nth-child(3)');
+      if (aliasCell) aliasCell.textContent = alias1 || '-';
+      
+      // 소비기한 업데이트
+      const shelfLifeCell = row.querySelector('td:nth-child(6)');
+      if (shelfLifeCell) {
+        shelfLifeCell.innerHTML = shelfLifeDays 
+          ? `<span class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">${shelfLifeDays}일</span>`
+          : `<span class="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">-</span>`;
+      }
+      
+      // data-name 속성 업데이트 (검색용)
+      row.dataset.name = name.toLowerCase();
+      break;
+    }
   }
 }
 

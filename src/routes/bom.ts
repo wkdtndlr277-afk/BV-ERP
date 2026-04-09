@@ -4,6 +4,55 @@ import type { Bindings } from '../types';
 
 const bomRoutes = new Hono<{ Bindings: Bindings }>();
 
+// production_bom 동기화 헬퍼 함수
+async function syncToProductionBom(db: any, productCode: string) {
+  try {
+    // 1. 제품명으로 production_items에서 생산코드 찾기
+    const product = await db.prepare(
+      'SELECT item_name FROM master WHERE item_code = ?'
+    ).bind(productCode).first() as any;
+    
+    if (!product) return;
+    
+    const productionItem = await db.prepare(`
+      SELECT production_code FROM production_items 
+      WHERE production_name = ? OR alias1 = ?
+    `).bind(product.item_name, product.item_name).first() as any;
+    
+    if (!productionItem) return;
+    
+    // 2. 기존 production_bom 삭제
+    await db.prepare(
+      'DELETE FROM production_bom WHERE production_code = ?'
+    ).bind(productionItem.production_code).run();
+    
+    // 3. bom 테이블에서 해당 제품의 BOM 가져와서 production_bom에 삽입
+    const bomData = await db.prepare(`
+      SELECT b.item_code, m.item_name as material_name, b.quantity, b.unit
+      FROM bom b
+      LEFT JOIN master m ON b.item_code = m.item_code
+      WHERE b.product_code = ?
+    `).bind(productCode).all();
+    
+    for (const bom of bomData.results as any[]) {
+      await db.prepare(`
+        INSERT INTO production_bom (production_code, material_code, material_name, quantity, unit)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(
+        productionItem.production_code,
+        bom.item_code || '',
+        bom.material_name || '알수없음',
+        bom.quantity,
+        bom.unit || 'g'
+      ).run();
+    }
+    
+    console.log(`Synced BOM for ${productCode} -> ${productionItem.production_code}`);
+  } catch (e) {
+    console.error('syncToProductionBom error:', e);
+  }
+}
+
 // D1 바인딩 검증 미들웨어
 bomRoutes.use('*', async (c, next) => {
   if (!c.env.DB) {
@@ -181,6 +230,9 @@ bomRoutes.post('/', async (c) => {
       memo || null
     ).run();
     
+    // production_bom 동기화
+    await syncToProductionBom(c.env.DB, product_code);
+    
     return c.json({ success: true, message: 'BOM이 등록되었습니다.' });
   } catch (error: any) {
     if (error.message?.includes('UNIQUE')) {
@@ -238,6 +290,9 @@ bomRoutes.post('/bulk', async (c) => {
       results.errors.push(`${mat.item_code}: ${error.message || '등록 실패'}`);
     }
   }
+  
+  // production_bom 동기화
+  await syncToProductionBom(c.env.DB, product_code);
   
   return c.json({ 
     success: true, 
@@ -337,6 +392,9 @@ bomRoutes.put('/:id', async (c) => {
     return c.json({ success: false, error: 'BOM을 찾을 수 없습니다.' }, 404);
   }
   
+  // production_bom 동기화
+  await syncToProductionBom(c.env.DB, product_code);
+  
   return c.json({ success: true, message: 'BOM이 수정되었습니다.' });
 });
 
@@ -344,12 +402,22 @@ bomRoutes.put('/:id', async (c) => {
 bomRoutes.delete('/:id', async (c) => {
   const id = c.req.param('id');
   
+  // 삭제 전 product_code 가져오기
+  const bomItem = await c.env.DB.prepare(
+    'SELECT product_code FROM bom WHERE id = ?'
+  ).bind(id).first() as any;
+  
   const result = await c.env.DB.prepare(
     'DELETE FROM bom WHERE id = ?'
   ).bind(id).run();
   
   if (result.meta.changes === 0) {
     return c.json({ success: false, error: 'BOM을 찾을 수 없습니다.' }, 404);
+  }
+  
+  // production_bom 동기화
+  if (bomItem?.product_code) {
+    await syncToProductionBom(c.env.DB, bomItem.product_code);
   }
   
   return c.json({ success: true, message: 'BOM이 삭제되었습니다.' });
@@ -363,6 +431,9 @@ bomRoutes.delete('/product/:product_code', async (c) => {
     'DELETE FROM bom WHERE product_code = ?'
   ).bind(productCode).run();
   
+  // production_bom 동기화 (삭제)
+  await syncToProductionBom(c.env.DB, productCode);
+  
   return c.json({ success: true, message: '제품의 BOM이 모두 삭제되었습니다.' });
 });
 
@@ -373,6 +444,9 @@ bomRoutes.delete('/product/:product_code/clear', async (c) => {
   const result = await c.env.DB.prepare(
     'DELETE FROM bom WHERE product_code = ?'
   ).bind(productCode).run();
+  
+  // production_bom 동기화 (삭제)
+  await syncToProductionBom(c.env.DB, productCode);
   
   return c.json({ 
     success: true, 

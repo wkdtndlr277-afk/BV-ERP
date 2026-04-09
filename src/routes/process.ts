@@ -23,14 +23,14 @@ process.get('/dough-master', async (c) => {
 
 // 반죽 마스터 등록
 process.post('/dough-master', async (c) => {
-  const { dough_code, dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max } = await c.req.json()
+  const { dough_code, dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max, workspace_temp_min, workspace_temp_max } = await c.req.json()
   const { env } = c
   
   try {
     await env.DB.prepare(`
-      INSERT INTO dough_master (dough_code, dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(dough_code, dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max).run()
+      INSERT INTO dough_master (dough_code, dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max, workspace_temp_min, workspace_temp_max)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(dough_code, dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max, workspace_temp_min || null, workspace_temp_max || null).run()
     
     return c.json({ success: true, message: '반죽 마스터가 등록되었습니다' })
   } catch (error: any) {
@@ -44,16 +44,17 @@ process.post('/dough-master', async (c) => {
 // 반죽 마스터 수정
 process.put('/dough-master/:id', async (c) => {
   const id = c.req.param('id')
-  const { dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max } = await c.req.json()
+  const { dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max, workspace_temp_min, workspace_temp_max } = await c.req.json()
   const { env } = c
   
   try {
     await env.DB.prepare(`
       UPDATE dough_master 
       SET dough_name = ?, temp_min = ?, temp_max = ?, ph_min = ?, ph_max = ?, 
-          humidity_min = ?, humidity_max = ?, fermentation_min = ?, fermentation_max = ?
+          humidity_min = ?, humidity_max = ?, fermentation_min = ?, fermentation_max = ?,
+          workspace_temp_min = ?, workspace_temp_max = ?
       WHERE id = ?
-    `).bind(dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max, id).run()
+    `).bind(dough_name, temp_min, temp_max, ph_min, ph_max, humidity_min, humidity_max, fermentation_min, fermentation_max, workspace_temp_min || null, workspace_temp_max || null, id).run()
     
     return c.json({ success: true, message: '반죽 마스터가 수정되었습니다' })
   } catch (error) {
@@ -86,7 +87,8 @@ process.get('/quality', async (c) => {
   try {
     let query = `
       SELECT pq.*, dm.temp_min, dm.temp_max, dm.ph_min, dm.ph_max,
-             dm.humidity_min, dm.humidity_max, dm.fermentation_min, dm.fermentation_max
+             dm.humidity_min, dm.humidity_max, dm.fermentation_min, dm.fermentation_max,
+             dm.workspace_temp_min, dm.workspace_temp_max
       FROM process_quality pq
       LEFT JOIN dough_master dm ON pq.dough_name = dm.dough_name
       WHERE 1=1
@@ -120,8 +122,9 @@ process.get('/quality', async (c) => {
       let ph_judgment = '적합'
       let humidity_judgment = '적합'
       let fermentation_judgment = '적합'
+      let workspace_temp_judgment = '적합'
       
-      // 온도 판정 (최신 기준 사용)
+      // 반죽온도 판정 (최신 기준 사용)
       if (rec.temp_min !== null && rec.temp_max !== null && rec.dough_temp !== null) {
         dough_temp_judgment = (rec.dough_temp >= rec.temp_min && rec.dough_temp <= rec.temp_max) ? '적합' : '부적합'
       }
@@ -131,7 +134,7 @@ process.get('/quality', async (c) => {
         ph_judgment = (rec.ph_value >= rec.ph_min && rec.ph_value <= rec.ph_max) ? '적합' : '부적합'
       }
       
-      // 습도 판정 (최신 기준 사용)
+      // 작업장 습도 판정 (최신 기준 사용)
       if (rec.humidity_min !== null && rec.humidity_max !== null && rec.humidity !== null) {
         humidity_judgment = (rec.humidity >= rec.humidity_min && rec.humidity <= rec.humidity_max) ? '적합' : '부적합'
       }
@@ -141,9 +144,15 @@ process.get('/quality', async (c) => {
         fermentation_judgment = (rec.fermentation_time >= rec.fermentation_min && rec.fermentation_time <= rec.fermentation_max) ? '적합' : '부적합'
       }
       
+      // 작업장 온도 판정 (최신 기준 사용)
+      if (rec.workspace_temp_min !== null && rec.workspace_temp_max !== null && rec.workspace_temp !== null) {
+        workspace_temp_judgment = (rec.workspace_temp >= rec.workspace_temp_min && rec.workspace_temp <= rec.workspace_temp_max) ? '적합' : '부적합'
+      }
+      
       // 종합 판정 재계산
       const overall_judgment = (dough_temp_judgment === '적합' && ph_judgment === '적합' && 
-                                humidity_judgment === '적합' && fermentation_judgment === '적합') ? '적합' : '부적합'
+                                humidity_judgment === '적합' && fermentation_judgment === '적합' &&
+                                workspace_temp_judgment === '적합') ? '적합' : '부적합'
       
       return {
         ...rec,
@@ -154,6 +163,7 @@ process.get('/quality', async (c) => {
         ph_judgment,
         humidity_judgment,
         fermentation_judgment,
+        workspace_temp_judgment,
         overall_judgment
       }
     })
@@ -169,7 +179,7 @@ process.post('/quality', async (c) => {
   const { 
     record_date, record_time, dough_name, 
     dough_temp, ph_value, humidity, fermentation_time,
-    worker_name, memo, inspection_no, inspection_stage 
+    workspace_temp, worker_name, memo, inspection_no, inspection_stage 
   } = await c.req.json()
   const { env } = c
   
@@ -188,6 +198,8 @@ process.post('/quality', async (c) => {
     let humidity_standard = '기준없음'
     let fermentation_judgment = '적합'
     let fermentation_standard = '기준없음'
+    let workspace_temp_judgment = '적합'
+    let workspace_temp_standard = '기준없음'
     
     // 헬퍼 함수: 기준값이 유효한지 확인 (null, undefined, 0-0 범위 제외)
     const hasValidRange = (min: any, max: any) => {
@@ -226,11 +238,20 @@ process.post('/quality', async (c) => {
           fermentation_judgment = (fermentation_time >= (doughMaster.fermentation_min as number) && fermentation_time <= (doughMaster.fermentation_max as number)) ? '적합' : '부적합'
         }
       }
+      
+      // 작업장 온도 판정 (0-0 범위는 기준없음으로 처리)
+      if (hasValidRange(doughMaster.workspace_temp_min, doughMaster.workspace_temp_max)) {
+        workspace_temp_standard = `${doughMaster.workspace_temp_min}-${doughMaster.workspace_temp_max}°C`
+        if (workspace_temp !== null && workspace_temp !== undefined) {
+          workspace_temp_judgment = (workspace_temp >= (doughMaster.workspace_temp_min as number) && workspace_temp <= (doughMaster.workspace_temp_max as number)) ? '적합' : '부적합'
+        }
+      }
     }
     
     // 종합 판정
     const overall_judgment = (dough_temp_judgment === '적합' && ph_judgment === '적합' && 
-                              humidity_judgment === '적합' && fermentation_judgment === '적합') ? '적합' : '부적합'
+                              humidity_judgment === '적합' && fermentation_judgment === '적합' &&
+                              workspace_temp_judgment === '적합') ? '적합' : '부적합'
     
     // 검사회차 결정: 지정되지 않은 경우 자동 계산
     let finalInspectionNo = inspection_no || 1;
@@ -256,14 +277,16 @@ process.post('/quality', async (c) => {
         ph_value, ph_standard, ph_judgment,
         humidity, humidity_standard, humidity_judgment,
         fermentation_time, fermentation_standard, fermentation_judgment,
+        workspace_temp, workspace_temp_standard, workspace_temp_judgment,
         worker_name, memo, overall_judgment, inspection_no, inspection_stage
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       record_date, record_time, dough_name,
       dough_temp, dough_temp_standard, dough_temp_judgment,
       ph_value, ph_standard, ph_judgment,
       humidity, humidity_standard, humidity_judgment,
       fermentation_time, fermentation_standard, fermentation_judgment,
+      workspace_temp || null, workspace_temp_standard, workspace_temp_judgment,
       worker_name, memo, overall_judgment, finalInspectionNo, finalInspectionStage
     ).run()
     
@@ -275,6 +298,7 @@ process.post('/quality', async (c) => {
         ph: ph_judgment,
         humidity: humidity_judgment,
         fermentation: fermentation_judgment,
+        workspace_temp: workspace_temp_judgment,
         overall: overall_judgment
       }
     })
@@ -289,7 +313,7 @@ process.put('/quality/:id', async (c) => {
   const id = c.req.param('id')
   const { 
     dough_temp, ph_value, humidity, fermentation_time,
-    worker_name, memo, dough_name
+    workspace_temp, worker_name, memo, dough_name
   } = await c.req.json()
   const { env } = c
   
@@ -309,6 +333,7 @@ process.put('/quality/:id', async (c) => {
     let ph_judgment = '적합'
     let humidity_judgment = '적합'
     let fermentation_judgment = '적합'
+    let workspace_temp_judgment = '적합'
     
     if (doughMaster) {
       if (dough_temp !== null && hasValidRange(doughMaster.temp_min, doughMaster.temp_max)) {
@@ -323,10 +348,14 @@ process.put('/quality/:id', async (c) => {
       if (fermentation_time !== null && hasValidRange(doughMaster.fermentation_min, doughMaster.fermentation_max)) {
         fermentation_judgment = (fermentation_time >= (doughMaster.fermentation_min as number) && fermentation_time <= (doughMaster.fermentation_max as number)) ? '적합' : '부적합'
       }
+      if (workspace_temp !== null && hasValidRange(doughMaster.workspace_temp_min, doughMaster.workspace_temp_max)) {
+        workspace_temp_judgment = (workspace_temp >= (doughMaster.workspace_temp_min as number) && workspace_temp <= (doughMaster.workspace_temp_max as number)) ? '적합' : '부적합'
+      }
     }
     
     const overall_judgment = (dough_temp_judgment === '적합' && ph_judgment === '적합' && 
-                              humidity_judgment === '적합' && fermentation_judgment === '적합') ? '적합' : '부적합'
+                              humidity_judgment === '적합' && fermentation_judgment === '적합' &&
+                              workspace_temp_judgment === '적합') ? '적합' : '부적합'
     
     await env.DB.prepare(`
       UPDATE process_quality 
@@ -334,6 +363,7 @@ process.put('/quality/:id', async (c) => {
           ph_value = ?, ph_judgment = ?,
           humidity = ?, humidity_judgment = ?,
           fermentation_time = ?, fermentation_judgment = ?,
+          workspace_temp = ?, workspace_temp_judgment = ?,
           worker_name = ?, memo = ?, overall_judgment = ?,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
@@ -342,6 +372,7 @@ process.put('/quality/:id', async (c) => {
       ph_value, ph_judgment,
       humidity, humidity_judgment,
       fermentation_time, fermentation_judgment,
+      workspace_temp || null, workspace_temp_judgment,
       worker_name, memo, overall_judgment, id
     ).run()
     
@@ -460,6 +491,50 @@ process.post('/migrate-inspection', async (c) => {
     }
     
     return c.json({ success: true, message: '마이그레이션 완료' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// DB 마이그레이션: 작업장 온도 컬럼 추가 (dough_master, process_quality)
+process.post('/migrate-workspace-temp', async (c) => {
+  const { env } = c
+  
+  try {
+    // dough_master에 workspace_temp_min, workspace_temp_max 컬럼 추가
+    const doughMasterColumns = [
+      'ALTER TABLE dough_master ADD COLUMN workspace_temp_min REAL',
+      'ALTER TABLE dough_master ADD COLUMN workspace_temp_max REAL'
+    ]
+    
+    for (const sql of doughMasterColumns) {
+      try {
+        await env.DB.prepare(sql).run()
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) {
+          console.log('Column already exists:', e.message)
+        }
+      }
+    }
+    
+    // process_quality에 workspace_temp, workspace_temp_standard, workspace_temp_judgment 컬럼 추가
+    const processQualityColumns = [
+      'ALTER TABLE process_quality ADD COLUMN workspace_temp REAL',
+      "ALTER TABLE process_quality ADD COLUMN workspace_temp_standard TEXT DEFAULT '기준없음'",
+      "ALTER TABLE process_quality ADD COLUMN workspace_temp_judgment TEXT DEFAULT '적합'"
+    ]
+    
+    for (const sql of processQualityColumns) {
+      try {
+        await env.DB.prepare(sql).run()
+      } catch (e: any) {
+        if (!e.message?.includes('duplicate column')) {
+          console.log('Column already exists:', e.message)
+        }
+      }
+    }
+    
+    return c.json({ success: true, message: '작업장 온도 컬럼 마이그레이션 완료' })
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500)
   }

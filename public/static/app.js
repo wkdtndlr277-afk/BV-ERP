@@ -13289,7 +13289,8 @@ async function loadProcessQualityData() {
                 <th class="px-3 py-2 text-center">회차</th>
                 <th class="px-3 py-2 text-center">반죽온도</th>
                 <th class="px-3 py-2 text-center">pH</th>
-                <th class="px-3 py-2 text-center">습도</th>
+                <th class="px-3 py-2 text-center">작업장온도</th>
+                <th class="px-3 py-2 text-center">작업장습도</th>
                 <th class="px-3 py-2 text-center">발효시간</th>
                 <th class="px-3 py-2 text-center">종합판정</th>
                 <th class="px-3 py-2 text-left">담당자</th>
@@ -13324,9 +13325,16 @@ async function loadProcessQualityData() {
                     <div class="text-xs text-gray-400 mt-1">(${rec.ph_min !== null && rec.ph_max !== null ? rec.ph_min + '-' + rec.ph_max : '기준없음'})</div>
                   </td>
                   <td class="px-3 py-2 text-center">
+                    <span class="px-2 py-1 rounded text-xs ${rec.workspace_temp_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                      ${rec.workspace_temp !== null ? rec.workspace_temp + '°C' : '-'}
+                    </span>
+                    <div class="text-xs text-gray-400 mt-1">(${rec.workspace_temp_min !== null && rec.workspace_temp_max !== null ? rec.workspace_temp_min + '-' + rec.workspace_temp_max + '°C' : '기준없음'})</div>
+                  </td>
+                  <td class="px-3 py-2 text-center">
                     <span class="px-2 py-1 rounded text-xs ${rec.humidity_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
                       ${rec.humidity !== null ? rec.humidity + '%' : '-'}
                     </span>
+                    <div class="text-xs text-gray-400 mt-1">(${rec.humidity_min !== null && rec.humidity_max !== null ? rec.humidity_min + '-' + rec.humidity_max + '%' : '기준없음'})</div>
                   </td>
                   <td class="px-3 py-2 text-center">
                     <span class="px-2 py-1 rounded text-xs ${rec.fermentation_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
@@ -13476,7 +13484,8 @@ async function loadProcessMonthlySummary() {
                                   <th class="px-3 py-2 text-left">반죽명</th>
                                   <th class="px-3 py-2 text-center">반죽온도</th>
                                   <th class="px-3 py-2 text-center">pH</th>
-                                  <th class="px-3 py-2 text-center">습도</th>
+                                  <th class="px-3 py-2 text-center">작업장온도</th>
+                <th class="px-3 py-2 text-center">작업장습도</th>
                                   <th class="px-3 py-2 text-center">발효시간</th>
                                   <th class="px-3 py-2 text-center">종합판정</th>
                                   <th class="px-3 py-2 text-left">담당자</th>
@@ -13495,6 +13504,11 @@ async function loadProcessMonthlySummary() {
                                     <td class="px-3 py-2 text-center">
                                       <span class="px-2 py-1 rounded text-xs ${rec.ph_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
                                         ${rec.ph_value !== null ? rec.ph_value : '-'}
+                                      </span>
+                                    </td>
+                                    <td class="px-3 py-2 text-center">
+                                      <span class="px-2 py-1 rounded text-xs ${rec.workspace_temp_judgment === '적합' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
+                                        ${rec.workspace_temp !== null ? rec.workspace_temp + '°C' : '-'}
                                       </span>
                                     </td>
                                     <td class="px-3 py-2 text-center">
@@ -13577,8 +13591,10 @@ function downloadProcessQualityMonthly(month) {
     { key: 'dough_temp_judgment', title: '온도판정', width: 10 },
     { key: 'ph_value', title: 'pH', width: 8 },
     { key: 'ph_judgment', title: 'pH판정', width: 10 },
-    { key: 'humidity', title: '습도(%)', width: 10 },
-    { key: 'humidity_judgment', title: '습도판정', width: 10 },
+    { key: 'workspace_temp', title: '작업장온도(°C)', width: 10 },
+    { key: 'workspace_temp_judgment', title: '작업장온도판정', width: 10 },
+    { key: 'humidity', title: '작업장습도(%)', width: 10 },
+    { key: 'humidity_judgment', title: '작업장습도판정', width: 10 },
     { key: 'fermentation_time', title: '발효시간(분)', width: 12 },
     { key: 'fermentation_judgment', title: '발효판정', width: 10 },
     { key: 'overall_judgment', title: '종합판정', width: 10 },
@@ -13628,7 +13644,8 @@ function printProcessQualityMonthly(month) {
           <th style="padding: 6px;">반죽명</th>
           <th style="padding: 6px;">온도</th>
           <th style="padding: 6px;">pH</th>
-          <th style="padding: 6px;">습도</th>
+          <th style="padding: 6px;">작업장온도</th>
+          <th style="padding: 6px;">작업장습도</th>
           <th style="padding: 6px;">발효</th>
           <th style="padding: 6px;">판정</th>
           <th style="padding: 6px;">담당자</th>
@@ -13642,6 +13659,7 @@ function printProcessQualityMonthly(month) {
             <td style="padding: 6px;">${rec.dough_name}</td>
             <td style="padding: 6px; text-align: center; ${rec.dough_temp_judgment !== '적합' ? 'color: red;' : ''}">${rec.dough_temp !== null ? rec.dough_temp + '°C' : '-'}</td>
             <td style="padding: 6px; text-align: center; ${rec.ph_judgment !== '적합' ? 'color: red;' : ''}">${rec.ph_value !== null ? rec.ph_value : '-'}</td>
+            <td style="padding: 6px; text-align: center; ${rec.workspace_temp_judgment !== '적합' ? 'color: red;' : ''}">${rec.workspace_temp !== null ? rec.workspace_temp + '°C' : '-'}</td>
             <td style="padding: 6px; text-align: center; ${rec.humidity_judgment !== '적합' ? 'color: red;' : ''}">${rec.humidity !== null ? rec.humidity + '%' : '-'}</td>
             <td style="padding: 6px; text-align: center; ${rec.fermentation_judgment !== '적합' ? 'color: red;' : ''}">${rec.fermentation_time !== null ? rec.fermentation_time + '분' : '-'}</td>
             <td style="padding: 6px; text-align: center; font-weight: bold; ${rec.overall_judgment !== '적합' ? 'color: red;' : 'color: green;'}">${rec.overall_judgment}</td>
@@ -13720,7 +13738,12 @@ function showProcessQualityModal(record = null) {
       
       <div class="grid grid-cols-2 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">습도 (%)</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 온도 (°C)</label>
+          <input type="number" id="pq-workspace-temp" value="${record?.workspace_temp || ''}" step="0.1"
+                 class="w-full px-3 py-2 border rounded-lg" placeholder="예: 25">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 습도 (%)</label>
           <input type="number" id="pq-humidity" value="${record?.humidity || ''}" step="0.1"
                  class="w-full px-3 py-2 border rounded-lg" placeholder="예: 65">
         </div>
@@ -13760,6 +13783,7 @@ async function saveProcessQuality() {
     dough_name: document.getElementById('pq-dough').value,
     dough_temp: document.getElementById('pq-temp').value ? parseFloat(document.getElementById('pq-temp').value) : null,
     ph_value: document.getElementById('pq-ph').value ? parseFloat(document.getElementById('pq-ph').value) : null,
+    workspace_temp: document.getElementById('pq-workspace-temp').value ? parseFloat(document.getElementById('pq-workspace-temp').value) : null,
     humidity: document.getElementById('pq-humidity').value ? parseFloat(document.getElementById('pq-humidity').value) : null,
     fermentation_time: document.getElementById('pq-fermentation').value ? parseInt(document.getElementById('pq-fermentation').value) : null,
     worker_name: document.getElementById('pq-worker').value,
@@ -13909,12 +13933,23 @@ function showAddDoughModal() {
       
       <div class="grid grid-cols-2 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">습도 최소 (%)</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 습도 최소 (%)</label>
           <input type="number" id="dough-humidity-min" step="1" class="w-full px-3 py-2 border rounded-lg" placeholder="예: 60">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">습도 최대 (%)</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 습도 최대 (%)</label>
           <input type="number" id="dough-humidity-max" step="1" class="w-full px-3 py-2 border rounded-lg" placeholder="예: 70">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 온도 최소 (°C)</label>
+          <input type="number" id="dough-workspace-temp-min" step="0.1" class="w-full px-3 py-2 border rounded-lg" placeholder="예: 20">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 온도 최대 (°C)</label>
+          <input type="number" id="dough-workspace-temp-max" step="0.1" class="w-full px-3 py-2 border rounded-lg" placeholder="예: 25">
         </div>
       </div>
       
@@ -13982,12 +14017,23 @@ function showEditDoughModal(id) {
       
       <div class="grid grid-cols-2 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">습도 최소 (%)</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 습도 최소 (%)</label>
           <input type="number" id="dough-humidity-min" step="1" value="${dough.humidity_min ?? ''}" class="w-full px-3 py-2 border rounded-lg" placeholder="기준 없음">
         </div>
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">습도 최대 (%)</label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 습도 최대 (%)</label>
           <input type="number" id="dough-humidity-max" step="1" value="${dough.humidity_max ?? ''}" class="w-full px-3 py-2 border rounded-lg" placeholder="기준 없음">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 온도 최소 (°C)</label>
+          <input type="number" id="dough-workspace-temp-min" step="0.1" value="${dough.workspace_temp_min ?? ''}" class="w-full px-3 py-2 border rounded-lg" placeholder="기준 없음">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">작업장 온도 최대 (°C)</label>
+          <input type="number" id="dough-workspace-temp-max" step="0.1" value="${dough.workspace_temp_max ?? ''}" class="w-full px-3 py-2 border rounded-lg" placeholder="기준 없음">
         </div>
       </div>
       
@@ -14020,6 +14066,8 @@ async function saveDoughMaster(isEdit = false) {
   const phMaxVal = document.getElementById('dough-ph-max').value;
   const humidityMinEl = document.getElementById('dough-humidity-min');
   const humidityMaxEl = document.getElementById('dough-humidity-max');
+  const workspaceTempMinEl = document.getElementById('dough-workspace-temp-min');
+  const workspaceTempMaxEl = document.getElementById('dough-workspace-temp-max');
   const fermentMinEl = document.getElementById('dough-ferment-min');
   const fermentMaxEl = document.getElementById('dough-ferment-max');
   
@@ -14032,6 +14080,8 @@ async function saveDoughMaster(isEdit = false) {
     ph_max: phMaxVal !== '' ? parseFloat(phMaxVal) : null,
     humidity_min: humidityMinEl && humidityMinEl.value !== '' ? parseFloat(humidityMinEl.value) : null,
     humidity_max: humidityMaxEl && humidityMaxEl.value !== '' ? parseFloat(humidityMaxEl.value) : null,
+    workspace_temp_min: workspaceTempMinEl && workspaceTempMinEl.value !== '' ? parseFloat(workspaceTempMinEl.value) : null,
+    workspace_temp_max: workspaceTempMaxEl && workspaceTempMaxEl.value !== '' ? parseFloat(workspaceTempMaxEl.value) : null,
     fermentation_min: fermentMinEl && fermentMinEl.value !== '' ? parseFloat(fermentMinEl.value) : null,
     fermentation_max: fermentMaxEl && fermentMaxEl.value !== '' ? parseFloat(fermentMaxEl.value) : null
   };
@@ -15661,7 +15711,8 @@ function downloadProcessQuality() {
     { key: 'dough_name', label: '반죽명' },
     { key: 'dough_temp', label: '반죽온도(°C)' },
     { key: 'ph_value', label: 'pH' },
-    { key: 'humidity', label: '습도(%)' },
+    { key: 'workspace_temp', label: '작업장온도(°C)' },
+    { key: 'humidity', label: '작업장습도(%)' },
     { key: 'fermentation_time', label: '발효시간(분)' },
     { key: 'overall_judgment', label: '종합판정' },
     { key: 'worker_name', label: '담당자' }
@@ -15680,7 +15731,8 @@ function printProcessQuality() {
     { key: 'dough_name', label: '반죽명' },
     { key: 'dough_temp', label: '반죽온도', type: 'center', format: (v) => v !== null ? v + '°C' : '-' },
     { key: 'ph_value', label: 'pH', type: 'center', format: (v) => v !== null ? v : '-' },
-    { key: 'humidity', label: '습도', type: 'center', format: (v) => v !== null ? v + '%' : '-' },
+    { key: 'workspace_temp', label: '작업장온도', type: 'center', format: (v) => v !== null ? v + '°C' : '-' },
+    { key: 'humidity', label: '작업장습도', type: 'center', format: (v) => v !== null ? v + '%' : '-' },
     { key: 'fermentation_time', label: '발효시간', type: 'center', format: (v) => v !== null ? v + '분' : '-' },
     { key: 'overall_judgment', label: '종합판정', type: 'center', format: (v) => `<span class="badge ${v === '적합' ? 'badge-pass' : 'badge-fail'}">${v}</span>` },
     { key: 'worker_name', label: '담당자' }

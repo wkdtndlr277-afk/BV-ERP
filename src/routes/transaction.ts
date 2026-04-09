@@ -1426,19 +1426,23 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   const category = c.req.query('category');
   const search = c.req.query('search');
   const is_sample = c.req.query('is_sample'); // '0': 일반만, '1': 샘플만, 'all': 전체
+  const is_sanitary = c.req.query('is_sanitary'); // '0': 일반만, '1': 위생자재만, 'all': 전체
   
   // 날짜 기본값 설정
   const today = new Date().toISOString().split('T')[0];
   const dateStart = start_date || today;
   const dateEnd = end_date || today;
   
-  // 샘플 필터 - is_sample 컬럼 존재 여부 먼저 확인
+  // 샘플/위생자재 필터 - 컬럼 존재 여부 먼저 확인
   let hasSampleColumn = false;
+  let hasSanitaryColumn = false;
   try {
     const tableInfo = await c.env.DB.prepare("PRAGMA table_info(inbound)").all();
     hasSampleColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sample');
+    hasSanitaryColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sanitary');
   } catch (e) {
     hasSampleColumn = false;
+    hasSanitaryColumn = false;
   }
   
   // 샘플만 조회 요청인데 컬럼이 없으면 즉시 빈 결과 반환
@@ -1462,6 +1466,27 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     });
   }
   
+  // 위생자재만 조회 요청인데 컬럼이 없으면 즉시 빈 결과 반환
+  if (is_sanitary === '1' && !hasSanitaryColumn) {
+    return c.json({
+      success: true,
+      data: [],
+      summary: {
+        total_carry_over: 0,
+        total_inbound: 0,
+        total_usage: 0,
+        total_outbound: 0,
+        total_calc_remain: 0,
+        total_current_stock: 0,
+        total_lot_remain: 0,
+        item_count: 0,
+        diff_count: 0
+      },
+      period: { start_date: dateStart, end_date: dateEnd },
+      notice: '위생자재 관리 기능이 아직 활성화되지 않았습니다. 마이그레이션을 실행하세요.'
+    });
+  }
+  
   // 샘플 필터 조건 설정
   let sampleCondition = '1=1';
   let sampleTransCondition = '1=1';
@@ -1473,6 +1498,17 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     } else if (is_sample !== 'all') {
       sampleCondition = '(i.is_sample IS NULL OR i.is_sample = 0)';
       sampleTransCondition = '(t.is_sample IS NULL OR t.is_sample = 0)';
+    }
+  }
+  
+  // 위생자재 필터 조건 설정
+  if (hasSanitaryColumn) {
+    if (is_sanitary === '1') {
+      sampleCondition += ' AND i.is_sanitary = 1';
+      sampleTransCondition += ' AND t.is_sanitary = 1';
+    } else if (is_sanitary !== 'all') {
+      sampleCondition += ' AND (i.is_sanitary IS NULL OR i.is_sanitary = 0)';
+      sampleTransCondition += ' AND (t.is_sanitary IS NULL OR t.is_sanitary = 0)';
     }
   }
   

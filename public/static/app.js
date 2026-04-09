@@ -2231,6 +2231,15 @@ async function renderInbound() {
             </div>
           </div>
           
+          <!-- 위생자재 입고 옵션 -->
+          <div class="border-t pt-4">
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" id="inbound-is-sanitary" class="w-5 h-5 text-teal-600 rounded">
+              <span class="font-medium text-teal-700"><i class="fas fa-pump-soap mr-1"></i> 위생자재</span>
+              <span class="text-xs text-gray-500">(위생자재는 별도 수불부에서 관리됩니다)</span>
+            </label>
+          </div>
+          
           <!-- 샘플 입고 옵션 -->
           <div class="border-t pt-4">
             <label class="flex items-center gap-3 cursor-pointer">
@@ -2414,6 +2423,9 @@ async function renderInbound() {
     const isSample = document.getElementById('inbound-is-sample').checked;
     const storageLocation = document.getElementById('inbound-storage-location')?.value || '';
     
+    // 위생자재 입고 체크
+    const isSanitary = document.getElementById('inbound-is-sanitary')?.checked || false;
+    
     if (isSample && !storageLocation.trim()) {
       showToast('샘플의 보관 장소를 입력해주세요.', 'warning');
       return;
@@ -2428,6 +2440,7 @@ async function renderInbound() {
       quality_status: document.querySelector('input[name="quality"]:checked').value,
       category: selectedCategory,
       is_sample: isSample,
+      is_sanitary: isSanitary,
       storage_location: isSample ? storageLocation.trim() : null
     };
     
@@ -27173,6 +27186,9 @@ async function renderStockLedger() {
           <button onclick="switchStockLedgerTab('adjustment')" class="stock-ledger-tab px-6 py-3 font-medium text-gray-600 hover:text-haccp-primary" data-tab="adjustment">
             <i class="fas fa-balance-scale mr-2"></i>재고조정 관리
           </button>
+          <button onclick="switchStockLedgerTab('sanitary')" class="stock-ledger-tab px-6 py-3 font-medium text-teal-600 hover:text-teal-700" data-tab="sanitary">
+            <i class="fas fa-pump-soap mr-2"></i>위생자재 수불부
+          </button>
         </div>
         
         <!-- 수불부 조회 탭 -->
@@ -27387,6 +27403,52 @@ async function renderStockLedger() {
             </div>
           </div>
         </div>
+        
+        <!-- 위생자재 수불부 탭 -->
+        <div id="stock-ledger-tab-sanitary" class="p-6 hidden">
+          <div class="bg-teal-50 border border-teal-200 rounded-lg p-4 mb-6">
+            <h4 class="font-bold text-teal-800 mb-2"><i class="fas fa-pump-soap mr-2"></i>위생자재 수불부 안내</h4>
+            <ul class="text-sm text-teal-700 space-y-1">
+              <li>• 위생자재로 입고된 품목만 조회됩니다.</li>
+              <li>• 입고 등록 시 "위생자재" 옵션을 체크하면 이 화면에서 관리됩니다.</li>
+              <li>• 일반 원료/부자재와 별도로 수불 관리됩니다.</li>
+            </ul>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">시작일</label>
+              <input type="date" id="sanitary-start-date" class="w-full border rounded-lg px-3 py-2" value="${monthStart}">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">종료일</label>
+              <input type="date" id="sanitary-end-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">품목 검색</label>
+              <input type="text" id="sanitary-search" class="w-full border rounded-lg px-3 py-2" placeholder="품목명 검색">
+            </div>
+            <div class="flex items-end gap-2 col-span-2">
+              <button onclick="loadSanitaryLedger()" class="flex-1 bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700">
+                <i class="fas fa-search mr-2"></i>조회
+              </button>
+              <button onclick="downloadSanitaryLedger()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+                <i class="fas fa-file-excel mr-2"></i>엑셀
+              </button>
+              <button onclick="printSanitaryLedger()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700">
+                <i class="fas fa-print mr-2"></i>출력
+              </button>
+            </div>
+          </div>
+          
+          <!-- 위생자재 수불 목록 -->
+          <div id="sanitary-ledger-result" class="bg-white border rounded-lg">
+            <div class="p-4 text-center text-gray-500">
+              <i class="fas fa-pump-soap text-4xl text-teal-300 mb-3"></i>
+              <p>조회 버튼을 클릭하여 위생자재 수불 내역을 확인하세요</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -27412,6 +27474,7 @@ function switchStockLedgerTab(tab) {
   document.getElementById('stock-ledger-tab-upload').classList.toggle('hidden', tab !== 'upload');
   document.getElementById('stock-ledger-tab-delete').classList.toggle('hidden', tab !== 'delete');
   document.getElementById('stock-ledger-tab-adjustment').classList.toggle('hidden', tab !== 'adjustment');
+  document.getElementById('stock-ledger-tab-sanitary')?.classList.toggle('hidden', tab !== 'sanitary');
 }
 
 // 삭제 대상 조회
@@ -27900,6 +27963,173 @@ async function syncStockLedger() {
 window.syncStockLedger = syncStockLedger;
 
 // ========== 재고조정 관리 기능 끝 ==========
+
+// ========== 위생자재 수불부 ==========
+async function loadSanitaryLedger() {
+  const startDate = document.getElementById('sanitary-start-date')?.value;
+  const endDate = document.getElementById('sanitary-end-date')?.value;
+  const search = document.getElementById('sanitary-search')?.value;
+  
+  try {
+    const params = new URLSearchParams({ 
+      start_date: startDate, 
+      end_date: endDate,
+      is_sanitary: '1'  // 위생자재만 조회
+    });
+    if (search) params.append('search', search);
+    
+    const result = await api(`/transactions/stock-ledger?${params}`);
+    const data = result.data || [];
+    
+    // 전역 저장 (엑셀/출력용)
+    window.sanitaryLedgerData = { data, summary: result.summary, startDate, endDate };
+    
+    const container = document.getElementById('sanitary-ledger-result');
+    
+    if (data.length === 0) {
+      container.innerHTML = `
+        <div class="p-8 text-center text-gray-500">
+          <i class="fas fa-pump-soap text-5xl text-teal-200 mb-4"></i>
+          <p class="text-lg font-medium">위생자재 입고 내역이 없습니다</p>
+          <p class="text-sm mt-2">입고 등록 시 "위생자재" 옵션을 체크하여 등록하세요</p>
+        </div>
+      `;
+      return;
+    }
+    
+    // 요약
+    const summary = result.summary || {};
+    
+    container.innerHTML = `
+      <!-- 요약 -->
+      <div class="p-4 border-b grid grid-cols-5 gap-4">
+        <div class="bg-teal-50 rounded-lg p-3 border border-teal-200">
+          <p class="text-xs text-teal-600">이월 재고</p>
+          <p class="text-lg font-bold text-teal-800">${formatNumber(summary.total_carry_over || 0)}</p>
+        </div>
+        <div class="bg-green-50 rounded-lg p-3 border border-green-200">
+          <p class="text-xs text-green-600">기간 입고</p>
+          <p class="text-lg font-bold text-green-800">${formatNumber(summary.total_inbound || 0)}</p>
+        </div>
+        <div class="bg-orange-50 rounded-lg p-3 border border-orange-200">
+          <p class="text-xs text-orange-600">기간 사용</p>
+          <p class="text-lg font-bold text-orange-800">${formatNumber(summary.total_usage || 0)}</p>
+        </div>
+        <div class="bg-blue-50 rounded-lg p-3 border border-blue-200">
+          <p class="text-xs text-blue-600">LOT 잔량</p>
+          <p class="text-lg font-bold text-blue-800">${formatNumber(summary.total_lot_remain || 0)}</p>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
+          <p class="text-xs text-gray-600">품목 수</p>
+          <p class="text-lg font-bold text-gray-800">${summary.item_count || data.length}종</p>
+        </div>
+      </div>
+      
+      <!-- 테이블 -->
+      <div class="overflow-x-auto max-h-[500px]">
+        <table class="w-full text-sm">
+          <thead class="bg-teal-50 sticky top-0">
+            <tr>
+              <th class="px-3 py-2 text-left">품목코드</th>
+              <th class="px-3 py-2 text-left">품목명</th>
+              <th class="px-3 py-2 text-right">전일재고</th>
+              <th class="px-3 py-2 text-right text-green-600">입고</th>
+              <th class="px-3 py-2 text-right text-orange-600">사용</th>
+              <th class="px-3 py-2 text-right text-teal-600 font-bold">현재고</th>
+              <th class="px-3 py-2 text-center">소비기한</th>
+              <th class="px-3 py-2 text-center">단위</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${data.map(item => `
+              <tr class="hover:bg-teal-50">
+                <td class="px-3 py-2 font-mono text-xs">${item.item_code}</td>
+                <td class="px-3 py-2 font-medium">${item.item_name}</td>
+                <td class="px-3 py-2 text-right">${formatNumber(item.carry_over || 0)}</td>
+                <td class="px-3 py-2 text-right text-green-600">${formatNumber(item.inbound || 0)}</td>
+                <td class="px-3 py-2 text-right text-orange-600">${formatNumber(item.usage || 0)}</td>
+                <td class="px-3 py-2 text-right font-bold text-teal-700">${formatNumber(item.lot_remain || item.current_stock || 0)}</td>
+                <td class="px-3 py-2 text-center text-xs">${item.expiry_date || '-'}</td>
+                <td class="px-3 py-2 text-center">${item.unit || '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+    
+  } catch (err) {
+    showToast('위생자재 수불부 조회 실패: ' + err.message, 'error');
+  }
+}
+window.loadSanitaryLedger = loadSanitaryLedger;
+
+// 위생자재 수불부 엑셀 다운로드
+function downloadSanitaryLedger() {
+  const data = window.sanitaryLedgerData;
+  if (!data || !data.data || data.data.length === 0) {
+    showToast('다운로드할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const columns = [
+    { key: 'item_code', title: '품목코드', width: 12 },
+    { key: 'item_name', title: '품목명', width: 25 },
+    { key: 'carry_over', title: '전일재고', width: 12 },
+    { key: 'inbound', title: '입고', width: 12 },
+    { key: 'usage', title: '사용', width: 12 },
+    { key: 'lot_remain', title: '현재고', width: 12 },
+    { key: 'expiry_date', title: '소비기한', width: 12 },
+    { key: 'unit', title: '단위', width: 8 }
+  ];
+  
+  downloadExcel(data.data, columns, `위생자재수불부_${data.startDate}_${data.endDate}`);
+}
+window.downloadSanitaryLedger = downloadSanitaryLedger;
+
+// 위생자재 수불부 출력
+function printSanitaryLedger() {
+  const data = window.sanitaryLedgerData;
+  if (!data || !data.data || data.data.length === 0) {
+    showToast('출력할 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const tableHtml = `
+    <table border="1" style="border-collapse: collapse; width: 100%; font-size: 11px;">
+      <thead>
+        <tr style="background: #e0f2f1;">
+          <th style="padding: 6px;">품목코드</th>
+          <th style="padding: 6px;">품목명</th>
+          <th style="padding: 6px;">전일재고</th>
+          <th style="padding: 6px;">입고</th>
+          <th style="padding: 6px;">사용</th>
+          <th style="padding: 6px;">현재고</th>
+          <th style="padding: 6px;">소비기한</th>
+          <th style="padding: 6px;">단위</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${data.data.map(item => `
+          <tr>
+            <td style="padding: 6px;">${item.item_code}</td>
+            <td style="padding: 6px;">${item.item_name}</td>
+            <td style="padding: 6px; text-align: right;">${formatNumber(item.carry_over || 0)}</td>
+            <td style="padding: 6px; text-align: right;">${formatNumber(item.inbound || 0)}</td>
+            <td style="padding: 6px; text-align: right;">${formatNumber(item.usage || 0)}</td>
+            <td style="padding: 6px; text-align: right; font-weight: bold;">${formatNumber(item.lot_remain || item.current_stock || 0)}</td>
+            <td style="padding: 6px; text-align: center;">${item.expiry_date || '-'}</td>
+            <td style="padding: 6px; text-align: center;">${item.unit || '-'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+  
+  printData(`위생자재 수불부 (${data.startDate} ~ ${data.endDate})`, tableHtml, { orientation: 'landscape' });
+}
+window.printSanitaryLedger = printSanitaryLedger;
+// ========== 위생자재 수불부 끝 ==========
 
 async function loadStockLedger() {
   const startDate = document.getElementById('ledger-start-date').value;

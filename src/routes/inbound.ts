@@ -19,6 +19,7 @@ inboundRoutes.get('/query', async (c) => {
   const category = c.req.query('category'); // 원료, 부자재, 전체
   const item_search = c.req.query('item_search'); // 품목명/코드 검색
   const is_sample = c.req.query('is_sample'); // 샘플 필터 (0, 1, 'all')
+  const is_sanitary = c.req.query('is_sanitary'); // 위생자재 필터 (0, 1, 'all')
   
   let dateFilter = '';
   const params: any[] = [];
@@ -58,13 +59,16 @@ inboundRoutes.get('/query', async (c) => {
     }
   }
   
-  // 샘플 필터 - is_sample 컬럼 존재 여부 먼저 확인
+  // 샘플/위생자재 필터 - 컬럼 존재 여부 먼저 확인
   let hasSampleColumn = false;
+  let hasSanitaryColumn = false;
   try {
     const tableInfo = await c.env.DB.prepare("PRAGMA table_info(inbound)").all();
     hasSampleColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sample');
+    hasSanitaryColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sanitary');
   } catch (e) {
     hasSampleColumn = false;
+    hasSanitaryColumn = false;
   }
   
   // 샘플만 조회 요청인데 컬럼이 없으면 즉시 빈 결과 반환
@@ -83,6 +87,22 @@ inboundRoutes.get('/query', async (c) => {
     });
   }
   
+  // 위생자재만 조회 요청인데 컬럼이 없으면 즉시 빈 결과 반환
+  if (is_sanitary === '1' && !hasSanitaryColumn) {
+    return c.json({ 
+      success: true, 
+      data: {
+        details: [],
+        summary: view_type === 'daily' ? {} : [],
+        itemSummary: [],
+        supplierSummary: [],
+        view_type,
+        date,
+        notice: '위생자재 관리 기능이 아직 활성화되지 않았습니다.'
+      }
+    });
+  }
+  
   // 샘플 필터 설정
   let sampleFilter = '';
   if (hasSampleColumn) {
@@ -90,6 +110,16 @@ inboundRoutes.get('/query', async (c) => {
       sampleFilter = ' AND i.is_sample = 1';
     } else if (is_sample !== 'all') {
       sampleFilter = ' AND (i.is_sample IS NULL OR i.is_sample = 0)';
+    }
+  }
+  
+  // 위생자재 필터 설정
+  let sanitaryFilter = '';
+  if (hasSanitaryColumn) {
+    if (is_sanitary === '1') {
+      sanitaryFilter = ' AND i.is_sanitary = 1';
+    } else if (is_sanitary !== 'all') {
+      sanitaryFilter = ' AND (i.is_sanitary IS NULL OR i.is_sanitary = 0)';
     }
   }
   // 컬럼이 없고 is_sample !== '1'이면 필터 없이 진행 (모든 데이터를 일반으로 취급)
@@ -104,7 +134,7 @@ inboundRoutes.get('/query', async (c) => {
     FROM inbound i 
     LEFT JOIN master m ON i.item_code = m.item_code
     LEFT JOIN supplies s ON i.item_code = s.item_code
-    WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
+    WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}${sanitaryFilter}
     ORDER BY i.inbound_date DESC, i.id DESC
   `;
   
@@ -125,7 +155,7 @@ inboundRoutes.get('/query', async (c) => {
       FROM inbound i
       LEFT JOIN master m ON i.item_code = m.item_code
       LEFT JOIN supplies s ON i.item_code = s.item_code
-      WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
+      WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}${sanitaryFilter}
     `;
   } else {
     // 월별인 경우 일자별 그룹핑
@@ -138,7 +168,7 @@ inboundRoutes.get('/query', async (c) => {
       FROM inbound i
       LEFT JOIN master m ON i.item_code = m.item_code
       LEFT JOIN supplies s ON i.item_code = s.item_code
-      WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
+      WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}${sanitaryFilter}
       GROUP BY DATE(i.inbound_date)
       ORDER BY DATE(i.inbound_date) DESC
     `;
@@ -159,7 +189,7 @@ inboundRoutes.get('/query', async (c) => {
     FROM inbound i
     LEFT JOIN master m ON i.item_code = m.item_code
     LEFT JOIN supplies s ON i.item_code = s.item_code
-    WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
+    WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}${sanitaryFilter}
     GROUP BY i.item_code, COALESCE(m.item_name, s.item_name), COALESCE(m.category, '부자재'), COALESCE(m.unit, s.unit)
     ORDER BY SUM(i.origin_qty) DESC
     LIMIT 10
@@ -176,7 +206,7 @@ inboundRoutes.get('/query', async (c) => {
     FROM inbound i
     LEFT JOIN master m ON i.item_code = m.item_code
     LEFT JOIN supplies s ON i.item_code = s.item_code
-    WHERE i.supplier IS NOT NULL AND i.supplier != '' AND (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}
+    WHERE i.supplier IS NOT NULL AND i.supplier != '' AND (m.item_code IS NOT NULL OR s.item_code IS NOT NULL) ${dateFilter}${sampleFilter}${sanitaryFilter}
     GROUP BY i.supplier
     ORDER BY SUM(i.origin_qty) DESC
     LIMIT 10
@@ -267,20 +297,23 @@ inboundRoutes.get('/lot/:lot_number', async (c) => {
 // 입고 등록
 inboundRoutes.post('/', async (c) => {
   try {
-    const body = await c.req.json<InboundRequest & { is_sample?: boolean; storage_location?: string }>();
-    const { item_code, quantity, inbound_date, expiry_date, supplier, quality_status, is_sample, storage_location } = body;
+    const body = await c.req.json<InboundRequest & { is_sample?: boolean; is_sanitary?: boolean; storage_location?: string }>();
+    const { item_code, quantity, inbound_date, expiry_date, supplier, quality_status, is_sample, is_sanitary, storage_location } = body;
     
     if (!item_code || !quantity || quantity <= 0) {
       return c.json({ success: false, error: '품목과 수량을 올바르게 입력해주세요.' }, 400);
     }
     
-    // is_sample 컬럼 존재 여부 확인
+    // is_sample, is_sanitary 컬럼 존재 여부 확인
     let hasSampleColumn = false;
+    let hasSanitaryColumn = false;
     try {
       const tableInfo = await c.env.DB.prepare("PRAGMA table_info(inbound)").all();
       hasSampleColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sample');
+      hasSanitaryColumn = (tableInfo.results || []).some((col: any) => col.name === 'is_sanitary');
     } catch (e) {
       hasSampleColumn = false;
+      hasSanitaryColumn = false;
     }
     
     // 샘플인 경우 보관 장소 필수 (컬럼이 있을 때만)
@@ -329,8 +362,26 @@ inboundRoutes.post('/', async (c) => {
   // 부자재는 expiry_date가 없을 수 있으므로 null 처리
   const expiryDateValue = expiry_date || null;
   
-  if (hasSampleColumn) {
-    // 샘플 컬럼이 있는 경우 (신규 스키마)
+  if (hasSampleColumn && hasSanitaryColumn) {
+    // 샘플 + 위생자재 컬럼이 있는 경우 (신규 스키마)
+    await c.env.DB.prepare(`
+      INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, is_sanitary, storage_location)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      lot_number, 
+      item_code, 
+      inbound_date, 
+      expiryDateValue, 
+      quantity, 
+      quantity, 
+      quality_status || '합격', 
+      supplier || null,
+      is_sample ? 1 : 0,
+      is_sanitary ? 1 : 0,
+      is_sample ? storage_location : null
+    ).run();
+  } else if (hasSampleColumn) {
+    // 샘플 컬럼만 있는 경우
     await c.env.DB.prepare(`
       INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, storage_location)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -347,7 +398,7 @@ inboundRoutes.post('/', async (c) => {
       is_sample ? storage_location : null
     ).run();
   } else {
-    // 샘플 컬럼이 없는 경우 (기존 스키마)
+    // 기존 스키마
     await c.env.DB.prepare(`
       INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -583,6 +634,33 @@ inboundRoutes.post('/delete-batch', async (c) => {
   } catch (error: any) {
     console.error('일괄 삭제 오류:', error);
     return c.json({ success: false, error: `삭제 실패: ${error.message}` }, 500);
+  }
+});
+
+// 위생자재 컬럼 마이그레이션
+inboundRoutes.post('/migrate-sanitary', async (c) => {
+  try {
+    // is_sanitary 컬럼 추가
+    try {
+      await c.env.DB.prepare(`ALTER TABLE inbound ADD COLUMN is_sanitary INTEGER DEFAULT 0`).run();
+    } catch (e: any) {
+      if (!e.message?.includes('duplicate column')) {
+        console.log('is_sanitary column already exists');
+      }
+    }
+    
+    // transactions 테이블에도 추가
+    try {
+      await c.env.DB.prepare(`ALTER TABLE transactions ADD COLUMN is_sanitary INTEGER DEFAULT 0`).run();
+    } catch (e: any) {
+      if (!e.message?.includes('duplicate column')) {
+        console.log('transactions.is_sanitary column already exists');
+      }
+    }
+    
+    return c.json({ success: true, message: '위생자재 컬럼 마이그레이션 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
   }
 });
 

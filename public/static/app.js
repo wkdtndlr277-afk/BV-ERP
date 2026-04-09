@@ -27475,6 +27475,11 @@ function switchStockLedgerTab(tab) {
   document.getElementById('stock-ledger-tab-delete').classList.toggle('hidden', tab !== 'delete');
   document.getElementById('stock-ledger-tab-adjustment').classList.toggle('hidden', tab !== 'adjustment');
   document.getElementById('stock-ledger-tab-sanitary')?.classList.toggle('hidden', tab !== 'sanitary');
+  
+  // 위생자재 탭 선택 시 자동 로드
+  if (tab === 'sanitary') {
+    loadSanitaryLedger();
+  }
 }
 
 // 삭제 대상 조회

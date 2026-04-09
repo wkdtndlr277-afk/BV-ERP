@@ -2149,14 +2149,18 @@ async function renderInbound() {
           <!-- 카테고리 선택 -->
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-2">카테고리 <span class="text-red-500">*</span></label>
-            <div class="flex gap-4">
+            <div class="flex gap-4 flex-wrap">
               <label class="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="inbound-category" value="원료" checked class="w-4 h-4 text-blue-600">
+                <input type="radio" name="inbound-category" value="원료" checked class="w-4 h-4 text-blue-600" onchange="updateSanitaryCheckbox()">
                 <span class="text-blue-600 font-medium"><i class="fas fa-leaf mr-1"></i>원료</span>
               </label>
               <label class="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="inbound-category" value="부자재" class="w-4 h-4 text-purple-600">
+                <input type="radio" name="inbound-category" value="부자재" class="w-4 h-4 text-purple-600" onchange="updateSanitaryCheckbox()">
                 <span class="text-purple-600 font-medium"><i class="fas fa-box mr-1"></i>부자재</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="radio" name="inbound-category" value="위생자재" class="w-4 h-4 text-teal-600" onchange="updateSanitaryCheckbox()">
+                <span class="text-teal-600 font-medium"><i class="fas fa-pump-soap mr-1"></i>위생자재</span>
               </label>
             </div>
           </div>
@@ -2231,12 +2235,12 @@ async function renderInbound() {
             </div>
           </div>
           
-          <!-- 위생자재 입고 옵션 -->
-          <div class="border-t pt-4">
+          <!-- 위생자재 입고 옵션 (카테고리가 위생자재일 때 자동 체크) -->
+          <div id="sanitary-option-container" class="border-t pt-4 hidden">
             <label class="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" id="inbound-is-sanitary" class="w-5 h-5 text-teal-600 rounded">
+              <input type="checkbox" id="inbound-is-sanitary" class="w-5 h-5 text-teal-600 rounded" checked disabled>
               <span class="font-medium text-teal-700"><i class="fas fa-pump-soap mr-1"></i> 위생자재</span>
-              <span class="text-xs text-gray-500">(위생자재는 별도 수불부에서 관리됩니다)</span>
+              <span class="text-xs text-gray-500">(위생자재 카테고리는 별도 수불부에서 관리됩니다)</span>
             </label>
           </div>
           
@@ -2283,11 +2287,13 @@ async function renderInbound() {
       searchInput.value = '';
       searchResults.classList.add('hidden');
       clearSelectedItem();
-      // 부자재 선택 시 소비기한 필수 표시 숨김
+      // 부자재/위생자재 선택 시 소비기한 필수 표시 숨김
       const expiryMark = document.getElementById('expiry-required-mark');
       if (expiryMark) {
-        expiryMark.style.display = this.value === '부자재' ? 'none' : 'inline';
+        expiryMark.style.display = (this.value === '부자재' || this.value === '위생자재') ? 'none' : 'inline';
       }
+      // 위생자재 옵션 표시/숨김
+      updateSanitaryCheckbox();
     });
   });
   
@@ -2300,21 +2306,23 @@ async function renderInbound() {
       return;
     }
     
-    // 선택된 카테고리에 맞게 필터링
+    // 선택된 카테고리에 맞게 필터링 (위생자재는 부자재 카테고리에서 검색)
+    const searchCategory = selectedCategory === '위생자재' ? '부자재' : selectedCategory;
     const filtered = window.inboundMasterItems.filter(item => 
       (item.item_name.toLowerCase().includes(term) || 
        item.item_code.toLowerCase().includes(term)) &&
-      item.category === selectedCategory
+      item.category === searchCategory
     );
     
     if (filtered.length === 0) {
       // 검색 결과 없음 - 신규 등록 옵션 표시
-      const categoryLabel = selectedCategory === '부자재' ? '부자재' : '원료';
+      const categoryLabel = selectedCategory === '위생자재' ? '위생자재' : (selectedCategory === '부자재' ? '부자재' : '원료');
+      const registerCategory = selectedCategory === '위생자재' ? '부자재' : selectedCategory;
       searchResults.innerHTML = `
         <div class="p-3 text-gray-500 text-center border-b">
           <i class="fas fa-search mr-1"></i> "${e.target.value}" ${categoryLabel} 검색 결과가 없습니다
         </div>
-        <div class="p-3 hover:bg-green-50 cursor-pointer text-center" onclick="showNewItemModal('${e.target.value}', '${selectedCategory}')">
+        <div class="p-3 hover:bg-green-50 cursor-pointer text-center" onclick="showNewItemModal('${e.target.value}', '${registerCategory}')">
           <i class="fas fa-plus-circle text-green-600 mr-1"></i>
           <span class="text-green-600 font-medium">"${e.target.value}" 신규 ${categoryLabel} 등록</span>
         </div>
@@ -2423,8 +2431,8 @@ async function renderInbound() {
     const isSample = document.getElementById('inbound-is-sample').checked;
     const storageLocation = document.getElementById('inbound-storage-location')?.value || '';
     
-    // 위생자재 입고 체크
-    const isSanitary = document.getElementById('inbound-is-sanitary')?.checked || false;
+    // 위생자재 입고 체크 (위생자재 카테고리이면 자동 true)
+    const isSanitary = selectedCategory === '위생자재' || (document.getElementById('inbound-is-sanitary')?.checked || false);
     
     if (isSample && !storageLocation.trim()) {
       showToast('샘플의 보관 장소를 입력해주세요.', 'warning');
@@ -2435,7 +2443,7 @@ async function renderInbound() {
       item_code: itemCode,
       quantity: parseFloat(document.getElementById('inbound-qty').value),
       inbound_date: inboundDate,
-      expiry_date: selectedCategory === '부자재' ? null : (expiryDate || null),
+      expiry_date: (selectedCategory === '부자재' || selectedCategory === '위생자재') ? null : (expiryDate || null),
       supplier: document.getElementById('inbound-supplier').value,
       quality_status: document.querySelector('input[name="quality"]:checked').value,
       category: selectedCategory,
@@ -3067,6 +3075,29 @@ function toggleSampleOptions() {
     sampleOptions.classList.add('hidden');
     storageInput.removeAttribute('required');
     storageInput.value = '';
+  }
+}
+
+// 위생자재 카테고리 선택 시 옵션 업데이트
+function updateSanitaryCheckbox() {
+  const selectedCategory = document.querySelector('input[name="inbound-category"]:checked')?.value || '원료';
+  const sanitaryContainer = document.getElementById('sanitary-option-container');
+  const sanitaryCheckbox = document.getElementById('inbound-is-sanitary');
+  
+  if (selectedCategory === '위생자재') {
+    // 위생자재 카테고리 선택 시 자동 체크 표시
+    if (sanitaryContainer) sanitaryContainer.classList.remove('hidden');
+    if (sanitaryCheckbox) {
+      sanitaryCheckbox.checked = true;
+      sanitaryCheckbox.disabled = true;
+    }
+  } else {
+    // 다른 카테고리 선택 시 숨김
+    if (sanitaryContainer) sanitaryContainer.classList.add('hidden');
+    if (sanitaryCheckbox) {
+      sanitaryCheckbox.checked = false;
+      sanitaryCheckbox.disabled = false;
+    }
   }
 }
 
@@ -28148,6 +28179,7 @@ async function loadStockLedger() {
     if (category && category !== '전체') params.append('category', category);
     if (search) params.append('search', search);
     params.append('is_sample', sampleFilter);
+    params.append('is_sanitary', '0');  // 일반 수불부에서는 위생자재 제외
     
     const result = await api(`/transactions/stock-ledger?${params}`);
     

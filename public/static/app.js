@@ -29520,7 +29520,7 @@ function renderProductionItemsManagement(container) {
                     <button onclick="showEditBomModal('${item.production_code}')" class="p-1.5 text-green-600 hover:bg-green-50 rounded" title="BOM">
                       <i class="fas fa-list-ul"></i>
                     </button>
-                    <button onclick="showBarcodeModal('${item.production_code}', ${JSON.stringify(item.production_name || '')})" class="p-1.5 text-orange-600 hover:bg-orange-50 rounded" title="바코드">
+                    <button onclick="showBarcodeModal('${item.production_code}', this.dataset.name)" data-name="${(item.production_name || '').replace(/"/g, '&quot;')}" class="p-1.5 text-orange-600 hover:bg-orange-50 rounded" title="바코드">
                       <i class="fas fa-barcode"></i>
                     </button>
                     <button onclick="deleteProductionItem('${item.production_code}')" class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="삭제">

@@ -1572,6 +1572,11 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     params.push(`%${search}%`, `%${search}%`);
   }
   
+  // 위생자재만 조회할 경우: 위생자재로 입고된 적이 있는 품목만 필터
+  if (hasSanitaryColumn && is_sanitary === '1') {
+    query += ' AND EXISTS (SELECT 1 FROM inbound i2 WHERE i2.item_code = m.item_code AND i2.is_sanitary = 1)';
+  }
+  
   query += ' ORDER BY m.category, m.item_name';
   
   const result = await c.env.DB.prepare(query).bind(...params).all();

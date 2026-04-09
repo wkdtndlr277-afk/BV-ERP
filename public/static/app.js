@@ -24746,13 +24746,12 @@ function renderBarcodeProductionPlanResult(data, fileName) {
   window.barcodeProductionPlanFileName = fileName;
 }
 
-// 소비기한 계산 헬퍼 (생산일 + 소비기한일수)
+// 소비기한 계산 헬퍼 (오늘 기준 + 소비기한일수)
 function calculateExpiryDate(shelfLifeDays) {
   if (!shelfLifeDays) return null;
-  const dateInput = document.getElementById('production-plan-date');
-  const baseDate = dateInput ? new Date(dateInput.value) : new Date();
-  baseDate.setDate(baseDate.getDate() + shelfLifeDays);
-  return baseDate.toISOString().split('T')[0];
+  const today = new Date();
+  today.setDate(today.getDate() + shelfLifeDays);
+  return today.toISOString().split('T')[0];
 }
 
 // 매칭 품목 테이블
@@ -29555,7 +29554,7 @@ async function showEditProductionItemModal(code) {
         <div class="flex items-center gap-2">
           <input type="number" id="edit-production-shelf-life" class="w-32 border rounded-lg px-4 py-2" 
                  value="${item.shelf_life_days || ''}" placeholder="예: 3" min="0">
-          <span class="text-sm text-gray-500">생산일 기준 (예: 3일 → 생산일+3일이 소비기한)</span>
+          <span class="text-sm text-gray-500">발주 등록일(오늘) 기준 (예: 3일 → 오늘+3일)</span>
         </div>
       </div>
     </div>

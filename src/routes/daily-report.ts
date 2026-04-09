@@ -263,12 +263,12 @@ dailyReport.post('/reports/from-order', async (c) => {
     const hasBom = (productionInfo?.bom_count || 0) > 0 ? 1 : 0
     const shelfLifeDays = productionInfo?.shelf_life_days || null
     
-    // 소비기한 계산 (생산일 + 소비기한 일수)
+    // 소비기한 계산 (발주서 등록일(오늘) 기준 + 소비기한 일수)
     let expiryDate: string | null = null
-    if (shelfLifeDays && report_date) {
-      const prodDate = new Date(report_date)
-      prodDate.setDate(prodDate.getDate() + shelfLifeDays)
-      expiryDate = prodDate.toISOString().split('T')[0]
+    if (shelfLifeDays) {
+      const today = new Date()
+      today.setDate(today.getDate() + shelfLifeDays)
+      expiryDate = today.toISOString().split('T')[0]
     }
     
     // 품목 등록

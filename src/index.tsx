@@ -739,6 +739,14 @@ app.get('/*', (c) => {
     <!-- Toast Container -->
     <div id="toast-container" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
     
+    <!-- Global Loading Overlay -->
+    <div id="loading-overlay" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-[9999] hidden">
+      <div class="bg-white rounded-xl p-6 shadow-2xl flex flex-col items-center gap-3">
+        <div class="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
+        <p id="loading-text" class="text-gray-700 font-medium">처리 중...</p>
+      </div>
+    </div>
+    
     <!-- Modal Container -->
     <div id="modal-container"></div>
     

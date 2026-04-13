@@ -318,6 +318,33 @@ function showToast(message, type = 'success') {
   setTimeout(() => toast.remove(), 3000);
 }
 
+// 전역 로딩 오버레이 표시/숨김
+let loadingCount = 0;
+function showLoading(text = '처리 중...') {
+  loadingCount++;
+  const overlay = document.getElementById('loading-overlay');
+  const textEl = document.getElementById('loading-text');
+  if (overlay) {
+    overlay.classList.remove('hidden');
+    if (textEl) textEl.textContent = text;
+  }
+}
+
+function hideLoading() {
+  loadingCount = Math.max(0, loadingCount - 1);
+  if (loadingCount === 0) {
+    const overlay = document.getElementById('loading-overlay');
+    if (overlay) overlay.classList.add('hidden');
+  }
+}
+
+// 강제로 로딩 숨김 (에러 발생 시)
+function forceHideLoading() {
+  loadingCount = 0;
+  const overlay = document.getElementById('loading-overlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
 function showModal(title, content, actions = '', maxWidth = 'max-w-lg') {
   const container = document.getElementById('modal-container');
   container.innerHTML = `
@@ -2452,6 +2479,7 @@ async function renderInbound() {
       storage_location: isSample ? storageLocation.trim() : null
     };
     
+    showLoading('입고 등록 중...');
     try {
       const result = await api('/inbound', 'POST', data);
       const sampleLabel = data.is_sample ? ' [샘플]' : '';
@@ -2508,6 +2536,8 @@ async function renderInbound() {
       }
     } catch (e) {
       // Error already handled in api function
+    } finally {
+      hideLoading();
     }
   });
 }
@@ -9671,6 +9701,7 @@ async function saveMaster(isEdit) {
     expiry_days: parseInt(document.getElementById('master-expiry').value) || 365
   };
   
+  showLoading('품목 저장 중...');
   try {
     if (isEdit) {
       await api(`/master/${data.item_code}`, 'PUT', data);
@@ -9684,6 +9715,8 @@ async function saveMaster(isEdit) {
     renderMaster();
   } catch (e) {
     // Error handled
+  } finally {
+    hideLoading();
   }
 }
 
@@ -13842,6 +13875,7 @@ async function saveProcessQuality() {
     return;
   }
   
+  showLoading('품질 기록 저장 중...');
   try {
     if (id) {
       await api(`/process/quality/${id}`, 'PUT', data);
@@ -13855,6 +13889,8 @@ async function saveProcessQuality() {
     loadProcessQualityData();
   } catch (e) {
     // Error handled
+  } finally {
+    hideLoading();
   }
 }
 
@@ -16367,6 +16403,7 @@ async function submitProduction() {
     return;
   }
   
+  showLoading('생산 등록 중...');
   try {
     const result = await api('/production', 'POST', data);
     showToast(`생산 등록 완료! LOT: ${result.data?.lot_number}`, 'success');
@@ -16384,6 +16421,8 @@ async function submitProduction() {
     loadTodayProduction();
   } catch (e) {
     // Error handled
+  } finally {
+    hideLoading();
   }
 }
 
@@ -16771,6 +16810,16 @@ async function processOrderFile(file) {
   } catch (e) {
     console.log('생산명 데이터 로드 실패 (기존 방식으로 매칭)');
     window.productionItemsData = [];
+  }
+  
+  // 바코드 데이터 로드 (발주서 바코드 매칭용)
+  try {
+    const barcodeResult = await api('/daily-report/barcodes');
+    window.productionBarcodes = barcodeResult.data || [];
+    console.log('바코드 데이터 로드:', window.productionBarcodes.length, '개');
+  } catch (e) {
+    console.log('바코드 데이터 로드 실패');
+    window.productionBarcodes = [];
   }
   
   console.log('발주서 처리 - 마스터 데이터:', state.masterItems.length, '항목 (제품:', 
@@ -17793,7 +17842,35 @@ function matchOrderToProducts(items) {
     // cleanName에서 추가 정제
     const cleanedName = cleanOrderProductName(item.originalName);
     
-    // 1. 생산명 매칭 먼저 시도 (production_items 테이블에서 검색)
+    // 0. 바코드 매칭 먼저 시도 (가장 정확함)
+    if (item.barcode && window.productionBarcodes && window.productionBarcodes.length > 0) {
+      const barcodeStr = String(item.barcode).trim();
+      const barcodeMatch = window.productionBarcodes.find(bc => String(bc.barcode).trim() === barcodeStr);
+      
+      if (barcodeMatch) {
+        // 생산명 정보 찾기
+        const productionItem = window.productionItemsData?.find(pi => pi.production_code === barcodeMatch.production_code);
+        console.log(`바코드 매칭: "${barcodeStr}" → "${barcodeMatch.production_name}" (${barcodeMatch.production_code})`);
+        
+        return {
+          ...item,
+          cleanName: cleanedName,
+          matchedProduct: {
+            item_code: barcodeMatch.production_code,
+            item_name: barcodeMatch.production_name,
+            matchType: 'barcode'  // 바코드 매칭 표시
+          },
+          productionItem: productionItem || {
+            production_code: barcodeMatch.production_code,
+            production_name: barcodeMatch.production_name,
+            bom_count: 0
+          },
+          hasBOM: productionItem?.bom_count > 0 || false
+        };
+      }
+    }
+    
+    // 1. 생산명 매칭 시도 (production_items 테이블에서 검색)
     // 생산명은 미리 로드된 productionItemsData에서 검색
     let productionMatch = null;
     if (window.productionItemsData && window.productionItemsData.length > 0) {
@@ -18176,7 +18253,17 @@ async function showOrderPreview(items, fileName) {
       <td class="px-3 py-2">
         <div class="flex items-center gap-2">
           ${item.matchedProduct 
-            ? `<span class="text-green-600 flex-1"><i class="fas fa-check-circle mr-1"></i>${item.matchedProduct.item_name}</span>
+            ? `<span class="text-green-600 flex-1">
+                 <i class="fas fa-check-circle mr-1"></i>${item.matchedProduct.item_name}
+                 <span class="ml-1 px-1.5 py-0.5 text-xs rounded ${
+                   item.matchedProduct.matchType === 'barcode' ? 'bg-purple-100 text-purple-700' :
+                   item.matchedProduct.matchType === 'production' ? 'bg-blue-100 text-blue-700' :
+                   'bg-gray-100 text-gray-600'
+                 }">${
+                   item.matchedProduct.matchType === 'barcode' ? '바코드' :
+                   item.matchedProduct.matchType === 'production' ? '생산명' : '제품'
+                 }</span>
+               </span>
                <button onclick="openManualMatchModal(${idx})" class="text-blue-500 hover:text-blue-700 text-xs px-2 py-1 border rounded" title="다른 제품으로 변경">
                  <i class="fas fa-exchange-alt"></i>
                </button>`
@@ -20481,6 +20568,7 @@ async function saveBOM() {
     return;
   }
   
+  showLoading('BOM 저장 중...');
   try {
     await api('/bom', 'POST', data);
     showToast('원재료가 추가되었습니다', 'success');
@@ -20489,6 +20577,8 @@ async function saveBOM() {
     loadBOMSummary();
   } catch (e) {
     // Error handled
+  } finally {
+    hideLoading();
   }
 }
 
@@ -21135,6 +21225,7 @@ async function submitProductOutbound() {
     return;
   }
   
+  showLoading('출고 등록 중...');
   try {
     // 제품 출고 기록
     await api('/outbound', 'POST', {
@@ -21159,6 +21250,8 @@ async function submitProductOutbound() {
     renderProductOutbound(); // 제품 목록 갱신
   } catch (e) {
     // Error handled
+  } finally {
+    hideLoading();
   }
 }
 
@@ -28998,6 +29091,7 @@ async function submitBulkUsage() {
     return;
   }
   
+  showLoading('사용량 등록 중...');
   try {
     const result = await api('/transactions/bulk-usage', 'POST', {
       usage_date: usageDate,
@@ -29074,6 +29168,8 @@ async function submitBulkUsage() {
     
   } catch (err) {
     showToast('등록 실패: ' + err.message, 'error');
+  } finally {
+    hideLoading();
   }
 }
 

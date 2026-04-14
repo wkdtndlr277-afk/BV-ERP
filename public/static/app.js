@@ -17586,8 +17586,9 @@ function parseCoupangOrder(rows) {
       if (i + 1 < rows.length) {
         const nextRow = rows[i + 1];
         const nextFirstCell = String(nextRow[0] || '').trim();
-        // 다음 행의 첫 번째 셀이 비어있으면 바코드 행
-        if (nextFirstCell === '' || nextFirstCell === 'undefined') {
+        // 다음 행의 첫 번째 셀이 순번이 아니면 바코드 행 (빈 셀, undefined, null, 숫자 아닌 경우)
+        const isNotSeqNum = !nextFirstCell || nextFirstCell === 'undefined' || nextFirstCell === 'null' || !/^\d+$/.test(nextFirstCell);
+        if (isNotSeqNum) {
           const barcodeCandidate = String(nextRow[nameCol] || '').trim();
           // 13자리 숫자인 경우 바코드로 인식
           if (/^\d{13}$/.test(barcodeCandidate)) {

@@ -17545,7 +17545,7 @@ function parseKurlyMultiSheet(wb, fileName) {
   return items;
 }
 
-// 쿠팡 발주서 파싱
+// 쿠팡 발주서 파싱 - 바코드 포함
 function parseCoupangOrder(rows) {
   const items = [];
   let headerIdx = -1;
@@ -17581,6 +17581,22 @@ function parseCoupangOrder(rows) {
       const qtyRaw = String(row[qtyCol] || '').replace(/,/g, '').trim();
       const quantity = parseInt(qtyRaw) || 0;
       
+      // 다음 행에서 바코드 추출 (쿠팡은 상품행 다음에 바코드 행이 있음)
+      let barcode = null;
+      if (i + 1 < rows.length) {
+        const nextRow = rows[i + 1];
+        const nextFirstCell = String(nextRow[0] || '').trim();
+        // 다음 행의 첫 번째 셀이 비어있으면 바코드 행
+        if (nextFirstCell === '' || nextFirstCell === 'undefined') {
+          const barcodeCandidate = String(nextRow[nameCol] || '').trim();
+          // 13자리 숫자인 경우 바코드로 인식
+          if (/^\d{13}$/.test(barcodeCandidate)) {
+            barcode = barcodeCandidate;
+            console.log(`쿠팡 바코드 추출: "${productName}" → ${barcode}`);
+          }
+        }
+      }
+      
       if (productName && quantity > 0) {
         // 상품명 정리 (쿠팡 형식 제거)
         const cleanName = productName
@@ -17595,13 +17611,14 @@ function parseCoupangOrder(rows) {
         items.push({
           originalName: productName,
           cleanName: cleanName,
-          quantity: quantity
+          quantity: quantity,
+          barcode: barcode  // 바코드 추가
         });
       }
     }
   }
   
-  console.log(`쿠팡 파싱 완료: ${items.length}개 품목`);
+  console.log(`쿠팡 파싱 완료: ${items.length}개 품목, 바코드 ${items.filter(i => i.barcode).length}개`);
   return items;
 }
 

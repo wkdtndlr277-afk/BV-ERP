@@ -17877,10 +17877,19 @@ function matchOrderToProducts(items) {
       const barcodeStr = String(item.barcode).trim();
       const barcodeMatch = window.productionBarcodes.find(bc => String(bc.barcode).trim() === barcodeStr);
       
+      // 디버그: 바코드 매칭 시도 로그
+      if (!barcodeMatch && barcodeStr) {
+        console.log(`바코드 미매칭: "${barcodeStr}" (등록된 바코드 ${window.productionBarcodes.length}개 중 없음)`);
+        // 첫 5개 등록된 바코드 샘플 출력
+        if (window.productionBarcodes.length > 0) {
+          console.log('등록된 바코드 샘플:', window.productionBarcodes.slice(0, 5).map(b => b.barcode));
+        }
+      }
+      
       if (barcodeMatch) {
         // 생산명 정보 찾기
         const productionItem = window.productionItemsData?.find(pi => pi.production_code === barcodeMatch.production_code);
-        console.log(`바코드 매칭: "${barcodeStr}" → "${barcodeMatch.production_name}" (${barcodeMatch.production_code})`);
+        console.log(`바코드 매칭 성공: "${barcodeStr}" → "${barcodeMatch.production_name}" (${barcodeMatch.production_code})`);
         
         return {
           ...item,

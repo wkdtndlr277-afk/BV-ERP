@@ -519,11 +519,33 @@ productionRoutes.post('/batch', async (c) => {
         item.quantity
       ).run();
       
-      // 5. 제품 입고 트랜잭션
+      // 5. 제품 입고 트랜잭션 (생산일에 '생산' 입고)
       await c.env.DB.prepare(`
         INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo)
         VALUES (?, ?, '입고', ?, ?, ?)
       `).bind(productionDate, item.product_code, item.quantity, productLot, `생산입고 (생산ID: ${productionId})`).run();
+      
+      // 6. HACCP 제품 수불부: 익일 자동 출고 트랜잭션 생성
+      // 생산 후 다음날 출고 처리 (HACCP 요구사항)
+      const nextDay = new Date(productionDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const nextDayStr = nextDay.toISOString().split('T')[0];
+      
+      await c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo)
+        VALUES (?, ?, '출고', ?, ?, ?)
+      `).bind(nextDayStr, item.product_code, item.quantity, productLot, `생산출고 (생산ID: ${productionId}, 생산일: ${productionDate})`).run();
+      
+      // 7. 익일 출고 시 inbound remain_qty 차감 및 master 재고 차감
+      await c.env.DB.prepare(`
+        UPDATE inbound SET remain_qty = remain_qty - ?, updated_at = CURRENT_TIMESTAMP
+        WHERE lot_number = ? AND item_code = ?
+      `).bind(item.quantity, productLot, item.product_code).run();
+      
+      await c.env.DB.prepare(`
+        UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
+        WHERE item_code = ?
+      `).bind(item.quantity, item.product_code).run();
       
       results.push({ 
         product_code: item.product_code, 

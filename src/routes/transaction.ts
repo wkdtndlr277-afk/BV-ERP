@@ -874,6 +874,7 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
     // 카테고리 필터 조건 생성
     let masterCategoryFilter = '';
     let suppliesCategoryFilter = '';
+    let productCategoryFilter = '';
     const categoryParams: any[] = [];
     
     if (category && category !== '전체') {
@@ -881,10 +882,17 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
         // 부자재만 조회 - supplies만 사용
         masterCategoryFilter = ' AND 1=0'; // master 제외
         suppliesCategoryFilter = ''; // supplies 전체
+        productCategoryFilter = ' AND 1=0'; // production_items 제외
+      } else if (category === '제품') {
+        // 제품만 조회 - production_items만 사용
+        masterCategoryFilter = ' AND 1=0'; // master 제외
+        suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
+        productCategoryFilter = ''; // production_items 전체
       } else {
-        // 원료 또는 제품 - master만 사용
+        // 원료 등 - master만 사용
         masterCategoryFilter = ' AND m.category = ?';
         suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
+        productCategoryFilter = ' AND 1=0'; // production_items 제외
         categoryParams.push(category);
       }
     }
@@ -952,26 +960,62 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
           OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date < ?)
           OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = s.item_code AND t.trans_date < ?)
         )${suppliesCategoryFilter}
+        
+        UNION ALL
+        
+        -- 제품 (production_items 테이블) - production_transactions 사용
+        SELECT 
+          p.production_code as item_code,
+          COALESCE(p.alias1, p.production_name) as item_name,
+          '제품' as category,
+          COALESCE(p.unit, 'EA') as unit,
+          p.current_stock,
+          COALESCE(p.shelf_life_days, 7) as expiry_days,
+          COALESCE((SELECT SUM(pi.remain_qty) FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.quality_status = '합격'), 0) as lot_remain_total,
+          COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '생산입고' AND pt.trans_date < ?), 0) as before_inbound,
+          0 as before_usage,
+          COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '출고' AND pt.trans_date < ?), 0) as before_outbound,
+          COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '재고조정' AND pt.trans_date < ?), 0) as before_adjustment,
+          COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '생산입고' AND pt.trans_date >= ? AND pt.trans_date <= ?), 0) as period_inbound,
+          0 as period_usage,
+          COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '출고' AND pt.trans_date >= ? AND pt.trans_date <= ?), 0) as period_outbound,
+          COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '재고조정' AND pt.trans_date >= ? AND pt.trans_date <= ?), 0) as period_adjustment
+        FROM production_items p
+        WHERE (
+          p.current_stock > 0
+          OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date >= ? AND pt.trans_date <= ?)
+          OR EXISTS (SELECT 1 FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.remain_qty > 0)
+          OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date < ?)
+        )${productCategoryFilter}
       ) combined
       WHERE 1=1 ${searchFilter}
       ORDER BY category, item_name
     `;
     
-    // 파라미터 순서: master(18개) + category + supplies(18개)
+    // 파라미터 순서: master(18개) + category + supplies(18개) + production_items(12개)
     const baseParams = [
       startDate, startDate, startDate, startDate,  // before queries
       startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate,  // period queries
       startDate, endDate, startDate, endDate, startDate, startDate  // EXISTS queries
     ];
     
+    // production_items용 파라미터 (12개)
+    const productParams = [
+      startDate, startDate, startDate,  // before queries (3개)
+      startDate, endDate, startDate, endDate, startDate, endDate,  // period queries (6개)
+      startDate, endDate, startDate  // EXISTS queries (3개)
+    ];
+    
     const itemParams: any[] = [
-      ...baseParams, // master params
+      ...baseParams, // master params (18개)
       ...categoryParams, // category filter for master
-      ...baseParams, // supplies params (same structure)
+      ...baseParams, // supplies params (18개)
+      ...productParams, // production_items params (12개)
       ...searchParams // search filter
     ];
     
     // 쿼리 2: 모든 LOT 정보 한번에 조회 (N+1 문제 해결)
+    // 원료/부자재 LOT (inbound 테이블)
     let lotQuery = `
       SELECT 
         i.item_code,
@@ -1007,10 +1051,46 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       WHERE i.quality_status = '합격'
         AND (i.remain_qty > 0 OR i.inbound_date >= ? 
           OR EXISTS (SELECT 1 FROM transactions t WHERE t.lot_number = i.lot_number AND t.trans_date >= ? AND t.trans_date <= ?))
-      ORDER BY i.item_code, i.inbound_date ASC, i.lot_number ASC
+      
+      UNION ALL
+      
+      -- 제품 LOT (production_inbound 테이블)
+      SELECT 
+        pi.production_code as item_code,
+        pi.lot_number,
+        pi.inbound_date,
+        pi.expiry_date,
+        pi.origin_qty,
+        pi.remain_qty,
+        '자체생산' as supplier,
+        pi.quality_status,
+        0 as period_usage,
+        COALESCE(pto.period_outbound, 0) as period_outbound,
+        COALESCE(pta.period_adjustment, 0) as period_adjustment
+      FROM production_inbound pi
+      LEFT JOIN (
+        SELECT lot_number, SUM(ABS(quantity)) as period_outbound 
+        FROM production_transactions 
+        WHERE trans_type = '출고' AND trans_date >= ? AND trans_date <= ?
+        GROUP BY lot_number
+      ) pto ON pto.lot_number = pi.lot_number
+      LEFT JOIN (
+        SELECT lot_number, SUM(quantity) as period_adjustment 
+        FROM production_transactions 
+        WHERE trans_type = '재고조정' AND trans_date >= ? AND trans_date <= ?
+        GROUP BY lot_number
+      ) pta ON pta.lot_number = pi.lot_number
+      WHERE pi.quality_status = '합격'
+        AND (pi.remain_qty > 0 OR pi.inbound_date >= ? 
+          OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.lot_number = pi.lot_number AND pt.trans_date >= ? AND pt.trans_date <= ?))
+      
+      ORDER BY item_code, inbound_date ASC, lot_number ASC
     `;
     
-    const lotParams = [startDate, endDate, startDate, endDate, startDate, endDate, startDate, startDate, endDate];
+    const lotParams = [
+      startDate, endDate, startDate, endDate, startDate, endDate, startDate, startDate, endDate,  // inbound (9개)
+      startDate, endDate, startDate, endDate, startDate, startDate, endDate  // production_inbound (7개)
+    ];
     
     // 두 쿼리 병렬 실행
     const [itemResult, lotResult] = await Promise.all([

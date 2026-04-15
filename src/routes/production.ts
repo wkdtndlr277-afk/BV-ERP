@@ -437,14 +437,15 @@ productionRoutes.post('/', async (c) => {
 // 빠른 일괄 생산 등록 (발주서 업로드용 - 원재료 차감 포함)
 productionRoutes.post('/batch', async (c) => {
   const body = await c.req.json();
-  const { items, prod_date, memo, channel: defaultChannel } = body;
+  const { items, prod_date, production_date, memo, channel: defaultChannel } = body;
   // items: [{ product_code, quantity, channel?, expiry_date? }]
   
   if (!items || items.length === 0) {
     return c.json({ success: false, error: '등록할 항목이 없습니다.' }, 400);
   }
   
-  const productionDate = prod_date || new Date().toISOString().split('T')[0];
+  // prod_date 또는 production_date 둘 다 지원
+  const productionDate = prod_date || production_date || new Date().toISOString().split('T')[0];
   const results: any[] = [];
   let successCount = 0;
   let failCount = 0;

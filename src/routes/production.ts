@@ -11,12 +11,14 @@ productionRoutes.get('/', async (c) => {
   const productCode = c.req.query('product_code');
   const status = c.req.query('status');
   
+  // master 테이블 또는 production_items 테이블에서 제품명 조회
   let query = `
     SELECT p.*, 
-           m.item_name as product_name,
-           m.unit as product_unit
+           COALESCE(m.item_name, pi.production_name) as product_name,
+           COALESCE(m.unit, 'EA') as product_unit
     FROM production p
     LEFT JOIN master m ON p.product_code = m.item_code
+    LEFT JOIN production_items pi ON p.product_code = pi.production_code
     WHERE 1=1
   `;
   const params: any[] = [];

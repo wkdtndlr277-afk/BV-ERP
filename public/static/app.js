@@ -16710,6 +16710,26 @@ async function processMultipleOrderFiles(files) {
     await loadMasterData();
   }
   
+  // 생산명 데이터 로드 (발주서 매칭용)
+  try {
+    const prodResult = await api('/admin/production-items');
+    window.productionItemsData = prodResult.data || [];
+    console.log('생산명 데이터 로드:', window.productionItemsData.length, '개');
+  } catch (e) {
+    console.log('생산명 데이터 로드 실패');
+    window.productionItemsData = [];
+  }
+  
+  // 바코드 데이터 로드 (발주서 바코드 매칭용) - 중요!
+  try {
+    const barcodeResult = await api('/daily-report/barcodes');
+    window.productionBarcodes = barcodeResult.data || [];
+    console.log('바코드 데이터 로드:', window.productionBarcodes.length, '개');
+  } catch (e) {
+    console.log('바코드 데이터 로드 실패');
+    window.productionBarcodes = [];
+  }
+  
   showToast(`${files.length}개 파일 분석 중...`, 'info');
   
   let allItems = [];
@@ -16877,9 +16897,12 @@ async function processOrderFile(file) {
     if (!channel) {
       channel = detectOrderChannel(fileName, wb);
     }
+    console.log(`📦 발주서 채널 감지: ${channel}, 파일: ${fileName}`);
+    console.log(`📦 바코드 데이터: ${window.productionBarcodes?.length || 0}개 로드됨`);
     
     // 판매처별 파싱
     const items = parseOrderByChannel(wb, channel);
+    console.log(`📦 파싱 결과: ${items.length}개 품목, 바코드 있는 품목: ${items.filter(i=>i.barcode).length}개`);
     
     if (items.length === 0) {
       showToast('유효한 발주 항목을 찾을 수 없습니다', 'warning');
@@ -17619,7 +17642,11 @@ function parseCoupangOrder(rows) {
     }
   }
   
-  console.log(`쿠팡 파싱 완료: ${items.length}개 품목, 바코드 ${items.filter(i => i.barcode).length}개`);
+  const barcodeCount = items.filter(i => i.barcode).length;
+  console.log(`쿠팡 파싱 완료: ${items.length}개 품목, 바코드 ${barcodeCount}개`);
+  if (barcodeCount === 0 && items.length > 0) {
+    console.warn('⚠️ 바코드 추출 실패! 첫 3개 품목:', items.slice(0, 3));
+  }
   return items;
 }
 

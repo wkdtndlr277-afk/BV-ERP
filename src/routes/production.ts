@@ -259,12 +259,33 @@ productionRoutes.post('/', async (c) => {
       const requiredQty = bom.quantity * quantity;
       const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
       
+      // 매칭된 실제 아이템 코드
+      const actualItemCode = bom.actualItemCode || bom.matched_item_code || bom.item_code;
+      
+      // 정제수는 재고 차감 제외 (사용량 기록만)
+      const itemName = bom.item_name || '';
+      const isWater = itemName.includes('정제수');
+      
+      if (isWater) {
+        // 정제수: 사용 기록만 남기고 재고 차감 안함
+        await c.env.DB.prepare(`
+          INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
+          VALUES (?, ?, NULL, ?, ?, ?)
+        `).bind(productionId, actualItemCode, requiredQty, requiredQty, bom.unit).run();
+        
+        // 사용 트랜잭션 기록 (재고 차감 없이 기록만)
+        await c.env.DB.prepare(`
+          INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+          VALUES (?, ?, '사용', ?, ?)
+        `).bind(prod_date, actualItemCode, requiredKg, 
+          `생산사용(재고미차감): ${product.item_name} ${quantity}개 - 정제수`).run();
+        
+        continue; // 다음 원재료로
+      }
+      
       // FEFO 방식으로 LOT에서 차감
       let remainingToDeduct = requiredKg;
       const usedLots: string[] = [];
-      
-      // 매칭된 실제 아이템 코드로 LOT 조회 (RM/R 코드 모두 시도)
-      const actualItemCode = bom.actualItemCode || bom.matched_item_code || bom.item_code;
       let lots = await c.env.DB.prepare(`
         SELECT * FROM inbound 
         WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
@@ -566,6 +587,23 @@ productionRoutes.post('/batch', async (c) => {
   // 원재료 일괄 차감 및 트랜잭션 기록
   for (const [itemCode, data] of materialDeductions) {
     try {
+      // 정제수는 재고 차감 제외 (사용량 기록만)
+      const isWater = data.itemName.includes('정제수');
+      
+      if (isWater) {
+        // 정제수: 사용 트랜잭션만 기록 (재고 차감 안함)
+        await c.env.DB.prepare(`
+          INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+          VALUES (?, ?, '사용', ?, ?)
+        `).bind(
+          productionDate, 
+          itemCode, 
+          data.qty, 
+          `생산사용(재고미차감): ${data.memos.slice(0, 3).join(', ')}${data.memos.length > 3 ? ` 외 ${data.memos.length - 3}건` : ''} - 정제수`
+        ).run();
+        continue; // 재고 차감 건너뛰기
+      }
+      
       // 마스터 재고 차감
       await c.env.DB.prepare(`
         UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP

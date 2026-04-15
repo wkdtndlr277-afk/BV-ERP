@@ -1,22 +1,7 @@
-# Cloudflare Pages Headers
-# 정적 파일 캐시 무효화를 위한 설정
-
-# HTML 페이지 - 캐시 안함 (항상 최신 버전)
-/
+/*
   Cache-Control: no-cache, no-store, must-revalidate
   Pragma: no-cache
   Expires: 0
 
-# API 응답 - 캐시 안함
-/api/*
-  Cache-Control: no-cache, no-store, must-revalidate
-
-# 정적 JS/CSS 파일 - 캐시 비활성화 (개발 중)
 /static/*
-  Cache-Control: no-cache, no-store, must-revalidate
-  Pragma: no-cache
-  Expires: 0
-
-# _worker.js - 캐시 안함 (서버 코드)
-/_worker.js
   Cache-Control: no-cache, no-store, must-revalidate

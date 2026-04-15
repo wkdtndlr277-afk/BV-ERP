@@ -1015,8 +1015,9 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
     ];
     
     // 쿼리 2: 모든 LOT 정보 한번에 조회 (N+1 문제 해결)
-    // 원료/부자재 LOT (inbound 테이블)
+    // 원료/부자재 LOT (inbound 테이블) + 제품 LOT (production_inbound)
     let lotQuery = `
+      SELECT * FROM (
       SELECT 
         i.item_code,
         i.lot_number,
@@ -1083,8 +1084,8 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       WHERE pi.quality_status = '합격'
         AND (pi.remain_qty > 0 OR pi.inbound_date >= ? 
           OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.lot_number = pi.lot_number AND pt.trans_date >= ? AND pt.trans_date <= ?))
-      
-      ORDER BY item_code, inbound_date ASC, lot_number ASC
+    ) all_lots
+    ORDER BY all_lots.item_code, all_lots.inbound_date ASC, all_lots.lot_number ASC
     `;
     
     const lotParams = [

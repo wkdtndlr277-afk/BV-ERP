@@ -181,11 +181,15 @@ dailyReport.get('/reports/:id', async (c) => {
     return c.json({ success: false, error: '생산일보를 찾을 수 없습니다.' }, 404)
   }
   
-  // 품목 목록
+  // 품목 목록 (production 테이블에서 LOT 정보 JOIN)
+  const reportDate = (report as any).report_date
   const items = await c.env.DB.prepare(`
-    SELECT * FROM production_daily_items WHERE report_id = ?
-    ORDER BY id
-  `).bind(id).all()
+    SELECT pdi.*, p.lot_number
+    FROM production_daily_items pdi
+    LEFT JOIN production p ON pdi.production_code = p.product_code AND p.prod_date = ?
+    WHERE pdi.report_id = ?
+    ORDER BY pdi.id
+  `).bind(reportDate, id).all()
   
   // 원재료 사용량 (저장된 데이터)
   const materials = await c.env.DB.prepare(`

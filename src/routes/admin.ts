@@ -1836,7 +1836,11 @@ admin.get('/production-items', async (c) => {
   try {
     const result = await env.DB.prepare(`
       SELECT pi.*, 
-             (SELECT COUNT(*) FROM production_bom pb WHERE pb.production_code = pi.production_code) as bom_count,
+             (
+               SELECT COUNT(*) FROM production_bom pb WHERE pb.production_code = pi.production_code
+             ) + (
+               SELECT COUNT(*) FROM bom b WHERE b.product_code = pi.production_code
+             ) as bom_count,
              (SELECT COUNT(*) FROM production_barcodes pbc WHERE pbc.production_code = pi.production_code) as barcode_count
       FROM production_items pi 
       WHERE pi.is_active = 1

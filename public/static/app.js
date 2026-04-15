@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.27';
-const APP_BUILD = '20260415-v2';
+const APP_VERSION = '2.0.28';
+const APP_BUILD = '20260415-v3';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -18295,10 +18295,18 @@ async function showOrderPreview(items, fileName) {
     const bomRes = await api('/bom/products/with-bom');
     window.bomWithData = bomRes.data || [];
     
-    // BOM 상태 갱신
+    // BOM 상태 갱신 (이미 hasBOM이 true인 경우 유지)
     items.forEach(item => {
       if (item.matchedProduct) {
-        item.hasBOM = window.bomWithData.some(b => b.item_code === item.matchedProduct.item_code);
+        // 바코드/생산명 매칭에서 이미 hasBOM이 설정된 경우 유지
+        // 그렇지 않은 경우에만 bomWithData에서 확인
+        if (item.hasBOM === undefined || item.hasBOM === false) {
+          // 마스터 제품 item_code로 확인
+          const bomMatch = window.bomWithData.some(b => b.item_code === item.matchedProduct.item_code);
+          // production_code로도 확인 (생산명 기반 BOM)
+          const prodBomMatch = window.productionItemsData?.find(pi => pi.production_code === item.matchedProduct.item_code)?.bom_count > 0;
+          item.hasBOM = bomMatch || prodBomMatch || false;
+        }
       }
     });
   } catch (e) {

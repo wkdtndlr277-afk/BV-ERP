@@ -436,7 +436,7 @@ productionRoutes.post('/batch', async (c) => {
   let successCount = 0;
   let failCount = 0;
   
-  // 모든 제품 정보를 한 번에 조회 (master 테이블 + production_items 테이블)
+  // 모든 제품 정보를 한 번에 조회 (master + production_items + production_barcodes)
   const productCodes = items.map((i: any) => i.product_code);
   const placeholders = productCodes.map(() => '?').join(',');
   
@@ -446,11 +446,21 @@ productionRoutes.post('/batch', async (c) => {
     WHERE item_code IN (${placeholders}) AND category = '제품'
   `).bind(...productCodes).all<any>();
   
-  // 2. production_items 테이블에서도 조회 (production_code로 전달된 경우)
+  // 2. production_items 테이블에서 조회
   const productionItems = await c.env.DB.prepare(`
     SELECT production_code as item_code, production_name as item_name, shelf_life_days as expiry_days 
     FROM production_items 
     WHERE production_code IN (${placeholders})
+  `).bind(...productCodes).all<any>();
+  
+  // 3. production_barcodes 테이블에서도 조회 (바코드 매핑된 경우)
+  const barcodeItems = await c.env.DB.prepare(`
+    SELECT pb.production_code as item_code, 
+           COALESCE(pi.production_name, pb.production_name) as item_name,
+           COALESCE(pi.shelf_life_days, 7) as expiry_days
+    FROM production_barcodes pb
+    LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+    WHERE pb.production_code IN (${placeholders})
   `).bind(...productCodes).all<any>();
   
   const productMap = new Map();
@@ -458,10 +468,16 @@ productionRoutes.post('/batch', async (c) => {
   for (const p of products.results || []) {
     productMap.set(p.item_code, { ...p, source: 'master' });
   }
-  // production_items 테이블 결과 추가 (master에 없는 경우만)
+  // production_items 테이블 결과 추가
   for (const p of productionItems.results || []) {
     if (!productMap.has(p.item_code)) {
       productMap.set(p.item_code, { ...p, source: 'production' });
+    }
+  }
+  // production_barcodes 테이블 결과 추가 (아직 없는 경우만)
+  for (const p of barcodeItems.results || []) {
+    if (!productMap.has(p.item_code)) {
+      productMap.set(p.item_code, { ...p, source: 'barcode' });
     }
   }
   

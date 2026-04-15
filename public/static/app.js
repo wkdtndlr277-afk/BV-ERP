@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.36';
+const APP_VERSION = '2.0.37';
 const APP_BUILD = '20260415-v4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -16734,6 +16734,7 @@ async function processMultipleOrderFiles(files) {
   
   let allItems = [];
   let fileNames = [];
+  let detectedChannel = null;
   
   for (const file of files) {
     try {
@@ -16741,6 +16742,13 @@ async function processMultipleOrderFiles(files) {
       if (items.length > 0) {
         allItems = allItems.concat(items);
         fileNames.push(file.name);
+        
+        // 첫 번째 파일에서 채널 감지
+        if (!detectedChannel) {
+          const data = await file.arrayBuffer();
+          const wb = XLSX.read(data, { type: 'array', codepage: 949 });
+          detectedChannel = detectOrderChannel(file.name, wb);
+        }
       }
     } catch (e) {
       console.error('File parse error:', file.name, e);
@@ -16776,15 +16784,18 @@ async function processMultipleOrderFiles(files) {
   // 마스터 제품과 매칭
   const matchedItems = matchOrderToProducts(mergedItems);
   
-  // 미리보기 표시
+  // 미리보기 표시 - 감지된 채널 또는 드롭다운 선택값 사용
+  const selectedChannel = document.getElementById('order-channel')?.value;
+  const finalChannel = selectedChannel || detectedChannel || 'mixed';
+  
   window.orderUploadData = {
     fileName: fileNames.join(', '),
-    channel: 'mixed',
+    channel: finalChannel,
     items: matchedItems
   };
   
   showOrderPreview(matchedItems, fileNames.join(', '));
-  showToast(`${files.length}개 파일에서 총 ${matchedItems.length}개 품목 로드됨`, 'success');
+  showToast(`${files.length}개 파일에서 총 ${matchedItems.length}개 품목 로드됨 (${finalChannel})`, 'success');
 }
 
 // 단일 파일 파싱 (내부용)
@@ -18625,7 +18636,9 @@ function showDailyReportModal(reportData) {
                     'baemin': '배민',
                     'direct_store': '직영점',
                     'generic': '기타',
-                    'unknown': '-'
+                    'mixed': '복합',
+                    'unknown': '-',
+                    'production_plan': '생산계획'
                   }[item.channel] || item.channel || '-';
                   
                   return `

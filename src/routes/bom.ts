@@ -309,36 +309,37 @@ bomRoutes.post('/bulk', async (c) => {
   
   const results = { success: 0, failed: 0, errors: [] as string[] };
   
+  // PR 코드인 경우 production_bom 테이블에 직접 등록
+  const isProductionCode = product_code.startsWith('PR');
+  const tableName = isProductionCode ? 'production_bom' : 'bom';
+  const codeColumn = isProductionCode ? 'production_code' : 'product_code';
+  
   for (const mat of materials) {
     try {
       // 기존 BOM 있으면 업데이트, 없으면 삽입
       const existing = await c.env.DB.prepare(
-        'SELECT id FROM bom WHERE product_code = ? AND item_code = ?'
+        `SELECT id FROM ${tableName} WHERE ${codeColumn} = ? AND item_code = ?`
       ).bind(product_code, mat.item_code).first();
       
       if (existing) {
         await c.env.DB.prepare(`
-          UPDATE bom SET quantity = ?, unit = ?, sort_order = ?, memo = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE product_code = ? AND item_code = ?
+          UPDATE ${tableName} SET quantity = ?, unit = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE ${codeColumn} = ? AND item_code = ?
         `).bind(
           mat.quantity,
           mat.unit || 'g',
-          mat.sort_order || 0,
-          mat.memo || null,
           product_code,
           mat.item_code
         ).run();
       } else {
         await c.env.DB.prepare(`
-          INSERT INTO bom (product_code, item_code, quantity, unit, sort_order, memo)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO ${tableName} (${codeColumn}, item_code, quantity, unit)
+          VALUES (?, ?, ?, ?)
         `).bind(
           product_code,
           mat.item_code,
           mat.quantity,
-          mat.unit || 'g',
-          mat.sort_order || 0,
-          mat.memo || null
+          mat.unit || 'g'
         ).run();
       }
       results.success++;
@@ -347,9 +348,6 @@ bomRoutes.post('/bulk', async (c) => {
       results.errors.push(`${mat.item_code}: ${error.message || '등록 실패'}`);
     }
   }
-  
-  // production_bom 동기화
-  await syncToProductionBom(c.env.DB, product_code);
   
   return c.json({ 
     success: true, 

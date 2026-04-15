@@ -1839,7 +1839,19 @@ admin.get('/migrate-shelf-life', async (c) => {
     }
   }
   
-  return c.json({ success: true, message: '소비기한 컬럼 마이그레이션 완료' })
+  // production_daily_items에 channel(판매처) 컬럼 추가
+  try {
+    await env.DB.prepare(`
+      ALTER TABLE production_daily_items ADD COLUMN channel TEXT DEFAULT NULL
+    `).run()
+  } catch (e: any) {
+    // 이미 존재하면 무시
+    if (!e.message?.includes('duplicate column')) {
+      console.log('channel column may already exist')
+    }
+  }
+  
+  return c.json({ success: true, message: '소비기한/판매처 컬럼 마이그레이션 완료' })
 })
 
 // 생산 재고/입고/트랜잭션 테이블 마이그레이션 (v2.0.35)

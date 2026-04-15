@@ -211,7 +211,7 @@ dailyReport.get('/reports/:id', async (c) => {
 // 발주서 → 생산일보 변환 (최적화 버전)
 dailyReport.post('/reports/from-order', async (c) => {
   const body = await c.req.json()
-  const { report_date, order_file_name, items, created_by } = body
+  const { report_date, order_file_name, items, created_by, channel } = body
   
   if (!report_date || !items || items.length === 0) {
     return c.json({ success: false, error: '생산일자와 품목 정보가 필요합니다.' }, 400)
@@ -314,16 +314,17 @@ dailyReport.post('/reports/from-order', async (c) => {
       expiryDate = today.toISOString().split('T')[0]
     }
     
-    // 품목 등록 (비동기 배치)
+    // 품목 등록 (비동기 배치) - channel(판매처) 필드 추가
+    const itemChannel = item.channel || channel || 'unknown'
     itemInserts.push(
       c.env.DB.prepare(`
         INSERT INTO production_daily_items 
-        (report_id, production_code, production_name, barcode, order_product_name, quantity, has_bom, expiry_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (report_id, production_code, production_name, barcode, order_product_name, quantity, has_bom, expiry_date, channel)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         reportId, productionCode, productionName, 
         item.barcode || null, item.product_name || null, 
-        item.quantity, hasBom, expiryDate
+        item.quantity, hasBom, expiryDate, itemChannel
       ).run()
     )
     
@@ -345,9 +346,12 @@ dailyReport.post('/reports/from-order', async (c) => {
     processedItems.push({
       production_code: productionCode,
       production_name: productionName,
+      order_product_name: item.product_name || null,
       barcode: item.barcode,
       quantity: item.quantity,
-      has_bom: hasBom
+      has_bom: hasBom,
+      expiry_date: expiryDate,
+      channel: itemChannel
     })
   }
   

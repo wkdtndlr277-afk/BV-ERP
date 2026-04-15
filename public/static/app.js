@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.35';
+const APP_VERSION = '2.0.36';
 const APP_BUILD = '20260415-v4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -18513,12 +18513,16 @@ async function convertToDailyReport() {
     return;
   }
   
+  // 판매처(channel) 정보
+  const channel = window.orderUploadData.channel || 'unknown';
+  
   // 바코드 또는 생산명 코드로 매핑
   const reportItems = selectedItems.map(item => ({
     barcode: item.barcode || null,
     product_name: item.originalName,
     quantity: item.quantity,
-    production_code: item.productionItem?.production_code || null
+    production_code: item.productionItem?.production_code || null,
+    channel: channel
   }));
   
   showToast('생산일보 생성 중...', 'info');
@@ -18528,6 +18532,7 @@ async function convertToDailyReport() {
       report_date: reportDate,
       order_file_name: window.orderUploadData.fileName,
       items: reportItems,
+      channel: channel,
       created_by: state.currentUser?.name || 'system'
     });
     
@@ -18602,34 +18607,57 @@ function showDailyReportModal(reportData) {
             <table class="w-full text-sm">
               <thead class="bg-gray-100">
                 <tr>
-                  <th class="px-3 py-2 text-left">생산명</th>
-                  <th class="px-3 py-2 text-left">발주서 상품명</th>
+                  <th class="px-3 py-2 text-left">생산명/제품명</th>
                   <th class="px-3 py-2 text-center">수량</th>
+                  <th class="px-3 py-2 text-center">소비기한</th>
                   <th class="px-3 py-2 text-center">BOM</th>
-                  <th class="px-3 py-2 text-center">상태</th>
+                  <th class="px-3 py-2 text-center">판매처</th>
                 </tr>
               </thead>
               <tbody>
-                ${items.map(item => `
+                ${items.map(item => {
+                  // 판매처 표시 (channel 값을 한글로 변환)
+                  const channelName = {
+                    'coupang': '쿠팡',
+                    'kurly': '컬리',
+                    'bmart': 'B마트',
+                    'oasis': '오아시스',
+                    'baemin': '배민',
+                    'direct_store': '직영점',
+                    'generic': '기타',
+                    'unknown': '-'
+                  }[item.channel] || item.channel || '-';
+                  
+                  return `
                   <tr class="${item.production_code === 'UNKNOWN' ? 'bg-red-50' : ''}">
                     <td class="px-3 py-2">
-                      <span class="font-medium">${item.production_name}</span>
-                      ${item.production_code !== 'UNKNOWN' ? `<span class="text-xs text-gray-400 ml-1">[${item.production_code}]</span>` : ''}
+                      <div class="font-medium">${item.production_name}</div>
+                      ${item.order_product_name && item.order_product_name !== item.production_name 
+                        ? `<div class="text-xs text-gray-500 mt-0.5">${item.order_product_name}</div>` 
+                        : ''}
+                      ${item.production_code !== 'UNKNOWN' ? `<span class="text-xs text-gray-400">[${item.production_code}]</span>` : '<span class="text-xs text-red-400">[미매칭]</span>'}
                     </td>
-                    <td class="px-3 py-2 text-gray-600 text-xs">${item.barcode || '-'}</td>
                     <td class="px-3 py-2 text-center font-medium">${formatNumber(item.quantity)}</td>
+                    <td class="px-3 py-2 text-center text-sm">
+                      ${item.expiry_date 
+                        ? `<span class="text-blue-600">${item.expiry_date}</span>` 
+                        : '<span class="text-gray-400">-</span>'}
+                    </td>
                     <td class="px-3 py-2 text-center">
                       ${item.has_bom 
                         ? '<span class="text-green-600"><i class="fas fa-check"></i></span>' 
                         : '<span class="text-gray-400">-</span>'}
                     </td>
                     <td class="px-3 py-2 text-center">
-                      ${item.production_code === 'UNKNOWN'
-                        ? '<span class="text-red-500 text-xs">미매칭</span>'
-                        : '<span class="text-green-500 text-xs">매칭</span>'}
+                      <span class="px-2 py-0.5 rounded text-xs ${
+                        item.channel === 'coupang' ? 'bg-orange-100 text-orange-700' :
+                        item.channel === 'kurly' ? 'bg-purple-100 text-purple-700' :
+                        item.channel === 'bmart' ? 'bg-green-100 text-green-700' :
+                        'bg-gray-100 text-gray-600'
+                      }">${channelName}</span>
                     </td>
                   </tr>
-                `).join('')}
+                `}).join('')}
               </tbody>
             </table>
             

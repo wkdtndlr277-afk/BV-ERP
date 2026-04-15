@@ -117,20 +117,56 @@ bomRoutes.get('/', async (c) => {
 bomRoutes.get('/product/:product_code', async (c) => {
   const productCode = c.req.param('product_code');
   
-  // 제품 정보
-  const product = await c.env.DB.prepare(`
+  // 제품 정보 (마스터 테이블 또는 생산명 테이블에서 조회)
+  let product = await c.env.DB.prepare(`
     SELECT * FROM master WHERE item_code = ? AND category = '제품'
   `).bind(productCode).first();
+  
+  // 마스터에 없으면 생산명 테이블에서 조회 (production_code로 전달된 경우)
+  let isProductionCode = false;
+  if (!product) {
+    const productionItem = await c.env.DB.prepare(`
+      SELECT production_code, production_name FROM production_items WHERE production_code = ?
+    `).bind(productCode).first<any>();
+    
+    if (productionItem) {
+      isProductionCode = true;
+      product = {
+        item_code: productionItem.production_code,
+        item_name: productionItem.production_name,
+        category: '제품'
+      };
+    }
+  }
   
   if (!product) {
     return c.json({ success: false, error: '제품을 찾을 수 없습니다.' }, 404);
   }
   
-  // BOM 목록
-  // BOM 조회 - 별도 쿼리로 RM/R 코드 매칭
-  const bomRaw = await c.env.DB.prepare(`
-    SELECT b.* FROM bom b WHERE b.product_code = ? ORDER BY b.sort_order, b.id
-  `).bind(productCode).all<any>();
+  // BOM 목록 - production_bom 또는 기존 bom 테이블에서 조회
+  let bomRaw;
+  if (isProductionCode) {
+    // production_code인 경우 production_bom 테이블에서 조회
+    bomRaw = await c.env.DB.prepare(`
+      SELECT pb.id, pb.production_code as product_code, pb.material_code as item_code, 
+             pb.material_name, pb.quantity, pb.unit, 1 as sort_order
+      FROM production_bom pb 
+      WHERE pb.production_code = ? 
+      ORDER BY pb.id
+    `).bind(productCode).all<any>();
+    
+    // production_bom에 없으면 기존 bom 테이블도 확인
+    if (!bomRaw.results || bomRaw.results.length === 0) {
+      bomRaw = await c.env.DB.prepare(`
+        SELECT b.* FROM bom b WHERE b.product_code = ? ORDER BY b.sort_order, b.id
+      `).bind(productCode).all<any>();
+    }
+  } else {
+    // 기존 bom 테이블에서 조회
+    bomRaw = await c.env.DB.prepare(`
+      SELECT b.* FROM bom b WHERE b.product_code = ? ORDER BY b.sort_order, b.id
+    `).bind(productCode).all<any>();
+  }
   
   // 각 BOM 항목에 대해 마스터 정보 및 거래처 조회 (RM/R 코드 모두 시도)
   const materials: any[] = [];

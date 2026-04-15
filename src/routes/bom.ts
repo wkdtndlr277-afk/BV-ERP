@@ -512,28 +512,51 @@ bomRoutes.delete('/product/:product_code/clear', async (c) => {
   });
 });
 
-// BOM 있는 제품 목록
+// BOM 있는 제품 목록 (master + production_items 통합)
 bomRoutes.get('/products/with-bom', async (c) => {
+  // master 테이블 + production_items 테이블 모두 조회
+  // production_bom 테이블도 포함
   const result = await c.env.DB.prepare(`
-    SELECT DISTINCT m.item_code, m.item_name, m.unit,
-           (SELECT COUNT(*) FROM bom WHERE product_code = m.item_code) as material_count
-    FROM master m
-    WHERE m.category = '제품'
-    AND EXISTS (SELECT 1 FROM bom WHERE product_code = m.item_code)
-    ORDER BY m.item_name
+    SELECT item_code, item_name, unit, material_count FROM (
+      -- master 테이블의 제품 (bom 테이블)
+      SELECT DISTINCT m.item_code, m.item_name, m.unit,
+             (SELECT COUNT(*) FROM bom WHERE product_code = m.item_code) as material_count
+      FROM master m
+      WHERE m.category = '제품'
+      AND EXISTS (SELECT 1 FROM bom WHERE product_code = m.item_code)
+      
+      UNION ALL
+      
+      -- production_items 테이블의 제품 (production_bom 테이블)
+      SELECT DISTINCT pi.production_code as item_code, pi.production_name as item_name, pi.unit,
+             (SELECT COUNT(*) FROM production_bom WHERE production_code = pi.production_code) as material_count
+      FROM production_items pi
+      WHERE EXISTS (SELECT 1 FROM production_bom WHERE production_code = pi.production_code)
+    )
+    ORDER BY item_name
   `).all();
   
   return c.json({ success: true, data: result.results });
 });
 
-// BOM 없는 제품 목록
+// BOM 없는 제품 목록 (master + production_items 통합)
 bomRoutes.get('/products/without-bom', async (c) => {
   const result = await c.env.DB.prepare(`
-    SELECT m.item_code, m.item_name, m.unit
-    FROM master m
-    WHERE m.category = '제품'
-    AND NOT EXISTS (SELECT 1 FROM bom WHERE product_code = m.item_code)
-    ORDER BY m.item_name
+    SELECT item_code, item_name, unit FROM (
+      -- master 테이블의 제품 (BOM 없음)
+      SELECT m.item_code, m.item_name, m.unit
+      FROM master m
+      WHERE m.category = '제품'
+      AND NOT EXISTS (SELECT 1 FROM bom WHERE product_code = m.item_code)
+      
+      UNION ALL
+      
+      -- production_items 테이블의 제품 (production_bom 없음)
+      SELECT pi.production_code as item_code, pi.production_name as item_name, pi.unit
+      FROM production_items pi
+      WHERE NOT EXISTS (SELECT 1 FROM production_bom WHERE production_code = pi.production_code)
+    )
+    ORDER BY item_name
   `).all();
   
   return c.json({ success: true, data: result.results });

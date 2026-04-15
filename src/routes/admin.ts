@@ -2327,7 +2327,7 @@ admin.get('/production-bom/:code', async (c) => {
 admin.post('/production-items', async (c) => {
   const { env } = c
   const body = await c.req.json()
-  const { production_name, alias1, alias2 } = body
+  const { production_code, production_name, alias1, alias2, category, unit, shelf_life_days } = body
   
   if (!production_name) {
     return c.json({ success: false, error: '생산명은 필수입니다' }, 400)
@@ -2343,27 +2343,39 @@ admin.post('/production-items', async (c) => {
       return c.json({ success: false, error: '이미 등록된 생산명입니다' }, 400)
     }
     
-    // 새 코드 생성
-    const maxCode = await env.DB.prepare(`
-      SELECT MAX(CAST(SUBSTR(production_code, 3) AS INTEGER)) as max_num 
-      FROM production_items
-    `).first() as { max_num: number | null }
-    const nextNum = (maxCode?.max_num || 0) + 1
-    const productionCode = `PR${String(nextNum).padStart(3, '0')}`
+    // 새 코드 생성 (제공된 코드가 없는 경우)
+    let finalProductionCode = production_code
+    if (!finalProductionCode) {
+      const maxCode = await env.DB.prepare(`
+        SELECT MAX(CAST(SUBSTR(production_code, 3) AS INTEGER)) as max_num 
+        FROM production_items
+      `).first() as { max_num: number | null }
+      const nextNum = (maxCode?.max_num || 0) + 1
+      finalProductionCode = `PR${String(nextNum).padStart(3, '0')}`
+    }
     
     // 중량 추출
     const weightMatch = production_name.match(/(\d+)g/i)
     const standardWeight = weightMatch ? parseFloat(weightMatch[1]) : null
     
     await env.DB.prepare(`
-      INSERT INTO production_items (production_code, production_name, alias1, alias2, standard_weight)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(productionCode, production_name, alias1 || null, alias2 || null, standardWeight).run()
+      INSERT INTO production_items (production_code, production_name, alias1, alias2, standard_weight, category, unit, shelf_life_days)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      finalProductionCode, 
+      production_name, 
+      alias1 || null, 
+      alias2 || null, 
+      standardWeight,
+      category || '제품',
+      unit || 'ea',
+      shelf_life_days || 3
+    ).run()
     
     return c.json({ 
       success: true, 
       message: '생산명이 등록되었습니다',
-      production_code: productionCode 
+      production_code: finalProductionCode 
     })
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500)

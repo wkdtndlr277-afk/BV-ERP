@@ -9037,6 +9037,19 @@ async function showNewProductWithBOMModal() {
             <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
             <input type="text" id="new-product-unit" class="w-full border rounded-lg px-4 py-2" value="ea">
           </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 일수 <span class="text-red-500">*</span></label>
+            <input type="number" id="new-product-shelf-life" class="w-full border rounded-lg px-4 py-2" 
+                   placeholder="예: 3" value="3" min="1">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">카테고리</label>
+            <select id="new-product-category" class="w-full border rounded-lg px-4 py-2">
+              <option value="빵">빵</option>
+              <option value="제품" selected>제품</option>
+              <option value="쿠키">쿠키</option>
+            </select>
+          </div>
         </div>
       </div>
       
@@ -9361,6 +9374,8 @@ async function saveNewProductWithBOM() {
   const productName = document.getElementById('new-product-name').value.trim();
   const productCode = document.getElementById('new-product-code').value.trim();
   const productUnit = document.getElementById('new-product-unit').value.trim() || 'ea';
+  const shelfLifeDays = parseInt(document.getElementById('new-product-shelf-life').value) || 3;
+  const category = document.getElementById('new-product-category')?.value || '제품';
   
   if (!productName) {
     showToast('제품명을 입력하세요', 'warning');
@@ -9382,15 +9397,16 @@ async function saveNewProductWithBOM() {
   });
   
   try {
-    // 1. 제품 등록
-    await api('/master', 'POST', {
-      item_code: productCode,
-      item_name: productName,
-      category: '제품',
+    // 1. production_items (생산품목) 테이블에 등록 (primary)
+    const productionResult = await api('/admin/production-items', 'POST', {
+      production_code: productCode,
+      production_name: productName,
+      category: category,
       unit: productUnit,
-      safety_stock: 0,
-      expiry_days: 365
+      shelf_life_days: shelfLifeDays
     });
+    
+    console.log('Production item registered:', productionResult);
     
     // 2. BOM 등록 (있는 경우)
     if (materials.length > 0) {
@@ -9400,18 +9416,19 @@ async function saveNewProductWithBOM() {
       });
     }
     
-    showToast(`신제품 "${productName}" 등록 완료! (배합표 ${materials.length}개)`, 'success');
+    showToast(`신제품 "${productName}" 등록 완료! (배합표 ${materials.length}개, 소비기한 ${shelfLifeDays}일)`, 'success');
     closeModal();
     await loadMasterData();
     
-    // BOM 관리 화면에서 호출된 경우 BOM 화면 유지
-    if (document.getElementById('bom-product-select')) {
-      loadBOMSummary();
+    // BOM 관리 화면에서 호출된 경우 BOM 화면 유지 및 요약 새로고침
+    if (document.getElementById('bom-product-select') || document.getElementById('products-with-bom')) {
+      await renderBOM();
     } else {
       renderMaster();
     }
   } catch (e) {
     console.error('Save error:', e);
+    showToast('등록 중 오류가 발생했습니다: ' + (e.message || e), 'error');
   }
 }
 
@@ -19260,8 +19277,34 @@ let bomData = [];
 async function renderBOM() {
   const content = document.getElementById('page-content');
   
-  // 제품 목록
-  const products = state.masterItems.filter(item => item.category === '제품');
+  // 제품 목록 (master 테이블 + production_items 테이블 통합)
+  const masterProducts = state.masterItems.filter(item => item.category === '제품');
+  
+  // production_items 데이터 로드
+  let productionItems = [];
+  try {
+    const piResult = await api('/admin/production-items?limit=500');
+    productionItems = (piResult.data || []).map(p => ({
+      item_code: p.production_code,
+      item_name: p.production_name,
+      unit: p.unit || 'g',
+      category: '제품',
+      source: 'production_items'
+    }));
+  } catch (e) {
+    console.log('production_items 로드 실패:', e);
+  }
+  
+  // 통합 (중복 제거)
+  const allProducts = [...masterProducts];
+  for (const pi of productionItems) {
+    if (!allProducts.some(p => p.item_code === pi.item_code)) {
+      allProducts.push(pi);
+    }
+  }
+  allProducts.sort((a, b) => (a.item_name || '').localeCompare(b.item_name || ''));
+  
+  const products = allProducts;
   const productOptions = products.map(p => 
     `<option value="${p.item_code}">${p.item_name} (${p.item_code})</option>`
   ).join('');

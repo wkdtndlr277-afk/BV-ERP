@@ -1825,6 +1825,46 @@ admin.get('/migrate-production-stock', async (c) => {
   }
 })
 
+// 제품 입고 기록 조회 (production_inbound)
+admin.get('/production-inbound', async (c) => {
+  const { env } = c
+  const start_date = c.req.query('start_date') || '2020-01-01'
+  const end_date = c.req.query('end_date') || '2099-12-31'
+  const limit = parseInt(c.req.query('limit') || '100')
+  
+  const result = await env.DB.prepare(`
+    SELECT pi.*, 
+           pit.production_name
+    FROM production_inbound pi
+    LEFT JOIN production_items pit ON pi.production_code = pit.production_code
+    WHERE pi.inbound_date BETWEEN ? AND ?
+    ORDER BY pi.inbound_date DESC, pi.id DESC
+    LIMIT ?
+  `).bind(start_date, end_date, limit).all()
+  
+  return c.json({ success: true, data: result.results || [], total: result.results?.length || 0 })
+})
+
+// 제품 트랜잭션 기록 조회 (production_transactions)
+admin.get('/production-transactions', async (c) => {
+  const { env } = c
+  const start_date = c.req.query('start_date') || '2020-01-01'
+  const end_date = c.req.query('end_date') || '2099-12-31'
+  const limit = parseInt(c.req.query('limit') || '100')
+  
+  const result = await env.DB.prepare(`
+    SELECT pt.*, 
+           pit.production_name
+    FROM production_transactions pt
+    LEFT JOIN production_items pit ON pt.production_code = pit.production_code
+    WHERE pt.trans_date BETWEEN ? AND ?
+    ORDER BY pt.trans_date DESC, pt.id DESC
+    LIMIT ?
+  `).bind(start_date, end_date, limit).all()
+  
+  return c.json({ success: true, data: result.results || [], total: result.results?.length || 0 })
+})
+
 // BOM 테이블 동기화 (bom → production_bom) - 누락 생산명 자동 등록 포함
 admin.get('/sync-bom-tables', async (c) => {
   const { env } = c

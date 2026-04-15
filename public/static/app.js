@@ -19140,6 +19140,11 @@ async function registerDailyReportById(reportId) {
       const summary = registerResult.summary || {};
       showToast(`생산등록 완료! (성공: ${summary.success_count || matchedItems.length}건)`, 'success');
       loadDailyReportList();
+    } else if (registerResult.already_registered) {
+      // 이미 모두 등록된 경우에도 상태를 registered로 변경
+      await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'registered' });
+      showToast(`이미 등록된 품목입니다. (${registerResult.already_registered}건)`, 'info');
+      loadDailyReportList();
     } else {
       showToast(registerResult.error || '생산등록 실패', 'error');
     }
@@ -19224,6 +19229,16 @@ async function registerProductionFromDailyReport() {
       if (typeof loadDashboardData === 'function') {
         loadDashboardData();
       }
+    } else if (result.already_registered) {
+      // 이미 모두 등록된 경우에도 상태를 registered로 변경
+      try {
+        await api(`/daily-report/reports/${reportData.report_id}/status`, 'PUT', { status: 'registered' });
+      } catch (e) {
+        console.log('상태 업데이트 실패 (무시)', e);
+      }
+      showToast(`이미 등록된 품목입니다. (${result.already_registered}건)`, 'info');
+      closeDailyReportModal();
+      if (typeof loadDashboardData === 'function') loadDashboardData();
     } else {
       showToast(`생산등록 실패: ${result.message || '알 수 없는 오류'}`, 'error');
     }

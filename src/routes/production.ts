@@ -781,6 +781,25 @@ productionRoutes.post('/:id/cancel', async (c) => {
   }
 });
 
+// 생산일 일괄 변경
+productionRoutes.put('/batch/update-date', async (c) => {
+  const { from_date, to_date } = await c.req.json();
+  
+  if (!from_date || !to_date) {
+    return c.json({ success: false, error: 'from_date와 to_date가 필요합니다.' }, 400);
+  }
+  
+  const result = await c.env.DB.prepare(`
+    UPDATE production SET prod_date = ? WHERE prod_date = ?
+  `).bind(to_date, from_date).run();
+  
+  return c.json({ 
+    success: true, 
+    message: `${result.meta.changes}건의 생산일이 ${from_date}에서 ${to_date}로 변경되었습니다.`,
+    updated: result.meta.changes
+  });
+});
+
 // 생산 통계
 productionRoutes.get('/stats/summary', async (c) => {
   const startDate = c.req.query('start_date');

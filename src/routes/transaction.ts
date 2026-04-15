@@ -306,7 +306,7 @@ transactionRoutes.get('/daily-report', async (c) => {
         0 as usage,
         COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '출고' AND pt.trans_date = ?), 0) as outbound_qty
       FROM production_items p
-      WHERE p.category = '제품' AND (
+      WHERE (
         p.current_stock > 0
         OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date = ?)
         OR EXISTS (SELECT 1 FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.remain_qty > 0)
@@ -467,7 +467,7 @@ transactionRoutes.get('/monthly-report', async (c) => {
         0 as total_usage,
         COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '출고' AND pt.trans_date >= ? AND pt.trans_date <= ?), 0) as outbound_qty
       FROM production_items p
-      WHERE p.category = '제품' AND (
+      WHERE (
         p.current_stock > 0
         OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date >= ? AND pt.trans_date <= ?)
         OR EXISTS (SELECT 1 FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.remain_qty > 0)

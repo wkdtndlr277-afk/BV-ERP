@@ -18782,9 +18782,153 @@ function switchReportTab(tab) {
   document.getElementById('tab-materials').classList.toggle('text-haccp-primary', tab === 'materials');
 }
 
+// 생산일보 목록 조회 모달
+async function showDailyReportListModal() {
+  const modalHtml = `
+    <div id="daily-report-list-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden">
+        <div class="bg-purple-600 text-white p-4 flex justify-between items-center">
+          <h2 class="text-xl font-bold"><i class="fas fa-clipboard-list mr-2"></i>생산일보 목록</h2>
+          <button onclick="closeDailyReportListModal()" class="text-white hover:text-gray-200">
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+        <div class="p-4">
+          <div class="flex gap-3 mb-4">
+            <input type="date" id="report-list-date" class="border rounded-lg px-3 py-2" value="${formatDate(new Date())}">
+            <button onclick="loadDailyReportList()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700">
+              <i class="fas fa-search mr-1"></i> 조회
+            </button>
+          </div>
+          <div id="report-list-content" class="overflow-y-auto max-h-[60vh]">
+            <div class="text-center py-8 text-gray-500">
+              <i class="fas fa-spinner fa-spin text-2xl"></i>
+              <p class="mt-2">로딩 중...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  await loadDailyReportList();
+}
+
+function closeDailyReportListModal() {
+  document.getElementById('daily-report-list-modal')?.remove();
+}
+
+async function loadDailyReportList() {
+  const contentEl = document.getElementById('report-list-content');
+  const date = document.getElementById('report-list-date')?.value;
+  
+  try {
+    const params = date ? `?date=${date}` : '';
+    const result = await api(`/daily-report/reports${params}`);
+    
+    if (!result.success || !result.data || result.data.length === 0) {
+      contentEl.innerHTML = '<div class="text-center py-8 text-gray-500"><i class="fas fa-inbox text-4xl mb-2"></i><p>생산일보가 없습니다.</p></div>';
+      return;
+    }
+    
+    contentEl.innerHTML = \`
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100 sticky top-0">
+          <tr>
+            <th class="px-3 py-2 text-left">번호</th>
+            <th class="px-3 py-2 text-left">생산일</th>
+            <th class="px-3 py-2 text-left">발주서</th>
+            <th class="px-3 py-2 text-center">품목수</th>
+            <th class="px-3 py-2 text-center">수량</th>
+            <th class="px-3 py-2 text-center">상태</th>
+            <th class="px-3 py-2 text-center">작업</th>
+          </tr>
+        </thead>
+        <tbody>
+          \${result.data.map(report => \`
+            <tr class="border-b hover:bg-gray-50">
+              <td class="px-3 py-2 font-mono text-xs">\${report.report_no}</td>
+              <td class="px-3 py-2">\${report.report_date}</td>
+              <td class="px-3 py-2 text-xs max-w-[200px] truncate" title="\${report.order_file_name || ''}">\${report.order_file_name || '-'}</td>
+              <td class="px-3 py-2 text-center font-medium">\${report.total_products}</td>
+              <td class="px-3 py-2 text-center">\${formatNumber(report.total_quantity)}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="px-2 py-0.5 rounded text-xs \${
+                  report.status === 'registered' ? 'bg-green-100 text-green-700' :
+                  report.status === 'confirmed' ? 'bg-blue-100 text-blue-700' :
+                  'bg-yellow-100 text-yellow-700'
+                }">\${
+                  report.status === 'registered' ? '등록완료' :
+                  report.status === 'confirmed' ? '확정' : '대기'
+                }</span>
+              </td>
+              <td class="px-3 py-2 text-center">
+                <button onclick="viewDailyReportDetail(\${report.id})" class="text-blue-600 hover:text-blue-800 mr-2" title="상세보기">
+                  <i class="fas fa-eye"></i>
+                </button>
+                <button onclick="deleteDailyReport(\${report.id})" class="text-red-600 hover:text-red-800" title="삭제">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </td>
+            </tr>
+          \`).join('')}
+        </tbody>
+      </table>
+    \`;
+  } catch (e) {
+    contentEl.innerHTML = '<div class="text-center py-8 text-red-500"><i class="fas fa-exclamation-triangle text-2xl"></i><p class="mt-2">조회 실패</p></div>';
+  }
+}
+
+// 생산일보 상세 보기
+async function viewDailyReportDetail(reportId) {
+  try {
+    showToast('생산일보 로딩 중...', 'info');
+    const result = await api(\`/daily-report/reports/\${reportId}\`);
+    
+    if (!result.success || !result.data) {
+      showToast('생산일보를 불러올 수 없습니다.', 'error');
+      return;
+    }
+    
+    // 기존 모달 닫기
+    closeDailyReportListModal();
+    
+    // 생산일보 상세 모달 표시
+    const reportData = {
+      report_id: result.data.id,
+      report_no: result.data.report_no,
+      report_date: result.data.report_date,
+      total_products: result.data.total_products,
+      total_quantity: result.data.total_quantity,
+      items: result.data.items || [],
+      materials_summary: result.data.materials_summary || []
+    };
+    
+    showDailyReportModal(reportData);
+    
+  } catch (e) {
+    console.error('생산일보 상세 조회 오류:', e);
+    showToast('생산일보 조회 실패', 'error');
+  }
+}
+
+// 생산일보 삭제
+async function deleteDailyReport(reportId) {
+  if (!confirm('이 생산일보를 삭제하시겠습니까?')) return;
+  
+  try {
+    await api(\`/daily-report/reports/\${reportId}\`, 'DELETE');
+    showToast('생산일보가 삭제되었습니다.', 'success');
+    loadDailyReportList();
+  } catch (e) {
+    showToast('삭제 실패', 'error');
+  }
+}
+
 async function confirmDailyReport(reportId) {
   try {
-    await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'confirmed' });
+    await api(\`/daily-report/reports/\${reportId}/status\`, 'PUT', { status: 'confirmed' });
     showToast('생산일보가 확정되었습니다', 'success');
     closeDailyReportModal();
   } catch (e) {
@@ -23921,6 +24065,9 @@ async function renderProductionPlan() {
           생산계획
         </h2>
         <div class="flex gap-2 flex-wrap">
+          <button onclick="showDailyReportListModal()" class="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700">
+            <i class="fas fa-clipboard-list mr-1"></i> 생산일보 조회
+          </button>
           <button onclick="showBarcodeProductionPlanModal()" class="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700">
             <i class="fas fa-barcode mr-1"></i> 바코드 계획표
           </button>
@@ -25579,6 +25726,11 @@ function showDailyReportDetailModal(reportData) {
 
 // 전역 함수 노출
 window.renderProductionPlan = renderProductionPlan;
+window.showDailyReportListModal = showDailyReportListModal;
+window.closeDailyReportListModal = closeDailyReportListModal;
+window.loadDailyReportList = loadDailyReportList;
+window.viewDailyReportDetail = viewDailyReportDetail;
+window.deleteDailyReport = deleteDailyReport;
 window.handlePlanFileUpload = handlePlanFileUpload;
 window.refreshPlanStock = refreshPlanStock;
 window.filterPlanItems = filterPlanItems;

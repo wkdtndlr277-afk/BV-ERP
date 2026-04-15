@@ -212,7 +212,7 @@ dailyReport.get('/reports/:id', async (c) => {
       unit: m.unit
     }))
   } else {
-    // 저장된 데이터가 없으면 실시간으로 계산 (기존 리포트 호환용)
+    // 저장된 데이터가 없거나 material_code가 없으면 실시간으로 계산
     const itemsList = items.results as any[]
     if (itemsList.length > 0) {
       // production_code 목록 추출
@@ -220,17 +220,24 @@ dailyReport.get('/reports/:id', async (c) => {
       
       if (productionCodes.length > 0) {
         // production_bom에서 BOM 데이터 조회 (material_code 포함)
-        const bomData = await c.env.DB.prepare(`
-          SELECT production_code, material_code, material_name, quantity, unit
-          FROM production_bom
-          WHERE production_code IN (${productionCodes.map(() => '?').join(',')})
-        `).bind(...productionCodes).all()
+        // SQLite는 IN 절에 999개까지만 지원하므로 배치 처리
+        let allBomResults: any[] = []
+        const batchSize = 100
+        for (let i = 0; i < productionCodes.length; i += batchSize) {
+          const batch = productionCodes.slice(i, i + batchSize)
+          const bomData = await c.env.DB.prepare(`
+            SELECT production_code, material_code, material_name, quantity, unit
+            FROM production_bom
+            WHERE production_code IN (${batch.map(() => '?').join(',')})
+          `).bind(...batch).all()
+          allBomResults = allBomResults.concat(bomData.results || [])
+        }
         
         // 품목별 수량으로 원재료 집계 (material_code 포함)
         const allMaterials = new Map<string, { material_code: string, quantity: number, unit: string }>()
         const bomMap = new Map<string, any[]>()
         
-        for (const row of bomData.results as any[]) {
+        for (const row of allBomResults) {
           if (!bomMap.has(row.production_code)) {
             bomMap.set(row.production_code, [])
           }

@@ -13,10 +13,11 @@ productionRoutes.get('/', async (c) => {
   
   // production_barcodes에서 제품명(product_name)과 판매처(channel) 가져오기
   // production_items에서 생산명(production_name)과 소비기한일수(shelf_life_days) 가져오기
+  // barcode_product_name이 없으면 alias1(제품명)을 대체로 사용
   let query = `
     SELECT p.*, 
            pi.production_name as production_name,
-           pb.product_name as barcode_product_name,
+           COALESCE(pb.product_name, pi.alias1) as barcode_product_name,
            COALESCE(pb.channel, p.channel) as channel,
            COALESCE(m.unit, 'EA') as product_unit,
            COALESCE(pi.shelf_life_days, 7) as shelf_life_days,

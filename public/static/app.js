@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.41';
+const APP_VERSION = '2.0.42';
 const APP_BUILD = '20260415-v4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -22050,12 +22050,13 @@ function exportProductionReportExcel() {
     // 소비기한: calculated_expiry_date 사용
     const expiryDate = prod.calculated_expiry_date || prod.expiry_date || prod.prod_date;
     
-    // 생산명/제품명 (production_barcodes에서 가져옴)
+    // 생산명/제품명 (production_barcodes에서 가져옴) - 풀네임
     const productionName = prod.production_name || prod.product_code;
     const productName = prod.barcode_product_name || '';
+    // 엑셀에서는 줄바꿈으로 구분
     let displayName = productionName;
     if (productName && productName !== productionName) {
-      displayName = productionName + ' / ' + productName;
+      displayName = productionName + '\n' + productName;
     }
     
     // 판매처: production_barcodes의 channel 필드 직접 사용
@@ -22076,12 +22077,12 @@ function exportProductionReportExcel() {
   
   // 컬럼 너비 설정
   wsSummary['!cols'] = [
-    { wch: 12 }, // 생산일
+    { wch: 12 }, // 소비기한
     { wch: 10 }, // 제품코드
-    { wch: 35 }, // 제품명
+    { wch: 60 }, // 생산명/제품명 (풀네임)
     { wch: 10 }, // 생산수량
     { wch: 25 }, // 제품LOT
-    { wch: 8 },  // 상태
+    { wch: 10 }, // 판매처
     { wch: 20 }  // 비고
   ];
   
@@ -22324,16 +22325,6 @@ function printProductionReport() {
               // 제품명: barcode_product_name (production_barcodes 테이블)
               const productName = p.barcode_product_name || '';
               
-              // 생산명/제품명 표시 (둘 다 있으면 함께, 같으면 하나만)
-              let displayName = productionName;
-              if (productName && productName !== productionName) {
-                displayName = productionName + ' / ' + productName;
-              }
-              // 너무 길면 자르기
-              if (displayName.length > 45) {
-                displayName = displayName.substring(0, 45) + '...';
-              }
-              
               // 판매처: production_barcodes의 channel 필드 사용
               const channelName = p.channel || '-';
               
@@ -22342,7 +22333,10 @@ function printProductionReport() {
                 <td class="text-center">${i + 1}</td>
                 <td class="text-center">${expiryDate}</td>
                 <td class="text-center">${p.product_code}</td>
-                <td style="font-size:8pt;">${displayName}</td>
+                <td style="font-size:8pt;">
+                  <div>${productionName}</div>
+                  ${productName && productName !== productionName ? `<div style="color:#666; margin-top:2px;">${productName}</div>` : ''}
+                </td>
                 <td class="text-right">${formatNumber(p.quantity)}개</td>
                 <td class="text-center" style="font-size:7pt;">${p.lot_number || '-'}</td>
                 <td class="text-center">${channelName}</td>

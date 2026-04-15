@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.38';
+const APP_VERSION = '2.0.39';
 const APP_BUILD = '20260415-v4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -18789,17 +18789,20 @@ async function registerProductionFromDailyReport() {
     // 생산일 (리포트 날짜 또는 오늘)
     const productionDate = reportData.report_date || new Date().toISOString().split('T')[0];
     
-    // 일괄 생산 등록 API 호출
+    // 일괄 생산 등록 API 호출 (소비기한, 판매처 포함)
     const items = matchedItems.map(item => ({
       product_code: item.production_code,
-      quantity: item.quantity
+      quantity: item.quantity,
+      expiry_date: item.expiry_date || null,
+      channel: item.channel || 'unknown'
     }));
     
     const result = await api('/production/batch', 'POST', {
       items: items,
       prod_date: productionDate,
       memo: `생산일보 자동등록 (${reportData.report_no})`,
-      created_by: localStorage.getItem('user_name') || '시스템'
+      created_by: localStorage.getItem('user_name') || '시스템',
+      channel: items[0]?.channel || 'unknown'
     });
     
     if (result.success) {
@@ -22040,17 +22043,30 @@ function exportProductionReportExcel() {
     [`기간: ${startDate} ~ ${endDate}`],
     [`출력일: ${formatDate(new Date())} ${new Date().toLocaleTimeString('ko-KR')}`],
     [],
-    ['생산일', '제품코드', '제품명', '생산수량', '제품LOT', '상태', '비고']
+    ['소비기한', '제품코드', '제품명', '생산수량', '제품LOT', '판매처', '비고']
   ];
   
   for (const prod of productions) {
+    // 판매처 한글 변환
+    const channelName = {
+      'coupang': '쿠팡',
+      'kurly': '컬리',
+      'bmart': 'B마트',
+      'oasis': '오아시스',
+      'baemin': '배민',
+      'direct_store': '직영점',
+      'generic': '기타',
+      'mixed': '복합',
+      'unknown': '-'
+    }[prod.channel] || prod.channel || '-';
+    
     summaryData.push([
-      prod.prod_date,
+      prod.expiry_date || prod.prod_date,
       prod.product_code,
       prod.product_name || '',
       prod.quantity,
       prod.lot_number || '',
-      prod.status,
+      channelName,
       prod.memo || ''
     ]);
   }
@@ -22289,26 +22305,40 @@ function printProductionReport() {
           <thead>
             <tr>
               <th style="width:4%">No</th>
-              <th style="width:9%">생산일</th>
+              <th style="width:9%">소비기한</th>
               <th style="width:9%">제품코드</th>
               <th>제품명</th>
               <th style="width:8%">수량</th>
               <th style="width:18%">제품LOT</th>
-              <th style="width:6%">상태</th>
+              <th style="width:6%">판매처</th>
             </tr>
           </thead>
           <tbody>
-            ${productions.map((p, i) => `
+            ${productions.map((p, i) => {
+              // 판매처 한글 변환
+              const channelName = {
+                'coupang': '쿠팡',
+                'kurly': '컬리',
+                'bmart': 'B마트',
+                'oasis': '오아시스',
+                'baemin': '배민',
+                'direct_store': '직영점',
+                'generic': '기타',
+                'mixed': '복합',
+                'unknown': '-'
+              }[p.channel] || p.channel || '-';
+              
+              return `
               <tr>
                 <td class="text-center">${i + 1}</td>
-                <td class="text-center">${p.prod_date}</td>
+                <td class="text-center">${p.expiry_date || p.prod_date}</td>
                 <td class="text-center">${p.product_code}</td>
                 <td>${(p.product_name || p.product_code).substring(0, 25)}${(p.product_name || '').length > 25 ? '...' : ''}</td>
                 <td class="text-right">${formatNumber(p.quantity)}개</td>
                 <td class="text-center" style="font-size:7pt;">${p.lot_number || '-'}</td>
-                <td class="text-center">${p.status}</td>
+                <td class="text-center">${channelName}</td>
               </tr>
-            `).join('')}
+            `}).join('')}
             <tr style="background:#f0f0f0; font-weight:bold;">
               <td colspan="4" class="text-center">합 계</td>
               <td class="text-right">${formatNumber(productions.reduce((s,p) => s + p.quantity, 0))}개</td>

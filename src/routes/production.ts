@@ -424,8 +424,8 @@ productionRoutes.post('/', async (c) => {
 // 빠른 일괄 생산 등록 (발주서 업로드용 - 원재료 차감 포함)
 productionRoutes.post('/batch', async (c) => {
   const body = await c.req.json();
-  const { items, prod_date, memo } = body;
-  // items: [{ product_code, quantity }]
+  const { items, prod_date, memo, channel: defaultChannel } = body;
+  // items: [{ product_code, quantity, channel?, expiry_date? }]
   
   if (!items || items.length === 0) {
     return c.json({ success: false, error: '등록할 항목이 없습니다.' }, 400);
@@ -539,11 +539,22 @@ productionRoutes.post('/batch', async (c) => {
     try {
       const productLot = `PRD-${productionDate.replace(/-/g, '')}-${item.product_code}-${String(Date.now()).slice(-4)}`;
       
-      // 1. 생산 기록 등록
+      // 소비기한 계산 (item에서 받거나 shelf_life_days로 계산)
+      const expiryDays = product.expiry_days || 7;
+      const itemExpiryDate = item.expiry_date || (() => {
+        const d = new Date(productionDate);
+        d.setDate(d.getDate() + expiryDays);
+        return d.toISOString().split('T')[0];
+      })();
+      
+      // 판매처 (item에서 받거나 기본값 사용)
+      const itemChannel = item.channel || defaultChannel || 'unknown';
+      
+      // 1. 생산 기록 등록 (소비기한, 판매처 포함)
       const prodResult = await c.env.DB.prepare(`
-        INSERT INTO production (prod_date, product_code, quantity, lot_number, status, memo)
-        VALUES (?, ?, ?, ?, '완료', ?)
-      `).bind(productionDate, item.product_code, item.quantity, productLot, memo || '발주서 일괄등록').run();
+        INSERT INTO production (prod_date, product_code, quantity, lot_number, status, memo, expiry_date, channel)
+        VALUES (?, ?, ?, ?, '완료', ?, ?, ?)
+      `).bind(productionDate, item.product_code, item.quantity, productLot, memo || '발주서 일괄등록', itemExpiryDate, itemChannel).run();
       
       const productionId = prodResult.meta.last_row_id;
       

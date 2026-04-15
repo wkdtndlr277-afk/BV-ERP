@@ -1851,6 +1851,27 @@ admin.get('/migrate-shelf-life', async (c) => {
     }
   }
   
+  // production 테이블에도 expiry_date, channel 컬럼 추가 (생산일보 인쇄용)
+  try {
+    await env.DB.prepare(`
+      ALTER TABLE production ADD COLUMN expiry_date TEXT DEFAULT NULL
+    `).run()
+  } catch (e: any) {
+    if (!e.message?.includes('duplicate column')) {
+      console.log('production.expiry_date column may already exist')
+    }
+  }
+  
+  try {
+    await env.DB.prepare(`
+      ALTER TABLE production ADD COLUMN channel TEXT DEFAULT NULL
+    `).run()
+  } catch (e: any) {
+    if (!e.message?.includes('duplicate column')) {
+      console.log('production.channel column may already exist')
+    }
+  }
+  
   return c.json({ success: true, message: '소비기한/판매처 컬럼 마이그레이션 완료' })
 })
 

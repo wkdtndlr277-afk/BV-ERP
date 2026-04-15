@@ -224,10 +224,10 @@ transactionRoutes.get('/daily-report', async (c) => {
   const search = c.req.query('search');
   
   // 정방향 계산: 전일재고 = 해당일 이전까지의 모든 입고 - 사용 - 출고 + 조정
-  // master 테이블 (원료/제품) + supplies 테이블 (부자재) 통합 조회
+  // master 테이블 (원료) + supplies 테이블 (부자재) + production_items 테이블 (제품) 통합 조회
   let query = `
     SELECT * FROM (
-      -- 원료/제품 (master 테이블)
+      -- 원료 (master 테이블)
       SELECT 
         ? as report_date,
         m.item_code,
@@ -284,10 +284,38 @@ transactionRoutes.get('/daily-report', async (c) => {
         OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date < ?)
         OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = s.item_code AND t.trans_date < ?)
       )
+      
+      UNION ALL
+      
+      -- 제품 (production_items 테이블) - 생산 입고/출고 트랜잭션 사용
+      SELECT 
+        ? as report_date,
+        p.production_code as item_code,
+        COALESCE(p.alias1, p.production_name) as item_name,
+        '제품' as category,
+        COALESCE(p.unit, 'EA') as unit,
+        p.current_stock,
+        COALESCE((SELECT SUM(pi.remain_qty) FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.quality_status = '합격'), 0) as lot_remain_total,
+        COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '생산입고' AND pt.trans_date < ?), 0) as before_inbound,
+        0 as before_usage,
+        COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '출고' AND pt.trans_date < ?), 0) as before_outbound,
+        COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '재고조정' AND pt.trans_date < ?), 0) as before_adjustment,
+        COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '생산입고' AND pt.trans_date = ?), 0) as inbound_qty,
+        COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '재고조정' AND pt.quantity > 0 AND pt.trans_date = ?), 0) as adj_plus,
+        COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '재고조정' AND pt.quantity < 0 AND pt.trans_date = ?), 0) as adj_minus,
+        0 as usage,
+        COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '출고' AND pt.trans_date = ?), 0) as outbound_qty
+      FROM production_items p
+      WHERE p.category = '제품' AND (
+        p.current_stock > 0
+        OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date = ?)
+        OR EXISTS (SELECT 1 FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.remain_qty > 0)
+        OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date < ?)
+      )
     ) combined
     WHERE 1=1
   `;
-  // 파라미터 순서: master(15) + supplies(15)
+  // 파라미터 순서: master(14) + supplies(14) + production_items(10)
   const params: any[] = [
     // master 파라미터
     date,  // report_date
@@ -298,7 +326,12 @@ transactionRoutes.get('/daily-report', async (c) => {
     date,  // report_date
     date, date, date, date,  // before queries
     date, date, date, date, date,  // period queries
-    date, date, date, date  // EXISTS queries
+    date, date, date, date,  // EXISTS queries
+    // production_items 파라미터
+    date,  // report_date
+    date, date, date,  // before queries
+    date, date, date, date,  // period queries
+    date, date  // EXISTS queries
   ];
   
   if (category && category !== '전체') {
@@ -355,10 +388,10 @@ transactionRoutes.get('/monthly-report', async (c) => {
   const endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
   
   // 정방향 계산: 월초재고 = 해당월 이전까지의 모든 입고 - 사용 - 출고 + 조정
-  // master 테이블 (원료/제품) + supplies 테이블 (부자재) 통합 조회
+  // master 테이블 (원료) + supplies 테이블 (부자재) + production_items 테이블 (제품) 통합 조회
   let query = `
     SELECT * FROM (
-      -- 원료/제품 (master 테이블)
+      -- 원료 (master 테이블)
       SELECT 
         m.item_code,
         m.item_name,
@@ -413,10 +446,37 @@ transactionRoutes.get('/monthly-report', async (c) => {
         OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date < ?)
         OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = s.item_code AND t.trans_date < ?)
       )
+      
+      UNION ALL
+      
+      -- 제품 (production_items 테이블) - 생산 입고/출고 트랜잭션 사용
+      SELECT 
+        p.production_code as item_code,
+        COALESCE(p.alias1, p.production_name) as item_name,
+        '제품' as category,
+        COALESCE(p.unit, 'EA') as unit,
+        p.current_stock,
+        COALESCE((SELECT SUM(pi.remain_qty) FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.quality_status = '합격'), 0) as lot_remain_total,
+        COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '생산입고' AND pt.trans_date < ?), 0) as before_inbound,
+        0 as before_usage,
+        COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '출고' AND pt.trans_date < ?), 0) as before_outbound,
+        COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '재고조정' AND pt.trans_date < ?), 0) as before_adjustment,
+        COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '생산입고' AND pt.trans_date >= ? AND pt.trans_date <= ?), 0) as inbound_qty,
+        COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '재고조정' AND pt.quantity > 0 AND pt.trans_date >= ? AND pt.trans_date <= ?), 0) as adj_plus,
+        COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '재고조정' AND pt.quantity < 0 AND pt.trans_date >= ? AND pt.trans_date <= ?), 0) as adj_minus,
+        0 as total_usage,
+        COALESCE((SELECT SUM(ABS(pt.quantity)) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '출고' AND pt.trans_date >= ? AND pt.trans_date <= ?), 0) as outbound_qty
+      FROM production_items p
+      WHERE p.category = '제품' AND (
+        p.current_stock > 0
+        OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date >= ? AND pt.trans_date <= ?)
+        OR EXISTS (SELECT 1 FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.remain_qty > 0)
+        OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date < ?)
+      )
     ) combined
     WHERE 1=1
   `;
-  // 파라미터 순서: master(20개) + supplies(20개)
+  // 파라미터 순서: master(20개) + supplies(20개) + production_items(14개)
   const params: any[] = [
     // master 파라미터
     startDate, startDate, startDate, startDate,  // before queries
@@ -425,7 +485,11 @@ transactionRoutes.get('/monthly-report', async (c) => {
     // supplies 파라미터
     startDate, startDate, startDate, startDate,  // before queries
     startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate,  // period queries
-    startDate, endDate, startDate, endDate, startDate, startDate  // EXISTS queries
+    startDate, endDate, startDate, endDate, startDate, startDate,  // EXISTS queries
+    // production_items 파라미터
+    startDate, startDate, startDate,  // before queries
+    startDate, endDate, startDate, endDate, startDate, endDate, startDate, endDate,  // period queries
+    startDate, endDate, startDate  // EXISTS queries
   ];
   
   if (category && category !== '전체') {

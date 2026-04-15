@@ -482,6 +482,94 @@ dailyReport.delete('/reports/:id', async (c) => {
   return c.json({ success: true, message: '삭제되었습니다.' })
 })
 
+// ===== 모든 데이터 삭제 API (초기화용) =====
+
+// 모든 생산일보 삭제
+dailyReport.delete('/reports', async (c) => {
+  const confirm = c.req.query('confirm')
+  
+  if (confirm !== 'yes') {
+    return c.json({ success: false, error: '삭제 확인이 필요합니다. confirm=yes 파라미터를 추가하세요.' }, 400)
+  }
+  
+  // 모든 생산일보 삭제 (CASCADE로 items, materials도 함께 삭제됨)
+  const countResult = await c.env.DB.prepare('SELECT COUNT(*) as count FROM production_daily_report').first() as any
+  const count = countResult?.count || 0
+  
+  await c.env.DB.prepare('DELETE FROM production_daily_report').run()
+  
+  return c.json({ success: true, message: `${count}건의 생산일보가 삭제되었습니다.`, deleted_count: count })
+})
+
+// 모든 생산등록 삭제 (생산, 입고, 트랜잭션, 재고 초기화)
+dailyReport.delete('/all-production', async (c) => {
+  const confirm = c.req.query('confirm')
+  
+  if (confirm !== 'yes') {
+    return c.json({ success: false, error: '삭제 확인이 필요합니다. confirm=yes 파라미터를 추가하세요.' }, 400)
+  }
+  
+  // 각 테이블의 데이터 수 조회
+  const productionCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM production').first() as any)?.count || 0
+  const productionMaterialsCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM production_materials').first() as any)?.count || 0
+  const productionInboundCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM production_inbound').first() as any)?.count || 0
+  const productionTransactionsCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM production_transactions').first() as any)?.count || 0
+  
+  // 생산 관련 테이블 초기화
+  await c.env.DB.prepare('DELETE FROM production_materials').run()
+  await c.env.DB.prepare('DELETE FROM production_transactions').run()
+  await c.env.DB.prepare('DELETE FROM production_inbound').run()
+  await c.env.DB.prepare('DELETE FROM production').run()
+  
+  // 제품 재고 0으로 초기화
+  await c.env.DB.prepare('UPDATE production_items SET current_stock = 0').run()
+  
+  return c.json({ 
+    success: true, 
+    message: '모든 생산등록이 삭제되었습니다.',
+    deleted: {
+      production: productionCount,
+      production_materials: productionMaterialsCount,
+      production_inbound: productionInboundCount,
+      production_transactions: productionTransactionsCount
+    }
+  })
+})
+
+// 전체 초기화 (생산일보 + 생산등록 모두 삭제)
+dailyReport.delete('/reset-all', async (c) => {
+  const confirm = c.req.query('confirm')
+  
+  if (confirm !== 'yes-reset-all') {
+    return c.json({ success: false, error: '전체 삭제 확인이 필요합니다. confirm=yes-reset-all 파라미터를 추가하세요.' }, 400)
+  }
+  
+  // 각 테이블의 데이터 수 조회
+  const dailyReportCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM production_daily_report').first() as any)?.count || 0
+  const productionCount = (await c.env.DB.prepare('SELECT COUNT(*) as count FROM production').first() as any)?.count || 0
+  
+  // 1. 생산일보 삭제 (CASCADE로 items, materials도 함께 삭제됨)
+  await c.env.DB.prepare('DELETE FROM production_daily_report').run()
+  
+  // 2. 생산등록 관련 테이블 초기화
+  await c.env.DB.prepare('DELETE FROM production_materials').run()
+  await c.env.DB.prepare('DELETE FROM production_transactions').run()
+  await c.env.DB.prepare('DELETE FROM production_inbound').run()
+  await c.env.DB.prepare('DELETE FROM production').run()
+  
+  // 3. 제품 재고 0으로 초기화
+  await c.env.DB.prepare('UPDATE production_items SET current_stock = 0').run()
+  
+  return c.json({ 
+    success: true, 
+    message: '모든 생산일보와 생산등록이 삭제되었습니다.',
+    deleted: {
+      daily_reports: dailyReportCount,
+      production: productionCount
+    }
+  })
+})
+
 // ===== 생산계획표 생성 API (발주서 기반) =====
 
 // 발주서 데이터로 생산계획표 생성 (바코드 매칭 + BOM 계산)

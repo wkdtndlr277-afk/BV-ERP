@@ -187,7 +187,7 @@ dailyReport.get('/reports/:id', async (c) => {
     ORDER BY id
   `).bind(id).all()
   
-  // 원재료 사용량 (집계)
+  // 원재료 사용량 (저장된 데이터)
   const materials = await c.env.DB.prepare(`
     SELECT material_name, unit, 
            SUM(required_quantity) as total_quantity,
@@ -198,12 +198,62 @@ dailyReport.get('/reports/:id', async (c) => {
     ORDER BY material_name
   `).bind(id).all()
   
-  // materials_summary 형식으로 변환 (프론트엔드 호환)
-  const materials_summary = (materials.results as any[]).map(m => ({
-    material_name: m.material_name,
-    total_quantity: m.total_quantity,
-    unit: m.unit
-  }))
+  let materials_summary: any[] = []
+  
+  // 저장된 원재료 데이터가 있으면 사용
+  if (materials.results && materials.results.length > 0) {
+    materials_summary = (materials.results as any[]).map(m => ({
+      material_name: m.material_name,
+      total_quantity: m.total_quantity,
+      unit: m.unit
+    }))
+  } else {
+    // 저장된 데이터가 없으면 실시간으로 계산 (기존 리포트 호환용)
+    const itemsList = items.results as any[]
+    if (itemsList.length > 0) {
+      // production_code 목록 추출
+      const productionCodes = [...new Set(itemsList.map(i => i.production_code).filter(c => c && c !== 'UNKNOWN'))]
+      
+      if (productionCodes.length > 0) {
+        // production_bom에서 BOM 데이터 조회
+        const bomData = await c.env.DB.prepare(`
+          SELECT production_code, material_name, quantity, unit
+          FROM production_bom
+          WHERE production_code IN (${productionCodes.map(() => '?').join(',')})
+        `).bind(...productionCodes).all()
+        
+        // 품목별 수량으로 원재료 집계
+        const allMaterials = new Map<string, { quantity: number, unit: string }>()
+        const bomMap = new Map<string, any[]>()
+        
+        for (const row of bomData.results as any[]) {
+          if (!bomMap.has(row.production_code)) {
+            bomMap.set(row.production_code, [])
+          }
+          bomMap.get(row.production_code)!.push(row)
+        }
+        
+        for (const item of itemsList) {
+          const bomItems = bomMap.get(item.production_code) || []
+          for (const bom of bomItems) {
+            const requiredQty = (bom.quantity || 0) * item.quantity
+            const key = `${bom.material_name}|${bom.unit || 'g'}`
+            const existing = allMaterials.get(key)
+            if (existing) {
+              existing.quantity += requiredQty
+            } else {
+              allMaterials.set(key, { quantity: requiredQty, unit: bom.unit || 'g' })
+            }
+          }
+        }
+        
+        materials_summary = Array.from(allMaterials.entries()).map(([key, val]) => {
+          const [name, unit] = key.split('|')
+          return { material_name: name, total_quantity: val.quantity, unit }
+        }).sort((a, b) => a.material_name.localeCompare(b.material_name))
+      }
+    }
+  }
   
   return c.json({
     success: true,

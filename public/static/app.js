@@ -19186,12 +19186,14 @@ async function registerProductionFromDailyReport() {
     // 생산일 (리포트 날짜 또는 오늘)
     const productionDate = reportData.report_date || new Date().toISOString().split('T')[0];
     
-    // 일괄 생산 등록 API 호출 (소비기한, 판매처 포함)
+    // 일괄 생산 등록 API 호출 (소비기한, 판매처, 바코드, box_quantity 포함)
     const items = matchedItems.map(item => ({
       product_code: item.production_code,
       quantity: item.quantity,
       expiry_date: item.expiry_date || null,
-      channel: item.channel || 'unknown'
+      channel: item.channel || 'unknown',
+      barcode: item.barcode || null,
+      box_quantity: item.box_quantity || null  // 바코드별 입수량
     }));
     
     const result = await api('/production/batch', 'POST', {
@@ -30770,19 +30772,30 @@ async function showBarcodeModal(productionCode, productionName) {
       <!-- 기존 바코드 목록 -->
       <div>
         <h4 class="font-medium text-gray-700 mb-2">등록된 바코드 (${barcodes.length}개)</h4>
-        <div id="barcode-list" class="border rounded-lg divide-y max-h-48 overflow-y-auto">
+        <div id="barcode-list" class="border rounded-lg divide-y max-h-64 overflow-y-auto">
           ${barcodes.length === 0 ? `
             <div class="text-center py-4 text-gray-400">등록된 바코드가 없습니다.</div>
           ` : barcodes.map(b => `
             <div class="flex items-center justify-between px-3 py-2 hover:bg-gray-50">
-              <div>
-                <span class="font-mono text-sm">${b.barcode}</span>
-                ${b.product_name ? `<span class="text-gray-400 text-xs ml-2">(${b.product_name})</span>` : ''}
-                ${b.channel ? `<span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded ml-2">${b.channel}</span>` : ''}
+              <div class="flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-sm">${b.barcode}</span>
+                  ${b.channel ? `<span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">${b.channel}</span>` : ''}
+                </div>
+                ${b.product_name ? `<div class="text-gray-400 text-xs mt-0.5">${b.product_name}</div>` : ''}
               </div>
-              <button onclick="deleteBarcode(${b.id}, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 p-1">
-                <i class="fas fa-times"></i>
-              </button>
+              <div class="flex items-center gap-2">
+                <div class="flex items-center gap-1">
+                  <label class="text-xs text-gray-500">입수량:</label>
+                  <input type="number" min="1" value="${b.box_quantity || 1}" 
+                         onchange="updateBarcodeBoxQuantity(${b.id}, this.value, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" 
+                         class="w-16 border rounded px-2 py-1 text-sm text-center">
+                  <span class="text-xs text-gray-400">EA/박스</span>
+                </div>
+                <button onclick="deleteBarcode(${b.id}, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 p-1" title="삭제">
+                  <i class="fas fa-times"></i>
+                </button>
+              </div>
             </div>
           `).join('')}
         </div>
@@ -30800,16 +30813,22 @@ async function showBarcodeModal(productionCode, productionName) {
             <label class="block text-sm text-gray-600 mb-1">주문 제품명 (선택)</label>
             <input type="text" id="new-barcode-product-name" class="w-full border rounded-lg px-4 py-2" placeholder="주문서에 표시되는 제품명">
           </div>
-          <div>
-            <label class="block text-sm text-gray-600 mb-1">판매 채널 (선택)</label>
-            <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2">
-              <option value="">선택안함</option>
-              <option value="쿠팡">쿠팡</option>
-              <option value="컬리">컬리</option>
-              <option value="오아시스">오아시스</option>
-              <option value="네이버">네이버</option>
-              <option value="기타">기타</option>
-            </select>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm text-gray-600 mb-1">판매 채널 (선택)</label>
+              <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2">
+                <option value="">선택안함</option>
+                <option value="쿠팡">쿠팡</option>
+                <option value="컬리">컬리</option>
+                <option value="오아시스">오아시스</option>
+                <option value="네이버">네이버</option>
+                <option value="기타">기타</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm text-gray-600 mb-1">입수량 (박스당 개수) <span class="text-red-500">*</span></label>
+              <input type="number" id="new-barcode-box-quantity" min="1" value="1" class="w-full border rounded-lg px-4 py-2" placeholder="예: 3">
+            </div>
           </div>
         </div>
       </div>
@@ -30830,9 +30849,15 @@ async function addBarcode(productionCode, productionName) {
   const barcode = document.getElementById('new-barcode').value.trim();
   const productName = document.getElementById('new-barcode-product-name').value.trim();
   const channel = document.getElementById('new-barcode-channel').value;
+  const boxQuantity = parseInt(document.getElementById('new-barcode-box-quantity')?.value) || 1;
   
   if (!barcode) {
     showToast('바코드를 입력하세요', 'warning');
+    return;
+  }
+  
+  if (boxQuantity < 1) {
+    showToast('입수량은 1 이상이어야 합니다', 'warning');
     return;
   }
   
@@ -30852,7 +30877,8 @@ async function addBarcode(productionCode, productionName) {
       production_code: productionCode,
       barcode: barcode,
       product_name: productName || null,
-      channel: channel || null
+      channel: channel || null,
+      box_quantity: boxQuantity
     });
     showToast('바코드가 추가되었습니다', 'success');
     // 데이터 새로고침 (UI 업데이트 위해)
@@ -30895,6 +30921,25 @@ function updateBarcodeCountInTable(productionCode) {
     }
   });
 }
+
+// 바코드 입수량 수정
+async function updateBarcodeBoxQuantity(id, newQuantity, productionCode, productionName) {
+  const quantity = parseInt(newQuantity);
+  if (isNaN(quantity) || quantity < 1) {
+    showToast('입수량은 1 이상이어야 합니다', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/admin/barcodes/${id}/box-quantity`, 'PUT', { box_quantity: quantity });
+    showToast(`입수량이 ${quantity}개로 수정되었습니다`, 'success');
+  } catch (e) {
+    showToast('입수량 수정 실패: ' + (e.message || e), 'error');
+    // 모달 새로고침하여 원래 값 복원
+    showBarcodeModal(productionCode, productionName);
+  }
+}
+window.updateBarcodeBoxQuantity = updateBarcodeBoxQuantity;
 
 // 바코드 삭제
 let isDeletingBarcode = false;

@@ -2025,6 +2025,20 @@ admin.post('/migrate/add-box-quantity', async (c) => {
     `).run()
     results.push('기존 데이터 box_quantity 기본값(1) 설정 완료')
     
+    // production_daily_items 테이블에도 box_quantity 컬럼 추가
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE production_daily_items ADD COLUMN box_quantity INTEGER DEFAULT 1
+      `).run()
+      results.push('production_daily_items.box_quantity 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message?.includes('duplicate column')) {
+        results.push('production_daily_items.box_quantity 컬럼 이미 존재')
+      } else {
+        results.push(`production_daily_items.box_quantity 추가 실패: ${e.message}`)
+      }
+    }
+    
     return c.json({ success: true, message: '바코드 입수량 마이그레이션 완료', details: results })
   } catch (error: any) {
     return c.json({ success: false, error: error.message, details: results }, 500)

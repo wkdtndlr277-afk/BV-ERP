@@ -74,7 +74,7 @@ dailyReport.get('/barcodes/lookup/:barcode', async (c) => {
 // 바코드 등록
 dailyReport.post('/barcodes', async (c) => {
   const body = await c.req.json()
-  const { production_code, barcode, product_name, channel } = body
+  const { production_code, barcode, product_name, channel, box_quantity } = body
   
   if (!production_code || !barcode) {
     return c.json({ success: false, error: '생산코드와 바코드는 필수입니다.' }, 400)
@@ -82,9 +82,9 @@ dailyReport.post('/barcodes', async (c) => {
   
   try {
     await c.env.DB.prepare(`
-      INSERT INTO production_barcodes (production_code, barcode, product_name, channel)
-      VALUES (?, ?, ?, ?)
-    `).bind(production_code, barcode, product_name || null, channel || null).run()
+      INSERT INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(production_code, barcode, product_name || null, channel || null, box_quantity || 1).run()
     
     return c.json({ success: true, message: '바코드가 등록되었습니다.' })
   } catch (e: any) {
@@ -111,9 +111,9 @@ dailyReport.post('/barcodes/bulk', async (c) => {
   for (const item of items) {
     try {
       await c.env.DB.prepare(`
-        INSERT OR REPLACE INTO production_barcodes (production_code, barcode, product_name, channel)
-        VALUES (?, ?, ?, ?)
-      `).bind(item.production_code, item.barcode, item.product_name || null, item.channel || null).run()
+        INSERT OR REPLACE INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(item.production_code, item.barcode, item.product_name || null, item.channel || null, item.box_quantity || 1).run()
       success++
     } catch (e: any) {
       failed++
@@ -215,10 +215,27 @@ dailyReport.get('/reports/:id', async (c) => {
     // 저장된 데이터가 없거나 material_code가 없으면 실시간으로 계산
     const itemsList = items.results as any[]
     if (itemsList.length > 0) {
-      // production_code 목록 추출
+      // production_code 목록 및 바코드 목록 추출
       const productionCodes = [...new Set(itemsList.map(i => i.production_code).filter(c => c && c !== 'UNKNOWN'))]
+      const barcodes = [...new Set(itemsList.map(i => i.barcode).filter(b => b))]
       
       if (productionCodes.length > 0) {
+        // 바코드별 box_quantity 조회
+        let barcodeBoxQuantityMap = new Map<string, number>()
+        if (barcodes.length > 0) {
+          const batchSize = 100
+          for (let i = 0; i < barcodes.length; i += batchSize) {
+            const batch = barcodes.slice(i, i + batchSize)
+            const barcodeData = await c.env.DB.prepare(`
+              SELECT barcode, box_quantity FROM production_barcodes
+              WHERE barcode IN (${batch.map(() => '?').join(',')})
+            `).bind(...batch).all()
+            for (const row of barcodeData.results as any[]) {
+              barcodeBoxQuantityMap.set(row.barcode, row.box_quantity || 1)
+            }
+          }
+        }
+        
         // production_bom에서 BOM 데이터 조회 (material_code 포함)
         // SQLite는 IN 절에 999개까지만 지원하므로 배치 처리
         let allBomResults: any[] = []
@@ -233,7 +250,7 @@ dailyReport.get('/reports/:id', async (c) => {
           allBomResults = allBomResults.concat(bomData.results || [])
         }
         
-        // 품목별 수량으로 원재료 집계 (material_code 포함)
+        // 품목별 수량으로 원재료 집계 (material_code 포함, box_quantity 적용)
         const allMaterials = new Map<string, { material_code: string, quantity: number, unit: string }>()
         const bomMap = new Map<string, any[]>()
         
@@ -246,8 +263,11 @@ dailyReport.get('/reports/:id', async (c) => {
         
         for (const item of itemsList) {
           const bomItems = bomMap.get(item.production_code) || []
+          // box_quantity: 바코드별 입수량 (박스당 개수), 기본값 1
+          const boxQuantity = item.barcode ? (barcodeBoxQuantityMap.get(item.barcode) || 1) : 1
+          const actualItemCount = item.quantity * boxQuantity  // 실제 생산 개수 = 박스수 × 입수량
           for (const bom of bomItems) {
-            const requiredQty = (bom.quantity || 0) * item.quantity
+            const requiredQty = (bom.quantity || 0) * actualItemCount
             const key = `${bom.material_code || ''}|${bom.material_name}|${bom.unit || 'g'}`
             const existing = allMaterials.get(key)
             if (existing) {
@@ -289,7 +309,7 @@ dailyReport.post('/reports/from-order', async (c) => {
   // 1. 모든 필요한 데이터를 한 번에 로드 (최적화)
   const [barcodeData, productionData, bomData, legacyBomData] = await Promise.all([
     c.env.DB.prepare(`
-      SELECT pb.barcode, pb.production_code, pi.production_name, pi.shelf_life_days
+      SELECT pb.barcode, pb.production_code, pb.box_quantity, pi.production_name, pi.shelf_life_days
       FROM production_barcodes pb
       JOIN production_items pi ON pb.production_code = pi.production_code
     `).all(),
@@ -383,17 +403,18 @@ dailyReport.post('/reports/from-order', async (c) => {
       expiryDate = prodDate.toISOString().split('T')[0]
     }
     
-    // 품목 등록 (비동기 배치) - channel(판매처) 필드 추가
+    // 품목 등록 (비동기 배치) - channel(판매처), box_quantity(입수량) 필드 추가
     const itemChannel = item.channel || channel || 'unknown'
+    const boxQuantity = productionInfo?.box_quantity || 1
     itemInserts.push(
       c.env.DB.prepare(`
         INSERT INTO production_daily_items 
-        (report_id, production_code, production_name, barcode, order_product_name, quantity, has_bom, expiry_date, channel)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (report_id, production_code, production_name, barcode, order_product_name, quantity, has_bom, expiry_date, channel, box_quantity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         reportId, productionCode, productionName, 
         item.barcode || null, item.product_name || null, 
-        item.quantity, hasBom, expiryDate, itemChannel
+        item.quantity, hasBom, expiryDate, itemChannel, boxQuantity
       ).run()
     )
     
@@ -401,8 +422,10 @@ dailyReport.post('/reports/from-order', async (c) => {
     totalQuantity += item.quantity
     
     // BOM 원재료 집계 (메모리에서, material_code 포함)
+    // box_quantity: 바코드별 입수량 (박스당 개수), 기본값 1 (위에서 선언된 boxQuantity 재사용)
+    const actualItemCount = item.quantity * boxQuantity  // 실제 생산 개수 = 박스수 × 입수량
     for (const bom of bomItems) {
-      const requiredQty = (bom.quantity || 0) * item.quantity
+      const requiredQty = (bom.quantity || 0) * actualItemCount
       const key = `${bom.material_code || ''}|${bom.material_name}|${bom.unit || 'g'}`
       const existing = allMaterials.get(key)
       if (existing) {
@@ -420,7 +443,8 @@ dailyReport.post('/reports/from-order', async (c) => {
       quantity: item.quantity,
       has_bom: hasBom,
       expiry_date: expiryDate,
-      channel: itemChannel
+      channel: itemChannel,
+      box_quantity: boxQuantity
     })
   }
   

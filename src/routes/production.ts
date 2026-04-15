@@ -438,7 +438,7 @@ productionRoutes.post('/', async (c) => {
 productionRoutes.post('/batch', async (c) => {
   const body = await c.req.json();
   const { items, prod_date, production_date, memo, channel: defaultChannel } = body;
-  // items: [{ product_code, quantity, channel?, expiry_date? }]
+  // items: [{ product_code, quantity, channel?, expiry_date?, barcode?, box_quantity? }]
   
   if (!items || items.length === 0) {
     return c.json({ success: false, error: '등록할 항목이 없습니다.' }, 400);
@@ -504,15 +504,24 @@ productionRoutes.post('/batch', async (c) => {
     WHERE production_code IN (${newPlaceholders})
   `).bind(...newProductCodes).all<any>();
   
-  // 3. production_barcodes 테이블에서도 조회 (바코드 매핑된 경우)
+  // 3. production_barcodes 테이블에서도 조회 (바코드 매핑된 경우, box_quantity 포함)
   const barcodeItems = await c.env.DB.prepare(`
     SELECT pb.production_code as item_code, 
            pi.production_name as item_name,
-           COALESCE(pi.shelf_life_days, 7) as expiry_days
+           COALESCE(pi.shelf_life_days, 7) as expiry_days,
+           pb.box_quantity
     FROM production_barcodes pb
     LEFT JOIN production_items pi ON pb.production_code = pi.production_code
     WHERE pb.production_code IN (${newPlaceholders})
   `).bind(...newProductCodes).all<any>();
+  
+  // production_code별 box_quantity 맵 (채널별로 다를 수 있으므로 대표값 사용)
+  const boxQuantityMap = new Map<string, number>();
+  for (const b of barcodeItems.results || []) {
+    // 여러 바코드가 있을 경우, 가장 큰 box_quantity 사용 (안전하게)
+    const current = boxQuantityMap.get(b.item_code) || 1;
+    boxQuantityMap.set(b.item_code, Math.max(current, b.box_quantity || 1));
+  }
   
   const productMap = new Map();
   // master 테이블 결과 먼저 추가
@@ -611,9 +620,12 @@ productionRoutes.post('/batch', async (c) => {
       
       // 2. BOM 기반 원재료 차감 누적
       const bomItems = bomMap.get(item.product_code) || [];
+      // box_quantity: 바코드별 입수량 (박스당 개수), item에서 전달받거나 boxQuantityMap에서 조회, 기본값 1
+      const boxQuantity = item.box_quantity || boxQuantityMap.get(item.product_code) || 1;
+      const actualItemCount = item.quantity * boxQuantity;  // 실제 생산 개수 = 박스수 × 입수량
       for (const bom of bomItems) {
         const actualItemCode = bom.matched_item_code || bom.item_code;
-        const requiredQty = bom.quantity * item.quantity;
+        const requiredQty = bom.quantity * actualItemCount;  // box_quantity 적용
         const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
         
         if (materialDeductions.has(actualItemCode)) {

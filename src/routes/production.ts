@@ -446,26 +446,63 @@ productionRoutes.post('/batch', async (c) => {
   
   // prod_date 또는 production_date 둘 다 지원
   const productionDate = prod_date || production_date || new Date().toISOString().split('T')[0];
+  
+  // 중복 등록 방지: 해당 날짜에 이미 등록된 제품 확인
+  const productCodes = items.map((i: any) => i.product_code);
+  const placeholders = productCodes.map(() => '?').join(',');
+  
+  const existingProductions = await c.env.DB.prepare(`
+    SELECT product_code FROM production 
+    WHERE prod_date = ? AND product_code IN (${placeholders})
+  `).bind(productionDate, ...productCodes).all<any>();
+  
+  const existingSet = new Set((existingProductions.results || []).map((p: any) => p.product_code));
+  
+  // 이미 등록된 제품 필터링
+  const newItems = items.filter((i: any) => !existingSet.has(i.product_code));
+  
+  if (newItems.length === 0) {
+    return c.json({ 
+      success: false, 
+      error: `해당 날짜(${productionDate})에 모든 제품이 이미 등록되어 있습니다.`,
+      already_registered: existingSet.size
+    }, 400);
+  }
+  
+  const skippedCount = items.length - newItems.length;
+  
   const results: any[] = [];
   let successCount = 0;
   let failCount = 0;
   
+  // 새로 등록할 제품 코드들
+  const newProductCodes = newItems.map((i: any) => i.product_code);
+  
+  // 새로 등록할 제품이 없으면 조기 반환
+  if (newProductCodes.length === 0) {
+    return c.json({ 
+      success: true, 
+      message: '모든 항목이 이미 등록되어 스킵되었습니다.',
+      summary: { total: items.length, success: 0, fail: 0, skipped: skippedCount, materials_deducted: 0 },
+      results: []
+    });
+  }
+  
   // 모든 제품 정보를 한 번에 조회 (master + production_items + production_barcodes)
-  const productCodes = items.map((i: any) => i.product_code);
-  const placeholders = productCodes.map(() => '?').join(',');
+  const newPlaceholders = newProductCodes.map(() => '?').join(',');
   
   // 1. master 테이블에서 조회
   const products = await c.env.DB.prepare(`
     SELECT item_code, item_name, expiry_days FROM master 
-    WHERE item_code IN (${placeholders}) AND category = '제품'
-  `).bind(...productCodes).all<any>();
+    WHERE item_code IN (${newPlaceholders}) AND category = '제품'
+  `).bind(...newProductCodes).all<any>();
   
   // 2. production_items 테이블에서 조회
   const productionItems = await c.env.DB.prepare(`
     SELECT production_code as item_code, production_name as item_name, shelf_life_days as expiry_days 
     FROM production_items 
-    WHERE production_code IN (${placeholders})
-  `).bind(...productCodes).all<any>();
+    WHERE production_code IN (${newPlaceholders})
+  `).bind(...newProductCodes).all<any>();
   
   // 3. production_barcodes 테이블에서도 조회 (바코드 매핑된 경우)
   const barcodeItems = await c.env.DB.prepare(`
@@ -474,8 +511,8 @@ productionRoutes.post('/batch', async (c) => {
            COALESCE(pi.shelf_life_days, 7) as expiry_days
     FROM production_barcodes pb
     LEFT JOIN production_items pi ON pb.production_code = pi.production_code
-    WHERE pb.production_code IN (${placeholders})
-  `).bind(...productCodes).all<any>();
+    WHERE pb.production_code IN (${newPlaceholders})
+  `).bind(...newProductCodes).all<any>();
   
   const productMap = new Map();
   // master 테이블 결과 먼저 추가
@@ -506,16 +543,16 @@ productionRoutes.post('/batch', async (c) => {
       (b.item_code LIKE 'RM%' AND m2.item_code = 'R' || SUBSTR(b.item_code, 3)) OR
       (b.item_code LIKE 'R%' AND b.item_code NOT LIKE 'RM%' AND m2.item_code = 'RM' || SUBSTR(b.item_code, 2))
     )
-    WHERE b.product_code IN (${placeholders})
-  `).bind(...productCodes).all<any>();
+    WHERE b.product_code IN (${newPlaceholders})
+  `).bind(...newProductCodes).all<any>();
   
   // production_bom 테이블에서도 조회
   const prodBom = await c.env.DB.prepare(`
     SELECT pb.production_code as product_code, pb.material_code as item_code, 
            pb.quantity, pb.unit, pb.material_code as matched_item_code, pb.material_name as item_name
     FROM production_bom pb
-    WHERE pb.production_code IN (${placeholders})
-  `).bind(...productCodes).all<any>();
+    WHERE pb.production_code IN (${newPlaceholders})
+  `).bind(...newProductCodes).all<any>();
   
   // BOM을 제품별로 그룹핑
   const bomMap = new Map<string, any[]>();
@@ -540,8 +577,8 @@ productionRoutes.post('/batch', async (c) => {
   // 원재료 차감 누적 (한 번에 처리)
   const materialDeductions = new Map<string, { qty: number, itemName: string, memos: string[] }>();
   
-  // 각 제품 등록
-  for (const item of items) {
+  // 각 제품 등록 (중복 제외된 새 항목만)
+  for (const item of newItems) {
     const product = productMap.get(item.product_code);
     
     if (!product) {

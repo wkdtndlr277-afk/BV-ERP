@@ -200,12 +200,15 @@ dailyReport.get('/reports/:id', async (c) => {
   
   let materials_summary: any[] = []
   
-  // 저장된 원재료 데이터가 있으면 사용 (material_code 포함)
-  if (materials.results && materials.results.length > 0) {
-    materials_summary = (materials.results as any[]).map(m => ({
+  // 저장된 원재료 데이터가 있고 material_code가 있으면 사용
+  const savedMaterials = materials.results as any[] || []
+  const hasMaterialCode = savedMaterials.length > 0 && savedMaterials.some(m => m.material_code)
+  
+  if (hasMaterialCode) {
+    materials_summary = savedMaterials.map(m => ({
       material_code: m.material_code || '',
       material_name: m.material_name,
-      total_quantity: m.total_quantity,
+      total_quantity: m.total_quantity || m.required_quantity,
       unit: m.unit
     }))
   } else {

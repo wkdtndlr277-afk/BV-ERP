@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.44';
+const APP_VERSION = '2.0.45';
 const APP_BUILD = '20260415-v4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -9095,19 +9095,28 @@ async function showNewProductWithBOMModal() {
 
 // 제품 코드 자동 생성
 async function generateProductCode() {
-  const existingCodes = state.masterItems
-    .filter(m => m.category === '제품')
-    .map(m => m.item_code);
-  
-  let num = existingCodes.length + 1;
-  let code = `PD${String(num).padStart(3, '0')}`;
-  
-  while (existingCodes.includes(code)) {
-    num++;
-    code = `PD${String(num).padStart(3, '0')}`;
+  // production_items 테이블에서 최대 코드 조회
+  try {
+    const result = await api('/admin/production-items?limit=500');
+    const existingCodes = (result.data || []).map(p => p.production_code);
+    
+    // PR 코드에서 최대 번호 찾기
+    let maxNum = 0;
+    existingCodes.forEach(code => {
+      if (code && code.startsWith('PR')) {
+        const num = parseInt(code.substring(2), 10);
+        if (!isNaN(num) && num > maxNum) maxNum = num;
+      }
+    });
+    
+    const nextNum = maxNum + 1;
+    const code = `PR${String(nextNum).padStart(3, '0')}`;
+    
+    document.getElementById('new-product-code').value = code;
+  } catch (e) {
+    console.error('코드 생성 오류:', e);
+    document.getElementById('new-product-code').value = `PR${Date.now().toString().slice(-6)}`;
   }
-  
-  document.getElementById('new-product-code').value = code;
 }
 
 // BOM 행 추가

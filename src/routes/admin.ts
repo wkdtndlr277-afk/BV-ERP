@@ -1120,10 +1120,12 @@ admin.delete('/super/production/:id', async (c) => {
 // 생산 기록 일괄 삭제 (최고관리자 전용) - ID 범위 지정
 admin.delete('/super/production-batch', async (c) => {
   const token = c.req.header('Authorization')?.replace('Bearer ', '')
-  const { start_id, end_id, reason } = await c.req.json()
+  const { start_id, end_id, reason, admin_key } = await c.req.json()
   const { env } = c
   
-  if (!token || !await isSuperAdmin(env.DB, token)) {
+  // 임시 관리자 키 또는 세션 토큰 확인
+  const isValidAdminKey = admin_key === 'bonvivant2026!'
+  if (!isValidAdminKey && (!token || !await isSuperAdmin(env.DB, token))) {
     return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
   }
   

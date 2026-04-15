@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.40';
+const APP_VERSION = '2.0.41';
 const APP_BUILD = '20260415-v4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -22047,24 +22047,19 @@ function exportProductionReportExcel() {
   ];
   
   for (const prod of productions) {
-    // 소비기한: calculated_expiry_date > expiry_date > prod_date
+    // 소비기한: calculated_expiry_date 사용
     const expiryDate = prod.calculated_expiry_date || prod.expiry_date || prod.prod_date;
     
-    // 생산명/제품명
-    const displayName = prod.production_name_only || prod.product_name || prod.product_code;
+    // 생산명/제품명 (production_barcodes에서 가져옴)
+    const productionName = prod.production_name || prod.product_code;
+    const productName = prod.barcode_product_name || '';
+    let displayName = productionName;
+    if (productName && productName !== productionName) {
+      displayName = productionName + ' / ' + productName;
+    }
     
-    // 판매처 한글 변환
-    const channelName = {
-      'coupang': '쿠팡',
-      'kurly': '컬리',
-      'bmart': 'B마트',
-      'oasis': '오아시스',
-      'baemin': '배민',
-      'direct_store': '직영점',
-      'generic': '기타',
-      'mixed': '복합',
-      'unknown': '-'
-    }[prod.channel] || prod.channel || '-';
+    // 판매처: production_barcodes의 channel 필드 직접 사용
+    const channelName = prod.channel || '-';
     
     summaryData.push([
       expiryDate,
@@ -22321,33 +22316,26 @@ function printProductionReport() {
           </thead>
           <tbody>
             ${productions.map((p, i) => {
-              // 소비기한: calculated_expiry_date > expiry_date > prod_date + shelf_life_days
+              // 소비기한: calculated_expiry_date 사용
               const expiryDate = p.calculated_expiry_date || p.expiry_date || p.prod_date;
               
-              // 생산명/제품명: 생산명 + (발주서 원본명은 memo에서 추출 시도)
-              const productionName = p.production_name_only || p.product_name || p.product_code;
-              // memo에서 발주서 원본 제품명 추출 시도 (예: "생산일보 자동등록 (DR-20260416-1234)")
-              let orderProductName = '';
-              if (p.memo && p.memo.includes('DR-')) {
-                // 별도 필드 없음 - 현재 생산명만 표시
-              }
-              const displayName = productionName.substring(0, 30) + (productionName.length > 30 ? '...' : '');
+              // 생산명: production_name (production_items 테이블)
+              const productionName = p.production_name || p.product_code;
+              // 제품명: barcode_product_name (production_barcodes 테이블)
+              const productName = p.barcode_product_name || '';
               
-              // 판매처: channel 필드 또는 LOT번호/바코드에서 추론
-              let channelName = '-';
-              if (p.channel) {
-                channelName = {
-                  'coupang': '쿠팡',
-                  'kurly': '컬리',
-                  'bmart': 'B마트',
-                  'oasis': '오아시스',
-                  'baemin': '배민',
-                  'direct_store': '직영점',
-                  'generic': '기타',
-                  'mixed': '복합',
-                  'unknown': '-'
-                }[p.channel] || p.channel;
+              // 생산명/제품명 표시 (둘 다 있으면 함께, 같으면 하나만)
+              let displayName = productionName;
+              if (productName && productName !== productionName) {
+                displayName = productionName + ' / ' + productName;
               }
+              // 너무 길면 자르기
+              if (displayName.length > 45) {
+                displayName = displayName.substring(0, 45) + '...';
+              }
+              
+              // 판매처: production_barcodes의 channel 필드 사용
+              const channelName = p.channel || '-';
               
               return `
               <tr>

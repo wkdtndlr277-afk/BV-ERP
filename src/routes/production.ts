@@ -11,19 +11,20 @@ productionRoutes.get('/', async (c) => {
   const productCode = c.req.query('product_code');
   const status = c.req.query('status');
   
-  // master 테이블 또는 production_items 테이블에서 제품명, 소비기한일수 조회
-  // 소비기한 = 생산일 + shelf_life_days (없으면 production 테이블의 expiry_date 사용)
+  // production_barcodes에서 제품명(product_name)과 판매처(channel) 가져오기
+  // production_items에서 생산명(production_name)과 소비기한일수(shelf_life_days) 가져오기
   let query = `
     SELECT p.*, 
-           COALESCE(m.item_name, pi.production_name) as product_name,
-           pi.production_name as production_name_only,
+           pi.production_name as production_name,
+           pb.product_name as barcode_product_name,
+           COALESCE(pb.channel, p.channel) as channel,
            COALESCE(m.unit, 'EA') as product_unit,
            COALESCE(pi.shelf_life_days, 7) as shelf_life_days,
-           COALESCE(p.expiry_date, date(p.prod_date, '+' || COALESCE(pi.shelf_life_days, 7) || ' days')) as calculated_expiry_date,
-           p.channel
+           COALESCE(p.expiry_date, date(p.prod_date, '+' || COALESCE(pi.shelf_life_days, 7) || ' days')) as calculated_expiry_date
     FROM production p
     LEFT JOIN master m ON p.product_code = m.item_code
     LEFT JOIN production_items pi ON p.product_code = pi.production_code
+    LEFT JOIN production_barcodes pb ON p.product_code = pb.production_code
     WHERE 1=1
   `;
   const params: any[] = [];

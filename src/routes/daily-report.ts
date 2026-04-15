@@ -198,12 +198,20 @@ dailyReport.get('/reports/:id', async (c) => {
     ORDER BY material_name
   `).bind(id).all()
   
+  // materials_summary 형식으로 변환 (프론트엔드 호환)
+  const materials_summary = (materials.results as any[]).map(m => ({
+    material_name: m.material_name,
+    total_quantity: m.total_quantity,
+    unit: m.unit
+  }))
+  
   return c.json({
     success: true,
     data: {
       ...report,
       items: items.results,
-      materials: materials.results
+      materials: materials.results,
+      materials_summary
     }
   })
 })
@@ -365,11 +373,22 @@ dailyReport.post('/reports/from-order', async (c) => {
     WHERE id = ?
   `).bind(totalProducts, totalQuantity, reportId).run()
   
-  // 6. 원재료 집계 결과
+  // 6. 원재료 집계 결과 및 DB 저장
   const materialsSummary = Array.from(allMaterials.entries()).map(([key, val]) => {
     const [name, unit] = key.split('|')
     return { material_name: name, total_quantity: val.quantity, unit }
   }).sort((a, b) => a.material_name.localeCompare(b.material_name))
+  
+  // 7. 원재료 집계 데이터를 production_daily_materials 테이블에 저장
+  if (materialsSummary.length > 0) {
+    const materialInserts = materialsSummary.map(mat => 
+      c.env.DB.prepare(`
+        INSERT INTO production_daily_materials (report_id, material_name, required_quantity, unit)
+        VALUES (?, ?, ?, ?)
+      `).bind(reportId, mat.material_name, mat.total_quantity, mat.unit).run()
+    )
+    await Promise.all(materialInserts)
+  }
   
   return c.json({
     success: true,

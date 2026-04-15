@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.50';
+const APP_VERSION = '2.0.51';
 const APP_BUILD = '20260415-v4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -22026,12 +22026,18 @@ function renderProductionReportTable(data) {
   for (const prod of data) {
     const materials = prod.materials || [];
     
+    // 생산명 또는 바코드 제품명 표시
+    const displayName = prod.production_name || prod.barcode_product_name || prod.product_name || prod.product_code;
+    
     html += `
       <div class="border rounded-lg overflow-hidden">
         <div class="bg-blue-50 px-4 py-2 flex justify-between items-center">
           <div>
             <span class="font-bold text-blue-800">${prod.prod_date}</span>
-            <span class="ml-2 text-gray-700">${prod.product_name || prod.product_code}</span>
+            <span class="ml-2 text-gray-700">${displayName}</span>
+            ${prod.barcode_product_name && prod.production_name && prod.barcode_product_name !== prod.production_name 
+              ? `<div class="text-xs text-gray-500">${prod.barcode_product_name}</div>` 
+              : ''}
           </div>
           <div class="text-right">
             <span class="font-bold text-lg">${formatNumber(prod.quantity)}개</span>

@@ -18838,6 +18838,8 @@ async function loadDailyReportList() {
                           'bg-yellow-100 text-yellow-700';
       const statusText = report.status === 'registered' ? '등록완료' :
                          report.status === 'confirmed' ? '확정' : '대기';
+      const canConfirm = report.status === 'draft';
+      const canRegister = report.status === 'confirmed';
       tableRows += `
         <tr class="border-b hover:bg-gray-50">
           <td class="px-3 py-2 font-mono text-xs">${report.report_no}</td>
@@ -18848,10 +18850,19 @@ async function loadDailyReportList() {
           <td class="px-3 py-2 text-center">
             <span class="px-2 py-0.5 rounded text-xs ${statusClass}">${statusText}</span>
           </td>
-          <td class="px-3 py-2 text-center">
-            <button onclick="viewDailyReportDetail(${report.id})" class="text-blue-600 hover:text-blue-800 mr-2" title="상세보기">
+          <td class="px-3 py-2 text-center space-x-1">
+            <button onclick="viewDailyReportDetail(${report.id})" class="text-blue-600 hover:text-blue-800" title="상세보기">
               <i class="fas fa-eye"></i>
             </button>
+            <button onclick="printDailyReportById(${report.id})" class="text-gray-600 hover:text-gray-800" title="출력">
+              <i class="fas fa-print"></i>
+            </button>
+            ${canConfirm ? `<button onclick="confirmDailyReportById(${report.id})" class="text-green-600 hover:text-green-800" title="확정">
+              <i class="fas fa-check-circle"></i>
+            </button>` : ''}
+            ${canRegister ? `<button onclick="registerDailyReportById(${report.id})" class="text-indigo-600 hover:text-indigo-800" title="생산등록">
+              <i class="fas fa-industry"></i>
+            </button>` : ''}
             <button onclick="deleteDailyReport(${report.id})" class="text-red-600 hover:text-red-800" title="삭제">
               <i class="fas fa-trash"></i>
             </button>
@@ -18926,6 +18937,169 @@ async function deleteDailyReport(reportId) {
     loadDailyReportList();
   } catch (e) {
     showToast('삭제 실패', 'error');
+  }
+}
+
+// 목록에서 바로 확정
+async function confirmDailyReportById(reportId) {
+  if (!confirm('이 생산일보를 확정하시겠습니까?')) return;
+  
+  try {
+    await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'confirmed' });
+    showToast('생산일보가 확정되었습니다', 'success');
+    loadDailyReportList();
+  } catch (e) {
+    showToast('상태 변경 실패', 'error');
+  }
+}
+
+// 목록에서 바로 출력
+async function printDailyReportById(reportId) {
+  try {
+    showToast('생산일보 로딩 중...', 'info');
+    const result = await api(`/daily-report/reports/${reportId}`);
+    
+    if (!result.success || !result.data) {
+      showToast('생산일보를 불러올 수 없습니다.', 'error');
+      return;
+    }
+    
+    const report = result.data;
+    const items = report.items || [];
+    
+    // 인쇄용 HTML 생성
+    const printHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>생산일보 - ${report.report_no}</title>
+        <style>
+          @page { size: A4; margin: 10mm; }
+          body { font-family: 'Malgun Gothic', sans-serif; font-size: 11px; }
+          h1 { text-align: center; font-size: 18px; margin-bottom: 10px; }
+          .info { display: flex; justify-content: space-between; margin-bottom: 10px; padding: 5px; background: #f5f5f5; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { border: 1px solid #333; padding: 4px 6px; }
+          th { background: #e0e0e0; font-weight: bold; text-align: center; }
+          td { text-align: left; }
+          .num { text-align: right; }
+          .center { text-align: center; }
+          .footer { margin-top: 20px; text-align: right; font-size: 10px; color: #666; }
+          @media print { button { display: none; } }
+        </style>
+      </head>
+      <body>
+        <h1>생 산 일 보</h1>
+        <div class="info">
+          <span><b>문서번호:</b> ${report.report_no}</span>
+          <span><b>생산일:</b> ${report.report_date}</span>
+          <span><b>품목수:</b> ${report.total_products}개</span>
+          <span><b>총수량:</b> ${formatNumber(report.total_quantity)}</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px">No</th>
+              <th style="width:70px">제품코드</th>
+              <th>제품명</th>
+              <th style="width:60px">수량</th>
+              <th style="width:80px">소비기한</th>
+              <th style="width:60px">판매처</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((item, idx) => {
+              const channel = {
+                'coupang': '쿠팡', 'kurly': '컬리', 'bmart': 'B마트',
+                'oasis': '오아시스', 'baemin': '배민', 'direct_store': '직영점'
+              }[item.channel] || item.channel || '-';
+              return `
+                <tr>
+                  <td class="center">${idx + 1}</td>
+                  <td class="center">${item.production_code || '-'}</td>
+                  <td>${item.production_name || item.order_product_name || '-'}</td>
+                  <td class="num">${formatNumber(item.quantity)}</td>
+                  <td class="center">${item.expiry_date || '-'}</td>
+                  <td class="center">${channel}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+        <div class="footer">
+          출력일시: ${new Date().toLocaleString('ko-KR')} | (주)본비반트 HACCP 통합관리시스템
+        </div>
+        <script>window.onload = function() { window.print(); }</script>
+      </body>
+      </html>
+    `;
+    
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(printHtml);
+    printWindow.document.close();
+    
+  } catch (e) {
+    console.error('생산일보 출력 오류:', e);
+    showToast('출력 실패', 'error');
+  }
+}
+
+// 목록에서 바로 생산등록
+async function registerDailyReportById(reportId) {
+  try {
+    showToast('생산일보 로딩 중...', 'info');
+    const result = await api(`/daily-report/reports/${reportId}`);
+    
+    if (!result.success || !result.data) {
+      showToast('생산일보를 불러올 수 없습니다.', 'error');
+      return;
+    }
+    
+    const report = result.data;
+    const items = report.items || [];
+    
+    // 매칭된 품목만 필터링
+    const matchedItems = items.filter(item => item.production_code && item.production_code !== 'UNKNOWN');
+    
+    if (matchedItems.length === 0) {
+      showToast('등록할 수 있는 품목이 없습니다', 'error');
+      return;
+    }
+    
+    if (!confirm(`${matchedItems.length}개 품목을 생산등록 하시겠습니까?\n\n※ 원재료 재고가 차감되고, 제품 재고가 증가합니다.`)) {
+      return;
+    }
+    
+    showToast('생산등록 처리 중...', 'info');
+    
+    // 배치 생산등록 API 호출
+    const batchItems = matchedItems.map(item => ({
+      product_code: item.production_code,
+      quantity: item.quantity,
+      channel: item.channel || 'coupang',
+      memo: `생산일보 자동등록 (${report.report_no})`
+    }));
+    
+    const registerResult = await api('/production/batch', 'POST', {
+      production_date: report.report_date,
+      items: batchItems
+    });
+    
+    if (registerResult.success) {
+      // 생산일보 상태 변경
+      await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'registered' });
+      
+      const summary = registerResult.summary || {};
+      showToast(`생산등록 완료! (성공: ${summary.success_count || matchedItems.length}건)`, 'success');
+      loadDailyReportList();
+    } else {
+      showToast(registerResult.error || '생산등록 실패', 'error');
+    }
+    
+  } catch (e) {
+    console.error('생산등록 오류:', e);
+    showToast('생산등록 실패', 'error');
   }
 }
 
@@ -25734,6 +25908,9 @@ window.closeDailyReportListModal = closeDailyReportListModal;
 window.loadDailyReportList = loadDailyReportList;
 window.viewDailyReportDetail = viewDailyReportDetail;
 window.deleteDailyReport = deleteDailyReport;
+window.confirmDailyReportById = confirmDailyReportById;
+window.printDailyReportById = printDailyReportById;
+window.registerDailyReportById = registerDailyReportById;
 window.handlePlanFileUpload = handlePlanFileUpload;
 window.refreshPlanStock = refreshPlanStock;
 window.filterPlanItems = filterPlanItems;

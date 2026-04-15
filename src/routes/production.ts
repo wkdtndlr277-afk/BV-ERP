@@ -14,18 +14,24 @@ productionRoutes.get('/', async (c) => {
   // production_barcodes에서 제품명(product_name)과 판매처(channel) 가져오기
   // production_items에서 생산명(production_name)과 소비기한일수(shelf_life_days) 가져오기
   // barcode_product_name이 없으면 alias1(제품명)을 대체로 사용
+  // 바코드가 여러 개인 경우 중복 방지를 위해 서브쿼리로 첫 번째 바코드만 가져옴
   let query = `
     SELECT p.*, 
            pi.production_name as production_name,
-           COALESCE(pb.product_name, pi.alias1) as barcode_product_name,
-           COALESCE(pb.channel, p.channel) as channel,
+           COALESCE(
+             (SELECT product_name FROM production_barcodes WHERE production_code = p.product_code LIMIT 1),
+             pi.alias1
+           ) as barcode_product_name,
+           COALESCE(
+             (SELECT channel FROM production_barcodes WHERE production_code = p.product_code LIMIT 1),
+             p.channel
+           ) as channel,
            COALESCE(m.unit, 'EA') as product_unit,
            COALESCE(pi.shelf_life_days, 7) as shelf_life_days,
            COALESCE(p.expiry_date, date(p.prod_date, '+' || COALESCE(pi.shelf_life_days, 7) || ' days')) as calculated_expiry_date
     FROM production p
     LEFT JOIN master m ON p.product_code = m.item_code
     LEFT JOIN production_items pi ON p.product_code = pi.production_code
-    LEFT JOIN production_barcodes pb ON p.product_code = pb.production_code
     WHERE 1=1
   `;
   const params: any[] = [];

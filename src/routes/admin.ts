@@ -1999,6 +1999,109 @@ admin.get('/migrate-production-stock', async (c) => {
   }
 })
 
+// 바코드별 입수량(box_quantity) 컬럼 추가 마이그레이션
+admin.post('/migrate/add-box-quantity', async (c) => {
+  const { env } = c
+  const results: string[] = []
+  
+  try {
+    // production_barcodes 테이블에 box_quantity 컬럼 추가
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE production_barcodes ADD COLUMN box_quantity INTEGER DEFAULT 1
+      `).run()
+      results.push('production_barcodes.box_quantity 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message?.includes('duplicate column')) {
+        results.push('production_barcodes.box_quantity 컬럼 이미 존재')
+      } else {
+        results.push(`box_quantity 추가 실패: ${e.message}`)
+      }
+    }
+    
+    // 기본값 1로 업데이트 (NULL인 경우)
+    await env.DB.prepare(`
+      UPDATE production_barcodes SET box_quantity = 1 WHERE box_quantity IS NULL
+    `).run()
+    results.push('기존 데이터 box_quantity 기본값(1) 설정 완료')
+    
+    return c.json({ success: true, message: '바코드 입수량 마이그레이션 완료', details: results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message, details: results }, 500)
+  }
+})
+
+// 바코드 입수량 일괄 조회
+admin.get('/barcodes/box-quantity', async (c) => {
+  const { env } = c
+  const production_code = c.req.query('production_code')
+  
+  let query = `
+    SELECT pb.*, pi.production_name 
+    FROM production_barcodes pb
+    LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+  `
+  const params: any[] = []
+  
+  if (production_code) {
+    query += ' WHERE pb.production_code = ?'
+    params.push(production_code)
+  }
+  
+  query += ' ORDER BY pb.production_code, pb.channel'
+  
+  const result = await env.DB.prepare(query).bind(...params).all()
+  return c.json({ success: true, data: result.results || [] })
+})
+
+// 바코드 입수량 수정
+admin.put('/barcodes/:id/box-quantity', async (c) => {
+  const { env } = c
+  const id = c.req.param('id')
+  const { box_quantity } = await c.req.json()
+  
+  if (!box_quantity || box_quantity < 1) {
+    return c.json({ success: false, error: '입수량은 1 이상이어야 합니다.' }, 400)
+  }
+  
+  await env.DB.prepare(`
+    UPDATE production_barcodes SET box_quantity = ? WHERE id = ?
+  `).bind(box_quantity, id).run()
+  
+  return c.json({ success: true, message: '입수량 수정 완료' })
+})
+
+// 바코드 입수량 일괄 수정
+admin.post('/barcodes/bulk-box-quantity', async (c) => {
+  const { env } = c
+  const { items } = await c.req.json()
+  // items: [{ barcode, box_quantity }] 또는 [{ id, box_quantity }]
+  
+  if (!items || !Array.isArray(items)) {
+    return c.json({ success: false, error: '잘못된 요청입니다.' }, 400)
+  }
+  
+  let successCount = 0
+  for (const item of items) {
+    try {
+      if (item.id) {
+        await env.DB.prepare(`
+          UPDATE production_barcodes SET box_quantity = ? WHERE id = ?
+        `).bind(item.box_quantity || 1, item.id).run()
+      } else if (item.barcode) {
+        await env.DB.prepare(`
+          UPDATE production_barcodes SET box_quantity = ? WHERE barcode = ?
+        `).bind(item.box_quantity || 1, item.barcode).run()
+      }
+      successCount++
+    } catch (e) {
+      console.error('바코드 입수량 수정 오류:', e)
+    }
+  }
+  
+  return c.json({ success: true, message: `${successCount}건 수정 완료` })
+})
+
 // 제품 입고 기록 조회 (production_inbound)
 admin.get('/production-inbound', async (c) => {
   const { env } = c

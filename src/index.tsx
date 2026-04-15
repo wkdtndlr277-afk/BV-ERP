@@ -58,7 +58,7 @@ app.route('/api/daily-report', dailyReportRoutes);
 app.route('/api/system-config', systemConfigRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '2.0.25';
+const SYSTEM_VERSION = '2.0.26';
 const SYSTEM_BUILD_DATE = '2026-03-27';
 
 // Health check

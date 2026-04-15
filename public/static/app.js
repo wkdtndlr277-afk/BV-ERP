@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.25';
-const APP_BUILD = '20260414-v1';
+const APP_VERSION = '2.0.26';
+const APP_BUILD = '20260415-v1';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -723,7 +723,7 @@ async function api(endpoint, method = 'GET', data = null) {
     const options = {
       method,
       headers: { 'Content-Type': 'application/json' },
-      timeout: 60000 // 60초 타임아웃
+      timeout: 180000 // 180초 타임아웃 (대량 처리용)
     };
     if (data) options.data = data;
     
@@ -18677,6 +18677,9 @@ function showDailyReportModal(reportData) {
           <button onclick="confirmDailyReport(${reportData.report_id})" class="bg-haccp-primary hover:bg-haccp-dark text-white px-4 py-2 rounded-lg">
             <i class="fas fa-check mr-1"></i> 생산일보 확정
           </button>
+          <button onclick="registerProductionFromDailyReport()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg">
+            <i class="fas fa-industry mr-1"></i> 생산등록
+          </button>
         </div>
       </div>
     </div>
@@ -18708,6 +18711,73 @@ async function confirmDailyReport(reportId) {
     closeDailyReportModal();
   } catch (e) {
     showToast('상태 변경 실패', 'error');
+  }
+}
+
+// 생산일보에서 생산등록 실행
+async function registerProductionFromDailyReport() {
+  const reportData = window.currentDailyReport;
+  if (!reportData || !reportData.items) {
+    showToast('생산일보 데이터가 없습니다', 'error');
+    return;
+  }
+  
+  // 매칭된 품목만 필터링 (UNKNOWN 제외)
+  const matchedItems = reportData.items.filter(item => item.production_code && item.production_code !== 'UNKNOWN');
+  
+  if (matchedItems.length === 0) {
+    showToast('등록할 수 있는 품목이 없습니다 (매칭된 품목 없음)', 'error');
+    return;
+  }
+  
+  // 확인 메시지
+  const confirmed = confirm(`${matchedItems.length}개 품목을 생산등록 하시겠습니까?\n\n※ 원재료 재고가 차감되고, 제품 재고가 증가합니다.`);
+  if (!confirmed) return;
+  
+  showToast('생산등록 처리 중...', 'info');
+  
+  try {
+    // 생산일 (리포트 날짜 또는 오늘)
+    const productionDate = reportData.report_date || new Date().toISOString().split('T')[0];
+    
+    // 일괄 생산 등록 API 호출
+    const items = matchedItems.map(item => ({
+      product_code: item.production_code,
+      quantity: item.quantity,
+      prod_date: productionDate,
+      memo: `생산일보 자동등록 (${reportData.report_no})`
+    }));
+    
+    const result = await api('/production/batch', 'POST', {
+      items: items,
+      created_by: localStorage.getItem('user_name') || '시스템'
+    });
+    
+    if (result.success) {
+      showToast(`생산등록 완료: ${result.success_count || matchedItems.length}개 품목`, 'success');
+      
+      // 생산일보 상태를 '등록완료'로 변경
+      try {
+        await api(`/daily-report/reports/${reportData.report_id}/status`, 'PUT', { status: 'registered' });
+      } catch (e) {
+        console.log('상태 업데이트 실패 (무시)', e);
+      }
+      
+      closeDailyReportModal();
+      
+      // 데이터 새로고침 (현재 페이지에 따라)
+      if (typeof loadProductionData === 'function') {
+        loadProductionData();
+      }
+      if (typeof loadDashboardData === 'function') {
+        loadDashboardData();
+      }
+    } else {
+      showToast(`생산등록 실패: ${result.message || '알 수 없는 오류'}`, 'error');
+    }
+  } catch (e) {
+    console.error('생산등록 오류:', e);
+    showToast(`생산등록 오류: ${e.message || '서버 오류'}`, 'error');
   }
 }
 

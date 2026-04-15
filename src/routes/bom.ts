@@ -512,50 +512,58 @@ bomRoutes.delete('/product/:product_code/clear', async (c) => {
   });
 });
 
-// BOM 있는 제품 목록 (master + production_items 통합)
+// BOM 있는 제품 목록 (production_items 우선, 중복 제거)
 bomRoutes.get('/products/with-bom', async (c) => {
-  // master 테이블 + production_items 테이블 모두 조회
-  // production_bom 테이블도 포함
+  // production_items 테이블 우선 조회 (production_bom 테이블)
+  // production_items에 없는 경우에만 master 테이블 사용
   const result = await c.env.DB.prepare(`
     SELECT item_code, item_name, unit, material_count FROM (
-      -- master 테이블의 제품 (bom 테이블)
-      SELECT DISTINCT m.item_code, m.item_name, m.unit,
-             (SELECT COUNT(*) FROM bom WHERE product_code = m.item_code) as material_count
+      -- production_items 테이블의 제품 (production_bom 테이블) - 우선
+      SELECT pi.production_code as item_code, pi.production_name as item_name, pi.unit,
+             (SELECT COUNT(*) FROM production_bom WHERE production_code = pi.production_code) as material_count,
+             1 as priority
+      FROM production_items pi
+      WHERE EXISTS (SELECT 1 FROM production_bom WHERE production_code = pi.production_code)
+      
+      UNION
+      
+      -- master 테이블의 제품 (bom 테이블) - production_items에 없는 경우만
+      SELECT m.item_code, m.item_name, m.unit,
+             (SELECT COUNT(*) FROM bom WHERE product_code = m.item_code) as material_count,
+             2 as priority
       FROM master m
       WHERE m.category = '제품'
       AND EXISTS (SELECT 1 FROM bom WHERE product_code = m.item_code)
-      
-      UNION ALL
-      
-      -- production_items 테이블의 제품 (production_bom 테이블)
-      SELECT DISTINCT pi.production_code as item_code, pi.production_name as item_name, pi.unit,
-             (SELECT COUNT(*) FROM production_bom WHERE production_code = pi.production_code) as material_count
-      FROM production_items pi
-      WHERE EXISTS (SELECT 1 FROM production_bom WHERE production_code = pi.production_code)
+      AND NOT EXISTS (SELECT 1 FROM production_items WHERE production_name = m.item_name)
     )
+    GROUP BY item_name
     ORDER BY item_name
   `).all();
   
   return c.json({ success: true, data: result.results });
 });
 
-// BOM 없는 제품 목록 (master + production_items 통합)
+// BOM 없는 제품 목록 (production_items 우선, 중복 제거)
 bomRoutes.get('/products/without-bom', async (c) => {
   const result = await c.env.DB.prepare(`
     SELECT item_code, item_name, unit FROM (
-      -- master 테이블의 제품 (BOM 없음)
-      SELECT m.item_code, m.item_name, m.unit
+      -- production_items 테이블의 제품 (production_bom 없음) - 우선
+      SELECT pi.production_code as item_code, pi.production_name as item_name, pi.unit,
+             1 as priority
+      FROM production_items pi
+      WHERE NOT EXISTS (SELECT 1 FROM production_bom WHERE production_code = pi.production_code)
+      
+      UNION
+      
+      -- master 테이블의 제품 (BOM 없음) - production_items에 없는 경우만
+      SELECT m.item_code, m.item_name, m.unit,
+             2 as priority
       FROM master m
       WHERE m.category = '제품'
       AND NOT EXISTS (SELECT 1 FROM bom WHERE product_code = m.item_code)
-      
-      UNION ALL
-      
-      -- production_items 테이블의 제품 (production_bom 없음)
-      SELECT pi.production_code as item_code, pi.production_name as item_name, pi.unit
-      FROM production_items pi
-      WHERE NOT EXISTS (SELECT 1 FROM production_bom WHERE production_code = pi.production_code)
+      AND NOT EXISTS (SELECT 1 FROM production_items WHERE production_name = m.item_name)
     )
+    GROUP BY item_name
     ORDER BY item_name
   `).all();
   

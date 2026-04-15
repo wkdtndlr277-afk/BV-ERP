@@ -434,20 +434,36 @@ productionRoutes.post('/batch', async (c) => {
   let successCount = 0;
   let failCount = 0;
   
-  // 모든 제품 정보를 한 번에 조회
+  // 모든 제품 정보를 한 번에 조회 (master 테이블 + production_items 테이블)
   const productCodes = items.map((i: any) => i.product_code);
   const placeholders = productCodes.map(() => '?').join(',');
+  
+  // 1. master 테이블에서 조회
   const products = await c.env.DB.prepare(`
     SELECT item_code, item_name, expiry_days FROM master 
     WHERE item_code IN (${placeholders}) AND category = '제품'
   `).bind(...productCodes).all<any>();
   
+  // 2. production_items 테이블에서도 조회 (production_code로 전달된 경우)
+  const productionItems = await c.env.DB.prepare(`
+    SELECT production_code as item_code, production_name as item_name, shelf_life_days as expiry_days 
+    FROM production_items 
+    WHERE production_code IN (${placeholders})
+  `).bind(...productCodes).all<any>();
+  
   const productMap = new Map();
+  // master 테이블 결과 먼저 추가
   for (const p of products.results || []) {
-    productMap.set(p.item_code, p);
+    productMap.set(p.item_code, { ...p, source: 'master' });
+  }
+  // production_items 테이블 결과 추가 (master에 없는 경우만)
+  for (const p of productionItems.results || []) {
+    if (!productMap.has(p.item_code)) {
+      productMap.set(p.item_code, { ...p, source: 'production' });
+    }
   }
   
-  // 모든 BOM 정보를 한 번에 조회
+  // 모든 BOM 정보를 한 번에 조회 (기존 bom 테이블 + production_bom 테이블)
   const allBom = await c.env.DB.prepare(`
     SELECT b.product_code, b.item_code, b.quantity, b.unit,
            COALESCE(m1.item_code, m2.item_code) as matched_item_code,
@@ -461,6 +477,14 @@ productionRoutes.post('/batch', async (c) => {
     WHERE b.product_code IN (${placeholders})
   `).bind(...productCodes).all<any>();
   
+  // production_bom 테이블에서도 조회
+  const prodBom = await c.env.DB.prepare(`
+    SELECT pb.production_code as product_code, pb.material_code as item_code, 
+           pb.quantity, pb.unit, pb.material_code as matched_item_code, pb.material_name as item_name
+    FROM production_bom pb
+    WHERE pb.production_code IN (${placeholders})
+  `).bind(...productCodes).all<any>();
+  
   // BOM을 제품별로 그룹핑
   const bomMap = new Map<string, any[]>();
   for (const bom of allBom.results || []) {
@@ -468,6 +492,17 @@ productionRoutes.post('/batch', async (c) => {
       bomMap.set(bom.product_code, []);
     }
     bomMap.get(bom.product_code)!.push(bom);
+  }
+  // production_bom 결과도 추가
+  for (const bom of prodBom.results || []) {
+    if (!bomMap.has(bom.product_code)) {
+      bomMap.set(bom.product_code, []);
+    }
+    // 중복 방지
+    const existing = bomMap.get(bom.product_code)!;
+    if (!existing.some((e: any) => e.item_code === bom.item_code)) {
+      existing.push(bom);
+    }
   }
   
   // 원재료 차감 누적 (한 번에 처리)

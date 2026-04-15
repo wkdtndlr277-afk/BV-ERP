@@ -311,36 +311,49 @@ bomRoutes.post('/bulk', async (c) => {
   
   // PR 코드인 경우 production_bom 테이블에 직접 등록
   const isProductionCode = product_code.startsWith('PR');
-  const tableName = isProductionCode ? 'production_bom' : 'bom';
-  const codeColumn = isProductionCode ? 'production_code' : 'product_code';
   
   for (const mat of materials) {
     try {
-      // 기존 BOM 있으면 업데이트, 없으면 삽입
-      const existing = await c.env.DB.prepare(
-        `SELECT id FROM ${tableName} WHERE ${codeColumn} = ? AND item_code = ?`
-      ).bind(product_code, mat.item_code).first();
-      
-      if (existing) {
-        await c.env.DB.prepare(`
-          UPDATE ${tableName} SET quantity = ?, unit = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE ${codeColumn} = ? AND item_code = ?
-        `).bind(
-          mat.quantity,
-          mat.unit || 'g',
-          product_code,
-          mat.item_code
-        ).run();
+      if (isProductionCode) {
+        // production_bom 테이블 (material_code, material_name 사용)
+        // 원재료 이름 조회
+        const materialInfo = await c.env.DB.prepare(
+          `SELECT item_name FROM master WHERE item_code = ?`
+        ).bind(mat.item_code).first() as { item_name: string } | null;
+        const materialName = materialInfo?.item_name || mat.item_code;
+        
+        const existing = await c.env.DB.prepare(
+          `SELECT id FROM production_bom WHERE production_code = ? AND material_code = ?`
+        ).bind(product_code, mat.item_code).first();
+        
+        if (existing) {
+          await c.env.DB.prepare(`
+            UPDATE production_bom SET quantity = ?, unit = ?, material_name = ?
+            WHERE production_code = ? AND material_code = ?
+          `).bind(mat.quantity, mat.unit || 'g', materialName, product_code, mat.item_code).run();
+        } else {
+          await c.env.DB.prepare(`
+            INSERT INTO production_bom (production_code, material_code, material_name, quantity, unit)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(product_code, mat.item_code, materialName, mat.quantity, mat.unit || 'g').run();
+        }
       } else {
-        await c.env.DB.prepare(`
-          INSERT INTO ${tableName} (${codeColumn}, item_code, quantity, unit)
-          VALUES (?, ?, ?, ?)
-        `).bind(
-          product_code,
-          mat.item_code,
-          mat.quantity,
-          mat.unit || 'g'
-        ).run();
+        // bom 테이블 (item_code 사용)
+        const existing = await c.env.DB.prepare(
+          `SELECT id FROM bom WHERE product_code = ? AND item_code = ?`
+        ).bind(product_code, mat.item_code).first();
+        
+        if (existing) {
+          await c.env.DB.prepare(`
+            UPDATE bom SET quantity = ?, unit = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE product_code = ? AND item_code = ?
+          `).bind(mat.quantity, mat.unit || 'g', product_code, mat.item_code).run();
+        } else {
+          await c.env.DB.prepare(`
+            INSERT INTO bom (product_code, item_code, quantity, unit)
+            VALUES (?, ?, ?, ?)
+          `).bind(product_code, mat.item_code, mat.quantity, mat.unit || 'g').run();
+        }
       }
       results.success++;
     } catch (error: any) {

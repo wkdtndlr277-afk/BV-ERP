@@ -218,19 +218,26 @@ dailyReport.post('/reports/from-order', async (c) => {
   }
   
   // 1. 모든 필요한 데이터를 한 번에 로드 (최적화)
-  const [barcodeData, productionData, bomData] = await Promise.all([
+  const [barcodeData, productionData, bomData, legacyBomData] = await Promise.all([
     c.env.DB.prepare(`
       SELECT pb.barcode, pb.production_code, pi.production_name, pi.shelf_life_days
       FROM production_barcodes pb
       JOIN production_items pi ON pb.production_code = pi.production_code
     `).all(),
     c.env.DB.prepare(`
-      SELECT production_code, production_name, shelf_life_days
+      SELECT production_code, production_name, shelf_life_days,
+             (SELECT COUNT(*) FROM production_bom WHERE production_code = production_items.production_code) as bom_count
       FROM production_items
     `).all(),
     c.env.DB.prepare(`
       SELECT production_code, material_name, quantity, unit
       FROM production_bom
+    `).all(),
+    // 기존 bom 테이블에서도 조회 (production_code = product_code 인 경우)
+    c.env.DB.prepare(`
+      SELECT b.product_code as production_code, m.item_name as material_name, b.quantity, m.unit
+      FROM bom b
+      JOIN master m ON b.item_code = m.item_code
     `).all()
   ])
   
@@ -245,12 +252,24 @@ dailyReport.post('/reports/from-order', async (c) => {
     productionMap.set(row.production_code, row)
   }
   
+  // production_bom + 기존 bom 테이블 병합
   const bomMap = new Map<string, any[]>()
   for (const row of bomData.results as any[]) {
     if (!bomMap.has(row.production_code)) {
       bomMap.set(row.production_code, [])
     }
     bomMap.get(row.production_code)!.push(row)
+  }
+  // 기존 bom 테이블 데이터도 추가 (production_bom에 없는 경우)
+  for (const row of legacyBomData.results as any[]) {
+    if (!bomMap.has(row.production_code)) {
+      bomMap.set(row.production_code, [])
+    }
+    // 중복 방지 (동일 material_name 있으면 skip)
+    const existing = bomMap.get(row.production_code)!
+    if (!existing.some((e: any) => e.material_name === row.material_name)) {
+      existing.push(row)
+    }
   }
   
   // 2. 생산일보 헤더 생성
@@ -282,7 +301,9 @@ dailyReport.post('/reports/from-order', async (c) => {
     const productionCode = productionInfo?.production_code || 'UNKNOWN'
     const productionName = productionInfo?.production_name || item.product_name || '미등록 품목'
     const bomItems = bomMap.get(productionCode) || []
-    const hasBom = bomItems.length > 0 ? 1 : 0
+    // BOM 등록 여부: bomMap에 있거나, production_items 테이블의 bom_count > 0
+    const productionItemInfo = productionMap.get(productionCode)
+    const hasBom = (bomItems.length > 0 || (productionItemInfo?.bom_count || 0) > 0) ? 1 : 0
     const shelfLifeDays = productionInfo?.shelf_life_days || null
     
     // 소비기한 계산

@@ -1117,6 +1117,90 @@ admin.delete('/super/production/:id', async (c) => {
   }
 })
 
+// 생산 기록 일괄 삭제 (최고관리자 전용) - ID 범위 지정
+admin.delete('/super/production-batch', async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer ', '')
+  const { start_id, end_id, reason } = await c.req.json()
+  const { env } = c
+  
+  if (!token || !await isSuperAdmin(env.DB, token)) {
+    return c.json({ success: false, message: '최고관리자 권한이 필요합니다' }, 403)
+  }
+  
+  if (!start_id || !end_id || start_id > end_id) {
+    return c.json({ success: false, message: 'start_id와 end_id를 올바르게 입력하세요' }, 400)
+  }
+  
+  try {
+    // 삭제 대상 조회
+    const targets = await env.DB.prepare(`
+      SELECT id, product_code, quantity, lot_number FROM production 
+      WHERE id BETWEEN ? AND ?
+    `).bind(start_id, end_id).all()
+    
+    const count = targets.results?.length || 0
+    if (count === 0) {
+      return c.json({ success: false, message: '삭제할 생산 기록이 없습니다' }, 404)
+    }
+    
+    // 1. production_materials 삭제
+    await env.DB.prepare(`
+      DELETE FROM production_materials WHERE production_id BETWEEN ? AND ?
+    `).bind(start_id, end_id).run()
+    
+    // 2. production_inbound 삭제 (새 테이블)
+    const lotNumbers = (targets.results as any[]).map(t => t.lot_number).filter(Boolean)
+    if (lotNumbers.length > 0) {
+      const placeholders = lotNumbers.map(() => '?').join(',')
+      await env.DB.prepare(`
+        DELETE FROM production_inbound WHERE lot_number IN (${placeholders})
+      `).bind(...lotNumbers).run()
+    }
+    
+    // 3. production_transactions 삭제 (새 테이블)
+    const productCodes = [...new Set((targets.results as any[]).map(t => t.product_code))]
+    if (productCodes.length > 0) {
+      const placeholders = productCodes.map(() => '?').join(',')
+      await env.DB.prepare(`
+        DELETE FROM production_transactions WHERE production_code IN (${placeholders})
+      `).bind(...productCodes).run()
+    }
+    
+    // 4. 기존 transactions 삭제 (생산ID 메모 기준)
+    await env.DB.prepare(`
+      DELETE FROM transactions WHERE memo LIKE '%생산ID:%' 
+      AND CAST(SUBSTR(memo, INSTR(memo, '생산ID:') + 5, 10) AS INTEGER) BETWEEN ? AND ?
+    `).bind(start_id, end_id).run()
+    
+    // 5. 기존 inbound 삭제 (자체생산 LOT)
+    if (lotNumbers.length > 0) {
+      const placeholders = lotNumbers.map(() => '?').join(',')
+      await env.DB.prepare(`
+        DELETE FROM inbound WHERE lot_number IN (${placeholders})
+      `).bind(...lotNumbers).run()
+    }
+    
+    // 6. production 삭제
+    await env.DB.prepare(`
+      DELETE FROM production WHERE id BETWEEN ? AND ?
+    `).bind(start_id, end_id).run()
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, before_data, reason)
+      VALUES (?, ?, ?, ?)
+    `).bind('생산일괄삭제', 'production', JSON.stringify({ start_id, end_id, count }), reason || `ID ${start_id}~${end_id} 일괄 삭제`).run()
+    
+    return c.json({ 
+      success: true, 
+      message: `생산 기록 ${count}건이 삭제되었습니다`,
+      deleted: { start_id, end_id, count }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, message: `삭제 실패: ${error.message}` }, 500)
+  }
+})
+
 // BOM 일괄 삭제 (최고관리자 전용) - 제품 마스터도 함께 삭제
 admin.delete('/super/bom-all', async (c) => {
   const token = c.req.header('Authorization')?.replace('Bearer ', '')

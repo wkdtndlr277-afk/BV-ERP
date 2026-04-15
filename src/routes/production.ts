@@ -53,7 +53,7 @@ productionRoutes.get('/', async (c) => {
     params.push(status);
   }
   
-  query += ' ORDER BY p.prod_date DESC, p.id DESC';
+  query += ' GROUP BY p.id ORDER BY p.prod_date DESC, p.id DESC';
   
   const result = await c.env.DB.prepare(query).bind(...params).all();
   return c.json({ success: true, data: result.results });

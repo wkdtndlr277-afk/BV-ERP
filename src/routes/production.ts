@@ -456,7 +456,7 @@ productionRoutes.post('/batch', async (c) => {
   // 3. production_barcodes 테이블에서도 조회 (바코드 매핑된 경우)
   const barcodeItems = await c.env.DB.prepare(`
     SELECT pb.production_code as item_code, 
-           COALESCE(pi.production_name, pb.production_name) as item_name,
+           pi.production_name as item_name,
            COALESCE(pi.shelf_life_days, 7) as expiry_days
     FROM production_barcodes pb
     LEFT JOIN production_items pi ON pb.production_code = pi.production_code

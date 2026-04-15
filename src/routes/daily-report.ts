@@ -364,12 +364,12 @@ dailyReport.post('/reports/from-order', async (c) => {
     const hasBom = (bomItems.length > 0 || (productionItemInfo?.bom_count || 0) > 0) ? 1 : 0
     const shelfLifeDays = productionInfo?.shelf_life_days || null
     
-    // 소비기한 계산
+    // 소비기한 계산 (생산일 기준)
     let expiryDate: string | null = null
     if (shelfLifeDays) {
-      const today = new Date()
-      today.setDate(today.getDate() + shelfLifeDays)
-      expiryDate = today.toISOString().split('T')[0]
+      const prodDate = new Date(report_date + 'T00:00:00')
+      prodDate.setDate(prodDate.getDate() + shelfLifeDays)
+      expiryDate = prodDate.toISOString().split('T')[0]
     }
     
     // 품목 등록 (비동기 배치) - channel(판매처) 필드 추가

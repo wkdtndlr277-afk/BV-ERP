@@ -386,7 +386,7 @@ dailyReport.put('/reports/:id/status', async (c) => {
   const id = c.req.param('id')
   const { status } = await c.req.json()
   
-  if (!['draft', 'confirmed', 'completed'].includes(status)) {
+  if (!['draft', 'confirmed', 'completed', 'registered'].includes(status)) {
     return c.json({ success: false, error: '유효하지 않은 상태값입니다.' }, 400)
   }
   

@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 1.8.3 Build: 20260403
-const APP_VERSION = '2.0.45';
+const APP_VERSION = '2.0.46';
 const APP_BUILD = '20260415-v4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -9406,9 +9406,9 @@ async function saveNewProductWithBOM() {
   });
   
   try {
-    // 1. production_items (생산품목) 테이블에 등록 (primary)
+    // 1. production_items (생산품목) 테이블에 등록 (코드는 백엔드에서 자동 생성)
     const productionResult = await api('/admin/production-items', 'POST', {
-      production_code: productCode,
+      // production_code는 백엔드에서 자동 생성
       production_name: productName,
       category: category,
       unit: productUnit,
@@ -9417,10 +9417,13 @@ async function saveNewProductWithBOM() {
     
     console.log('Production item registered:', productionResult);
     
+    // 백엔드에서 생성된 코드 사용
+    const generatedCode = productionResult.production_code;
+    
     // 2. BOM 등록 (있는 경우)
     if (materials.length > 0) {
       await api('/bom/bulk', 'POST', {
-        product_code: productCode,
+        product_code: generatedCode,
         materials
       });
     }

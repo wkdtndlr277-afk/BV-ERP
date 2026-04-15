@@ -1399,73 +1399,148 @@ transactionRoutes.get('/monthly-daily-ledger', async (c) => {
   const daysInMonth = new Date(parseInt(year), parseInt(month), 0).getDate();
   const endDate = `${year}-${month.padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
   
-  // 품목 조회
-  let itemQuery = `
-    SELECT 
-      m.item_code,
-      m.item_name,
-      m.category,
-      m.unit,
-      m.current_stock,
-      m.safety_stock
-    FROM master m
-    WHERE (
-      m.current_stock > 0
-      OR EXISTS (
-        SELECT 1 FROM transactions t 
-        WHERE t.item_code = m.item_code 
-        AND t.trans_date >= ? AND t.trans_date <= ?
+  // 제품 카테고리인 경우 production_items 테이블 사용
+  const isProductCategory = category === '제품';
+  
+  let items: any;
+  
+  if (isProductCategory) {
+    // 제품: production_items + production_transactions 사용
+    let itemQuery = `
+      SELECT 
+        p.production_code as item_code,
+        COALESCE(p.alias1, p.production_name) as item_name,
+        '제품' as category,
+        COALESCE(p.unit, 'EA') as unit,
+        p.current_stock,
+        0 as safety_stock
+      FROM production_items p
+      WHERE (
+        p.current_stock > 0
+        OR EXISTS (
+          SELECT 1 FROM production_transactions pt 
+          WHERE pt.production_code = p.production_code 
+          AND pt.trans_date >= ? AND pt.trans_date <= ?
+        )
+        OR EXISTS (
+          SELECT 1 FROM production_inbound pi 
+          WHERE pi.production_code = p.production_code 
+          AND pi.inbound_date >= ? AND pi.inbound_date <= ?
+        )
       )
-      OR EXISTS (
-        SELECT 1 FROM inbound i 
-        WHERE i.item_code = m.item_code 
-        AND i.inbound_date >= ? AND i.inbound_date <= ?
+    `;
+    const itemParams: any[] = [startDate, endDate, startDate, endDate];
+    
+    if (item_code) {
+      itemQuery += ' AND p.production_code = ?';
+      itemParams.push(item_code);
+    }
+    if (search) {
+      itemQuery += ' AND (p.production_name LIKE ? OR p.production_code LIKE ? OR p.alias1 LIKE ?)';
+      itemParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    
+    itemQuery += ' ORDER BY p.production_name';
+    items = await c.env.DB.prepare(itemQuery).bind(...itemParams).all();
+  } else {
+    // 원료/부자재: master 테이블 사용
+    let itemQuery = `
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.category,
+        m.unit,
+        m.current_stock,
+        m.safety_stock
+      FROM master m
+      WHERE (
+        m.current_stock > 0
+        OR EXISTS (
+          SELECT 1 FROM transactions t 
+          WHERE t.item_code = m.item_code 
+          AND t.trans_date >= ? AND t.trans_date <= ?
+        )
+        OR EXISTS (
+          SELECT 1 FROM inbound i 
+          WHERE i.item_code = m.item_code 
+          AND i.inbound_date >= ? AND i.inbound_date <= ?
+        )
       )
-    )
-  `;
-  const itemParams: any[] = [startDate, endDate, startDate, endDate];
-  
-  if (category) {
-    itemQuery += ' AND m.category = ?';
-    itemParams.push(category);
+    `;
+    const itemParams: any[] = [startDate, endDate, startDate, endDate];
+    
+    if (category) {
+      itemQuery += ' AND m.category = ?';
+      itemParams.push(category);
+    }
+    if (item_code) {
+      itemQuery += ' AND m.item_code = ?';
+      itemParams.push(item_code);
+    }
+    if (search) {
+      itemQuery += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
+      itemParams.push(`%${search}%`, `%${search}%`);
+    }
+    
+    itemQuery += ' ORDER BY m.category, m.item_name';
+    items = await c.env.DB.prepare(itemQuery).bind(...itemParams).all();
   }
-  if (item_code) {
-    itemQuery += ' AND m.item_code = ?';
-    itemParams.push(item_code);
-  }
-  if (search) {
-    itemQuery += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
-    itemParams.push(`%${search}%`, `%${search}%`);
-  }
-  
-  itemQuery += ' ORDER BY m.category, m.item_name';
-  
-  const items = await c.env.DB.prepare(itemQuery).bind(...itemParams).all();
   
   // 각 품목의 일별 수불 데이터 생성
   const itemData = await Promise.all((items.results || []).map(async (item: any) => {
-    // 월초 재고 (전월말까지의 거래 합계)
-    const openingResult = await c.env.DB.prepare(`
-      SELECT COALESCE(SUM(quantity), 0) as balance
-      FROM transactions
-      WHERE item_code = ? AND trans_date < ?
-    `).bind(item.item_code, startDate).first();
+    let openingStock = 0;
+    let dailyTrans: any;
     
-    const openingStock = (openingResult as any)?.balance || 0;
-    
-    // 일별 입고/사용/출고/조정 데이터
-    const dailyTrans = await c.env.DB.prepare(`
-      SELECT 
-        trans_date,
-        SUM(CASE WHEN trans_type = '입고' THEN quantity ELSE 0 END) as inbound,
-        SUM(CASE WHEN trans_type = '사용' THEN ABS(quantity) ELSE 0 END) as usage,
-        SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END) as outbound,
-        SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END) as adjustment
-      FROM transactions
-      WHERE item_code = ? AND trans_date >= ? AND trans_date <= ?
-      GROUP BY trans_date
-      ORDER BY trans_date
-    `).bind(item.item_code, startDate, endDate).all();
+    if (isProductCategory) {
+      // 제품: production_transactions 사용
+      // 월초 재고 (전월말까지의 생산입고 - 출고 + 조정)
+      const openingResult = await c.env.DB.prepare(`
+        SELECT 
+          COALESCE(SUM(CASE WHEN trans_type = '생산입고' THEN quantity ELSE 0 END), 0) -
+          COALESCE(SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END), 0) +
+          COALESCE(SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END), 0) as balance
+        FROM production_transactions
+        WHERE production_code = ? AND trans_date < ?
+      `).bind(item.item_code, startDate).first();
+      
+      openingStock = (openingResult as any)?.balance || 0;
+      
+      // 일별 생산입고/출고/조정 데이터
+      dailyTrans = await c.env.DB.prepare(`
+        SELECT 
+          trans_date,
+          SUM(CASE WHEN trans_type = '생산입고' THEN quantity ELSE 0 END) as inbound,
+          0 as usage,
+          SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END) as outbound,
+          SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END) as adjustment
+        FROM production_transactions
+        WHERE production_code = ? AND trans_date >= ? AND trans_date <= ?
+        GROUP BY trans_date
+        ORDER BY trans_date
+      `).bind(item.item_code, startDate, endDate).all();
+    } else {
+      // 원료/부자재: transactions 사용
+      const openingResult = await c.env.DB.prepare(`
+        SELECT COALESCE(SUM(quantity), 0) as balance
+        FROM transactions
+        WHERE item_code = ? AND trans_date < ?
+      `).bind(item.item_code, startDate).first();
+      
+      openingStock = (openingResult as any)?.balance || 0;
+      
+      dailyTrans = await c.env.DB.prepare(`
+        SELECT 
+          trans_date,
+          SUM(CASE WHEN trans_type = '입고' THEN quantity ELSE 0 END) as inbound,
+          SUM(CASE WHEN trans_type = '사용' THEN ABS(quantity) ELSE 0 END) as usage,
+          SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END) as outbound,
+          SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END) as adjustment
+        FROM transactions
+        WHERE item_code = ? AND trans_date >= ? AND trans_date <= ?
+        GROUP BY trans_date
+        ORDER BY trans_date
+      `).bind(item.item_code, startDate, endDate).all();
+    }
     
     // 일별 데이터 맵 생성
     const dailyMap: { [key: string]: any } = {};

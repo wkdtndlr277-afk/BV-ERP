@@ -1875,6 +1875,61 @@ admin.get('/migrate-shelf-life', async (c) => {
   return c.json({ success: true, message: '소비기한/판매처 컬럼 마이그레이션 완료' })
 })
 
+// 기존 생산 데이터 소비기한/판매처 업데이트 (v2.0.39)
+admin.get('/update-production-expiry-channel', async (c) => {
+  const { env } = c
+  const results: string[] = []
+  
+  try {
+    // 1. production_items의 shelf_life_days를 기반으로 expiry_date 업데이트 (NULL인 경우만)
+    const updateExpiry = await env.DB.prepare(`
+      UPDATE production 
+      SET expiry_date = date(prod_date, '+' || COALESCE(
+        (SELECT shelf_life_days FROM production_items WHERE production_code = production.product_code), 
+        7
+      ) || ' days')
+      WHERE expiry_date IS NULL
+    `).run()
+    results.push(`소비기한 업데이트: ${updateExpiry.meta.changes}건`)
+    
+    // 2. production_daily_items에서 channel 정보 가져와서 업데이트
+    // memo 필드에서 DR-YYYYMMDD-XXXX 형태의 리포트 번호 추출하여 매칭
+    const updateChannel = await env.DB.prepare(`
+      UPDATE production 
+      SET channel = (
+        SELECT pdi.channel 
+        FROM production_daily_items pdi
+        JOIN production_daily_report pdr ON pdi.report_id = pdr.id
+        WHERE pdi.production_code = production.product_code
+          AND pdr.report_date = production.prod_date
+          AND pdi.channel IS NOT NULL
+        LIMIT 1
+      )
+      WHERE channel IS NULL
+    `).run()
+    results.push(`판매처 업데이트: ${updateChannel.meta.changes}건`)
+    
+    // 3. 아직 channel이 NULL인 경우 memo에서 추론
+    // 예: "쿠팡" 포함 시 coupang, "컬리" 포함 시 kurly
+    await env.DB.prepare(`
+      UPDATE production SET channel = 'coupang'
+      WHERE channel IS NULL AND memo LIKE '%쿠팡%'
+    `).run()
+    await env.DB.prepare(`
+      UPDATE production SET channel = 'kurly'
+      WHERE channel IS NULL AND memo LIKE '%컬리%'
+    `).run()
+    
+    return c.json({ 
+      success: true, 
+      message: '기존 생산 데이터 소비기한/판매처 업데이트 완료',
+      details: results
+    })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message })
+  }
+})
+
 // 생산 재고/입고/트랜잭션 테이블 마이그레이션 (v2.0.35)
 admin.get('/migrate-production-stock', async (c) => {
   const { env } = c

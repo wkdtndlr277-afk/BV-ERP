@@ -18751,18 +18751,19 @@ async function registerProductionFromDailyReport() {
     // 일괄 생산 등록 API 호출
     const items = matchedItems.map(item => ({
       product_code: item.production_code,
-      quantity: item.quantity,
-      prod_date: productionDate,
-      memo: `생산일보 자동등록 (${reportData.report_no})`
+      quantity: item.quantity
     }));
     
     const result = await api('/production/batch', 'POST', {
       items: items,
+      prod_date: productionDate,
+      memo: `생산일보 자동등록 (${reportData.report_no})`,
       created_by: localStorage.getItem('user_name') || '시스템'
     });
     
     if (result.success) {
-      showToast(`생산등록 완료: ${result.success_count || matchedItems.length}개 품목`, 'success');
+      const successCount = result.data?.success || result.success_count || matchedItems.length;
+      showToast(`생산등록 완료: ${successCount}개 품목`, 'success');
       
       // 생산일보 상태를 '등록완료'로 변경
       try {

@@ -1756,6 +1756,75 @@ admin.get('/migrate-shelf-life', async (c) => {
   return c.json({ success: true, message: '소비기한 컬럼 마이그레이션 완료' })
 })
 
+// 생산 재고/입고/트랜잭션 테이블 마이그레이션 (v2.0.35)
+admin.get('/migrate-production-stock', async (c) => {
+  const { env } = c
+  const results: string[] = []
+  
+  try {
+    // 1. production_items에 current_stock 컬럼 추가
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE production_items ADD COLUMN current_stock REAL DEFAULT 0
+      `).run()
+      results.push('production_items.current_stock 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message?.includes('duplicate column')) {
+        results.push('production_items.current_stock 컬럼 이미 존재')
+      } else {
+        results.push(`current_stock 추가 실패: ${e.message}`)
+      }
+    }
+    
+    // 2. production_inbound 테이블 생성
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_inbound (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        lot_number TEXT NOT NULL,
+        production_code TEXT NOT NULL,
+        inbound_date DATE NOT NULL,
+        expiry_date DATE,
+        origin_qty REAL NOT NULL,
+        remain_qty REAL NOT NULL,
+        quality_status TEXT DEFAULT '합격',
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    results.push('production_inbound 테이블 생성 완료')
+    
+    // 3. production_transactions 테이블 생성
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trans_date DATE NOT NULL,
+        production_code TEXT NOT NULL,
+        trans_type TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        lot_number TEXT,
+        memo TEXT,
+        created_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    results.push('production_transactions 테이블 생성 완료')
+    
+    // 4. 인덱스 생성
+    try { await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_inbound_code ON production_inbound(production_code)`).run() } catch {}
+    try { await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_inbound_date ON production_inbound(inbound_date)`).run() } catch {}
+    try { await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_inbound_lot ON production_inbound(lot_number)`).run() } catch {}
+    try { await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_transactions_code ON production_transactions(production_code)`).run() } catch {}
+    try { await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_transactions_date ON production_transactions(trans_date)`).run() } catch {}
+    try { await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_transactions_type ON production_transactions(trans_type)`).run() } catch {}
+    results.push('인덱스 생성 완료')
+    
+    return c.json({ success: true, message: '생산 재고 테이블 마이그레이션 완료', details: results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message, details: results }, 500)
+  }
+})
+
 // BOM 테이블 동기화 (bom → production_bom) - 누락 생산명 자동 등록 포함
 admin.get('/sync-bom-tables', async (c) => {
   const { env } = c

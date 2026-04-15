@@ -18957,7 +18957,7 @@ async function confirmDailyReportById(reportId) {
 async function printDailyReportById(reportId) {
   try {
     showToast('생산일보 로딩 중...', 'info');
-    const result = await api(`/daily-report/reports/${reportId}`);
+    const result = await api('/daily-report/reports/' + reportId);
     
     if (!result.success || !result.data) {
       showToast('생산일보를 불러올 수 없습니다.', 'error');
@@ -18966,74 +18966,121 @@ async function printDailyReportById(reportId) {
     
     const report = result.data;
     const items = report.items || [];
+    const materials = report.materials_summary || [];
+    const reportDate = report.report_date;
+    const totalQty = items.reduce((s, i) => s + (i.quantity || 0), 0);
     
-    // 인쇄용 HTML 생성
-    const printHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <title>생산일보 - ${report.report_no}</title>
-        <style>
-          @page { size: A4; margin: 10mm; }
-          body { font-family: 'Malgun Gothic', sans-serif; font-size: 11px; }
-          h1 { text-align: center; font-size: 18px; margin-bottom: 10px; }
-          .info { display: flex; justify-content: space-between; margin-bottom: 10px; padding: 5px; background: #f5f5f5; }
-          table { width: 100%; border-collapse: collapse; }
-          th, td { border: 1px solid #333; padding: 4px 6px; }
-          th { background: #e0e0e0; font-weight: bold; text-align: center; }
-          td { text-align: left; }
-          .num { text-align: right; }
-          .center { text-align: center; }
-          .footer { margin-top: 20px; text-align: right; font-size: 10px; color: #666; }
-          @media print { button { display: none; } }
-        </style>
-      </head>
-      <body>
-        <h1>생 산 일 보</h1>
-        <div class="info">
-          <span><b>문서번호:</b> ${report.report_no}</span>
-          <span><b>생산일:</b> ${report.report_date}</span>
-          <span><b>품목수:</b> ${report.total_products}개</span>
-          <span><b>총수량:</b> ${formatNumber(report.total_quantity)}</span>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th style="width:30px">No</th>
-              <th style="width:70px">제품코드</th>
-              <th>제품명</th>
-              <th style="width:60px">수량</th>
-              <th style="width:80px">소비기한</th>
-              <th style="width:60px">판매처</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${items.map((item, idx) => {
-              const channel = {
-                'coupang': '쿠팡', 'kurly': '컬리', 'bmart': 'B마트',
-                'oasis': '오아시스', 'baemin': '배민', 'direct_store': '직영점'
-              }[item.channel] || item.channel || '-';
-              return `
-                <tr>
-                  <td class="center">${idx + 1}</td>
-                  <td class="center">${item.production_code || '-'}</td>
-                  <td>${item.production_name || item.order_product_name || '-'}</td>
-                  <td class="num">${formatNumber(item.quantity)}</td>
-                  <td class="center">${item.expiry_date || '-'}</td>
-                  <td class="center">${channel}</td>
-                </tr>
-              `;
-            }).join('')}
-          </tbody>
-        </table>
-        <div class="footer">
-          출력일시: ${new Date().toLocaleString('ko-KR')} | (주)본비반트 HACCP 통합관리시스템
-        </div>
-        <script>window.onload = function() { window.print(); }</script>
-      </body>
-      </html>
-    `;
+    // 품목 행 생성
+    let itemRows = '';
+    items.forEach((item, idx) => {
+      const channelMap = {
+        'coupang': '쿠팡', 'kurly': '컬리', 'bmart': 'B마트',
+        'oasis': '오아시스', 'baemin': '배민', 'direct_store': '직영점'
+      };
+      const channelName = channelMap[item.channel] || item.channel || '-';
+      const productionName = item.production_name || item.production_code || '-';
+      const productName = item.order_product_name || '';
+      const expiryDate = item.expiry_date || reportDate;
+      const lotNumber = item.lot_number || '-';
+      const productNameRow = (productName && productName !== productionName) 
+        ? '<div style="color:#666; margin-top:2px;">' + productName + '</div>' 
+        : '';
+      
+      itemRows += '<tr>' +
+        '<td class="text-center">' + (idx + 1) + '</td>' +
+        '<td class="text-center">' + expiryDate + '</td>' +
+        '<td class="text-center">' + (item.production_code || '-') + '</td>' +
+        '<td style="font-size:8pt;"><div>' + productionName + '</div>' + productNameRow + '</td>' +
+        '<td class="text-right">' + formatNumber(item.quantity) + '개</td>' +
+        '<td class="text-center" style="font-size:7pt;">' + lotNumber + '</td>' +
+        '<td class="text-center">' + channelName + '</td>' +
+        '</tr>';
+    });
+    
+    // 원재료 행 생성
+    let materialRows = '';
+    let materialSection = '';
+    if (materials.length > 0) {
+      materials.forEach((m, i) => {
+        materialRows += '<tr>' +
+          '<td class="text-center">' + (i + 1) + '</td>' +
+          '<td class="text-center">' + (m.material_code || '-') + '</td>' +
+          '<td>' + (m.material_name || '-') + '</td>' +
+          '<td class="text-right">' + formatNumber(Math.round(m.total_quantity || 0)) + '</td>' +
+          '<td class="text-center">' + (m.unit || 'g') + '</td>' +
+          '</tr>';
+      });
+      
+      materialSection = '<div class="section-title">2. 원재료 사용 현황 (총 ' + materials.length + '종)</div>' +
+        '<table><thead><tr>' +
+        '<th style="width:6%">No</th>' +
+        '<th style="width:12%">품목코드</th>' +
+        '<th>원재료명</th>' +
+        '<th style="width:15%">총사용량</th>' +
+        '<th style="width:8%">단위</th>' +
+        '</tr></thead><tbody>' + materialRows + '</tbody></table>';
+    }
+    
+    // 인쇄용 HTML 생성 (생산등록 > 생산일보 조회와 동일한 HACCP 양식)
+    const printHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+      '<title>생산일보 - ' + report.report_no + '</title>' +
+      '<style>' +
+      '@page { size: A4; margin: 10mm; }' +
+      '* { box-sizing: border-box; }' +
+      'body { font-family: "Malgun Gothic", sans-serif; font-size: 9pt; line-height: 1.3; margin: 0; padding: 10px; }' +
+      '.doc-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; border-bottom: 2px solid #000; padding-bottom: 8px; }' +
+      '.doc-title { text-align: center; flex: 1; }' +
+      '.doc-title h1 { font-size: 16pt; margin: 0; font-weight: bold; }' +
+      '.doc-title .subtitle { font-size: 10pt; color: #333; margin-top: 3px; }' +
+      '.approval-box { width: 180px; }' +
+      '.approval-box table { width: 100%; border-collapse: collapse; }' +
+      '.approval-box th, .approval-box td { border: 1px solid #000; padding: 2px 4px; text-align: center; font-size: 8pt; }' +
+      '.approval-box th { background: #f0f0f0; height: 20px; }' +
+      '.approval-box td { height: 45px; }' +
+      '.info-row { margin-bottom: 8px; font-size: 9pt; }' +
+      '.info-label { font-weight: bold; }' +
+      'table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }' +
+      'th, td { border: 1px solid #333; padding: 3px 5px; font-size: 8pt; }' +
+      'th { background: #e8e8e8; font-weight: bold; text-align: center; }' +
+      'td { text-align: left; }' +
+      '.text-center { text-align: center; }' +
+      '.text-right { text-align: right; }' +
+      '.section-title { font-size: 10pt; font-weight: bold; margin: 12px 0 5px 0; padding: 3px 5px; background: #333; color: #fff; }' +
+      '.summary-box { background: #f5f5f5; border: 1px solid #333; padding: 8px; margin-top: 10px; }' +
+      '.summary-row { display: flex; justify-content: space-between; margin: 3px 0; }' +
+      '.doc-footer { margin-top: 15px; padding-top: 8px; border-top: 1px solid #333; font-size: 8pt; color: #666; text-align: center; }' +
+      '@media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }' +
+      '</style></head><body>' +
+      '<div class="doc-header">' +
+      '<div style="width:100px;"></div>' +
+      '<div class="doc-title"><h1>생 산 일 보</h1><div class="subtitle">(주)본비반트 HACCP</div></div>' +
+      '<div class="approval-box"><table><tr><th>담당</th><th>검토</th><th>승인</th></tr><tr><td style="height:50px;"></td><td></td><td></td></tr></table></div>' +
+      '</div>' +
+      '<div class="info-row"><span class="info-label">생산기간:</span> ' + reportDate + ' ~ ' + reportDate + '</div>' +
+      '<div class="section-title">1. 생산 현황 (총 ' + items.length + '건)</div>' +
+      '<table><thead><tr>' +
+      '<th style="width:4%">No</th>' +
+      '<th style="width:9%">소비기한</th>' +
+      '<th style="width:9%">제품코드</th>' +
+      '<th>생산명/제품명</th>' +
+      '<th style="width:8%">수량</th>' +
+      '<th style="width:18%">제품LOT</th>' +
+      '<th style="width:6%">판매처</th>' +
+      '</tr></thead><tbody>' + itemRows +
+      '<tr style="background:#f0f0f0; font-weight:bold;">' +
+      '<td colspan="4" class="text-center">합 계</td>' +
+      '<td class="text-right">' + formatNumber(totalQty) + '개</td>' +
+      '<td colspan="2"></td></tr>' +
+      '</tbody></table>' +
+      materialSection +
+      '<div class="summary-box"><div class="summary-row">' +
+      '<span><b>총 생산건수:</b> ' + items.length + '건</span>' +
+      '<span><b>총 생산수량:</b> ' + formatNumber(totalQty) + '개</span>' +
+      '<span><b>사용원재료:</b> ' + materials.length + '종</span>' +
+      '</div></div>' +
+      '<div class="doc-footer">본 문서는 HACCP 통합관리시스템에서 출력되었습니다. | 문서번호: ' + report.report_no + '</div>' +
+      '<script>window.onload = function() { window.print(); }<\/script>' +
+      '</body></html>';
     
     const printWindow = window.open('', '_blank');
     printWindow.document.write(printHtml);

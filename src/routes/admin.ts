@@ -3519,4 +3519,124 @@ admin.get('/system/backup', async (c) => {
   }
 })
 
+// ========== BOM 원료명 일괄 변경 API ==========
+
+// 슬라이스치즈 → RM162 아메리칸슬라이스치즈 변경
+admin.post('/migrate/rename-slice-cheese', async (c) => {
+  const { env } = c
+  
+  try {
+    const results: string[] = []
+    
+    // 1. bom 테이블에서 슬라이스치즈 관련 원료 찾기
+    const bomItems = await env.DB.prepare(`
+      SELECT id, product_code, item_code, item_name 
+      FROM bom 
+      WHERE item_name LIKE '%슬라이스%치즈%' 
+         OR item_name LIKE '%슬라이스치즈%'
+         OR item_name = '슬라이스치즈'
+         OR item_name = '슬라이스 치즈'
+    `).all()
+    
+    if (bomItems.results && bomItems.results.length > 0) {
+      // bom 테이블 업데이트
+      const bomUpdate = await env.DB.prepare(`
+        UPDATE bom 
+        SET item_code = 'RM162', item_name = '아메리칸슬라이스치즈'
+        WHERE item_name LIKE '%슬라이스%치즈%' 
+           OR item_name LIKE '%슬라이스치즈%'
+           OR item_name = '슬라이스치즈'
+           OR item_name = '슬라이스 치즈'
+      `).run()
+      results.push(`bom 테이블: ${bomItems.results.length}건 업데이트 (${bomItems.results.map((r: any) => r.product_code).join(', ')})`)
+    } else {
+      results.push('bom 테이블: 슬라이스치즈 항목 없음')
+    }
+    
+    // 2. production_bom 테이블에서 슬라이스치즈 관련 원료 찾기
+    const prodBomItems = await env.DB.prepare(`
+      SELECT id, production_code, material_code, material_name 
+      FROM production_bom 
+      WHERE material_name LIKE '%슬라이스%치즈%' 
+         OR material_name LIKE '%슬라이스치즈%'
+         OR material_name = '슬라이스치즈'
+         OR material_name = '슬라이스 치즈'
+    `).all()
+    
+    if (prodBomItems.results && prodBomItems.results.length > 0) {
+      // production_bom 테이블 업데이트
+      const prodBomUpdate = await env.DB.prepare(`
+        UPDATE production_bom 
+        SET material_code = 'RM162', material_name = '아메리칸슬라이스치즈'
+        WHERE material_name LIKE '%슬라이스%치즈%' 
+           OR material_name LIKE '%슬라이스치즈%'
+           OR material_name = '슬라이스치즈'
+           OR material_name = '슬라이스 치즈'
+      `).run()
+      results.push(`production_bom 테이블: ${prodBomItems.results.length}건 업데이트 (${prodBomItems.results.map((r: any) => r.production_code).join(', ')})`)
+    } else {
+      results.push('production_bom 테이블: 슬라이스치즈 항목 없음')
+    }
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES ('원료명변경', 'bom,production_bom', '슬라이스치즈 → RM162 아메리칸슬라이스치즈')
+    `).run()
+    
+    return c.json({
+      success: true,
+      message: '슬라이스치즈 → RM162 아메리칸슬라이스치즈 변경 완료',
+      details: results,
+      changed: {
+        bom: bomItems.results || [],
+        production_bom: prodBomItems.results || []
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 변경 전 슬라이스치즈 항목 미리보기
+admin.get('/migrate/preview-slice-cheese', async (c) => {
+  const { env } = c
+  
+  try {
+    // bom 테이블 조회
+    const bomItems = await env.DB.prepare(`
+      SELECT id, product_code, item_code, item_name, quantity, unit 
+      FROM bom 
+      WHERE item_name LIKE '%슬라이스%치즈%' 
+         OR item_name LIKE '%슬라이스치즈%'
+         OR item_name = '슬라이스치즈'
+         OR item_name = '슬라이스 치즈'
+    `).all()
+    
+    // production_bom 테이블 조회
+    const prodBomItems = await env.DB.prepare(`
+      SELECT id, production_code, material_code, material_name, quantity, unit 
+      FROM production_bom 
+      WHERE material_name LIKE '%슬라이스%치즈%' 
+         OR material_name LIKE '%슬라이스치즈%'
+         OR material_name = '슬라이스치즈'
+         OR material_name = '슬라이스 치즈'
+    `).all()
+    
+    return c.json({
+      success: true,
+      preview: {
+        bom: bomItems.results || [],
+        production_bom: prodBomItems.results || []
+      },
+      summary: {
+        bom_count: bomItems.results?.length || 0,
+        production_bom_count: prodBomItems.results?.length || 0
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

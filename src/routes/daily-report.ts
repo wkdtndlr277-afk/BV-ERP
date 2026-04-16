@@ -290,6 +290,42 @@ dailyReport.get('/reports/:id', async (c) => {
     }
   }
   
+  // 원료별 LOT 정보 조회 (FEFO: 유통기한 빠른 순)
+  const materialCodes = materials_summary.map((m: any) => m.material_code).filter((c: string) => c)
+  let materialLots: any[] = []
+  if (materialCodes.length > 0) {
+    const batchSize = 100
+    for (let i = 0; i < materialCodes.length; i += batchSize) {
+      const batch = materialCodes.slice(i, i + batchSize)
+      const lotData = await c.env.DB.prepare(`
+        SELECT item_code, lot_number, expiry_date, remain_qty
+        FROM inbound
+        WHERE item_code IN (${batch.map(() => '?').join(',')})
+          AND remain_qty > 0
+        ORDER BY item_code, expiry_date ASC
+      `).bind(...batch).all()
+      materialLots = materialLots.concat(lotData.results || [])
+    }
+    
+    // materials_summary에 LOT 정보 추가
+    const lotMap = new Map<string, any[]>()
+    for (const lot of materialLots) {
+      if (!lotMap.has(lot.item_code)) {
+        lotMap.set(lot.item_code, [])
+      }
+      lotMap.get(lot.item_code)!.push({
+        lot_number: lot.lot_number,
+        expiry_date: lot.expiry_date,
+        remain_qty: lot.remain_qty
+      })
+    }
+    
+    materials_summary = materials_summary.map((m: any) => ({
+      ...m,
+      lots: lotMap.get(m.material_code) || []
+    }))
+  }
+  
   return c.json({
     success: true,
     data: {

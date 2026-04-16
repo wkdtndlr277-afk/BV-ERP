@@ -18997,27 +18997,35 @@ async function printDailyReportById(reportId) {
         '</tr>';
     });
     
-    // 원재료 행 생성
+    // 원재료 행 생성 (원료 LOT 포함)
     let materialRows = '';
     let materialSection = '';
     if (materials.length > 0) {
       materials.forEach((m, i) => {
+        // 원료 LOT 정보 (FEFO 순서대로 최대 2개 표시)
+        const lots = m.lots || [];
+        const lotText = lots.length > 0 
+          ? lots.slice(0, 2).map(l => l.lot_number).join(', ') + (lots.length > 2 ? ' 외' : '')
+          : '-';
+        
         materialRows += '<tr>' +
           '<td class="text-center">' + (i + 1) + '</td>' +
           '<td class="text-center">' + (m.material_code || '-') + '</td>' +
           '<td>' + (m.material_name || '-') + '</td>' +
           '<td class="text-right">' + formatNumber(Math.round(m.total_quantity || 0)) + '</td>' +
           '<td class="text-center">' + (m.unit || 'g') + '</td>' +
+          '<td style="font-size:7pt;">' + lotText + '</td>' +
           '</tr>';
       });
       
       materialSection = '<div class="section-title">2. 원재료 사용 현황 (총 ' + materials.length + '종)</div>' +
         '<table><thead><tr>' +
-        '<th style="width:6%">No</th>' +
-        '<th style="width:12%">품목코드</th>' +
-        '<th>원재료명</th>' +
-        '<th style="width:15%">총사용량</th>' +
-        '<th style="width:8%">단위</th>' +
+        '<th style="width:5%">No</th>' +
+        '<th style="width:10%">품목코드</th>' +
+        '<th style="width:20%">원재료명</th>' +
+        '<th style="width:12%">총사용량</th>' +
+        '<th style="width:6%">단위</th>' +
+        '<th style="width:25%">원료LOT</th>' +
         '</tr></thead><tbody>' + materialRows + '</tbody></table>';
     }
     
@@ -19078,6 +19086,20 @@ async function printDailyReportById(reportId) {
       '<span><b>총 생산수량:</b> ' + formatNumber(totalQty) + '개</span>' +
       '<span><b>사용원재료:</b> ' + materials.length + '종</span>' +
       '</div></div>' +
+      // 이상 여부 및 비고란 추가
+      '<div style="margin-top:15px; border:1px solid #333; padding:10px;">' +
+      '<div style="font-weight:bold; margin-bottom:8px;">■ 이상 여부: 없음</div>' +
+      '<div style="color:#666; font-size:8pt; line-height:1.6;">' +
+      '(이상 발생 시)<br>' +
+      '- 제품:<br>' +
+      '- LOT:<br>' +
+      '- 내용:<br>' +
+      '- 조치사항:' +
+      '</div></div>' +
+      '<div style="margin-top:10px; border:1px solid #333; padding:10px;">' +
+      '<div style="font-weight:bold; margin-bottom:5px;">■ 비고</div>' +
+      '<div style="min-height:40px;"></div>' +
+      '</div>' +
       '<div class="doc-footer">본 문서는 HACCP 통합관리시스템에서 출력되었습니다. | 문서번호: ' + report.report_no + '</div>' +
       '<script>window.onload = function() { window.print(); }<\/script>' +
       '</body></html>';

@@ -3638,4 +3638,125 @@ admin.get('/migrate/preview-slice-cheese', async (c) => {
   }
 })
 
+// ========== 범용 BOM 원료 변경 API ==========
+
+// BOM 원료 코드 변경 (범용)
+admin.post('/migrate/rename-material', async (c) => {
+  const { env } = c
+  const { old_code, new_code, new_name } = await c.req.json()
+  
+  if (!old_code || !new_code) {
+    return c.json({ success: false, message: '변경 전/후 원료 코드가 필요합니다' }, 400)
+  }
+  
+  try {
+    const results: string[] = []
+    
+    // 새 원료 정보 조회
+    let newMaterialName = new_name
+    if (!newMaterialName) {
+      const newMaterial = await env.DB.prepare(`
+        SELECT item_name FROM master WHERE item_code = ?
+      `).bind(new_code).first<any>()
+      newMaterialName = newMaterial?.item_name || new_code
+    }
+    
+    // 1. bom 테이블에서 해당 원료 찾기
+    const bomItems = await env.DB.prepare(`
+      SELECT id, product_code, item_code, quantity, unit
+      FROM bom WHERE item_code = ?
+    `).bind(old_code).all()
+    
+    if (bomItems.results && bomItems.results.length > 0) {
+      await env.DB.prepare(`
+        UPDATE bom SET item_code = ? WHERE item_code = ?
+      `).bind(new_code, old_code).run()
+      results.push(`bom 테이블: ${bomItems.results.length}건 업데이트`)
+    } else {
+      results.push('bom 테이블: 해당 원료 없음')
+    }
+    
+    // 2. production_bom 테이블에서 해당 원료 찾기
+    const prodBomItems = await env.DB.prepare(`
+      SELECT id, production_code, material_code, material_name 
+      FROM production_bom WHERE material_code = ?
+    `).bind(old_code).all()
+    
+    if (prodBomItems.results && prodBomItems.results.length > 0) {
+      await env.DB.prepare(`
+        UPDATE production_bom SET material_code = ?, material_name = ?
+        WHERE material_code = ?
+      `).bind(new_code, newMaterialName, old_code).run()
+      results.push(`production_bom 테이블: ${prodBomItems.results.length}건 업데이트`)
+    } else {
+      results.push('production_bom 테이블: 해당 원료 없음')
+    }
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES ('원료명변경', 'bom,production_bom', ?)
+    `).bind(`${old_code} → ${new_code} (${newMaterialName})`).run()
+    
+    return c.json({
+      success: true,
+      message: `${old_code} → ${new_code} (${newMaterialName}) 변경 완료`,
+      details: results,
+      changed: {
+        bom: bomItems.results || [],
+        production_bom: prodBomItems.results || []
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// BOM 원료 변경 미리보기 (범용)
+admin.get('/migrate/preview-material', async (c) => {
+  const { env } = c
+  const old_code = c.req.query('old_code')
+  
+  if (!old_code) {
+    return c.json({ success: false, message: '변경 전 원료 코드가 필요합니다' }, 400)
+  }
+  
+  try {
+    // 원료 정보 조회
+    const oldMaterial = await env.DB.prepare(`
+      SELECT item_code, item_name FROM master WHERE item_code = ?
+    `).bind(old_code).first<any>()
+    
+    // bom 테이블 조회
+    const bomItems = await env.DB.prepare(`
+      SELECT id, product_code, item_code, quantity, unit
+      FROM bom WHERE item_code = ?
+    `).bind(old_code).all()
+    
+    // production_bom 테이블 조회
+    const prodBomItems = await env.DB.prepare(`
+      SELECT id, production_code, material_code, material_name, quantity, unit 
+      FROM production_bom WHERE material_code = ?
+    `).bind(old_code).all()
+    
+    return c.json({
+      success: true,
+      target: {
+        code: old_code,
+        name: oldMaterial?.item_name || '(알 수 없음)'
+      },
+      preview: {
+        bom: bomItems.results || [],
+        production_bom: prodBomItems.results || []
+      },
+      summary: {
+        bom_count: bomItems.results?.length || 0,
+        production_bom_count: prodBomItems.results?.length || 0
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

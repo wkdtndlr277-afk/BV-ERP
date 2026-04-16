@@ -26,6 +26,7 @@ import { frozenStockRoutes } from './routes/frozen-stock';
 import costRoutes from './routes/cost';
 import dailyReportRoutes from './routes/daily-report';
 import systemConfigRoutes from './routes/system-config';
+import semiFinishedRoutes from './routes/semi-finished';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -56,9 +57,10 @@ app.route('/api/frozen-stock', frozenStockRoutes);
 app.route('/api/cost', costRoutes);
 app.route('/api/daily-report', dailyReportRoutes);
 app.route('/api/system-config', systemConfigRoutes);
+app.route('/api/semi-finished', semiFinishedRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '2.0.78';
+const SYSTEM_VERSION = '2.0.81';
 const SYSTEM_BUILD_DATE = '2026-04-16';
 
 // Health check

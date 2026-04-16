@@ -58,8 +58,8 @@ app.route('/api/daily-report', dailyReportRoutes);
 app.route('/api/system-config', systemConfigRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '2.0.60';
-const SYSTEM_BUILD_DATE = '2026-03-27';
+const SYSTEM_VERSION = '2.0.78';
+const SYSTEM_BUILD_DATE = '2026-04-16';
 
 // Health check
 app.get('/api/health', (c) => {

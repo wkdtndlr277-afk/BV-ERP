@@ -19088,7 +19088,7 @@ async function printDailyReportById(reportId) {
       '</div></div>' +
       // 이상 여부 및 비고란 추가
       '<div style="margin-top:15px; border:1px solid #333; padding:10px;">' +
-      '<div style="font-weight:bold; margin-bottom:8px;">■ 이상 여부: 없음</div>' +
+      '<div style="font-weight:bold; margin-bottom:8px;">■ 이상 여부: </div>' +
       '<div style="color:#666; font-size:8pt; line-height:1.6;">' +
       '(이상 발생 시)<br>' +
       '- 제품:<br>' +

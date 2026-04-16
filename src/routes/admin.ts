@@ -3522,31 +3522,29 @@ admin.get('/system/backup', async (c) => {
 // ========== BOM 원료명 일괄 변경 API ==========
 
 // 슬라이스치즈 → RM162 아메리칸슬라이스치즈 변경
+// 대상: R074(슬라이스 치즈), RM143(슬라이스치즈) → RM162(아메리칸슬라이스치즈)
 admin.post('/migrate/rename-slice-cheese', async (c) => {
   const { env } = c
   
   try {
     const results: string[] = []
+    const OLD_ITEM_CODES = ['R074', 'RM143']  // 변경 대상 원료 코드
+    const NEW_ITEM_CODE = 'RM162'
+    const NEW_ITEM_NAME = '아메리칸슬라이스치즈'
     
-    // 1. bom 테이블에서 슬라이스치즈 관련 원료 찾기 (master와 JOIN)
+    // 1. bom 테이블에서 슬라이스치즈 관련 원료 찾기 (item_code 기준)
     const bomItems = await env.DB.prepare(`
-      SELECT b.id, b.product_code, b.item_code, m.item_name, b.quantity, b.unit
-      FROM bom b
-      LEFT JOIN master m ON b.item_code = m.item_code
-      WHERE m.item_name LIKE '%슬라이스%치즈%' 
-         OR m.item_name LIKE '%슬라이스치즈%'
-         OR m.item_name = '슬라이스치즈'
-         OR m.item_name = '슬라이스 치즈'
+      SELECT id, product_code, item_code, quantity, unit
+      FROM bom 
+      WHERE item_code IN ('R074', 'RM143')
     `).all()
     
     if (bomItems.results && bomItems.results.length > 0) {
       // bom 테이블에서 해당 item_code를 RM162로 변경
-      for (const item of bomItems.results as any[]) {
-        await env.DB.prepare(`
-          UPDATE bom SET item_code = 'RM162' WHERE id = ?
-        `).bind(item.id).run()
-      }
-      results.push(`bom 테이블: ${bomItems.results.length}건 업데이트 (${bomItems.results.map((r: any) => r.product_code).join(', ')})`)
+      await env.DB.prepare(`
+        UPDATE bom SET item_code = ? WHERE item_code IN ('R074', 'RM143')
+      `).bind(NEW_ITEM_CODE).run()
+      results.push(`bom 테이블: ${bomItems.results.length}건 업데이트 (${bomItems.results.map((r: any) => `${r.product_code}:${r.item_code}`).join(', ')})`)
     } else {
       results.push('bom 테이블: 슬라이스치즈 항목 없음')
     }
@@ -3555,7 +3553,8 @@ admin.post('/migrate/rename-slice-cheese', async (c) => {
     const prodBomItems = await env.DB.prepare(`
       SELECT id, production_code, material_code, material_name 
       FROM production_bom 
-      WHERE material_name LIKE '%슬라이스%치즈%' 
+      WHERE material_code IN ('R074', 'RM143')
+         OR material_name LIKE '%슬라이스%치즈%' 
          OR material_name LIKE '%슬라이스치즈%'
          OR material_name = '슬라이스치즈'
          OR material_name = '슬라이스 치즈'
@@ -3565,13 +3564,14 @@ admin.post('/migrate/rename-slice-cheese', async (c) => {
       // production_bom 테이블 업데이트
       await env.DB.prepare(`
         UPDATE production_bom 
-        SET material_code = 'RM162', material_name = '아메리칸슬라이스치즈'
-        WHERE material_name LIKE '%슬라이스%치즈%' 
+        SET material_code = ?, material_name = ?
+        WHERE material_code IN ('R074', 'RM143')
+           OR material_name LIKE '%슬라이스%치즈%' 
            OR material_name LIKE '%슬라이스치즈%'
            OR material_name = '슬라이스치즈'
            OR material_name = '슬라이스 치즈'
-      `).run()
-      results.push(`production_bom 테이블: ${prodBomItems.results.length}건 업데이트 (${prodBomItems.results.map((r: any) => r.production_code).join(', ')})`)
+      `).bind(NEW_ITEM_CODE, NEW_ITEM_NAME).run()
+      results.push(`production_bom 테이블: ${prodBomItems.results.length}건 업데이트 (${prodBomItems.results.map((r: any) => `${r.production_code}:${r.material_name}`).join(', ')})`)
     } else {
       results.push('production_bom 테이블: 슬라이스치즈 항목 없음')
     }
@@ -3579,13 +3579,14 @@ admin.post('/migrate/rename-slice-cheese', async (c) => {
     // 로그 기록
     await env.DB.prepare(`
       INSERT INTO admin_logs (action_type, target_table, reason)
-      VALUES ('원료명변경', 'bom,production_bom', '슬라이스치즈 → RM162 아메리칸슬라이스치즈')
+      VALUES ('원료명변경', 'bom,production_bom', 'R074/RM143 슬라이스치즈 → RM162 아메리칸슬라이스치즈')
     `).run()
     
     return c.json({
       success: true,
       message: '슬라이스치즈 → RM162 아메리칸슬라이스치즈 변경 완료',
       details: results,
+      target_codes: { old: OLD_ITEM_CODES, new: NEW_ITEM_CODE },
       changed: {
         bom: bomItems.results || [],
         production_bom: prodBomItems.results || []
@@ -3601,22 +3602,19 @@ admin.get('/migrate/preview-slice-cheese', async (c) => {
   const { env } = c
   
   try {
-    // bom 테이블 조회 (master와 JOIN)
+    // bom 테이블 조회 (item_code 기준)
     const bomItems = await env.DB.prepare(`
-      SELECT b.id, b.product_code, b.item_code, m.item_name, b.quantity, b.unit
-      FROM bom b
-      LEFT JOIN master m ON b.item_code = m.item_code
-      WHERE m.item_name LIKE '%슬라이스%치즈%' 
-         OR m.item_name LIKE '%슬라이스치즈%'
-         OR m.item_name = '슬라이스치즈'
-         OR m.item_name = '슬라이스 치즈'
+      SELECT id, product_code, item_code, quantity, unit
+      FROM bom 
+      WHERE item_code IN ('R074', 'RM143')
     `).all()
     
     // production_bom 테이블 조회
     const prodBomItems = await env.DB.prepare(`
       SELECT id, production_code, material_code, material_name, quantity, unit 
       FROM production_bom 
-      WHERE material_name LIKE '%슬라이스%치즈%' 
+      WHERE material_code IN ('R074', 'RM143')
+         OR material_name LIKE '%슬라이스%치즈%' 
          OR material_name LIKE '%슬라이스치즈%'
          OR material_name = '슬라이스치즈'
          OR material_name = '슬라이스 치즈'
@@ -3624,6 +3622,8 @@ admin.get('/migrate/preview-slice-cheese', async (c) => {
     
     return c.json({
       success: true,
+      target_codes: ['R074 (슬라이스 치즈)', 'RM143 (슬라이스치즈)'],
+      new_code: 'RM162 (아메리칸슬라이스치즈)',
       preview: {
         bom: bomItems.results || [],
         production_bom: prodBomItems.results || []

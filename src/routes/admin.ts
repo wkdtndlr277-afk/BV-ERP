@@ -3528,26 +3528,24 @@ admin.post('/migrate/rename-slice-cheese', async (c) => {
   try {
     const results: string[] = []
     
-    // 1. bom 테이블에서 슬라이스치즈 관련 원료 찾기
+    // 1. bom 테이블에서 슬라이스치즈 관련 원료 찾기 (master와 JOIN)
     const bomItems = await env.DB.prepare(`
-      SELECT id, product_code, item_code, item_name 
-      FROM bom 
-      WHERE item_name LIKE '%슬라이스%치즈%' 
-         OR item_name LIKE '%슬라이스치즈%'
-         OR item_name = '슬라이스치즈'
-         OR item_name = '슬라이스 치즈'
+      SELECT b.id, b.product_code, b.item_code, m.item_name, b.quantity, b.unit
+      FROM bom b
+      LEFT JOIN master m ON b.item_code = m.item_code
+      WHERE m.item_name LIKE '%슬라이스%치즈%' 
+         OR m.item_name LIKE '%슬라이스치즈%'
+         OR m.item_name = '슬라이스치즈'
+         OR m.item_name = '슬라이스 치즈'
     `).all()
     
     if (bomItems.results && bomItems.results.length > 0) {
-      // bom 테이블 업데이트
-      const bomUpdate = await env.DB.prepare(`
-        UPDATE bom 
-        SET item_code = 'RM162', item_name = '아메리칸슬라이스치즈'
-        WHERE item_name LIKE '%슬라이스%치즈%' 
-           OR item_name LIKE '%슬라이스치즈%'
-           OR item_name = '슬라이스치즈'
-           OR item_name = '슬라이스 치즈'
-      `).run()
+      // bom 테이블에서 해당 item_code를 RM162로 변경
+      for (const item of bomItems.results as any[]) {
+        await env.DB.prepare(`
+          UPDATE bom SET item_code = 'RM162' WHERE id = ?
+        `).bind(item.id).run()
+      }
       results.push(`bom 테이블: ${bomItems.results.length}건 업데이트 (${bomItems.results.map((r: any) => r.product_code).join(', ')})`)
     } else {
       results.push('bom 테이블: 슬라이스치즈 항목 없음')
@@ -3565,7 +3563,7 @@ admin.post('/migrate/rename-slice-cheese', async (c) => {
     
     if (prodBomItems.results && prodBomItems.results.length > 0) {
       // production_bom 테이블 업데이트
-      const prodBomUpdate = await env.DB.prepare(`
+      await env.DB.prepare(`
         UPDATE production_bom 
         SET material_code = 'RM162', material_name = '아메리칸슬라이스치즈'
         WHERE material_name LIKE '%슬라이스%치즈%' 
@@ -3603,14 +3601,15 @@ admin.get('/migrate/preview-slice-cheese', async (c) => {
   const { env } = c
   
   try {
-    // bom 테이블 조회
+    // bom 테이블 조회 (master와 JOIN)
     const bomItems = await env.DB.prepare(`
-      SELECT id, product_code, item_code, item_name, quantity, unit 
-      FROM bom 
-      WHERE item_name LIKE '%슬라이스%치즈%' 
-         OR item_name LIKE '%슬라이스치즈%'
-         OR item_name = '슬라이스치즈'
-         OR item_name = '슬라이스 치즈'
+      SELECT b.id, b.product_code, b.item_code, m.item_name, b.quantity, b.unit
+      FROM bom b
+      LEFT JOIN master m ON b.item_code = m.item_code
+      WHERE m.item_name LIKE '%슬라이스%치즈%' 
+         OR m.item_name LIKE '%슬라이스치즈%'
+         OR m.item_name = '슬라이스치즈'
+         OR m.item_name = '슬라이스 치즈'
     `).all()
     
     // production_bom 테이블 조회

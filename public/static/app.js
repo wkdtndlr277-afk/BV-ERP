@@ -22,86 +22,63 @@ const API_BASE = '/api';
   localStorage.setItem(STORED_VERSION_KEY, APP_VERSION);
 })();
 
-// 버전 업데이트 알림 표시
+// 버전 업데이트 알림 표시 - 중앙 팝업 모달
 function showVersionUpdateNotification(oldVersion, newVersion) {
   const notification = document.createElement('div');
   notification.id = 'version-update-notification';
   notification.innerHTML = `
-    <div style="position:fixed; top:20px; right:20px; z-index:99999; 
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                color:white; padding:16px 24px; border-radius:12px; 
-                box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    <div style="position:fixed; top:0; left:0; right:0; bottom:0; 
+                background:rgba(0,0,0,0.5); z-index:99999;
+                display:flex; align-items:center; justify-content:center;
                 font-family: 'Malgun Gothic', sans-serif;
-                animation: slideIn 0.5s ease-out;">
-      <div style="display:flex; align-items:center; gap:12px;">
-        <div style="background:rgba(255,255,255,0.2); border-radius:50%; width:40px; height:40px; 
-                    display:flex; align-items:center; justify-content:center;">
-          <i class="fas fa-rocket" style="font-size:18px;"></i>
+                animation: fadeIn 0.3s ease-out;">
+      <div style="background:white; border-radius:16px; padding:30px 40px;
+                  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                  max-width:400px; width:90%; text-align:center;
+                  animation: scaleIn 0.3s ease-out;">
+        <div style="font-size:60px; margin-bottom:20px;">🎉</div>
+        <h2 style="margin:0 0 10px 0; font-size:22px; color:#333;">시스템 업데이트 완료!</h2>
+        <div style="color:#667eea; font-size:20px; font-weight:bold; margin-bottom:20px;">
+          v${oldVersion} → v${newVersion}
         </div>
-        <div>
-          <div style="font-weight:bold; font-size:14px; margin-bottom:4px;">
-            🎉 시스템 업데이트 완료!
-          </div>
-          <div style="font-size:12px; opacity:0.9;">
-            v${oldVersion} → <b>v${newVersion}</b>
+        <div style="background:#f8f9fa; border-radius:10px; padding:15px; 
+                    text-align:left; margin-bottom:20px; font-size:13px; color:#444;">
+          <div style="font-weight:bold; margin-bottom:8px; color:#333;">📋 업데이트 내용:</div>
+          <div style="line-height:1.8;">
+            • 생산일보 원료LOT 표시 기능<br>
+            • 이상여부/비고란 추가<br>
+            • 상태 표시 개선
           </div>
         </div>
-        <button onclick="this.parentElement.parentElement.parentElement.remove()" 
-                style="background:rgba(255,255,255,0.2); border:none; color:white; 
-                       width:28px; height:28px; border-radius:50%; cursor:pointer;
-                       margin-left:10px; font-size:14px;">
-          ✕
+        <button onclick="document.getElementById('version-update-notification').remove()" 
+                style="background:linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                       border:none; color:white; padding:12px 40px; border-radius:8px;
+                       font-size:15px; font-weight:bold; cursor:pointer;
+                       transition:transform 0.2s, box-shadow 0.2s;"
+                onmouseover="this.style.transform='scale(1.05)'; this.style.boxShadow='0 5px 20px rgba(102,126,234,0.4)';"
+                onmouseout="this.style.transform='scale(1)'; this.style.boxShadow='none';">
+          확인
         </button>
-      </div>
-      <div style="margin-top:12px; background:rgba(255,255,255,0.15); 
-                  border-radius:6px; padding:8px 12px; font-size:11px;">
-        <div style="margin-bottom:4px;"><b>업데이트 내용:</b></div>
-        <div>• 생산일보 원료LOT 표시 기능</div>
-        <div>• 이상여부/비고란 추가</div>
-        <div>• 상태 표시 개선</div>
       </div>
     </div>
     <style>
-      @keyframes slideIn {
-        from { transform: translateX(100px); opacity: 0; }
-        to { transform: translateX(0); opacity: 1; }
+      @keyframes fadeIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes scaleIn {
+        from { transform: scale(0.8); opacity: 0; }
+        to { transform: scale(1); opacity: 1; }
       }
     </style>
   `;
   document.body.appendChild(notification);
-  
-  // 10초 후 자동 닫기
-  setTimeout(() => {
-    const el = document.getElementById('version-update-notification');
-    if (el) {
-      el.style.animation = 'slideIn 0.3s ease-out reverse';
-      setTimeout(() => el.remove(), 300);
-    }
-  }, 10000);
 }
 
-// 화면 하단에 버전 표시 추가
+// 화면 하단에 버전 표시 추가 - 제거됨 (오른쪽 하단 표시 안함)
 function addVersionDisplay() {
-  // 이미 존재하면 제거
-  const existing = document.getElementById('version-display');
-  if (existing) existing.remove();
-  
-  const versionEl = document.createElement('div');
-  versionEl.id = 'version-display';
-  versionEl.innerHTML = `
-    <div style="position:fixed; bottom:10px; right:15px; z-index:1000;
-                background:rgba(0,0,0,0.6); color:#fff; 
-                padding:4px 10px; border-radius:12px;
-                font-size:11px; font-family:'Malgun Gothic',sans-serif;
-                cursor:pointer; transition:all 0.2s;"
-         onmouseover="this.style.background='rgba(102,126,234,0.9)'"
-         onmouseout="this.style.background='rgba(0,0,0,0.6)'"
-         onclick="showVersionInfo()">
-      <i class="fas fa-code-branch" style="margin-right:4px;"></i>
-      v${APP_VERSION}
-    </div>
-  `;
-  document.body.appendChild(versionEl);
+  // 오른쪽 하단 버전 표시 비활성화 - 사용자 요청에 따라 제거
+  // 업데이트 시에만 팝업으로 알림
 }
 
 // 버전 정보 상세 표시
@@ -14389,8 +14366,8 @@ async function initializeApp() {
     mainApp.style.display = 'flex';
   }
   
-  // 버전 표시 추가
-  addVersionDisplay();
+  // 버전 표시 추가 (비활성화 - 업데이트 팝업만 표시)
+  // addVersionDisplay();
   
   // Set current date
   const currentDateEl = document.getElementById('current-date');

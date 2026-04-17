@@ -27597,8 +27597,17 @@ async function showProductCostDetail(productCode) {
       </tr>
     `).join('');
     
+    // 인쇄용 데이터 저장
+    window._costDetailForPrint = d;
+    
     showModal(`${d.product_name} 원가 상세`, `
       <div class="space-y-4">
+        <div class="flex justify-end mb-2">
+          <button onclick="printProductCostDetail()" 
+                  class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">
+            <i class="fas fa-print mr-1"></i> 인쇄
+          </button>
+        </div>
         <div class="bg-blue-50 rounded-lg p-4">
           <div class="grid grid-cols-2 gap-4">
             <div>
@@ -27641,6 +27650,120 @@ async function showProductCostDetail(productCode) {
     showToast('상세 정보 로드 실패', 'error');
   }
 }
+
+// 제품 원가 상세 인쇄
+function printProductCostDetail() {
+  const d = window._costDetailForPrint;
+  if (!d) {
+    showToast('인쇄할 데이터가 없습니다', 'error');
+    return;
+  }
+  
+  const productCode = d.product_code;
+  const productName = d.product_name;
+  const materials = d.materials;
+  const materialCost = d.material_cost;
+  const isComplete = d.is_complete;
+  const missingCount = d.missing_cost_count || 0;
+  
+  const today = new Date().toLocaleDateString('ko-KR');
+  
+  const materialsHtml = materials.map((m, idx) => `
+    <tr style="${m.has_cost ? '' : 'background-color: #fffbeb;'}">
+      <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: center;">${idx + 1}</td>
+      <td style="border: 1px solid #e5e7eb; padding: 8px;">${m.item_name}</td>
+      <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: right;">${m.bom_qty} ${m.bom_unit}</td>
+      <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: right;">${m.cost_per_unit ? formatNumber(m.cost_per_unit) + '원/' + m.cost_unit : '-'}</td>
+      <td style="border: 1px solid #e5e7eb; padding: 8px; text-align: right; font-weight: ${m.has_cost ? '600' : 'normal'}; color: ${m.has_cost ? '#000' : '#f59e0b'};">
+        ${m.has_cost ? formatNumber(Math.round(m.calculated_cost)) + '원' : '미등록'}
+      </td>
+    </tr>
+  `).join('');
+  
+  const printContent = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>${productName} - 원가 상세</title>
+      <style>
+        @page { size: A4; margin: 15mm; }
+        body { font-family: 'Malgun Gothic', sans-serif; font-size: 12px; line-height: 1.4; }
+        .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+        .header h1 { font-size: 18px; margin: 0 0 5px 0; }
+        .info-box { background: #f0f9ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .info-grid { display: flex; justify-content: space-between; }
+        .info-item { }
+        .info-label { color: #666; font-size: 11px; }
+        .info-value { font-weight: bold; font-size: 14px; }
+        .warning { color: #f59e0b; margin-top: 10px; font-size: 11px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th { background: #f3f4f6; border: 1px solid #e5e7eb; padding: 10px 8px; font-weight: 600; }
+        tfoot td { background: #f9fafb; font-weight: bold; }
+        .footer { margin-top: 30px; text-align: center; font-size: 10px; color: #999; border-top: 1px solid #ddd; padding-top: 10px; }
+        @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <h1>제품 원가 상세</h1>
+        <div style="font-size: 11px; color: #666;">출력일: ${today}</div>
+      </div>
+      
+      <div class="info-box">
+        <div class="info-grid">
+          <div class="info-item">
+            <div class="info-label">제품코드</div>
+            <div class="info-value">${productCode}</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">제품명</div>
+            <div class="info-value">${productName}</div>
+          </div>
+          <div class="info-item">
+            <div class="info-label">재료비 합계</div>
+            <div class="info-value" style="color: ${isComplete ? '#16a34a' : '#f59e0b'}; font-size: 18px;">
+              ${formatNumber(Math.round(materialCost))}원
+            </div>
+          </div>
+        </div>
+        ${!isComplete ? `<div class="warning">⚠ ${missingCount}개 원료의 단가가 미등록 상태입니다</div>` : ''}
+      </div>
+      
+      <table>
+        <thead>
+          <tr>
+            <th style="width: 40px;">No</th>
+            <th style="text-align: left;">원료명</th>
+            <th style="text-align: right; width: 100px;">사용량</th>
+            <th style="text-align: right; width: 100px;">단가</th>
+            <th style="text-align: right; width: 100px;">원가</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${materialsHtml}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4" style="border: 1px solid #e5e7eb; padding: 10px; text-align: right;">합계</td>
+            <td style="border: 1px solid #e5e7eb; padding: 10px; text-align: right; font-size: 14px;">${formatNumber(Math.round(materialCost))}원</td>
+          </tr>
+        </tfoot>
+      </table>
+      
+      <div class="footer">
+        본비반트 ERP 시스템 | ${today}
+      </div>
+      
+      <script>window.onload = function() { window.print(); }</script>
+    </body>
+    </html>
+  `;
+  
+  const printWindow = window.open('', '_blank', 'width=800,height=600');
+  printWindow.document.write(printContent);
+  printWindow.document.close();
+}
+window.printProductCostDetail = printProductCostDetail;
 
 // 시뮬레이션용 원료 목록 로드
 async function loadSimulateMaterials() {

@@ -21724,8 +21724,8 @@ async function saveQuickBOM() {
 }
 
 // 제품별 BOM 로드
-async function loadBOMForProduct() {
-  const productCode = document.getElementById('bom-product-select').value;
+async function loadBOMForProduct(productCodeParam) {
+  const productCode = productCodeParam || document.getElementById('bom-product-select')?.value || window.currentBOMProduct;
   const listDiv = document.getElementById('bom-list');
   const titleEl = document.getElementById('bom-product-title');
   const countEl = document.getElementById('bom-count');
@@ -21935,16 +21935,23 @@ async function editBOM(id, itemCode, quantity, unit, bomTable) {
 }
 
 // BOM 업데이트
+let isUpdatingBOM = false;
 async function updateBOM(id, bomTable) {
+  if (isUpdatingBOM) return; // 중복 클릭 방지
+  
   const itemCode = document.getElementById('edit-bom-item')?.value;
   const quantity = parseFloat(document.getElementById('edit-bom-quantity').value);
   const unit = document.getElementById('edit-bom-unit').value;
   const table = bomTable || window.currentBOMTable || 'bom';
+  const productCode = window.currentBOMProduct;
   
   if (!quantity || quantity <= 0) {
     showToast('사용량을 입력하세요', 'warning');
     return;
   }
+  
+  isUpdatingBOM = true;
+  showToast('저장 중...', 'info');
   
   try {
     if (table === 'production_bom') {
@@ -21964,9 +21971,14 @@ async function updateBOM(id, bomTable) {
     }
     showToast('수정되었습니다', 'success');
     closeModal();
-    loadBOMForProduct();
+    // productCode를 명시적으로 전달
+    if (productCode) {
+      await loadBOMForProduct(productCode);
+    }
   } catch (e) {
     showToast('수정 실패: ' + (e.message || '알 수 없는 오류'), 'error');
+  } finally {
+    isUpdatingBOM = false;
   }
 }
 

@@ -21745,8 +21745,10 @@ async function loadBOMForProduct() {
     const result = await api(`/bom/product/${productCode}`);
     const product = result.data?.product;
     const materials = result.data?.materials || [];
+    const bomTable = result.data?.bom_table || 'bom';
     
     window.currentBOMProduct = productCode;
+    window.currentBOMTable = bomTable; // 어떤 테이블인지 저장
     bomData = materials;
     
     titleEl.innerHTML = `<i class="fas fa-clipboard-list mr-2"></i>${product?.item_name || productCode} 배합표`;
@@ -21784,10 +21786,10 @@ async function loadBOMForProduct() {
               <td class="px-4 py-2 text-center">${m.unit}</td>
               <td class="px-4 py-2 text-center">${formatNumber(m.current_stock || 0)} ${m.item_unit || 'kg'}</td>
               <td class="px-4 py-2 text-center">
-                <button onclick="editBOM(${m.id}, '${m.item_code}', ${m.quantity}, '${m.unit}')" class="text-blue-500 hover:text-blue-700 mr-2">
+                <button onclick="editBOM(${m.id}, '${m.item_code}', ${m.quantity}, '${m.unit}', '${m.bom_table || bomTable}')" class="text-blue-500 hover:text-blue-700 mr-2">
                   <i class="fas fa-edit"></i>
                 </button>
-                <button onclick="deleteBOM(${m.id})" class="text-red-500 hover:text-red-700">
+                <button onclick="deleteBOM(${m.id}, '${m.bom_table || bomTable}')" class="text-red-500 hover:text-red-700">
                   <i class="fas fa-trash"></i>
                 </button>
               </td>
@@ -21876,7 +21878,10 @@ async function saveBOM() {
 }
 
 // BOM 수정
-function editBOM(id, itemCode, quantity, unit) {
+function editBOM(id, itemCode, quantity, unit, bomTable) {
+  // bomTable 파라미터가 없으면 전역 변수에서 가져옴
+  const table = bomTable || window.currentBOMTable || 'bom';
+  
   // 원재료 목록 가져오기 (원료, 부자재)
   const materials = state.masterItems.filter(item => 
     item.category === '원료' || item.category === '부자재'
@@ -21913,29 +21918,38 @@ function editBOM(id, itemCode, quantity, unit) {
     </div>
   `, `
     <button onclick="closeModal()" class="px-4 py-2 border rounded-lg">취소</button>
-    <button onclick="updateBOM(${id})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
+    <button onclick="updateBOM(${id}, '${table}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">저장</button>
   `);
 }
 
 // BOM 업데이트
-async function updateBOM(id) {
+async function updateBOM(id, bomTable) {
   const itemCode = document.getElementById('edit-bom-item')?.value;
   const quantity = parseFloat(document.getElementById('edit-bom-quantity').value);
   const unit = document.getElementById('edit-bom-unit').value;
+  const table = bomTable || window.currentBOMTable || 'bom';
   
   if (!quantity || quantity <= 0) {
     showToast('사용량을 입력하세요', 'warning');
     return;
   }
   
-  const data = {
-    item_code: itemCode,
-    quantity: quantity,
-    unit: unit
-  };
-  
   try {
-    await api(`/bom/${id}`, 'PUT', data);
+    if (table === 'production_bom') {
+      // production_bom 테이블 수정
+      await api(`/bom/production/${id}`, 'PUT', {
+        material_code: itemCode,
+        quantity: quantity,
+        unit: unit
+      });
+    } else {
+      // bom 테이블 수정
+      await api(`/bom/${id}`, 'PUT', {
+        item_code: itemCode,
+        quantity: quantity,
+        unit: unit
+      });
+    }
     showToast('수정되었습니다', 'success');
     closeModal();
     loadBOMForProduct();
@@ -21945,17 +21959,24 @@ async function updateBOM(id) {
 }
 
 // BOM 삭제
-async function deleteBOM(id) {
-  console.log('deleteBOM called with id:', id);
+async function deleteBOM(id, bomTable) {
+  console.log('deleteBOM called with id:', id, 'table:', bomTable);
   if (!id) {
     showToast('삭제할 항목 ID가 없습니다', 'error');
     return;
   }
   
+  const table = bomTable || window.currentBOMTable || 'bom';
+  
   if (!confirm('이 원재료를 배합표에서 삭제하시겠습니까?')) return;
   
   try {
-    const result = await api(`/bom/${id}`, 'DELETE');
+    let result;
+    if (table === 'production_bom') {
+      result = await api(`/bom/production/${id}`, 'DELETE');
+    } else {
+      result = await api(`/bom/${id}`, 'DELETE');
+    }
     console.log('Delete result:', result);
     showToast('삭제되었습니다', 'success');
     loadBOMForProduct();

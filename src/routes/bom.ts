@@ -145,6 +145,8 @@ bomRoutes.get('/product/:product_code', async (c) => {
   
   // BOM 목록 - production_bom 또는 기존 bom 테이블에서 조회
   let bomRaw;
+  let bomTable = 'bom'; // 어떤 테이블에서 조회했는지 기록
+  
   if (isProductionCode) {
     // production_code인 경우 production_bom 테이블에서 조회
     bomRaw = await c.env.DB.prepare(`
@@ -155,17 +157,21 @@ bomRoutes.get('/product/:product_code', async (c) => {
       ORDER BY pb.id
     `).bind(productCode).all<any>();
     
-    // production_bom에 없으면 기존 bom 테이블도 확인
-    if (!bomRaw.results || bomRaw.results.length === 0) {
+    if (bomRaw.results && bomRaw.results.length > 0) {
+      bomTable = 'production_bom';
+    } else {
+      // production_bom에 없으면 기존 bom 테이블도 확인
       bomRaw = await c.env.DB.prepare(`
         SELECT b.* FROM bom b WHERE b.product_code = ? ORDER BY b.sort_order, b.id
       `).bind(productCode).all<any>();
+      bomTable = 'bom';
     }
   } else {
     // 기존 bom 테이블에서 조회
     bomRaw = await c.env.DB.prepare(`
       SELECT b.* FROM bom b WHERE b.product_code = ? ORDER BY b.sort_order, b.id
     `).bind(productCode).all<any>();
+    bomTable = 'bom';
   }
   
   // 각 BOM 항목에 대해 마스터 정보 및 거래처 조회 (RM/R 코드 모두 시도)
@@ -233,7 +239,8 @@ bomRoutes.get('/product/:product_code', async (c) => {
       item_unit: master?.unit || item.unit,
       current_stock: master?.current_stock ?? 0,
       supplier: isSelfMade ? '자체제작' : (supplierInfo?.supplier || null),
-      expiry_date: supplierInfo?.expiry_date || null
+      expiry_date: supplierInfo?.expiry_date || null,
+      bom_table: bomTable // 어떤 테이블에서 조회했는지
     });
   }
   
@@ -243,7 +250,8 @@ bomRoutes.get('/product/:product_code', async (c) => {
     success: true, 
     data: {
       product,
-      materials: bom.results
+      materials: bom.results,
+      bom_table: bomTable
     }
   });
 });
@@ -497,6 +505,57 @@ bomRoutes.delete('/:id', async (c) => {
   // production_bom 동기화
   if (bomItem?.product_code) {
     await syncToProductionBom(c.env.DB, bomItem.product_code);
+  }
+  
+  return c.json({ success: true, message: 'BOM이 삭제되었습니다.' });
+});
+
+// production_bom 수정
+bomRoutes.put('/production/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json();
+  const { material_code, quantity, unit } = body;
+  
+  // undefined 값을 null로 변환
+  const safeMaterialCode = material_code !== undefined ? material_code : null;
+  const safeQuantity = quantity !== undefined ? quantity : null;
+  const safeUnit = unit !== undefined ? unit : null;
+  
+  // 원재료명 조회 (material_code가 변경된 경우)
+  let materialName = null;
+  if (safeMaterialCode) {
+    const master = await c.env.DB.prepare(`
+      SELECT item_name FROM master WHERE item_code = ?
+    `).bind(safeMaterialCode).first<any>();
+    materialName = master?.item_name || safeMaterialCode;
+  }
+  
+  const result = await c.env.DB.prepare(`
+    UPDATE production_bom 
+    SET material_code = COALESCE(?, material_code),
+        material_name = COALESCE(?, material_name),
+        quantity = COALESCE(?, quantity),
+        unit = COALESCE(?, unit)
+    WHERE id = ?
+  `).bind(safeMaterialCode, materialName, safeQuantity, safeUnit, id).run();
+  
+  if (result.meta.changes === 0) {
+    return c.json({ success: false, error: 'production_bom을 찾을 수 없습니다.' }, 404);
+  }
+  
+  return c.json({ success: true, message: 'BOM이 수정되었습니다.' });
+});
+
+// production_bom 삭제
+bomRoutes.delete('/production/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  const result = await c.env.DB.prepare(
+    'DELETE FROM production_bom WHERE id = ?'
+  ).bind(id).run();
+  
+  if (result.meta.changes === 0) {
+    return c.json({ success: false, error: 'production_bom을 찾을 수 없습니다.' }, 404);
   }
   
   return c.json({ success: true, message: 'BOM이 삭제되었습니다.' });

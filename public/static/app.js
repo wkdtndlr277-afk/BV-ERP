@@ -21877,16 +21877,27 @@ async function saveBOM() {
 
 // BOM 수정
 function editBOM(id, itemCode, quantity, unit) {
+  // 원재료 목록 가져오기 (원료, 부자재)
+  const materials = state.masterItems.filter(item => 
+    item.category === '원료' || item.category === '부자재'
+  );
+  const materialOptions = materials.map(m => 
+    `<option value="${m.item_code}" ${m.item_code === itemCode ? 'selected' : ''}>${m.item_name} (${m.item_code})</option>`
+  ).join('');
+  
   showModal('원재료 수정', `
     <div class="space-y-4">
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">원재료</label>
-        <input type="text" class="w-full border rounded-lg px-4 py-2 bg-gray-100" value="${itemCode}" disabled>
+        <label class="block text-sm font-medium text-gray-700 mb-1">원재료 <span class="text-red-500">*</span></label>
+        <select id="edit-bom-item" class="w-full border rounded-lg px-4 py-2">
+          ${materialOptions}
+        </select>
+        <p class="text-xs text-gray-500 mt-1">현재: ${itemCode}</p>
       </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">1개당 사용량</label>
-          <input type="number" id="edit-bom-quantity" step="0.01" min="0" class="w-full border rounded-lg px-4 py-2" value="${quantity}">
+          <label class="block text-sm font-medium text-gray-700 mb-1">1개당 사용량 <span class="text-red-500">*</span></label>
+          <input type="number" id="edit-bom-quantity" step="0.001" min="0" class="w-full border rounded-lg px-4 py-2" value="${quantity}">
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
@@ -21908,9 +21919,19 @@ function editBOM(id, itemCode, quantity, unit) {
 
 // BOM 업데이트
 async function updateBOM(id) {
+  const itemCode = document.getElementById('edit-bom-item')?.value;
+  const quantity = parseFloat(document.getElementById('edit-bom-quantity').value);
+  const unit = document.getElementById('edit-bom-unit').value;
+  
+  if (!quantity || quantity <= 0) {
+    showToast('사용량을 입력하세요', 'warning');
+    return;
+  }
+  
   const data = {
-    quantity: parseFloat(document.getElementById('edit-bom-quantity').value),
-    unit: document.getElementById('edit-bom-unit').value
+    item_code: itemCode,
+    quantity: quantity,
+    unit: unit
   };
   
   try {
@@ -21919,7 +21940,7 @@ async function updateBOM(id) {
     closeModal();
     loadBOMForProduct();
   } catch (e) {
-    // Error handled
+    showToast('수정 실패: ' + (e.message || '알 수 없는 오류'), 'error');
   }
 }
 

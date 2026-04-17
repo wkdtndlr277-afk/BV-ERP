@@ -438,9 +438,19 @@ bomRoutes.post('/sync-all', async (c) => {
 bomRoutes.put('/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
-  const { quantity, unit, sort_order, memo } = body;
+  const { item_code, quantity, unit, sort_order, memo } = body;
+  
+  // 기존 BOM 정보 가져오기 (product_code 필요)
+  const existingBom = await c.env.DB.prepare(`
+    SELECT product_code FROM bom WHERE id = ?
+  `).bind(id).first() as any;
+  
+  if (!existingBom) {
+    return c.json({ success: false, error: 'BOM을 찾을 수 없습니다.' }, 404);
+  }
   
   // undefined 값을 null로 변환
+  const safeItemCode = item_code !== undefined ? item_code : null;
   const safeQuantity = quantity !== undefined ? quantity : null;
   const safeUnit = unit !== undefined ? unit : null;
   const safeSortOrder = sort_order !== undefined ? sort_order : null;
@@ -448,20 +458,21 @@ bomRoutes.put('/:id', async (c) => {
   
   const result = await c.env.DB.prepare(`
     UPDATE bom 
-    SET quantity = COALESCE(?, quantity),
+    SET item_code = COALESCE(?, item_code),
+        quantity = COALESCE(?, quantity),
         unit = COALESCE(?, unit),
         sort_order = COALESCE(?, sort_order),
         memo = COALESCE(?, memo),
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).bind(safeQuantity, safeUnit, safeSortOrder, safeMemo, id).run();
+  `).bind(safeItemCode, safeQuantity, safeUnit, safeSortOrder, safeMemo, id).run();
   
   if (result.meta.changes === 0) {
-    return c.json({ success: false, error: 'BOM을 찾을 수 없습니다.' }, 404);
+    return c.json({ success: false, error: 'BOM 수정에 실패했습니다.' }, 500);
   }
   
   // production_bom 동기화
-  await syncToProductionBom(c.env.DB, product_code);
+  await syncToProductionBom(c.env.DB, existingBom.product_code);
   
   return c.json({ success: true, message: 'BOM이 수정되었습니다.' });
 });

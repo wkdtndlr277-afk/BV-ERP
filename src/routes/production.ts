@@ -435,6 +435,7 @@ productionRoutes.post('/', async (c) => {
 });
 
 // 빠른 일괄 생산 등록 (발주서 업로드용 - 원재료 차감 포함)
+// 주의: Cloudflare Workers CPU 제한으로 인해 한 번에 최대 30개까지만 처리
 productionRoutes.post('/batch', async (c) => {
   const body = await c.req.json();
   const { items, prod_date, production_date, memo, channel: defaultChannel } = body;
@@ -442,6 +443,18 @@ productionRoutes.post('/batch', async (c) => {
   
   if (!items || items.length === 0) {
     return c.json({ success: false, error: '등록할 항목이 없습니다.' }, 400);
+  }
+  
+  // 배치 크기 제한 (D1 batch() 사용으로 최적화됨)
+  // batch()는 여러 쿼리를 단일 네트워크 요청으로 처리
+  const MAX_BATCH_SIZE = 30;
+  if (items.length > MAX_BATCH_SIZE) {
+    return c.json({ 
+      success: false, 
+      error: `한 번에 최대 ${MAX_BATCH_SIZE}개까지만 등록할 수 있습니다. (요청: ${items.length}개)`,
+      max_batch_size: MAX_BATCH_SIZE,
+      requested_count: items.length
+    }, 400);
   }
   
   // prod_date 또는 production_date 둘 다 지원
@@ -504,12 +517,15 @@ productionRoutes.post('/batch', async (c) => {
     WHERE production_code IN (${newPlaceholders})
   `).bind(...newProductCodes).all<any>();
   
-  // 3. production_barcodes 테이블에서도 조회 (바코드 매핑된 경우, box_quantity 포함)
+  // 3. production_barcodes 테이블에서도 조회 (바코드 매핑된 경우, box_quantity 및 expiry_days 포함)
   const barcodeItems = await c.env.DB.prepare(`
     SELECT pb.production_code as item_code, 
            pi.production_name as item_name,
-           COALESCE(pi.shelf_life_days, 7) as expiry_days,
-           pb.box_quantity
+           COALESCE(pi.shelf_life_days, 7) as default_expiry_days,
+           pb.box_quantity,
+           pb.barcode,
+           pb.expiry_days as barcode_expiry_days,
+           pb.channel
     FROM production_barcodes pb
     LEFT JOIN production_items pi ON pb.production_code = pi.production_code
     WHERE pb.production_code IN (${newPlaceholders})
@@ -517,10 +533,17 @@ productionRoutes.post('/batch', async (c) => {
   
   // production_code별 box_quantity 맵 (채널별로 다를 수 있으므로 대표값 사용)
   const boxQuantityMap = new Map<string, number>();
+  // 바코드별 소비기한 맵 (바코드 → expiry_days)
+  const barcodeExpiryMap = new Map<string, number>();
   for (const b of barcodeItems.results || []) {
     // 여러 바코드가 있을 경우, 가장 큰 box_quantity 사용 (안전하게)
     const current = boxQuantityMap.get(b.item_code) || 1;
     boxQuantityMap.set(b.item_code, Math.max(current, b.box_quantity || 1));
+    
+    // 바코드별 소비기한 저장 (barcode_expiry_days가 설정된 경우만)
+    if (b.barcode && b.barcode_expiry_days) {
+      barcodeExpiryMap.set(b.barcode, b.barcode_expiry_days);
+    }
   }
   
   const productMap = new Map();
@@ -583,174 +606,208 @@ productionRoutes.post('/batch', async (c) => {
     }
   }
   
-  // 원재료 차감 누적 (한 번에 처리)
-  const materialDeductions = new Map<string, { qty: number, itemName: string, memos: string[] }>();
+  // ============================================
+  // 최적화: 모든 데이터를 먼저 준비한 후 병렬 배치 처리
+  // ============================================
   
-  // 각 제품 등록 (중복 제외된 새 항목만)
+  const materialDeductions = new Map<string, { qty: number, itemName: string, memos: string[] }>();
+  const nextDayStr = (() => {
+    const d = new Date(productionDate);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  })();
+  
+  // 1단계: 모든 데이터 준비 (DB 호출 없음)
+  const preparedItems: any[] = [];
+  const materialRecords: any[] = [];
+  
   for (const item of newItems) {
     const product = productMap.get(item.product_code);
-    
     if (!product) {
       results.push({ product_code: item.product_code, success: false, error: '제품 없음' });
       failCount++;
       continue;
     }
     
-    try {
-      const productLot = `PRD-${productionDate.replace(/-/g, '')}-${item.product_code}-${String(Date.now()).slice(-4)}`;
+    const productLot = `PRD-${productionDate.replace(/-/g, '')}-${item.product_code}-${String(Date.now()).slice(-4)}`;
+    
+    // 소비기한 우선순위: 1) 바코드별 설정 → 2) 생산명 기본값 → 3) 7일
+    let expiryDays = product.expiry_days || 7;
+    if (item.barcode && barcodeExpiryMap.has(item.barcode)) {
+      expiryDays = barcodeExpiryMap.get(item.barcode)!;
+    }
+    
+    const itemExpiryDate = item.expiry_date || (() => {
+      const d = new Date(productionDate);
+      d.setDate(d.getDate() + expiryDays);
+      return d.toISOString().split('T')[0];
+    })();
+    const itemChannel = item.channel || defaultChannel || 'unknown';
+    const boxQuantity = item.box_quantity || boxQuantityMap.get(item.product_code) || 1;
+    const actualItemCount = item.quantity * boxQuantity;
+    
+    preparedItems.push({
+      item, product, productLot, itemExpiryDate, itemChannel, expiryDays, actualItemCount
+    });
+    
+    // BOM 처리 (메모리에서만)
+    const bomItems = bomMap.get(item.product_code) || [];
+    for (const bom of bomItems) {
+      const actualItemCode = bom.matched_item_code || bom.item_code;
+      const requiredQty = bom.quantity * actualItemCount;
+      const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
       
-      // 소비기한 계산 (item에서 받거나 shelf_life_days로 계산)
-      const expiryDays = product.expiry_days || 7;
-      const itemExpiryDate = item.expiry_date || (() => {
-        const d = new Date(productionDate);
-        d.setDate(d.getDate() + expiryDays);
-        return d.toISOString().split('T')[0];
-      })();
+      materialRecords.push({
+        productLot, actualItemCode, requiredQty, unit: bom.unit
+      });
       
-      // 판매처 (item에서 받거나 기본값 사용)
-      const itemChannel = item.channel || defaultChannel || 'unknown';
-      
-      // 1. 생산 기록 등록 (소비기한, 판매처 포함)
-      const prodResult = await c.env.DB.prepare(`
+      if (materialDeductions.has(actualItemCode)) {
+        const existing = materialDeductions.get(actualItemCode)!;
+        existing.qty += requiredKg;
+        existing.memos.push(`${product.item_name} ${item.quantity}개`);
+      } else {
+        materialDeductions.set(actualItemCode, {
+          qty: requiredKg,
+          itemName: bom.item_name || actualItemCode,
+          memos: [`${product.item_name} ${item.quantity}개`]
+        });
+      }
+    }
+  }
+  
+  // 2단계: 생산 기록 일괄 INSERT (핵심 최적화)
+  // D1은 batch() 지원 - 여러 쿼리를 한 번에 실행
+  try {
+    const productionInserts = preparedItems.map(p => 
+      c.env.DB.prepare(`
         INSERT INTO production (prod_date, product_code, quantity, lot_number, status, memo, expiry_date, channel)
         VALUES (?, ?, ?, ?, '완료', ?, ?, ?)
-      `).bind(productionDate, item.product_code, item.quantity, productLot, memo || '발주서 일괄등록', itemExpiryDate, itemChannel).run();
-      
-      const productionId = prodResult.meta.last_row_id;
-      
-      // 2. BOM 기반 원재료 차감 누적
-      const bomItems = bomMap.get(item.product_code) || [];
-      // box_quantity: 바코드별 입수량 (박스당 개수), item에서 전달받거나 boxQuantityMap에서 조회, 기본값 1
-      const boxQuantity = item.box_quantity || boxQuantityMap.get(item.product_code) || 1;
-      const actualItemCount = item.quantity * boxQuantity;  // 실제 생산 개수 = 박스수 × 입수량
-      for (const bom of bomItems) {
-        const actualItemCode = bom.matched_item_code || bom.item_code;
-        const requiredQty = bom.quantity * actualItemCount;  // box_quantity 적용
-        const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
-        
-        if (materialDeductions.has(actualItemCode)) {
-          const existing = materialDeductions.get(actualItemCode)!;
-          existing.qty += requiredKg;
-          existing.memos.push(`${product.item_name} ${item.quantity}개`);
-        } else {
-          materialDeductions.set(actualItemCode, {
-            qty: requiredKg,
-            itemName: bom.item_name || actualItemCode,
-            memos: [`${product.item_name} ${item.quantity}개`]
-          });
-        }
-        
-        // 생산 자재 기록
-        await c.env.DB.prepare(`
-          INSERT INTO production_materials (production_id, item_code, planned_qty, actual_qty, unit)
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(productionId, actualItemCode, requiredQty, requiredQty, bom.unit).run();
-      }
-      
-      // 3. 제품 재고 증가 (production_items 테이블 사용)
-      await c.env.DB.prepare(`
-        UPDATE production_items SET current_stock = COALESCE(current_stock, 0) + ?, updated_at = CURRENT_TIMESTAMP
-        WHERE production_code = ?
-      `).bind(item.quantity, item.product_code).run();
-      
-      // 4. 제품 입고 기록 (production_inbound 테이블 사용)
-      await c.env.DB.prepare(`
+      `).bind(productionDate, p.item.product_code, p.item.quantity, p.productLot, memo || '발주서 일괄등록', p.itemExpiryDate, p.itemChannel)
+    );
+    
+    // 배치 실행 (한 번의 네트워크 요청)
+    if (productionInserts.length > 0) {
+      await c.env.DB.batch(productionInserts);
+    }
+    
+    // 3단계: 입고 기록 일괄 INSERT
+    const inboundInserts = preparedItems.map(p =>
+      c.env.DB.prepare(`
         INSERT INTO production_inbound (lot_number, production_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, memo)
         VALUES (?, ?, ?, date(?, '+' || ? || ' days'), ?, ?, '합격', ?)
-      `).bind(
-        productLot,
-        item.product_code,
-        productionDate,
-        productionDate,
-        product.expiry_days || 30,
-        item.quantity,
-        item.quantity,
-        `생산입고 (생산ID: ${productionId})`
-      ).run();
-      
-      // 5. 제품 입고 트랜잭션 (production_transactions 테이블 사용)
-      await c.env.DB.prepare(`
+      `).bind(p.productLot, p.item.product_code, productionDate, productionDate, p.expiryDays, p.item.quantity, p.item.quantity, '생산입고')
+    );
+    
+    if (inboundInserts.length > 0) {
+      await c.env.DB.batch(inboundInserts);
+    }
+    
+    // 4단계: 입고/출고 트랜잭션 일괄 INSERT
+    const transactionInserts = preparedItems.flatMap(p => [
+      c.env.DB.prepare(`
         INSERT INTO production_transactions (trans_date, production_code, trans_type, quantity, lot_number, memo)
         VALUES (?, ?, '생산입고', ?, ?, ?)
-      `).bind(productionDate, item.product_code, item.quantity, productLot, `생산입고 (생산ID: ${productionId})`).run();
-      
-      // 6. HACCP 제품 수불부: 익일 자동 출고 트랜잭션 생성
-      // 생산 후 다음날 출고 처리 (HACCP 요구사항)
-      const nextDay = new Date(productionDate);
-      nextDay.setDate(nextDay.getDate() + 1);
-      const nextDayStr = nextDay.toISOString().split('T')[0];
-      
-      await c.env.DB.prepare(`
+      `).bind(productionDate, p.item.product_code, p.item.quantity, p.productLot, '생산입고'),
+      c.env.DB.prepare(`
         INSERT INTO production_transactions (trans_date, production_code, trans_type, quantity, lot_number, memo)
         VALUES (?, ?, '출고', ?, ?, ?)
-      `).bind(nextDayStr, item.product_code, item.quantity, productLot, `생산출고 (생산ID: ${productionId}, 생산일: ${productionDate})`).run();
-      
-      // 7. 익일 출고 시 production_inbound remain_qty 차감 및 재고 차감
-      await c.env.DB.prepare(`
+      `).bind(nextDayStr, p.item.product_code, p.item.quantity, p.productLot, '생산출고')
+    ]);
+    
+    if (transactionInserts.length > 0) {
+      await c.env.DB.batch(transactionInserts);
+    }
+    
+    // 5단계: remain_qty 업데이트 일괄 처리
+    const remainUpdates = preparedItems.map(p =>
+      c.env.DB.prepare(`
         UPDATE production_inbound SET remain_qty = remain_qty - ?, updated_at = CURRENT_TIMESTAMP
         WHERE lot_number = ? AND production_code = ?
-      `).bind(item.quantity, productLot, item.product_code).run();
-      
-      await c.env.DB.prepare(`
-        UPDATE production_items SET current_stock = COALESCE(current_stock, 0) - ?, updated_at = CURRENT_TIMESTAMP
-        WHERE production_code = ?
-      `).bind(item.quantity, item.product_code).run();
-      
-      results.push({ 
-        product_code: item.product_code, 
-        product_name: product.item_name,
-        quantity: item.quantity,
-        lot_number: productLot,
-        success: true 
+      `).bind(p.item.quantity, p.productLot, p.item.product_code)
+    );
+    
+    if (remainUpdates.length > 0) {
+      await c.env.DB.batch(remainUpdates);
+    }
+    
+    // 결과 기록
+    for (const p of preparedItems) {
+      results.push({
+        product_code: p.item.product_code,
+        product_name: p.product.item_name,
+        quantity: p.item.quantity,
+        lot_number: p.productLot,
+        success: true
       });
       successCount++;
-      
-    } catch (error: any) {
-      console.error('Batch production error:', item.product_code, error);
-      results.push({ product_code: item.product_code, success: false, error: error.message });
+    }
+    
+  } catch (error: any) {
+    console.error('Batch production error:', error);
+    // 실패 시 모든 항목 실패 처리
+    for (const p of preparedItems) {
+      results.push({ product_code: p.item.product_code, success: false, error: error.message });
       failCount++;
     }
   }
   
-  // 원재료 일괄 차감 및 트랜잭션 기록
+  // 6단계: 원재료 차감 일괄 처리 (반제품 SF 코드 포함)
+  const materialUpdates: any[] = [];
+  const semiFinishedUpdates: any[] = [];  // 반제품 차감
+  const materialTransactions: any[] = [];
+  
   for (const [itemCode, data] of materialDeductions) {
-    try {
-      // 정제수는 재고 차감 제외 (사용량 기록만)
-      const isWater = data.itemName.includes('정제수');
-      
-      if (isWater) {
-        // 정제수: 사용 트랜잭션만 기록 (재고 차감 안함)
-        await c.env.DB.prepare(`
-          INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
-          VALUES (?, ?, '사용', ?, ?)
-        `).bind(
-          productionDate, 
-          itemCode, 
-          data.qty, 
-          `생산사용(재고미차감): ${data.memos.slice(0, 3).join(', ')}${data.memos.length > 3 ? ` 외 ${data.memos.length - 3}건` : ''} - 정제수`
-        ).run();
-        continue; // 재고 차감 건너뛰기
+    const isWater = data.itemName.includes('정제수');
+    const isSemiFinished = itemCode.startsWith('SF');  // 반제품 여부
+    const memoText = `생산사용${isWater ? '(재고미차감)' : ''}: ${data.memos.slice(0, 3).join(', ')}${data.memos.length > 3 ? ` 외 ${data.memos.length - 3}건` : ''}`;
+    
+    if (!isWater) {
+      if (isSemiFinished) {
+        // 반제품: semi_finished_lots 테이블에서 FEFO 차감 (가장 오래된 LOT부터)
+        // 먼저 가용 LOT 확인 후 차감
+        semiFinishedUpdates.push(
+          c.env.DB.prepare(`
+            UPDATE semi_finished_lots 
+            SET remain_qty = remain_qty - ?
+            WHERE item_code = ? AND remain_qty > 0
+            AND id = (SELECT id FROM semi_finished_lots WHERE item_code = ? AND remain_qty > 0 ORDER BY expiry_date ASC, id ASC LIMIT 1)
+          `).bind(data.qty, itemCode, itemCode)
+        );
+      } else {
+        // 일반 원료: master 테이블에서 차감
+        materialUpdates.push(
+          c.env.DB.prepare(`UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?`)
+            .bind(data.qty, itemCode)
+        );
       }
-      
-      // 마스터 재고 차감
-      await c.env.DB.prepare(`
-        UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
-        WHERE item_code = ?
-      `).bind(data.qty, itemCode).run();
-      
-      // 사용 트랜잭션 기록
-      await c.env.DB.prepare(`
-        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
-        VALUES (?, ?, '사용', ?, ?)
-      `).bind(
-        productionDate, 
-        itemCode, 
-        data.qty, 
-        `생산사용: ${data.memos.slice(0, 3).join(', ')}${data.memos.length > 3 ? ` 외 ${data.memos.length - 3}건` : ''}`
-      ).run();
-    } catch (e) {
-      console.error('Material deduction error:', itemCode, e);
     }
+    
+    // 트랜잭션 기록 (반제품도 포함)
+    if (isSemiFinished) {
+      materialTransactions.push(
+        c.env.DB.prepare(`INSERT INTO semi_finished_transactions (trans_date, item_code, trans_type, quantity, memo) VALUES (?, ?, '사용', ?, ?)`)
+          .bind(productionDate, itemCode, -data.qty, memoText)
+      );
+    } else {
+      materialTransactions.push(
+        c.env.DB.prepare(`INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo) VALUES (?, ?, '사용', ?, ?)`)
+          .bind(productionDate, itemCode, data.qty, memoText)
+      );
+    }
+  }
+  
+  try {
+    if (materialUpdates.length > 0) {
+      await c.env.DB.batch(materialUpdates);
+    }
+    if (semiFinishedUpdates.length > 0) {
+      await c.env.DB.batch(semiFinishedUpdates);
+    }
+    if (materialTransactions.length > 0) {
+      await c.env.DB.batch(materialTransactions);
+    }
+  } catch (e) {
+    console.error('Material deduction batch error:', e);
   }
   
   return c.json({

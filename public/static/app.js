@@ -113,6 +113,7 @@ const state = {
   currentPage: 'dashboard',
   masterItems: [],
   suppliers: [],
+  semiFinishedItems: [],  // 반제품 목록
   alerts: { total: 0 },
   user: null,  // 로그인한 사용자 정보
   isLoggedIn: false
@@ -854,15 +855,30 @@ async function api(endpoint, method = 'GET', data = null) {
 // Load Master Data
 async function loadMasterData() {
   try {
-    const [items, suppliers] = await Promise.all([
+    const [items, suppliers, semiFinished] = await Promise.all([
       api('/master'),
-      api('/suppliers')
+      api('/suppliers'),
+      api('/semi-finished/items').catch(() => ({ data: [] }))  // 반제품 목록
     ]);
     state.masterItems = items.data || [];
     state.suppliers = suppliers.data || [];
+    state.semiFinishedItems = semiFinished.data || [];
   } catch (e) {
     console.error('Failed to load master data:', e);
   }
+}
+
+// 원료 목록 가져오기 (master 원료 + 반제품 포함)
+function getMaterialsWithSemiFinished() {
+  const materials = state.masterItems.filter(m => m.category === '원료');
+  const semiFinished = (state.semiFinishedItems || []).map(sf => ({
+    item_code: sf.item_code,
+    item_name: `[반제품] ${sf.item_name}`,
+    category: '반제품',
+    unit: sf.unit || 'kg',
+    current_stock: sf.total_stock || 0
+  }));
+  return [...materials, ...semiFinished];
 }
 
 // Load Alert Count
@@ -964,6 +980,7 @@ function renderPage(page) {
     case 'bom': renderBOM(); break;
     case 'product-outbound': renderProductOutbound(); break;
     case 'cost-calc': renderCostCalc(); break;
+    case 'semi-finished': renderSemiFinished(); break;
     case 'inventory': renderInventory(); break;
     case 'supplies-inventory': renderSuppliesInventory(); break;
     case 'sample-inventory': renderSampleInventory(); break;
@@ -9113,8 +9130,8 @@ async function showNewProductWithBOMModal() {
   // 최신 마스터 데이터 로드
   await loadMasterData();
   
-  // 원재료 목록
-  const materials = state.masterItems.filter(item => item.category === '원료');
+  // 원재료 목록 (반제품 포함)
+  const materials = getMaterialsWithSemiFinished();
   const materialOptions = materials.map(m => 
     `<option value="${m.item_code}">${m.item_name}</option>`
   ).join('');
@@ -9224,8 +9241,8 @@ async function generateProductCode() {
 // BOM 행 추가
 function addBOMRow() {
   const container = document.getElementById('bom-rows');
-  // state.masterItems에서 최신 원료 목록 가져오기 (material-options 대신)
-  const materials = state.masterItems.filter(m => m.category === '원료');
+  // 원료 목록 (반제품 포함)
+  const materials = getMaterialsWithSemiFinished();
   const rowId = Date.now();
   
   const row = document.createElement('div');
@@ -9240,14 +9257,17 @@ function addBOMRow() {
              data-selected-code="">
       <input type="hidden" class="bom-material" value="">
       <div id="bom-dropdown-${rowId}" class="absolute z-50 w-full bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto hidden">
-        ${materials.map(m => `
+        ${materials.map(m => {
+          const isSF = m.item_code.startsWith('SF') || m.category === '반제품';
+          const badge = isSF ? '<span class="ml-1 px-1 py-0.5 text-xs rounded bg-purple-100 text-purple-700">반제품</span>' : '';
+          return `
           <div class="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm bom-material-option" 
                data-code="${m.item_code}" data-name="${m.item_name}"
                onclick="selectBOMMaterial('${rowId}', '${m.item_code}', '${m.item_name.replace(/'/g, "\\'")}')">
-            <span class="font-medium">${m.item_name}</span>
+            <span class="font-medium">${m.item_name}</span>${badge}
             <span class="text-gray-400 text-xs ml-1">(${m.item_code})</span>
           </div>
-        `).join('')}
+        `}).join('')}
       </div>
     </div>
     <input type="number" class="w-24 border rounded px-3 py-2 text-sm text-right bom-quantity" 
@@ -9347,7 +9367,7 @@ async function parseBOMFromText() {
     return;
   }
   
-  let materials = state.masterItems.filter(m => m.category === '원료');
+  let materials = getMaterialsWithSemiFinished();
   const materialMap = {};
   materials.forEach(m => {
     materialMap[m.item_name.toLowerCase()] = m.item_code;
@@ -9423,9 +9443,9 @@ async function parseBOMFromText() {
       // 마스터 데이터 새로고침
       await loadMasterData();
       
-      // 모달 내 원재료 옵션 업데이트
+      // 모달 내 원재료 옵션 업데이트 (반제품 포함)
       document.getElementById('material-options').value = JSON.stringify(
-        state.masterItems.filter(item => item.category === '원료')
+        getMaterialsWithSemiFinished()
       );
       
       showToast(`${unmatchedMaterials.length}개 원재료가 자동 등록되었습니다`, 'success');
@@ -9439,7 +9459,7 @@ async function parseBOMFromText() {
     row.className = 'flex gap-2 items-center bom-row';
     row.id = `bom-row-${rowId}`;
     
-    const currentMaterials = state.masterItems.filter(m => m.category === '원료');
+    const currentMaterials = getMaterialsWithSemiFinished();
     
     row.innerHTML = `
       <div class="flex-1 relative">
@@ -16209,6 +16229,7 @@ async function renderProduction() {
               <ul class="text-sm text-blue-700 mt-2 space-y-1">
                 <li>• <strong>쿠팡</strong>: 상품명/발주수량 열 자동 인식</li>
                 <li>• <strong>컬리</strong>: 제품명/물류센터별 수량 합산 (72시간빵 포함)</li>
+                <li>• <strong class="text-purple-700">컬리 (PDF)</strong>: 거래명세서 PDF에서 바코드/소비기한 자동 추출</li>
                 <li>• <strong>배민 (발주상세)</strong>: 상품명/총 발주 수량 자동 인식</li>
                 <li>• <strong>비마트</strong>: SKU명/요청수량 열 자동 인식</li>
                 <li>• <strong>오아시스</strong>: 상품명/출고수량 열 자동 인식</li>
@@ -16222,10 +16243,11 @@ async function renderProduction() {
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">판매처 <span class="text-red-500">*</span></label>
-              <select id="order-channel" class="w-full border rounded-lg px-4 py-2">
+              <select id="order-channel" class="w-full border rounded-lg px-4 py-2" onchange="updateFileAccept()">
                 <option value="">자동 감지</option>
                 <option value="coupang">쿠팡</option>
-                <option value="kurly">컬리</option>
+                <option value="kurly">컬리 (엑셀)</option>
+                <option value="kurly_pdf">컬리 (PDF 거래명세서) ⭐</option>
                 <option value="baemin">배민 (발주상세)</option>
                 <option value="bmart">비마트</option>
                 <option value="oasis">오아시스</option>
@@ -16242,10 +16264,10 @@ async function renderProduction() {
           <!-- 파일 업로드 영역 -->
           <div id="order-drop-zone" 
                class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-haccp-primary hover:bg-blue-50 transition cursor-pointer">
-            <input type="file" id="order-file-input" class="hidden" accept=".xlsx,.xls,.csv" multiple>
-            <i class="fas fa-file-excel text-4xl text-gray-400 mb-3"></i>
-            <p class="text-gray-600">발주서 엑셀 파일을 드래그하거나 클릭하여 선택</p>
-            <p class="text-sm text-gray-400 mt-1">.xlsx, .xls, .csv 지원</p>
+            <input type="file" id="order-file-input" class="hidden" accept=".xlsx,.xls,.csv,.pdf" multiple>
+            <i id="order-file-icon" class="fas fa-file-excel text-4xl text-gray-400 mb-3"></i>
+            <p id="order-file-desc" class="text-gray-600">발주서 엑셀 파일을 드래그하거나 클릭하여 선택</p>
+            <p id="order-file-types" class="text-sm text-gray-400 mt-1">.xlsx, .xls, .csv, .pdf 지원</p>
           </div>
           
           <!-- 발주서 미리보기 -->
@@ -16294,6 +16316,7 @@ async function renderProduction() {
                         <th class="px-3 py-2 text-left">발주서 상품명</th>
                         <th class="px-3 py-2 text-center">수량</th>
                         <th class="px-3 py-2 text-left">매칭 제품</th>
+                        <th class="px-3 py-2 text-center">소비기한</th>
                         <th class="px-3 py-2 text-center">BOM</th>
                       </tr>
                     </thead>
@@ -16964,9 +16987,213 @@ async function parseSingleOrderFile(file) {
   return parseOrderByChannel(wb, channel);
 }
 
+// ========== 컬리 PDF 거래명세서 처리 ==========
+
+// PDF.js 로드 확인 및 로드
+async function ensurePdfJsLoaded() {
+  if (typeof pdfjsLib !== 'undefined') return true;
+  
+  // PDF.js 라이브러리 동적 로드
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    script.onload = () => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      resolve(true);
+    };
+    script.onerror = () => reject(new Error('PDF.js 로드 실패'));
+    document.head.appendChild(script);
+  });
+}
+
+// 컬리 PDF 거래명세서 처리
+async function processKurlyPdfFile(file) {
+  showToast('PDF 분석 중...', 'info');
+  
+  try {
+    // PDF.js 로드 확인
+    await ensurePdfJsLoaded();
+    
+    // 마스터/생산명/바코드 데이터 로드
+    if (!state.masterItems || state.masterItems.length === 0) {
+      await loadMasterData();
+    }
+    
+    try {
+      const prodResult = await api('/admin/production-items');
+      window.productionItemsData = prodResult.data || [];
+    } catch (e) {
+      window.productionItemsData = [];
+    }
+    
+    try {
+      const barcodeResult = await api('/daily-report/barcodes');
+      window.productionBarcodes = barcodeResult.data || [];
+    } catch (e) {
+      window.productionBarcodes = [];
+    }
+    
+    // PDF 파일 읽기
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    
+    console.log('📄 PDF 페이지 수:', pdf.numPages);
+    
+    let allText = '';
+    const extractedItems = [];
+    
+    // 모든 페이지에서 텍스트 추출
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(item => item.str).join(' ');
+      allText += pageText + '\\n';
+    }
+    
+    console.log('📄 추출된 텍스트 길이:', allText.length);
+    
+    // 바코드 패턴 찾기 (880으로 시작하는 13자리)
+    const barcodePattern = /880\\d{10}/g;
+    const foundBarcodes = allText.match(barcodePattern) || [];
+    console.log('📄 발견된 바코드:', foundBarcodes.length, '개');
+    
+    // 소비기한 패턴 찾기 (소) 2026-11-07 형식
+    const expiryPattern = /\\(소\\)\\s*(\\d{4}-\\d{2}-\\d{2})/g;
+    const expiryDates = [];
+    let match;
+    while ((match = expiryPattern.exec(allText)) !== null) {
+      expiryDates.push(match[1]);
+    }
+    console.log('📄 발견된 소비기한:', expiryDates.length, '개');
+    
+    // 수량 패턴 찾기 (바코드 뒤의 숫자들)
+    // 테이블 구조: 바코드 품명 총수량 소비기한
+    const linePattern = /(880\\d{10})\\s+([^\\d]+?)\\s+(\\d+)\\s+\\(소\\)\\s*(\\d{4}-\\d{2}-\\d{2})/g;
+    
+    while ((match = linePattern.exec(allText)) !== null) {
+      extractedItems.push({
+        barcode: match[1],
+        productName: match[2].trim().replace(/\\x00/g, ' ').replace(/\\s+/g, ' '),
+        quantity: parseInt(match[3]),
+        expiryDate: match[4]
+      });
+    }
+    
+    // 패턴 매칭 실패시 바코드와 소비기한 개별 매칭 시도
+    if (extractedItems.length === 0 && foundBarcodes.length > 0) {
+      // 바코드를 순서대로 소비기한과 매칭
+      const uniqueBarcodes = [...new Set(foundBarcodes)];
+      
+      for (let i = 0; i < uniqueBarcodes.length; i++) {
+        const barcode = uniqueBarcodes[i];
+        const expiryDate = expiryDates[i] || expiryDates[0] || null;
+        
+        // 바코드 주변 텍스트에서 수량 추출 시도
+        const barcodeIdx = allText.indexOf(barcode);
+        const nearbyText = allText.substring(barcodeIdx, barcodeIdx + 200);
+        const qtyMatch = nearbyText.match(/\\s(\\d{1,4})\\s/);
+        const quantity = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+        
+        extractedItems.push({
+          barcode: barcode,
+          productName: '',
+          quantity: quantity,
+          expiryDate: expiryDate
+        });
+      }
+    }
+    
+    console.log('📄 추출된 품목:', extractedItems.length, '개');
+    
+    if (extractedItems.length === 0) {
+      showToast('PDF에서 바코드 정보를 찾을 수 없습니다', 'warning');
+      return;
+    }
+    
+    // 바코드로 제품 매칭
+    const matchedItems = extractedItems.map(item => {
+      const barcodeData = window.productionBarcodes.find(b => b.barcode === item.barcode);
+      
+      if (barcodeData) {
+        return {
+          orderName: item.productName || barcodeData.product_name || barcodeData.production_name,
+          quantity: item.quantity,
+          barcode: item.barcode,
+          expiryDate: item.expiryDate, // PDF에서 추출한 소비기한
+          matched: true,
+          productCode: barcodeData.production_code,
+          productName: barcodeData.production_name,
+          hasBom: true // 바코드 매칭되면 대부분 BOM 있음
+        };
+      }
+      
+      return {
+        orderName: item.productName || item.barcode,
+        quantity: item.quantity,
+        barcode: item.barcode,
+        expiryDate: item.expiryDate,
+        matched: false,
+        productCode: null,
+        productName: null,
+        hasBom: false
+      };
+    });
+    
+    // 미리보기 표시
+    window.orderUploadData = {
+      fileName: file.name,
+      channel: 'kurly_pdf',
+      items: matchedItems,
+      hasExpiryDates: matchedItems.some(m => m.expiryDate)
+    };
+    
+    showOrderPreview(matchedItems, file.name);
+    showToast(`PDF에서 ${matchedItems.length}개 품목 추출 완료`, 'success');
+    
+  } catch (e) {
+    console.error('PDF 처리 오류:', e);
+    showToast('PDF 파일 처리 실패: ' + e.message, 'error');
+  }
+}
+
+// 파일 유형에 따라 accept 속성 변경
+function updateFileAccept() {
+  const channel = document.getElementById('order-channel')?.value;
+  const fileInput = document.getElementById('order-file-input');
+  const icon = document.getElementById('order-file-icon');
+  const desc = document.getElementById('order-file-desc');
+  const types = document.getElementById('order-file-types');
+  
+  if (channel === 'kurly_pdf') {
+    if (fileInput) fileInput.accept = '.pdf';
+    if (icon) {
+      icon.className = 'fas fa-file-pdf text-4xl text-red-400 mb-3';
+    }
+    if (desc) desc.textContent = '컬리 거래명세서 PDF 파일을 드래그하거나 클릭하여 선택';
+    if (types) types.textContent = '.pdf 지원 (바코드 + 소비기한 자동 추출)';
+  } else {
+    if (fileInput) fileInput.accept = '.xlsx,.xls,.csv,.pdf';
+    if (icon) {
+      icon.className = 'fas fa-file-excel text-4xl text-gray-400 mb-3';
+    }
+    if (desc) desc.textContent = '발주서 엑셀 파일을 드래그하거나 클릭하여 선택';
+    if (types) types.textContent = '.xlsx, .xls, .csv, .pdf 지원';
+  }
+}
+
+window.processKurlyPdfFile = processKurlyPdfFile;
+window.updateFileAccept = updateFileAccept;
+
 // 발주서 파일 처리 (단일 파일용 - 호환성 유지)
 async function processOrderFile(file) {
   const fileName = file.name.toLowerCase();
+  const selectedChannel = document.getElementById('order-channel')?.value;
+  
+  // PDF 파일 처리 (컬리 거래명세서)
+  if (fileName.endsWith('.pdf') || selectedChannel === 'kurly_pdf') {
+    await processKurlyPdfFile(file);
+    return;
+  }
   
   // XLSX 라이브러리 확인
   if (typeof XLSX === 'undefined') {
@@ -18495,6 +18722,12 @@ async function showOrderPreview(items, fileName) {
         </div>
       </td>
       <td class="px-3 py-2 text-center">
+        ${item.expiryDate 
+          ? `<span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">${item.expiryDate}</span>`
+          : '<span class="text-gray-400 text-xs">-</span>'
+        }
+      </td>
+      <td class="px-3 py-2 text-center">
         ${item.matchedProduct 
           ? (item.hasBOM 
               ? '<span class="text-green-600" title="BOM(배합표) 등록됨 - 생산 시 원재료 자동 차감"><i class="fas fa-check"></i></span>' 
@@ -18661,13 +18894,14 @@ async function convertToDailyReport() {
   // 판매처(channel) 정보
   const channel = window.orderUploadData.channel || 'unknown';
   
-  // 바코드 또는 생산명 코드로 매핑
+  // 바코드 또는 생산명 코드로 매핑 (PDF에서 추출한 소비기한 포함)
   const reportItems = selectedItems.map(item => ({
     barcode: item.barcode || null,
     product_name: item.originalName,
     quantity: item.quantity,
     production_code: item.productionItem?.production_code || null,
-    channel: channel
+    channel: channel,
+    expiry_date: item.expiryDate || null // PDF에서 추출한 소비기한
   }));
   
   showToast('생산일보 생성 중...', 'info');
@@ -19169,7 +19403,7 @@ async function printDailyReportById(reportId) {
       '<div class="doc-title"><h1>생 산 일 보</h1><div class="subtitle">(주)본비반트 HACCP</div></div>' +
       '<div class="approval-box"><table><tr><th>담당</th><th>검토</th><th>승인</th></tr><tr><td style="height:50px;"></td><td></td><td></td></tr></table></div>' +
       '</div>' +
-      '<div class="info-row"><span class="info-label">생산기간:</span> ' + reportDate + ' ~ ' + reportDate + '</div>' +
+      '<div class="info-row"><span class="info-label">생산일:</span> ' + reportDate + '</div>' +
       '<div class="section-title">1. 생산 현황 (총 ' + items.length + '건)</div>' +
       '<table><thead><tr>' +
       '<th style="width:4%">No</th>' +
@@ -19292,7 +19526,7 @@ async function confirmDailyReport(reportId) {
   }
 }
 
-// 생산일보에서 생산등록 실행
+// 생산일보에서 생산등록 실행 (청크 단위 처리)
 async function registerProductionFromDailyReport() {
   const reportData = window.currentDailyReport;
   if (!reportData || !reportData.items) {
@@ -19312,66 +19546,107 @@ async function registerProductionFromDailyReport() {
   const confirmed = confirm(`${matchedItems.length}개 품목을 생산등록 하시겠습니까?\n\n※ 원재료 재고가 차감되고, 제품 재고가 증가합니다.`);
   if (!confirmed) return;
   
-  showToast('생산등록 처리 중...', 'info');
+  showLoading('생산등록 처리 중...');
   
   try {
     // 생산일 (리포트 날짜 또는 오늘)
     const productionDate = reportData.report_date || new Date().toISOString().split('T')[0];
     
     // 일괄 생산 등록 API 호출 (소비기한, 판매처, 바코드, box_quantity 포함)
-    const items = matchedItems.map(item => ({
+    const allItems = matchedItems.map(item => ({
       product_code: item.production_code,
       quantity: item.quantity,
       expiry_date: item.expiry_date || null,
       channel: item.channel || 'unknown',
       barcode: item.barcode || null,
-      box_quantity: item.box_quantity || null  // 바코드별 입수량
+      box_quantity: item.box_quantity || null
     }));
     
-    const result = await api('/production/batch', 'POST', {
-      items: items,
-      prod_date: productionDate,
-      memo: `생산일보 자동등록 (${reportData.report_no})`,
-      created_by: localStorage.getItem('user_name') || '시스템',
-      channel: items[0]?.channel || 'unknown'
-    });
-    
-    if (result.success) {
-      const successCount = result.data?.success || result.success_count || matchedItems.length;
-      showToast(`생산등록 완료: ${successCount}개 품목`, 'success');
-      
-      // 생산일보 상태를 '등록완료'로 변경
-      try {
-        await api(`/daily-report/reports/${reportData.report_id}/status`, 'PUT', { status: 'registered' });
-      } catch (e) {
-        console.log('상태 업데이트 실패 (무시)', e);
-      }
-      
-      closeDailyReportModal();
-      
-      // 데이터 새로고침 (현재 페이지에 따라)
-      if (typeof loadProductionData === 'function') {
-        loadProductionData();
-      }
-      if (typeof loadDashboardData === 'function') {
-        loadDashboardData();
-      }
-    } else if (result.already_registered) {
-      // 이미 모두 등록된 경우에도 상태를 registered로 변경
-      try {
-        await api(`/daily-report/reports/${reportData.report_id}/status`, 'PUT', { status: 'registered' });
-      } catch (e) {
-        console.log('상태 업데이트 실패 (무시)', e);
-      }
-      showToast(`이미 등록된 품목입니다. (${result.already_registered}건)`, 'info');
-      closeDailyReportModal();
-      if (typeof loadDashboardData === 'function') loadDashboardData();
-    } else {
-      showToast(`생산등록 실패: ${result.message || '알 수 없는 오류'}`, 'error');
+    // 청크 단위로 분할 (D1 batch 최적화로 30개씩)
+    const CHUNK_SIZE = 30;
+    const chunks = [];
+    for (let i = 0; i < allItems.length; i += CHUNK_SIZE) {
+      chunks.push(allItems.slice(i, i + CHUNK_SIZE));
     }
+    
+    let totalSuccess = 0;
+    let totalFail = 0;
+    let totalSkipped = 0;
+    
+    // 각 청크를 순차적으로 처리
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      showLoading(`생산등록 처리 중... (${i + 1}/${chunks.length})`);
+      
+      try {
+        // axios 직접 호출 (api 함수의 에러 처리 우회)
+        const response = await axios.post(`${API_BASE}/production/batch`, {
+          items: chunk,
+          prod_date: productionDate,
+          memo: `생산일보 자동등록 (${reportData.report_no})`,
+          created_by: localStorage.getItem('user_name') || '시스템',
+          channel: chunk[0]?.channel || 'unknown'
+        }, { timeout: 60000 });
+        
+        const result = response.data;
+        if (result.success) {
+          totalSuccess += result.data?.success || 0;
+          totalFail += result.data?.fail || 0;
+        } else if (result.already_registered) {
+          // 이미 등록된 경우
+          totalSkipped += result.already_registered;
+        } else {
+          totalFail += chunk.length;
+        }
+      } catch (chunkError) {
+        console.error(`청크 ${i + 1} 처리 오류:`, chunkError);
+        // 400 응답도 처리 (이미 등록된 경우)
+        const errData = chunkError.response?.data;
+        if (errData?.already_registered) {
+          totalSkipped += errData.already_registered;
+        } else {
+          totalFail += chunk.length;
+        }
+      }
+      
+      // 청크 간 딜레이 (최적화됨 - 200ms)
+      if (i < chunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+    }
+    
+    hideLoading();
+    
+    // 결과 표시 및 완료 처리
+    const hasAnyResult = totalSuccess > 0 || totalSkipped > 0;
+    
+    if (totalSuccess > 0) {
+      showToast(`생산등록 완료: 성공 ${totalSuccess}건${totalSkipped > 0 ? `, 이미등록 ${totalSkipped}건` : ''}${totalFail > 0 ? `, 실패 ${totalFail}건` : ''}`, 'success');
+    } else if (totalSkipped > 0) {
+      showToast(`이미 등록된 품목입니다. (${totalSkipped}건)`, 'info');
+    } else {
+      showToast(`생산등록 실패: ${totalFail}건`, 'error');
+    }
+    
+    // 성공 또는 이미 등록된 경우 상태 업데이트
+    if (hasAnyResult) {
+      try {
+        await axios.put(`${API_BASE}/daily-report/reports/${reportData.report_id}/status`, { status: 'registered' }, { timeout: 10000 });
+      } catch (e) {
+        console.log('상태 업데이트 실패 (무시)', e);
+      }
+    }
+    
+    // 항상 모달 닫기 및 데이터 새로고침
+    closeDailyReportModal();
+    if (typeof loadProductionData === 'function') loadProductionData();
+    if (typeof loadDashboardData === 'function') loadDashboardData();
+    
   } catch (e) {
+    hideLoading();
     console.error('생산등록 오류:', e);
     showToast(`생산등록 오류: ${e.message || '서버 오류'}`, 'error');
+    closeDailyReportModal();
   }
 }
 
@@ -19530,16 +19805,20 @@ async function executeOrderProduction() {
   showToast('일괄 생산 등록 중...', 'info');
   
   try {
-    // 배치 API로 한 번에 등록
+    // 배치 API로 한 번에 등록 (소비기한, 바코드 포함)
     const batchItems = selectedItems.map(item => ({
       product_code: item.matchedProduct.item_code,
-      quantity: item.quantity
+      quantity: item.quantity,
+      expiry_date: item.expiryDate || null, // PDF에서 추출한 소비기한
+      barcode: item.barcode || null,        // 바코드 정보
+      channel: channel || 'unknown'          // 판매처
     }));
     
     const result = await api('/production/batch', 'POST', {
       items: batchItems,
       prod_date: prodDate,
-      memo: memo
+      memo: memo,
+      channel: channel
     });
     
     if (result.success) {
@@ -21013,8 +21292,8 @@ function quickAddBOMForProduct(productCode, productName) {
 // 빠른 BOM 행 추가
 function addQuickBOMRow() {
   const container = document.getElementById('quick-bom-rows');
-  // state.masterItems에서 최신 원료 목록 가져오기
-  const materials = state.masterItems.filter(m => m.category === '원료');
+  // 원료 목록 (반제품 포함)
+  const materials = getMaterialsWithSemiFinished();
   const rowId = Date.now();
   
   const row = document.createElement('div');
@@ -21023,7 +21302,11 @@ function addQuickBOMRow() {
   row.innerHTML = `
     <select class="flex-1 border rounded px-3 py-2 text-sm quick-bom-material">
       <option value="">원재료 선택</option>
-      ${materials.map(m => `<option value="${m.item_code}">${m.item_name}</option>`).join('')}
+      ${materials.map(m => {
+        const isSF = m.item_code.startsWith('SF') || m.category === '반제품';
+        const label = isSF ? `[반제품] ${m.item_name.replace('[반제품] ', '')}` : m.item_name;
+        return `<option value="${m.item_code}">${label}</option>`;
+      }).join('')}
     </select>
     <input type="number" class="w-24 border rounded px-3 py-2 text-sm text-right quick-bom-quantity" 
            placeholder="사용량" step="0.01" min="0">
@@ -21045,10 +21328,10 @@ async function parseQuickBOMPaste() {
     return;
   }
   
-  let materials = state.masterItems.filter(m => m.category === '원료');
+  let materials = getMaterialsWithSemiFinished();
   const materialMap = {};
   materials.forEach(m => {
-    materialMap[m.item_name.toLowerCase()] = m.item_code;
+    materialMap[m.item_name.toLowerCase().replace('[반제품] ', '')] = m.item_code;
   });
   
   const lines = text.split('\n').filter(l => l.trim());
@@ -21124,8 +21407,8 @@ async function parseQuickBOMPaste() {
     }
   }
   
-  // 행 추가
-  const currentMaterials = state.masterItems.filter(m => m.category === '원료');
+  // 행 추가 (원료 + 반제품)
+  const currentMaterials = getMaterialsWithSemiFinished();
   parsedItems.forEach(item => {
     const rowId = Date.now() + Math.random();
     const row = document.createElement('div');
@@ -21134,7 +21417,11 @@ async function parseQuickBOMPaste() {
     row.innerHTML = `
       <select class="flex-1 border rounded px-3 py-2 text-sm quick-bom-material">
         <option value="">원재료 선택</option>
-        ${currentMaterials.map(m => `<option value="${m.item_code}" ${m.item_code === item.code ? 'selected' : ''}>${m.item_name}</option>`).join('')}
+        ${currentMaterials.map(m => {
+          const isSF = m.item_code.startsWith('SF') || m.category === '반제품';
+          const label = isSF ? `[반제품] ${m.item_name.replace('[반제품] ', '')}` : m.item_name;
+          return `<option value="${m.item_code}" ${m.item_code === item.code ? 'selected' : ''}>${label}</option>`;
+        }).join('')}
       </select>
       <input type="number" class="w-24 border rounded px-3 py-2 text-sm text-right quick-bom-quantity" 
              value="${item.qty}" step="0.01" min="0">
@@ -23669,10 +23956,10 @@ async function showAddBomModal(productionCode = null) {
   // 생산명 목록 로드
   const items = window.productionManagementData || [];
   
-  // 원료 목록 로드
-  if (!window.materialsList) {
-    const masterRes = await api('/master?category=원료');
-    window.materialsList = masterRes.data || [];
+  // 원료 목록 로드 (반제품 포함)
+  if (!window.materialsList || window.materialsList.length === 0) {
+    await loadMasterData(); // state에 원료 및 반제품 로드
+    window.materialsList = getMaterialsWithSemiFinished(); // 원료 + 반제품
   }
   
   showModal('BOM(원료사용량) 등록', `
@@ -23723,7 +24010,7 @@ async function showAddBomModal(productionCode = null) {
   window.bomMaterialsToAdd = [];
 }
 
-// 원료 검색
+// 원료 검색 (반제품 포함)
 function searchMaterials(query) {
   const results = document.getElementById('material-search-results');
   
@@ -23732,20 +24019,27 @@ function searchMaterials(query) {
     return;
   }
   
-  const materials = window.materialsList || [];
+  // 원료 + 반제품 목록 사용
+  const materials = window.materialsList || getMaterialsWithSemiFinished();
   const filtered = materials.filter(m => 
-    m.item_name.toLowerCase().includes(query.toLowerCase())
-  ).slice(0, 10);
+    m.item_name.toLowerCase().includes(query.toLowerCase()) ||
+    m.item_code.toLowerCase().includes(query.toLowerCase())
+  ).slice(0, 15);
   
   if (filtered.length === 0) {
     results.innerHTML = '<div class="p-2 text-gray-500 text-sm">검색 결과 없음</div>';
   } else {
-    results.innerHTML = filtered.map(m => `
-      <div class="p-2 hover:bg-gray-100 cursor-pointer text-sm" onclick="selectMaterial('${m.item_code}', '${m.item_name}')">
-        <span class="font-medium">${m.item_name}</span>
+    results.innerHTML = filtered.map(m => {
+      const isSemiFinished = m.item_code.startsWith('SF') || m.category === '반제품';
+      const badge = isSemiFinished 
+        ? '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-purple-100 text-purple-700">반제품</span>' 
+        : '';
+      return `
+      <div class="p-2 hover:bg-gray-100 cursor-pointer text-sm" onclick="selectMaterial('${m.item_code}', '${m.item_name.replace(/'/g, "\\'")}')">
+        <span class="font-medium">${m.item_name}</span>${badge}
         <span class="text-gray-400 text-xs ml-2">${m.item_code}</span>
       </div>
-    `).join('');
+    `}).join('');
   }
   
   results.classList.remove('hidden');
@@ -23876,18 +24170,32 @@ function showAddBarcodeModal(productionCode = null) {
       </div>
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">판매채널</label>
-        <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2">
+        <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2" onchange="updateExpiryDaysSuggestion()">
           <option value="">선택</option>
-          <option value="쿠팡">쿠팡</option>
+          <option value="쿠팡">쿠팡 (실온)</option>
+          <option value="쿠팡냉동">쿠팡냉동</option>
           <option value="컬리">컬리</option>
+          <option value="컬리냉동">컬리냉동</option>
           <option value="생협">생협</option>
           <option value="네이버">네이버</option>
           <option value="기타">기타</option>
         </select>
       </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          소비기한 (일)
+          <span class="text-gray-400 text-xs ml-1">비워두면 생산명 기본값 사용</span>
+        </label>
+        <div class="flex gap-2">
+          <input type="number" id="new-barcode-expiry-days" class="flex-1 border rounded-lg px-4 py-2" placeholder="예: 7 (실온), 90 (냉동)" min="1">
+          <button type="button" onclick="document.getElementById('new-barcode-expiry-days').value='7'" class="px-3 py-2 bg-gray-100 rounded-lg text-sm hover:bg-gray-200">실온(7일)</button>
+          <button type="button" onclick="document.getElementById('new-barcode-expiry-days').value='90'" class="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm hover:bg-blue-200">냉동(90일)</button>
+        </div>
+      </div>
       <div class="bg-purple-50 rounded-lg p-3 text-sm text-purple-700">
         <i class="fas fa-info-circle mr-1"></i>
-        바코드를 등록하면 발주서 업로드 시 자동으로 매칭됩니다.
+        바코드를 등록하면 발주서 업로드 시 자동으로 매칭됩니다.<br>
+        <span class="text-purple-600"><i class="fas fa-snowflake mr-1"></i>냉동 상품은 소비기한을 별도 설정하세요.</span>
       </div>
     </div>
   `, `
@@ -23902,6 +24210,7 @@ async function saveNewBarcode() {
   const barcode = document.getElementById('new-barcode').value.trim();
   const productName = document.getElementById('new-barcode-product-name').value.trim();
   const channel = document.getElementById('new-barcode-channel').value;
+  const expiryDays = document.getElementById('new-barcode-expiry-days')?.value;
   
   if (!productionCode) {
     showToast('생산명을 선택하세요', 'warning');
@@ -23917,7 +24226,8 @@ async function saveNewBarcode() {
       production_code: productionCode,
       barcode: barcode,
       product_name: productName || null,
-      channel: channel || null
+      channel: channel || null,
+      expiry_days: expiryDays ? parseInt(expiryDays) : null
     });
     
     showToast('바코드가 등록되었습니다', 'success');
@@ -23925,6 +24235,24 @@ async function saveNewBarcode() {
     loadProductionManagementData();
   } catch (e) {
     showToast('등록 실패: ' + (e.message || '오류 발생'), 'error');
+  }
+}
+
+// 채널 변경 시 소비기한 자동 제안
+function updateExpiryDaysSuggestion() {
+  const channel = document.getElementById('new-barcode-channel')?.value || '';
+  const expiryInput = document.getElementById('new-barcode-expiry-days');
+  if (!expiryInput) return;
+  
+  // 이미 값이 입력되어 있으면 변경하지 않음
+  if (expiryInput.value) return;
+  
+  // 냉동 채널이면 90일 자동 입력
+  if (channel.includes('냉동')) {
+    expiryInput.value = '90';
+    expiryInput.classList.add('bg-blue-50');
+  } else {
+    expiryInput.classList.remove('bg-blue-50');
   }
 }
 
@@ -23996,7 +24324,10 @@ async function showProductionDetail(code) {
                     <span class="font-mono text-sm">${b.barcode}</span>
                     ${b.product_name ? `<span class="text-gray-500 text-xs ml-2">${b.product_name}</span>` : ''}
                   </div>
-                  ${b.channel ? `<span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">${b.channel}</span>` : ''}
+                  <div class="flex items-center gap-2">
+                    ${b.expiry_days ? `<span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded"><i class="fas fa-clock mr-1"></i>${b.expiry_days}일</span>` : ''}
+                    ${b.channel ? `<span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">${b.channel}</span>` : ''}
+                  </div>
                 </div>
               `).join('')}
             </div>
@@ -24390,6 +24721,7 @@ window.removeBomMaterial = removeBomMaterial;
 window.saveBomMaterials = saveBomMaterials;
 window.showAddBarcodeModal = showAddBarcodeModal;
 window.saveNewBarcode = saveNewBarcode;
+window.updateExpiryDaysSuggestion = updateExpiryDaysSuggestion;
 window.showProductionDetail = showProductionDetail;
 window.showEditBomModal = showEditBomModal;
 window.showEditBarcodeModal = showEditBarcodeModal;
@@ -26124,6 +26456,474 @@ window.switchPlanResultTab = switchPlanResultTab;
 window.downloadProductionPlanExcel = downloadProductionPlanExcel;
 window.convertToProductionReport = convertToProductionReport;
 window.showDailyReportDetailModal = showDailyReportDetailModal;
+
+// ==================== 반제품 관리 ====================
+
+async function renderSemiFinished() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex justify-between items-center">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-mortar-pestle mr-2 text-amber-600"></i>반제품 관리
+        </h2>
+        <div class="flex gap-2">
+          <button onclick="showSemiFinishedProductionModal()" class="bg-amber-500 text-white px-4 py-2 rounded-lg hover:bg-amber-600">
+            <i class="fas fa-plus mr-1"></i> 반제품 생산
+          </button>
+          <button onclick="loadSemiFinishedData()" class="bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600">
+            <i class="fas fa-sync-alt mr-1"></i> 새로고침
+          </button>
+        </div>
+      </div>
+      
+      <!-- 재고 현황 카드 -->
+      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4" id="semi-finished-stock-cards">
+        <div class="text-center text-gray-500 col-span-full py-8">
+          <i class="fas fa-spinner fa-spin mr-2"></i> 로딩 중...
+        </div>
+      </div>
+      
+      <!-- 탭 메뉴 -->
+      <div class="bg-white rounded-xl shadow">
+        <div class="border-b">
+          <nav class="flex">
+            <button onclick="showSFTab('stock')" id="sf-tab-stock" class="px-6 py-3 text-sm font-medium text-amber-600 border-b-2 border-amber-500">
+              <i class="fas fa-boxes mr-1"></i> 재고 현황
+            </button>
+            <button onclick="showSFTab('lots')" id="sf-tab-lots" class="px-6 py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+              <i class="fas fa-tags mr-1"></i> LOT 목록
+            </button>
+            <button onclick="showSFTab('history')" id="sf-tab-history" class="px-6 py-3 text-sm font-medium text-gray-500 hover:text-gray-700">
+              <i class="fas fa-history mr-1"></i> 생산 이력
+            </button>
+          </nav>
+        </div>
+        
+        <div id="sf-tab-content" class="p-6">
+          <!-- 탭 컨텐츠 -->
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadSemiFinishedData();
+}
+
+// 반제품 데이터 로드
+async function loadSemiFinishedData() {
+  try {
+    const stockRes = await fetch('/api/semi-finished/stock');
+    const stockData = await stockRes.json();
+    
+    if (stockData.success) {
+      renderSFStockCards(stockData.data);
+      window.sfStockData = stockData.data;
+    }
+    
+    showSFTab('stock');
+  } catch (error) {
+    console.error('반제품 데이터 로드 실패:', error);
+    showToast('데이터 로드 실패', 'error');
+  }
+}
+
+// 재고 카드 렌더링
+function renderSFStockCards(data) {
+  const container = document.getElementById('semi-finished-stock-cards');
+  if (!data || data.length === 0) {
+    container.innerHTML = '<div class="text-center text-gray-500 col-span-full py-8">등록된 반제품이 없습니다</div>';
+    return;
+  }
+  
+  container.innerHTML = data.map(item => {
+    const stockColor = item.total_stock > 0 ? 'text-green-600' : 'text-red-500';
+    const bgColor = item.total_stock > 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200';
+    const expiryText = item.nearest_expiry ? `소비기한: ${item.nearest_expiry}` : '재고 없음';
+    
+    return `
+      <div class="bg-white rounded-xl shadow p-4 border-l-4 ${bgColor} cursor-pointer hover:shadow-lg transition-shadow" 
+           onclick="showSFItemDetail('${item.item_code}')">
+        <div class="text-xs text-gray-500 mb-1">${item.item_code}</div>
+        <div class="font-bold text-gray-800 mb-2">${item.item_name}</div>
+        <div class="text-2xl font-bold ${stockColor}">${item.total_stock?.toFixed(2) || 0} ${item.unit}</div>
+        <div class="text-xs text-gray-400 mt-1">${expiryText}</div>
+        <div class="text-xs text-gray-400">LOT: ${item.lot_count || 0}건</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// 탭 전환
+function showSFTab(tab) {
+  // 탭 버튼 스타일 변경
+  document.querySelectorAll('[id^="sf-tab-"]').forEach(btn => {
+    btn.classList.remove('text-amber-600', 'border-b-2', 'border-amber-500');
+    btn.classList.add('text-gray-500');
+  });
+  document.getElementById(`sf-tab-${tab}`).classList.add('text-amber-600', 'border-b-2', 'border-amber-500');
+  document.getElementById(`sf-tab-${tab}`).classList.remove('text-gray-500');
+  
+  const content = document.getElementById('sf-tab-content');
+  
+  switch(tab) {
+    case 'stock':
+      renderSFStockTable();
+      break;
+    case 'lots':
+      loadSFLots();
+      break;
+    case 'history':
+      loadSFHistory();
+      break;
+  }
+}
+
+// 재고 현황 테이블
+function renderSFStockTable() {
+  const content = document.getElementById('sf-tab-content');
+  const data = window.sfStockData || [];
+  
+  content.innerHTML = `
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-4 py-3 text-left font-medium text-gray-600">코드</th>
+            <th class="px-4 py-3 text-left font-medium text-gray-600">반제품명</th>
+            <th class="px-4 py-3 text-right font-medium text-gray-600">현재고</th>
+            <th class="px-4 py-3 text-center font-medium text-gray-600">단위</th>
+            <th class="px-4 py-3 text-center font-medium text-gray-600">LOT 수</th>
+            <th class="px-4 py-3 text-center font-medium text-gray-600">소비기한(유효)</th>
+            <th class="px-4 py-3 text-center font-medium text-gray-600">기준 유통기한</th>
+            <th class="px-4 py-3 text-center font-medium text-gray-600">작업</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-200">
+          ${data.map(item => `
+            <tr class="hover:bg-gray-50">
+              <td class="px-4 py-3 font-mono text-gray-600">${item.item_code}</td>
+              <td class="px-4 py-3 font-medium">${item.item_name}</td>
+              <td class="px-4 py-3 text-right font-bold ${item.total_stock > 0 ? 'text-green-600' : 'text-red-500'}">
+                ${item.total_stock?.toFixed(2) || 0}
+              </td>
+              <td class="px-4 py-3 text-center">${item.unit}</td>
+              <td class="px-4 py-3 text-center">${item.lot_count || 0}</td>
+              <td class="px-4 py-3 text-center ${item.nearest_expiry ? '' : 'text-gray-400'}">
+                ${item.nearest_expiry || '-'}
+              </td>
+              <td class="px-4 py-3 text-center">${item.shelf_life_days}일</td>
+              <td class="px-4 py-3 text-center">
+                <button onclick="showSemiFinishedProductionModal('${item.item_code}')" 
+                        class="text-amber-600 hover:text-amber-800 mr-2" title="생산 등록">
+                  <i class="fas fa-plus-circle"></i>
+                </button>
+                <button onclick="showSFItemDetail('${item.item_code}')" 
+                        class="text-blue-600 hover:text-blue-800" title="상세보기">
+                  <i class="fas fa-eye"></i>
+                </button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// LOT 목록 로드
+async function loadSFLots() {
+  const content = document.getElementById('sf-tab-content');
+  content.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin mr-2"></i> 로딩 중...</div>';
+  
+  try {
+    const res = await fetch('/api/semi-finished/lots');
+    const data = await res.json();
+    
+    if (!data.success || !data.data?.length) {
+      content.innerHTML = '<div class="text-center text-gray-500 py-8">LOT 데이터가 없습니다</div>';
+      return;
+    }
+    
+    content.innerHTML = `
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left font-medium text-gray-600">LOT 번호</th>
+              <th class="px-4 py-3 text-left font-medium text-gray-600">반제품명</th>
+              <th class="px-4 py-3 text-right font-medium text-gray-600">생산량</th>
+              <th class="px-4 py-3 text-right font-medium text-gray-600">잔량</th>
+              <th class="px-4 py-3 text-center font-medium text-gray-600">생산일</th>
+              <th class="px-4 py-3 text-center font-medium text-gray-600">소비기한</th>
+              <th class="px-4 py-3 text-center font-medium text-gray-600">상태</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200">
+            ${data.data.map(lot => {
+              const today = new Date().toISOString().split('T')[0];
+              const isExpired = lot.expiry_date < today;
+              const isNearExpiry = !isExpired && lot.expiry_date <= new Date(Date.now() + 86400000).toISOString().split('T')[0];
+              let statusBadge = '<span class="px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">정상</span>';
+              if (isExpired) statusBadge = '<span class="px-2 py-1 rounded-full text-xs bg-red-100 text-red-800">만료</span>';
+              else if (isNearExpiry) statusBadge = '<span class="px-2 py-1 rounded-full text-xs bg-yellow-100 text-yellow-800">임박</span>';
+              
+              return `
+                <tr class="hover:bg-gray-50">
+                  <td class="px-4 py-3 font-mono">${lot.lot_number}</td>
+                  <td class="px-4 py-3">${lot.item_name}</td>
+                  <td class="px-4 py-3 text-right">${lot.quantity} ${lot.unit}</td>
+                  <td class="px-4 py-3 text-right font-bold ${lot.remain_qty > 0 ? 'text-green-600' : 'text-gray-400'}">
+                    ${lot.remain_qty?.toFixed(2)} ${lot.unit}
+                  </td>
+                  <td class="px-4 py-3 text-center">${lot.prod_date}</td>
+                  <td class="px-4 py-3 text-center">${lot.expiry_date}</td>
+                  <td class="px-4 py-3 text-center">${statusBadge}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (error) {
+    content.innerHTML = '<div class="text-center text-red-500 py-8">LOT 목록 로드 실패</div>';
+  }
+}
+
+// 생산 이력 로드
+async function loadSFHistory() {
+  const content = document.getElementById('sf-tab-content');
+  content.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin mr-2"></i> 로딩 중...</div>';
+  
+  try {
+    const res = await fetch('/api/semi-finished/production?limit=50');
+    const data = await res.json();
+    
+    if (!data.success || !data.data?.length) {
+      content.innerHTML = '<div class="text-center text-gray-500 py-8">생산 이력이 없습니다</div>';
+      return;
+    }
+    
+    content.innerHTML = `
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-4 py-3 text-left font-medium text-gray-600">생산일</th>
+              <th class="px-4 py-3 text-left font-medium text-gray-600">LOT 번호</th>
+              <th class="px-4 py-3 text-left font-medium text-gray-600">반제품명</th>
+              <th class="px-4 py-3 text-right font-medium text-gray-600">생산량</th>
+              <th class="px-4 py-3 text-right font-medium text-gray-600">잔량</th>
+              <th class="px-4 py-3 text-center font-medium text-gray-600">소비기한</th>
+              <th class="px-4 py-3 text-left font-medium text-gray-600">담당자</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200">
+            ${data.data.map(lot => `
+              <tr class="hover:bg-gray-50">
+                <td class="px-4 py-3">${lot.prod_date}</td>
+                <td class="px-4 py-3 font-mono">${lot.lot_number}</td>
+                <td class="px-4 py-3">${lot.item_name}</td>
+                <td class="px-4 py-3 text-right">${lot.quantity} ${lot.unit}</td>
+                <td class="px-4 py-3 text-right">${lot.remain_qty?.toFixed(2)} ${lot.unit}</td>
+                <td class="px-4 py-3 text-center">${lot.expiry_date}</td>
+                <td class="px-4 py-3">${lot.created_by || '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (error) {
+    content.innerHTML = '<div class="text-center text-red-500 py-8">생산 이력 로드 실패</div>';
+  }
+}
+
+// 반제품 생산 모달
+function showSemiFinishedProductionModal(itemCode = '') {
+  const items = window.sfStockData || [];
+  const today = new Date().toISOString().split('T')[0];
+  
+  const modalContent = `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">반제품 선택 *</label>
+        <select id="sf-prod-item" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500" required>
+          <option value="">선택하세요</option>
+          ${items.map(item => `
+            <option value="${item.item_code}" ${item.item_code === itemCode ? 'selected' : ''}>
+              ${item.item_code} - ${item.item_name} (현재고: ${item.total_stock?.toFixed(2) || 0} ${item.unit})
+            </option>
+          `).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">생산량 *</label>
+        <div class="flex gap-2">
+          <input type="number" id="sf-prod-qty" step="0.01" min="0.01" 
+                 class="flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500" 
+                 placeholder="생산량 입력" required>
+          <span class="px-3 py-2 bg-gray-100 rounded-lg text-gray-600">kg</span>
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">생산일</label>
+        <input type="date" id="sf-prod-date" value="${today}" 
+               class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">담당자</label>
+        <input type="text" id="sf-prod-creator" 
+               class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500"
+               placeholder="담당자명">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+        <textarea id="sf-prod-memo" rows="2" 
+                  class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500"
+                  placeholder="메모 (선택사항)"></textarea>
+      </div>
+    </div>
+  `;
+  
+  showModal('반제품 생산 등록', modalContent, `
+    <button onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800">취소</button>
+    <button onclick="submitSFProduction()" class="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600">
+      <i class="fas fa-check mr-1"></i> 생산 등록
+    </button>
+  `);
+}
+
+// 반제품 생산 제출
+async function submitSFProduction() {
+  const itemCode = document.getElementById('sf-prod-item').value;
+  const quantity = parseFloat(document.getElementById('sf-prod-qty').value);
+  const prodDate = document.getElementById('sf-prod-date').value;
+  const createdBy = document.getElementById('sf-prod-creator').value;
+  const memo = document.getElementById('sf-prod-memo').value;
+  
+  if (!itemCode || !quantity) {
+    showToast('반제품과 생산량을 입력하세요', 'error');
+    return;
+  }
+  
+  try {
+    showToast('생산 등록 중...', 'info');
+    
+    const res = await fetch('/api/semi-finished/production', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        item_code: itemCode,
+        quantity,
+        prod_date: prodDate,
+        created_by: createdBy,
+        memo
+      })
+    });
+    
+    const data = await res.json();
+    
+    if (data.success) {
+      showToast(`생산 등록 완료! LOT: ${data.data.lot_number}`, 'success');
+      closeModal();
+      loadSemiFinishedData();
+    } else {
+      showToast(data.message || '생산 등록 실패', 'error');
+    }
+  } catch (error) {
+    console.error('생산 등록 실패:', error);
+    showToast('생산 등록 중 오류 발생', 'error');
+  }
+}
+
+// 반제품 상세 보기
+async function showSFItemDetail(itemCode) {
+  try {
+    const res = await fetch(`/api/semi-finished/items/${itemCode}`);
+    const data = await res.json();
+    
+    if (!data.success) {
+      showToast('상세 정보 로드 실패', 'error');
+      return;
+    }
+    
+    const item = data.data;
+    const lots = item.lots || [];
+    
+    const modalContent = `
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-4 bg-gray-50 p-4 rounded-lg">
+          <div>
+            <div class="text-sm text-gray-500">코드</div>
+            <div class="font-bold">${item.item_code}</div>
+          </div>
+          <div>
+            <div class="text-sm text-gray-500">반제품명</div>
+            <div class="font-bold">${item.item_name}</div>
+          </div>
+          <div>
+            <div class="text-sm text-gray-500">현재고</div>
+            <div class="font-bold text-xl ${item.total_stock > 0 ? 'text-green-600' : 'text-red-500'}">
+              ${item.total_stock?.toFixed(2) || 0} ${item.unit}
+            </div>
+          </div>
+          <div>
+            <div class="text-sm text-gray-500">기준 유통기한</div>
+            <div class="font-bold">${item.shelf_life_days}일</div>
+          </div>
+        </div>
+        
+        <div>
+          <h4 class="font-bold text-gray-700 mb-2">LOT 목록 (${lots.length}건)</h4>
+          ${lots.length > 0 ? `
+            <div class="max-h-60 overflow-y-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-100 sticky top-0">
+                  <tr>
+                    <th class="px-2 py-2 text-left">LOT</th>
+                    <th class="px-2 py-2 text-right">잔량</th>
+                    <th class="px-2 py-2 text-center">소비기한</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y">
+                  ${lots.map(lot => `
+                    <tr>
+                      <td class="px-2 py-2 font-mono text-xs">${lot.lot_number}</td>
+                      <td class="px-2 py-2 text-right">${lot.remain_qty?.toFixed(2)} ${lot.unit}</td>
+                      <td class="px-2 py-2 text-center">${lot.expiry_date}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : '<div class="text-gray-500 text-center py-4">재고 LOT가 없습니다</div>'}
+        </div>
+      </div>
+    `;
+    
+    showModal(`${item.item_name} 상세`, modalContent, `
+      <button onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800">닫기</button>
+      <button onclick="closeModal(); showSemiFinishedProductionModal('${item.item_code}')" 
+              class="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600">
+        <i class="fas fa-plus mr-1"></i> 생산 등록
+      </button>
+    `);
+  } catch (error) {
+    console.error('상세 정보 로드 실패:', error);
+    showToast('상세 정보 로드 실패', 'error');
+  }
+}
+
+// 전역 함수 등록
+window.renderSemiFinished = renderSemiFinished;
+window.loadSemiFinishedData = loadSemiFinishedData;
+window.showSFTab = showSFTab;
+window.showSemiFinishedProductionModal = showSemiFinishedProductionModal;
+window.submitSFProduction = submitSFProduction;
+window.showSFItemDetail = showSFItemDetail;
 
 // ==================== 원가 계산 ====================
 
@@ -28117,6 +28917,9 @@ async function renderStockLedger() {
           <button onclick="switchStockLedgerTab('sanitary')" class="stock-ledger-tab px-6 py-3 font-medium text-teal-600 hover:text-teal-700" data-tab="sanitary">
             <i class="fas fa-pump-soap mr-2"></i>위생자재 수불부
           </button>
+          <button onclick="switchStockLedgerTab('semi-finished')" class="stock-ledger-tab px-6 py-3 font-medium text-purple-600 hover:text-purple-700" data-tab="semi-finished">
+            <i class="fas fa-flask mr-2"></i>반제품 수불부
+          </button>
         </div>
         
         <!-- 수불부 조회 탭 -->
@@ -28136,6 +28939,7 @@ async function renderStockLedger() {
                 <option value="전체">전체</option>
                 <option value="원료">원료</option>
                 <option value="부자재">부자재</option>
+                <option value="반제품">반제품 (SF)</option>
               </select>
             </div>
             <div>
@@ -28377,12 +29181,65 @@ async function renderStockLedger() {
             </div>
           </div>
         </div>
+        
+        <!-- 반제품 수불부 탭 -->
+        <div id="stock-ledger-tab-semi-finished" class="p-6 hidden">
+          <div class="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
+            <h4 class="font-bold text-purple-800 mb-2"><i class="fas fa-flask mr-2"></i>반제품 수불부 안내</h4>
+            <ul class="text-sm text-purple-700 space-y-1">
+              <li>• 반제품(발효종르방, 탕종 등)의 생산 및 사용 내역을 조회합니다.</li>
+              <li>• 반제품 생산 시 재고가 증가하고, 제품 생산에 사용 시 재고가 차감됩니다.</li>
+              <li>• FEFO(선입선출) 기준으로 자동 차감됩니다.</li>
+            </ul>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">시작일</label>
+              <input type="date" id="sf-ledger-start-date" class="w-full border rounded-lg px-3 py-2" value="${monthStart}">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">종료일</label>
+              <input type="date" id="sf-ledger-end-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">반제품 선택</label>
+              <select id="sf-ledger-item" class="w-full border rounded-lg px-3 py-2">
+                <option value="">전체</option>
+              </select>
+            </div>
+            <div class="flex items-end gap-2 col-span-2">
+              <button onclick="loadSemiFinishedLedger()" class="flex-1 bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700">
+                <i class="fas fa-search mr-2"></i>조회
+              </button>
+              <button onclick="downloadSemiFinishedLedger()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
+                <i class="fas fa-file-excel mr-2"></i>엑셀
+              </button>
+            </div>
+          </div>
+          
+          <!-- 반제품 재고 현황 -->
+          <div id="sf-ledger-stock" class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <!-- 동적 로드 -->
+          </div>
+          
+          <!-- 반제품 수불 목록 -->
+          <div id="sf-ledger-result" class="bg-white border rounded-lg">
+            <div class="p-4 text-center text-gray-500">
+              <i class="fas fa-flask text-4xl text-purple-300 mb-3"></i>
+              <p>조회 버튼을 클릭하여 반제품 수불 내역을 확인하세요</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `;
   
   // 초기 로드
   loadStockLedger();
+  
+  // 반제품 셀렉트 옵션 로드
+  loadSemiFinishedOptions();
 }
 
 function switchStockLedgerTab(tab) {
@@ -28403,10 +29260,16 @@ function switchStockLedgerTab(tab) {
   document.getElementById('stock-ledger-tab-delete').classList.toggle('hidden', tab !== 'delete');
   document.getElementById('stock-ledger-tab-adjustment').classList.toggle('hidden', tab !== 'adjustment');
   document.getElementById('stock-ledger-tab-sanitary')?.classList.toggle('hidden', tab !== 'sanitary');
+  document.getElementById('stock-ledger-tab-semi-finished')?.classList.toggle('hidden', tab !== 'semi-finished');
   
   // 위생자재 탭 선택 시 자동 로드
   if (tab === 'sanitary') {
     loadSanitaryLedger();
+  }
+  
+  // 반제품 탭 선택 시 자동 로드
+  if (tab === 'semi-finished') {
+    loadSemiFinishedLedger();
   }
 }
 
@@ -30017,6 +30880,137 @@ window.toggleAllAdjustments = toggleAllAdjustments;
 window.deleteSelectedAdjustments = deleteSelectedAdjustments;
 window.recalculateStock = recalculateStock;
 
+// ========== 반제품 수불부 ==========
+
+// 반제품 셀렉트 옵션 로드
+async function loadSemiFinishedOptions() {
+  try {
+    const result = await api('/semi-finished/items');
+    const items = result.data || [];
+    const select = document.getElementById('sf-ledger-item');
+    if (select) {
+      select.innerHTML = '<option value="">전체</option>' + 
+        items.map(sf => `<option value="${sf.item_code}">${sf.item_name} (${sf.item_code})</option>`).join('');
+    }
+  } catch (e) {
+    console.error('반제품 목록 로드 실패:', e);
+  }
+}
+
+// 반제품 수불부 조회
+async function loadSemiFinishedLedger() {
+  const startDate = document.getElementById('sf-ledger-start-date')?.value;
+  const endDate = document.getElementById('sf-ledger-end-date')?.value;
+  const itemCode = document.getElementById('sf-ledger-item')?.value;
+  
+  try {
+    // 반제품 재고 현황
+    const stockResult = await api('/semi-finished/stock');
+    const stocks = stockResult.data || [];
+    
+    const stockContainer = document.getElementById('sf-ledger-stock');
+    if (stockContainer) {
+      stockContainer.innerHTML = stocks.slice(0, 5).map(sf => `
+        <div class="bg-purple-50 rounded-lg p-3 border border-purple-200">
+          <p class="text-xs text-purple-600">${sf.item_name}</p>
+          <p class="text-lg font-bold text-purple-800">${formatNumber(sf.total_stock)} ${sf.unit || 'kg'}</p>
+        </div>
+      `).join('');
+    }
+    
+    // 거래 이력 조회
+    let params = new URLSearchParams();
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
+    if (itemCode) params.append('item_code', itemCode);
+    params.append('limit', '200');
+    
+    const transResult = await api(`/semi-finished/transactions?${params}`);
+    const transactions = transResult.data || [];
+    
+    const resultContainer = document.getElementById('sf-ledger-result');
+    if (resultContainer) {
+      if (transactions.length === 0) {
+        resultContainer.innerHTML = `
+          <div class="p-4 text-center text-gray-500">
+            <i class="fas fa-info-circle text-4xl text-purple-300 mb-3"></i>
+            <p>해당 기간에 반제품 거래 내역이 없습니다.</p>
+          </div>
+        `;
+      } else {
+        resultContainer.innerHTML = `
+          <div class="overflow-x-auto" style="max-height: 500px;">
+            <table class="w-full text-sm">
+              <thead class="bg-purple-100 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-left">일자</th>
+                  <th class="px-3 py-2 text-left">반제품</th>
+                  <th class="px-3 py-2 text-center">유형</th>
+                  <th class="px-3 py-2 text-right">수량</th>
+                  <th class="px-3 py-2 text-left">LOT번호</th>
+                  <th class="px-3 py-2 text-left">메모</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${transactions.map(t => `
+                  <tr class="hover:bg-purple-50">
+                    <td class="px-3 py-2">${t.trans_date || '-'}</td>
+                    <td class="px-3 py-2 font-medium">${t.item_name || t.item_code}</td>
+                    <td class="px-3 py-2 text-center">
+                      <span class="px-2 py-1 rounded text-xs ${t.trans_type === '생산' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}">
+                        ${t.trans_type}
+                      </span>
+                    </td>
+                    <td class="px-3 py-2 text-right ${t.quantity >= 0 ? 'text-green-600' : 'text-red-600'}">
+                      ${t.quantity >= 0 ? '+' : ''}${formatNumber(t.quantity)}
+                    </td>
+                    <td class="px-3 py-2 font-mono text-xs">${t.lot_number || '-'}</td>
+                    <td class="px-3 py-2 text-gray-500 text-xs">${t.memo || '-'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+    }
+    
+    // 전역 저장
+    window.semiFinishedLedgerData = { stocks, transactions };
+    
+  } catch (err) {
+    showToast('반제품 수불부 조회 실패: ' + err.message, 'error');
+  }
+}
+
+// 반제품 수불부 엑셀 다운로드
+async function downloadSemiFinishedLedger() {
+  const data = window.semiFinishedLedgerData;
+  if (!data || !data.transactions || data.transactions.length === 0) {
+    showToast('조회된 데이터가 없습니다', 'warning');
+    return;
+  }
+  
+  const startDate = document.getElementById('sf-ledger-start-date')?.value || '';
+  const endDate = document.getElementById('sf-ledger-end-date')?.value || '';
+  
+  const rows = data.transactions.map(t => ({
+    '일자': t.trans_date,
+    '품목코드': t.item_code,
+    '반제품명': t.item_name,
+    '유형': t.trans_type,
+    '수량': t.quantity,
+    'LOT번호': t.lot_number || '',
+    '메모': t.memo || ''
+  }));
+  
+  exportToExcel(rows, `반제품수불부_${startDate}_${endDate}.xlsx`, '반제품수불부');
+}
+
+window.loadSemiFinishedOptions = loadSemiFinishedOptions;
+window.loadSemiFinishedLedger = loadSemiFinishedLedger;
+window.downloadSemiFinishedLedger = downloadSemiFinishedLedger;
+
 // ========== 통합 시스템 관리 모드 ==========
 
 // 통합 관리 데이터
@@ -30934,6 +31928,13 @@ async function showBarcodeModal(productionCode, productionName) {
                          class="w-16 border rounded px-2 py-1 text-sm text-center">
                   <span class="text-xs text-gray-400">EA/박스</span>
                 </div>
+                <div class="flex items-center gap-1">
+                  <label class="text-xs text-gray-500">소비기한:</label>
+                  <input type="number" min="1" value="${b.expiry_days || ''}" placeholder="-"
+                         onchange="updateBarcodeExpiryDays(${b.id}, this.value, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" 
+                         class="w-14 border rounded px-2 py-1 text-sm text-center ${b.expiry_days ? 'bg-blue-50' : ''}">
+                  <span class="text-xs text-gray-400">일</span>
+                </div>
                 <button onclick="deleteBarcode(${b.id}, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 p-1" title="삭제">
                   <i class="fas fa-times"></i>
                 </button>
@@ -30955,22 +31956,33 @@ async function showBarcodeModal(productionCode, productionName) {
             <label class="block text-sm text-gray-600 mb-1">주문 제품명 (선택)</label>
             <input type="text" id="new-barcode-product-name" class="w-full border rounded-lg px-4 py-2" placeholder="주문서에 표시되는 제품명">
           </div>
-          <div class="grid grid-cols-2 gap-3">
+          <div class="grid grid-cols-3 gap-3">
             <div>
               <label class="block text-sm text-gray-600 mb-1">판매 채널 (선택)</label>
-              <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2">
+              <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2" onchange="suggestExpiryDays()">
                 <option value="">선택안함</option>
-                <option value="쿠팡">쿠팡</option>
-                <option value="컬리">컬리</option>
+                <option value="쿠팡">쿠팡 (실온)</option>
+                <option value="쿠팡냉동">쿠팡냉동</option>
+                <option value="컬리">컬리 (실온)</option>
+                <option value="컬리냉동">컬리냉동</option>
                 <option value="오아시스">오아시스</option>
                 <option value="네이버">네이버</option>
                 <option value="기타">기타</option>
               </select>
             </div>
             <div>
-              <label class="block text-sm text-gray-600 mb-1">입수량 (박스당 개수) <span class="text-red-500">*</span></label>
-              <input type="number" id="new-barcode-box-quantity" min="1" value="1" class="w-full border rounded-lg px-4 py-2" placeholder="예: 3">
+              <label class="block text-sm text-gray-600 mb-1">입수량 <span class="text-red-500">*</span></label>
+              <input type="number" id="new-barcode-box-quantity" min="1" value="1" class="w-full border rounded-lg px-4 py-2" placeholder="EA/박스">
             </div>
+            <div>
+              <label class="block text-sm text-gray-600 mb-1">소비기한 (일)</label>
+              <input type="number" id="new-barcode-expiry-days" min="1" class="w-full border rounded-lg px-4 py-2" placeholder="예: 90 (냉동)">
+            </div>
+          </div>
+          <div class="flex gap-2 mt-2">
+            <button type="button" onclick="document.getElementById('new-barcode-expiry-days').value=''" class="px-3 py-1 bg-gray-100 rounded text-xs hover:bg-gray-200">기본값</button>
+            <button type="button" onclick="document.getElementById('new-barcode-expiry-days').value='7'" class="px-3 py-1 bg-green-100 text-green-700 rounded text-xs hover:bg-green-200">실온 7일</button>
+            <button type="button" onclick="document.getElementById('new-barcode-expiry-days').value='90'" class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200">냉동 90일</button>
           </div>
         </div>
       </div>
@@ -30992,6 +32004,8 @@ async function addBarcode(productionCode, productionName) {
   const productName = document.getElementById('new-barcode-product-name').value.trim();
   const channel = document.getElementById('new-barcode-channel').value;
   const boxQuantity = parseInt(document.getElementById('new-barcode-box-quantity')?.value) || 1;
+  const expiryDaysVal = document.getElementById('new-barcode-expiry-days')?.value;
+  const expiryDays = expiryDaysVal ? parseInt(expiryDaysVal) : null;
   
   if (!barcode) {
     showToast('바코드를 입력하세요', 'warning');
@@ -31020,7 +32034,8 @@ async function addBarcode(productionCode, productionName) {
       barcode: barcode,
       product_name: productName || null,
       channel: channel || null,
-      box_quantity: boxQuantity
+      box_quantity: boxQuantity,
+      expiry_days: expiryDays
     });
     showToast('바코드가 추가되었습니다', 'success');
     // 데이터 새로고침 (UI 업데이트 위해)
@@ -31082,6 +32097,42 @@ async function updateBarcodeBoxQuantity(id, newQuantity, productionCode, product
   }
 }
 window.updateBarcodeBoxQuantity = updateBarcodeBoxQuantity;
+
+// 바코드 소비기한 수정
+async function updateBarcodeExpiryDays(id, newDays, productionCode, productionName) {
+  const days = newDays ? parseInt(newDays) : null;
+  if (newDays && (isNaN(days) || days < 1)) {
+    showToast('소비기한은 1일 이상이어야 합니다', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/admin/barcodes/${id}/expiry-days`, 'PUT', { expiry_days: days });
+    showToast(days ? `소비기한이 ${days}일로 설정되었습니다` : '소비기한이 기본값으로 변경되었습니다', 'success');
+  } catch (e) {
+    showToast('소비기한 수정 실패: ' + (e.message || e), 'error');
+    showBarcodeModal(productionCode, productionName);
+  }
+}
+window.updateBarcodeExpiryDays = updateBarcodeExpiryDays;
+
+// 채널 선택 시 소비기한 자동 제안
+function suggestExpiryDays() {
+  const channel = document.getElementById('new-barcode-channel')?.value || '';
+  const expiryInput = document.getElementById('new-barcode-expiry-days');
+  if (!expiryInput) return;
+  
+  // 냉동 채널이면 90일 자동 제안
+  if (channel.includes('냉동')) {
+    if (!expiryInput.value) {
+      expiryInput.value = '90';
+      expiryInput.classList.add('bg-blue-50');
+    }
+  } else {
+    expiryInput.classList.remove('bg-blue-50');
+  }
+}
+window.suggestExpiryDays = suggestExpiryDays;
 
 // 바코드 삭제
 let isDeletingBarcode = false;
@@ -31367,8 +32418,11 @@ async function showBomDetailModal(code) {
             </thead>
             <tbody class="divide-y">
               ${bom.map(b => `
-                <tr>
-                  <td class="px-4 py-2">${b.material_name}</td>
+                <tr class="${b.material_code?.startsWith('SF') ? 'bg-purple-50' : ''}">
+                  <td class="px-4 py-2">
+                    ${b.material_code?.startsWith('SF') ? '<span class="text-xs bg-purple-100 text-purple-700 px-1 py-0.5 rounded mr-1">반제품</span>' : ''}
+                    ${b.material_name}
+                  </td>
                   <td class="px-4 py-2 text-right">${b.quantity}</td>
                   <td class="px-4 py-2 text-center">${b.unit || 'g'}</td>
                 </tr>

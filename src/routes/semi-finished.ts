@@ -539,4 +539,28 @@ semiFinished.post('/migrate-bom', async (c) => {
   }
 })
 
+// 반제품 유통기한 일괄 변경
+semiFinished.post('/update-shelf-life', async (c) => {
+  const { env } = c
+  const { shelf_life_days } = await c.req.json()
+  
+  if (!shelf_life_days || shelf_life_days < 1) {
+    return c.json({ success: false, message: '유효한 유통기한을 입력하세요' }, 400)
+  }
+  
+  try {
+    const result = await env.DB.prepare(`
+      UPDATE semi_finished_items SET shelf_life_days = ?, updated_at = CURRENT_TIMESTAMP
+    `).bind(shelf_life_days).run()
+    
+    return c.json({ 
+      success: true, 
+      message: `모든 반제품 유통기한이 ${shelf_life_days}일로 변경되었습니다`,
+      updated: result.meta.changes
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default semiFinished

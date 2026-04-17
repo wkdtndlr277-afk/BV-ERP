@@ -74,7 +74,7 @@ dailyReport.get('/barcodes/lookup/:barcode', async (c) => {
 // 바코드 등록
 dailyReport.post('/barcodes', async (c) => {
   const body = await c.req.json()
-  const { production_code, barcode, product_name, channel, box_quantity } = body
+  const { production_code, barcode, product_name, channel, box_quantity, expiry_days } = body
   
   if (!production_code || !barcode) {
     return c.json({ success: false, error: '생산코드와 바코드는 필수입니다.' }, 400)
@@ -82,9 +82,9 @@ dailyReport.post('/barcodes', async (c) => {
   
   try {
     await c.env.DB.prepare(`
-      INSERT INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(production_code, barcode, product_name || null, channel || null, box_quantity || 1).run()
+      INSERT INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity, expiry_days)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(production_code, barcode, product_name || null, channel || null, box_quantity || 1, expiry_days || null).run()
     
     return c.json({ success: true, message: '바코드가 등록되었습니다.' })
   } catch (e: any) {
@@ -111,9 +111,9 @@ dailyReport.post('/barcodes/bulk', async (c) => {
   for (const item of items) {
     try {
       await c.env.DB.prepare(`
-        INSERT OR REPLACE INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity)
-        VALUES (?, ?, ?, ?, ?)
-      `).bind(item.production_code, item.barcode, item.product_name || null, item.channel || null, item.box_quantity || 1).run()
+        INSERT OR REPLACE INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity, expiry_days)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).bind(item.production_code, item.barcode, item.product_name || null, item.channel || null, item.box_quantity || 1, item.expiry_days || null).run()
       success++
     } catch (e: any) {
       failed++
@@ -292,11 +292,18 @@ dailyReport.get('/reports/:id', async (c) => {
   
   // 원료별 LOT 정보 조회 (FEFO: 유통기한 빠른 순)
   const materialCodes = materials_summary.map((m: any) => m.material_code).filter((c: string) => c)
+  
+  // 일반 원료 코드와 반제품(SF) 코드 분리
+  const regularCodes = materialCodes.filter((c: string) => !c.startsWith('SF'))
+  const sfCodes = materialCodes.filter((c: string) => c.startsWith('SF'))
+  
   let materialLots: any[] = []
-  if (materialCodes.length > 0) {
+  
+  // 1. 일반 원료 LOT 조회 (inbound 테이블)
+  if (regularCodes.length > 0) {
     const batchSize = 100
-    for (let i = 0; i < materialCodes.length; i += batchSize) {
-      const batch = materialCodes.slice(i, i + batchSize)
+    for (let i = 0; i < regularCodes.length; i += batchSize) {
+      const batch = regularCodes.slice(i, i + batchSize)
       const lotData = await c.env.DB.prepare(`
         SELECT item_code, lot_number, expiry_date, remain_qty
         FROM inbound
@@ -306,8 +313,26 @@ dailyReport.get('/reports/:id', async (c) => {
       `).bind(...batch).all()
       materialLots = materialLots.concat(lotData.results || [])
     }
-    
-    // materials_summary에 LOT 정보 추가
+  }
+  
+  // 2. 반제품(SF) LOT 조회 (semi_finished_lots 테이블)
+  if (sfCodes.length > 0) {
+    const batchSize = 100
+    for (let i = 0; i < sfCodes.length; i += batchSize) {
+      const batch = sfCodes.slice(i, i + batchSize)
+      const sfLotData = await c.env.DB.prepare(`
+        SELECT item_code, lot_number, expiry_date, remain_qty
+        FROM semi_finished_lots
+        WHERE item_code IN (${batch.map(() => '?').join(',')})
+          AND remain_qty > 0
+        ORDER BY item_code, expiry_date ASC
+      `).bind(...batch).all()
+      materialLots = materialLots.concat(sfLotData.results || [])
+    }
+  }
+  
+  // materials_summary에 LOT 정보 추가
+  if (materialLots.length > 0) {
     const lotMap = new Map<string, any[]>()
     for (const lot of materialLots) {
       if (!lotMap.has(lot.item_code)) {
@@ -435,9 +460,13 @@ dailyReport.post('/reports/from-order', async (c) => {
     const hasBom = (bomItems.length > 0 || (productionItemInfo?.bom_count || 0) > 0) ? 1 : 0
     const shelfLifeDays = productionInfo?.shelf_life_days || null
     
-    // 소비기한 계산 (생산일 기준)
+    // 소비기한 계산 우선순위: 1) PDF에서 추출한 소비기한 → 2) 제품 기본 설정(shelf_life_days)
     let expiryDate: string | null = null
-    if (shelfLifeDays) {
+    if (item.expiry_date) {
+      // PDF에서 추출한 소비기한이 있으면 우선 사용
+      expiryDate = item.expiry_date
+    } else if (shelfLifeDays) {
+      // 기본값: 생산일 기준 + shelf_life_days
       const prodDate = new Date(report_date + 'T00:00:00')
       prodDate.setDate(prodDate.getDate() + shelfLifeDays)
       expiryDate = prodDate.toISOString().split('T')[0]

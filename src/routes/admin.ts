@@ -2045,6 +2045,93 @@ admin.post('/migrate/add-box-quantity', async (c) => {
   }
 })
 
+// 바코드별 소비기한(expiry_days) 컬럼 추가 마이그레이션
+admin.post('/migrate/add-barcode-expiry', async (c) => {
+  const { env } = c
+  const results: string[] = []
+  
+  try {
+    // production_barcodes 테이블에 expiry_days 컬럼 추가
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE production_barcodes ADD COLUMN expiry_days INTEGER DEFAULT NULL
+      `).run()
+      results.push('production_barcodes.expiry_days 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message?.includes('duplicate column')) {
+        results.push('production_barcodes.expiry_days 컬럼 이미 존재')
+      } else {
+        results.push(`expiry_days 추가 실패: ${e.message}`)
+      }
+    }
+    
+    // 냉동 채널 바코드에 기본값 90일 설정
+    const updateResult = await env.DB.prepare(`
+      UPDATE production_barcodes 
+      SET expiry_days = 90 
+      WHERE expiry_days IS NULL 
+      AND (channel LIKE '%냉동%' OR channel LIKE '%frozen%' OR channel LIKE '%쿠팡냉동%')
+    `).run()
+    results.push(`냉동 채널 바코드 ${updateResult.meta?.changes || 0}건에 90일 기본 설정`)
+    
+    // 실온 채널 바코드에 기본값 7일 설정 (옵션)
+    // const updateResult2 = await env.DB.prepare(`
+    //   UPDATE production_barcodes 
+    //   SET expiry_days = 7 
+    //   WHERE expiry_days IS NULL 
+    //   AND channel NOT LIKE '%냉동%'
+    // `).run()
+    
+    return c.json({ success: true, message: '바코드별 소비기한 마이그레이션 완료', details: results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message, details: results }, 500)
+  }
+})
+
+// 바코드 소비기한 수정
+admin.put('/barcodes/:id/expiry-days', async (c) => {
+  const { env } = c
+  const id = c.req.param('id')
+  const { expiry_days } = await c.req.json()
+  
+  // NULL 허용 (NULL이면 생산명 기본값 사용)
+  await env.DB.prepare(`
+    UPDATE production_barcodes SET expiry_days = ? WHERE id = ?
+  `).bind(expiry_days || null, id).run()
+  
+  return c.json({ success: true, message: '소비기한 수정 완료' })
+})
+
+// 바코드 소비기한 일괄 수정
+admin.post('/barcodes/bulk-expiry-days', async (c) => {
+  const { env } = c
+  const { updates } = await c.req.json()
+  
+  if (!updates || !Array.isArray(updates)) {
+    return c.json({ success: false, error: '수정 데이터가 필요합니다.' }, 400)
+  }
+  
+  let successCount = 0
+  for (const item of updates) {
+    try {
+      if (item.id) {
+        await env.DB.prepare(`
+          UPDATE production_barcodes SET expiry_days = ? WHERE id = ?
+        `).bind(item.expiry_days || null, item.id).run()
+      } else if (item.barcode) {
+        await env.DB.prepare(`
+          UPDATE production_barcodes SET expiry_days = ? WHERE barcode = ?
+        `).bind(item.expiry_days || null, item.barcode).run()
+      }
+      successCount++
+    } catch (e) {
+      console.error('Barcode expiry update failed:', item, e)
+    }
+  }
+  
+  return c.json({ success: true, message: `${successCount}건 수정 완료` })
+})
+
 // 바코드 입수량 일괄 조회
 admin.get('/barcodes/box-quantity', async (c) => {
   const { env } = c
@@ -3754,6 +3841,236 @@ admin.get('/migrate/preview-material', async (c) => {
         production_bom_count: prodBomItems.results?.length || 0
       }
     })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 반제품 기존 코드 정리 (master 삭제 + BOM SF코드 변경)
+admin.post('/cleanup-semi-finished', async (c) => {
+  const { env } = c
+  
+  try {
+    const results: string[] = []
+    
+    // 반제품 코드 매핑 (RM213 추가)
+    const mapping = [
+      { old: 'RM146', sf: 'SF001', name: '발효종르방' },
+      { old: 'R076', sf: 'SF002', name: '통밀르방' },
+      { old: 'RM136', sf: 'SF003', name: '폴리쉬' },
+      { old: 'RM155', sf: 'SF004', name: '쌀르방' },
+      { old: 'RM156', sf: 'SF005', name: '쌀탕종' },
+      { old: 'RM137', sf: 'SF006', name: '탕종' },
+      { old: 'RM149', sf: 'SF007', name: '통밀탕종' },
+      { old: 'RM145', sf: 'SF008', name: '통밀폴리쉬' },
+      { old: 'RM265', sf: 'SF009', name: '호밀르방' },
+      { old: 'RM213', sf: 'SF010', name: '솔트라이발효종르방' },
+    ]
+    
+    // SF010 반제품 추가 (없으면)
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO semi_finished_items (item_code, item_name, unit, shelf_life_days, old_item_code)
+      VALUES ('SF010', '솔트라이발효종르방', 'kg', 7, 'RM213')
+    `).run()
+    results.push('SF010 (솔트라이발효종르방) 추가됨')
+    
+    for (const m of mapping) {
+      // 1. bom 테이블: 기존 코드 → SF 코드
+      const bomResult = await env.DB.prepare(`
+        UPDATE bom SET item_code = ? WHERE item_code = ?
+      `).bind(m.sf, m.old).run()
+      
+      // 2. production_bom 테이블: 기존 코드 → SF 코드
+      const prodBomResult = await env.DB.prepare(`
+        UPDATE production_bom SET material_code = ?, material_name = ? WHERE material_code = ?
+      `).bind(m.sf, m.name, m.old).run()
+      
+      // 3. master 테이블에서 기존 코드 삭제
+      const masterResult = await env.DB.prepare(`
+        DELETE FROM master WHERE item_code = ?
+      `).bind(m.old).run()
+      
+      results.push(`${m.old} → ${m.sf}: bom ${bomResult.meta.changes || 0}건, prod_bom ${prodBomResult.meta.changes || 0}건, master 삭제 ${masterResult.meta.changes || 0}건`)
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: '반제품 코드 정리 완료', 
+      details: results 
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 원재료 코드 변경 API
+admin.post('/change-material-code', async (c) => {
+  const { env } = c
+  const { oldCode, newCode } = await c.req.json()
+  
+  if (!oldCode || !newCode) {
+    return c.json({ success: false, error: 'oldCode와 newCode가 필요합니다.' }, 400)
+  }
+  
+  try {
+    const results: string[] = []
+    
+    // 1. newCode가 master에 있는지 확인
+    const newItem = await env.DB.prepare(`SELECT item_code, item_name FROM master WHERE item_code = ?`).bind(newCode).first()
+    if (!newItem) {
+      return c.json({ success: false, error: `대상 코드 ${newCode}가 master에 존재하지 않습니다.` }, 400)
+    }
+    
+    // 2. bom 테이블 업데이트
+    const bomResult = await env.DB.prepare(`UPDATE bom SET item_code = ? WHERE item_code = ?`).bind(newCode, oldCode).run()
+    results.push(`bom: ${bomResult.meta.changes || 0}건 변경`)
+    
+    // 3. production_bom 테이블 업데이트
+    const prodBomResult = await env.DB.prepare(`
+      UPDATE production_bom SET material_code = ?, material_name = ? WHERE material_code = ?
+    `).bind(newCode, newItem.item_name, oldCode).run()
+    results.push(`production_bom: ${prodBomResult.meta.changes || 0}건 변경`)
+    
+    // 4. 기존 코드가 master에 있으면 삭제 (중복 코드 정리)
+    const oldItem = await env.DB.prepare(`SELECT item_code FROM master WHERE item_code = ?`).bind(oldCode).first()
+    if (oldItem) {
+      await env.DB.prepare(`DELETE FROM master WHERE item_code = ?`).bind(oldCode).run()
+      results.push(`master: ${oldCode} 삭제됨`)
+    }
+    
+    return c.json({
+      success: true,
+      message: `${oldCode} → ${newCode} 변경 완료`,
+      newItemName: newItem.item_name,
+      details: results
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 반제품 정리 미리보기
+admin.get('/cleanup-semi-finished/preview', async (c) => {
+  const { env } = c
+  
+  try {
+    const oldCodes = ['RM146', 'R076', 'RM136', 'RM155', 'RM156', 'RM137', 'RM149', 'RM145', 'RM265', 'RM213']
+    
+    // master에서 기존 코드 확인
+    const masterItems = await env.DB.prepare(`
+      SELECT item_code, item_name FROM master WHERE item_code IN (${oldCodes.map(() => '?').join(',')})
+    `).bind(...oldCodes).all()
+    
+    // bom에서 기존 코드 확인
+    const bomItems = await env.DB.prepare(`
+      SELECT item_code, COUNT(*) as count FROM bom WHERE item_code IN (${oldCodes.map(() => '?').join(',')}) GROUP BY item_code
+    `).bind(...oldCodes).all()
+    
+    // production_bom에서 기존 코드 확인
+    const prodBomItems = await env.DB.prepare(`
+      SELECT material_code, COUNT(*) as count FROM production_bom WHERE material_code IN (${oldCodes.map(() => '?').join(',')}) GROUP BY material_code
+    `).bind(...oldCodes).all()
+    
+    return c.json({
+      success: true,
+      preview: {
+        master: masterItems.results,
+        bom: bomItems.results,
+        production_bom: prodBomItems.results
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// PR 코드를 PD 코드로 변환 (master에 등록 + bom 복사 + 바코드 연결)
+admin.post('/convert-pr-to-pd', async (c) => {
+  const { env } = c
+  const { pr_codes } = await c.req.json()
+  
+  if (!pr_codes || !Array.isArray(pr_codes) || pr_codes.length === 0) {
+    return c.json({ success: false, error: 'PR 코드 목록이 필요합니다.' }, 400)
+  }
+  
+  try {
+    const results: any[] = []
+    
+    // 현재 최대 PD 코드 조회
+    const maxPd = await env.DB.prepare(`
+      SELECT item_code FROM master 
+      WHERE item_code LIKE 'PD%' 
+      ORDER BY CAST(SUBSTR(item_code, 3) AS INTEGER) DESC 
+      LIMIT 1
+    `).first() as any
+    
+    let pdCounter = maxPd ? parseInt(maxPd.item_code.replace('PD', '')) + 1 : 194
+    
+    for (const prCode of pr_codes) {
+      // 1. production_items에서 PR 정보 조회
+      const prInfo = await env.DB.prepare(`
+        SELECT * FROM production_items WHERE production_code = ?
+      `).bind(prCode).first() as any
+      
+      if (!prInfo) {
+        results.push({ pr_code: prCode, success: false, error: 'PR 코드를 찾을 수 없습니다.' })
+        continue
+      }
+      
+      // 2. 새 PD 코드 생성
+      const newPdCode = `PD${String(pdCounter).padStart(3, '0')}`
+      pdCounter++
+      
+      // 3. master 테이블에 등록
+      await env.DB.prepare(`
+        INSERT INTO master (item_code, item_name, category, unit, expiry_days, current_stock)
+        VALUES (?, ?, '제품', ?, ?, 0)
+      `).bind(newPdCode, prInfo.production_name, prInfo.unit || 'ea', prInfo.shelf_life_days || 3).run()
+      
+      // 4. production_bom에서 BOM 조회 후 bom 테이블에 복사
+      const bomData = await env.DB.prepare(`
+        SELECT material_code, material_name, quantity, unit FROM production_bom WHERE production_code = ?
+      `).bind(prCode).all()
+      
+      let bomCopied = 0
+      for (const bom of bomData.results as any[]) {
+        await env.DB.prepare(`
+          INSERT INTO bom (product_code, item_code, quantity, unit)
+          VALUES (?, ?, ?, ?)
+        `).bind(newPdCode, bom.material_code, bom.quantity, bom.unit || 'g').run()
+        bomCopied++
+      }
+      
+      // 5. production_barcodes에서 바코드 조회
+      const barcodeData = await env.DB.prepare(`
+        SELECT barcode, channel, box_quantity FROM production_barcodes WHERE production_code = ?
+      `).bind(prCode).all()
+      
+      // 6. 바코드를 새 PD 코드에도 연결 (production_barcodes에 추가)
+      let barcodeLinked = 0
+      for (const bc of barcodeData.results as any[]) {
+        try {
+          await env.DB.prepare(`
+            INSERT OR IGNORE INTO production_barcodes (production_code, barcode, channel, box_quantity)
+            VALUES (?, ?, ?, ?)
+          `).bind(newPdCode, bc.barcode, bc.channel || null, bc.box_quantity || 1).run()
+          barcodeLinked++
+        } catch (e) {
+          // 중복 무시
+        }
+      }
+      
+      results.push({
+        pr_code: prCode,
+        pd_code: newPdCode,
+        name: prInfo.production_name,
+        bom_copied: bomCopied,
+        barcode_linked: barcodeLinked,
+        success: true
+      })
+    }
+    
+    return c.json({ success: true, results })
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500)
   }

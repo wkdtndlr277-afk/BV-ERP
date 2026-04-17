@@ -606,6 +606,11 @@ app.get('/*', (c) => {
                     <span>원가 계산</span>
                 </a>
                 
+                <a href="#semi-finished" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="semi-finished">
+                    <i class="fas fa-mortar-pestle w-5"></i>
+                    <span>반제품 관리</span>
+                </a>
+                
                 <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">조회/검색</p>
                 </div>

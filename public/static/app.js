@@ -16229,7 +16229,7 @@ async function renderProduction() {
               <ul class="text-sm text-blue-700 mt-2 space-y-1">
                 <li>• <strong>쿠팡</strong>: 상품명/발주수량 열 자동 인식</li>
                 <li>• <strong>컬리</strong>: 제품명/물류센터별 수량 합산 (72시간빵 포함)</li>
-                <li>• <strong class="text-purple-700">컬리 (PDF)</strong>: 거래명세서 PDF에서 바코드/소비기한 자동 추출</li>
+                <li>• <strong class="text-purple-700">컬리 (붙여넣기)</strong>: 엑셀에서 바코드/수량 복사 후 붙여넣기 (소비기한 공통 설정)</li>
                 <li>• <strong>배민 (발주상세)</strong>: 상품명/총 발주 수량 자동 인식</li>
                 <li>• <strong>비마트</strong>: SKU명/요청수량 열 자동 인식</li>
                 <li>• <strong>오아시스</strong>: 상품명/출고수량 열 자동 인식</li>
@@ -16247,7 +16247,7 @@ async function renderProduction() {
                 <option value="">자동 감지</option>
                 <option value="coupang">쿠팡</option>
                 <option value="kurly">컬리 (엑셀)</option>
-                <option value="kurly_pdf">컬리 (PDF 거래명세서) ⭐</option>
+                <option value="kurly_paste">컬리 (붙여넣기) ⭐</option>
                 <option value="baemin">배민 (발주상세)</option>
                 <option value="bmart">비마트</option>
                 <option value="oasis">오아시스</option>
@@ -16268,6 +16268,48 @@ async function renderProduction() {
             <i id="order-file-icon" class="fas fa-file-excel text-4xl text-gray-400 mb-3"></i>
             <p id="order-file-desc" class="text-gray-600">발주서 엑셀 파일을 드래그하거나 클릭하여 선택</p>
             <p id="order-file-types" class="text-sm text-gray-400 mt-1">.xlsx, .xls, .csv, .pdf 지원</p>
+          </div>
+          
+          <!-- 컬리 붙여넣기 영역 (숨김) -->
+          <div id="kurly-paste-zone" class="hidden">
+            <div class="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
+              <p class="text-purple-800 font-medium"><i class="fas fa-clipboard mr-1"></i> 컬리 거래명세서 붙여넣기</p>
+              <p class="text-sm text-purple-600 mt-1">엑셀에서 <strong>바코드, 수량</strong> 열을 복사하여 아래에 붙여넣기 하세요</p>
+              <p class="text-xs text-purple-500 mt-1">예시: 8809424534960 → 60 (탭 또는 줄바꿈으로 구분)</p>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 (공통) <span class="text-red-500">*</span></label>
+                <input type="date" id="kurly-paste-expiry" class="w-full border rounded-lg px-4 py-2">
+              </div>
+              <div class="flex items-end">
+                <button onclick="setKurlyExpiryFromDays(90)" class="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm mr-2 hover:bg-blue-200">+90일</button>
+                <button onclick="setKurlyExpiryFromDays(180)" class="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm hover:bg-blue-200">+180일</button>
+              </div>
+            </div>
+            
+            <textarea id="kurly-paste-input" 
+                      class="w-full border-2 border-dashed border-purple-300 rounded-lg p-4 h-48 focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                      placeholder="엑셀에서 복사한 데이터를 여기에 붙여넣기 (Ctrl+V)
+
+예시 (탭으로 구분):
+8809424534960	60
+8809424535134	100
+8809424534878	30
+
+또는 (한 줄씩):
+8809424534960, 60
+8809424535134, 100"></textarea>
+            
+            <div class="mt-4 flex justify-end gap-2">
+              <button onclick="clearKurlyPaste()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+                <i class="fas fa-eraser mr-1"></i> 지우기
+              </button>
+              <button onclick="processKurlyPaste()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+                <i class="fas fa-check mr-1"></i> 데이터 처리
+              </button>
+            </div>
           </div>
           
           <!-- 발주서 미리보기 -->
@@ -16844,7 +16886,17 @@ function handleOrderFileDrop(e) {
   }
   const file = e.dataTransfer?.files?.[0];
   if (file) {
-    console.log('File dropped:', file.name);
+    const fileName = file.name.toLowerCase();
+    const selectedChannel = document.getElementById('order-channel')?.value;
+    console.log('📁 File dropped:', file.name, '| channel:', selectedChannel, '| isPDF:', fileName.endsWith('.pdf'));
+    
+    // PDF 파일 처리 (확장자 또는 채널로 판단)
+    if (fileName.endsWith('.pdf') || selectedChannel === 'kurly_pdf') {
+      console.log('📁 PDF 파일 → processKurlyPdfFile 호출');
+      processKurlyPdfFile(file);
+      return;
+    }
+    
     processOrderFile(file);
   }
 }
@@ -16852,7 +16904,21 @@ function handleOrderFileDrop(e) {
 function handleOrderFileSelect(e) {
   const files = e.target?.files;
   if (files && files.length > 0) {
-    console.log('Files selected:', files.length);
+    const selectedChannel = document.getElementById('order-channel')?.value;
+    console.log('📁 Files selected:', files.length, '| channel:', selectedChannel);
+    
+    // PDF 파일인 경우 별도 처리
+    if (files.length === 1) {
+      const file = files[0];
+      const fileName = file.name.toLowerCase();
+      console.log('📁 Single file:', fileName, '| isPDF:', fileName.endsWith('.pdf'));
+      if (fileName.endsWith('.pdf') || selectedChannel === 'kurly_pdf') {
+        console.log('📁 PDF 파일 → processKurlyPdfFile 호출');
+        processKurlyPdfFile(file);
+        return;
+      }
+    }
+    
     processMultipleOrderFiles(Array.from(files));
   }
 }
@@ -17008,11 +17074,14 @@ async function ensurePdfJsLoaded() {
 
 // 컬리 PDF 거래명세서 처리
 async function processKurlyPdfFile(file) {
+  console.log('🔷 processKurlyPdfFile 시작:', file.name);
   showToast('PDF 분석 중...', 'info');
   
   try {
     // PDF.js 로드 확인
+    console.log('🔷 PDF.js 로드 시작...');
     await ensurePdfJsLoaded();
+    console.log('🔷 PDF.js 로드 완료');
     
     // 마스터/생산명/바코드 데이터 로드
     if (!state.masterItems || state.masterItems.length === 0) {
@@ -17047,52 +17116,70 @@ async function processKurlyPdfFile(file) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
       const pageText = textContent.items.map(item => item.str).join(' ');
-      allText += pageText + '\\n';
+      allText += pageText + '\n';
     }
     
     console.log('📄 추출된 텍스트 길이:', allText.length);
+    console.log('📄 텍스트 샘플 (처음 1000자):', allText.substring(0, 1000));
     
     // 바코드 패턴 찾기 (880으로 시작하는 13자리)
-    const barcodePattern = /880\\d{10}/g;
+    const barcodePattern = /880\d{10}/g;
     const foundBarcodes = allText.match(barcodePattern) || [];
-    console.log('📄 발견된 바코드:', foundBarcodes.length, '개');
+    console.log('📄 발견된 바코드:', foundBarcodes.length, '개', foundBarcodes.slice(0, 5));
     
-    // 소비기한 패턴 찾기 (소) 2026-11-07 형식
-    const expiryPattern = /\\(소\\)\\s*(\\d{4}-\\d{2}-\\d{2})/g;
+    // 컬리 거래명세서 형식: 바코드[품명]수량(소) 2026-11-07
+    // 예: 8809424534960[브로드카세] 저당 호밀 통밀 바게트 310gx260(소) 2026-11-07
+    
+    // 소비기한 패턴: 숫자(소) 2026-11-07 또는 (소) 2026-11-07
+    const expiryPattern1 = /\d*\(소\)\s*(\d{4}-\d{2}-\d{2})/g;
+    const expiryPattern2 = /소비기한[:\s]*(\d{4}-\d{2}-\d{2})/g;
     const expiryDates = [];
     let match;
-    while ((match = expiryPattern.exec(allText)) !== null) {
+    
+    while ((match = expiryPattern1.exec(allText)) !== null) {
       expiryDates.push(match[1]);
     }
-    console.log('📄 발견된 소비기한:', expiryDates.length, '개');
+    while ((match = expiryPattern2.exec(allText)) !== null) {
+      if (!expiryDates.includes(match[1])) expiryDates.push(match[1]);
+    }
+    console.log('📄 발견된 소비기한:', expiryDates.length, '개', expiryDates.slice(0, 5));
     
-    // 수량 패턴 찾기 (바코드 뒤의 숫자들)
-    // 테이블 구조: 바코드 품명 총수량 소비기한
-    const linePattern = /(880\\d{10})\\s+([^\\d]+?)\\s+(\\d+)\\s+\\(소\\)\\s*(\\d{4}-\\d{2}-\\d{2})/g;
+    // 컬리 거래명세서 패턴: 바코드...수량(소) 날짜
+    // 형식: 8809424534960[품명...]60(소) 2026-11-07
+    const kurlyPattern = /(880\d{10})[^\d]*?(\d{1,5})\(소\)\s*(\d{4}-\d{2}-\d{2})/g;
     
-    while ((match = linePattern.exec(allText)) !== null) {
+    while ((match = kurlyPattern.exec(allText)) !== null) {
       extractedItems.push({
         barcode: match[1],
-        productName: match[2].trim().replace(/\\x00/g, ' ').replace(/\\s+/g, ' '),
-        quantity: parseInt(match[3]),
-        expiryDate: match[4]
+        productName: '',
+        quantity: parseInt(match[2]),
+        expiryDate: match[3]
       });
     }
+    console.log('📄 컬리 패턴 추출 결과:', extractedItems.length, '개');
     
-    // 패턴 매칭 실패시 바코드와 소비기한 개별 매칭 시도
+    // 대안 패턴: 바코드와 소비기한 개별 매칭
     if (extractedItems.length === 0 && foundBarcodes.length > 0) {
-      // 바코드를 순서대로 소비기한과 매칭
       const uniqueBarcodes = [...new Set(foundBarcodes)];
+      console.log('📄 대안 패턴 시도: 고유 바코드', uniqueBarcodes.length, '개');
+      
+      // 공통 소비기한 (모든 품목이 같은 소비기한인 경우)
+      const commonExpiry = expiryDates.length > 0 ? expiryDates[0] : null;
       
       for (let i = 0; i < uniqueBarcodes.length; i++) {
         const barcode = uniqueBarcodes[i];
-        const expiryDate = expiryDates[i] || expiryDates[0] || null;
+        const expiryDate = expiryDates[i] || commonExpiry;
         
-        // 바코드 주변 텍스트에서 수량 추출 시도
+        // 바코드 주변 텍스트에서 수량 추출
         const barcodeIdx = allText.indexOf(barcode);
-        const nearbyText = allText.substring(barcodeIdx, barcodeIdx + 200);
-        const qtyMatch = nearbyText.match(/\\s(\\d{1,4})\\s/);
-        const quantity = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+        const nearbyText = allText.substring(barcodeIdx, barcodeIdx + 300);
+        
+        // 수량 패턴: 숫자(소) 형식에서 숫자 추출
+        const qtyMatch = nearbyText.match(/(\d{1,5})\(소\)/);
+        let quantity = 1;
+        if (qtyMatch) {
+          quantity = parseInt(qtyMatch[1]);
+        }
         
         extractedItems.push({
           barcode: barcode,
@@ -17103,41 +17190,50 @@ async function processKurlyPdfFile(file) {
       }
     }
     
-    console.log('📄 추출된 품목:', extractedItems.length, '개');
+    console.log('📄 최종 추출 품목:', extractedItems.length, '개');
     
     if (extractedItems.length === 0) {
       showToast('PDF에서 바코드 정보를 찾을 수 없습니다', 'warning');
       return;
     }
     
-    // 바코드로 제품 매칭
+    // 바코드로 제품 매칭 (showOrderPreview가 기대하는 형식으로 변환)
     const matchedItems = extractedItems.map(item => {
       const barcodeData = window.productionBarcodes.find(b => b.barcode === item.barcode);
+      const productionItem = barcodeData ? window.productionItemsData?.find(p => p.production_code === barcodeData.production_code) : null;
+      
+      const displayName = item.productName || barcodeData?.product_name || barcodeData?.production_name || `바코드: ${item.barcode}`;
       
       if (barcodeData) {
         return {
-          orderName: item.productName || barcodeData.product_name || barcodeData.production_name,
+          originalName: displayName,
+          cleanName: displayName,
           quantity: item.quantity,
           barcode: item.barcode,
           expiryDate: item.expiryDate, // PDF에서 추출한 소비기한
-          matched: true,
-          productCode: barcodeData.production_code,
-          productName: barcodeData.production_name,
-          hasBom: true // 바코드 매칭되면 대부분 BOM 있음
+          matchedProduct: {
+            item_code: barcodeData.production_code,
+            item_name: barcodeData.production_name || displayName,
+            matchType: 'barcode'
+          },
+          productionItem: productionItem,
+          hasBOM: productionItem?.bom_count > 0 || true
         };
       }
       
       return {
-        orderName: item.productName || item.barcode,
+        originalName: displayName,
+        cleanName: displayName,
         quantity: item.quantity,
         barcode: item.barcode,
         expiryDate: item.expiryDate,
-        matched: false,
-        productCode: null,
-        productName: null,
-        hasBom: false
+        matchedProduct: null,
+        productionItem: null,
+        hasBOM: false
       };
     });
+    
+    console.log('📄 매칭 결과:', matchedItems.length, '개, 매칭됨:', matchedItems.filter(m => m.matchedProduct).length);
     
     // 미리보기 표시
     window.orderUploadData = {
@@ -17163,23 +17259,176 @@ function updateFileAccept() {
   const icon = document.getElementById('order-file-icon');
   const desc = document.getElementById('order-file-desc');
   const types = document.getElementById('order-file-types');
+  const dropZone = document.getElementById('order-drop-zone');
+  const pasteZone = document.getElementById('kurly-paste-zone');
   
-  if (channel === 'kurly_pdf') {
-    if (fileInput) fileInput.accept = '.pdf';
-    if (icon) {
-      icon.className = 'fas fa-file-pdf text-4xl text-red-400 mb-3';
+  // 컬리 붙여넣기 모드
+  if (channel === 'kurly_paste') {
+    if (dropZone) dropZone.classList.add('hidden');
+    if (pasteZone) pasteZone.classList.remove('hidden');
+    // 기본 소비기한 설정 (생산일 + 90일)
+    const prodDate = document.getElementById('order-prod-date')?.value;
+    if (prodDate) {
+      setKurlyExpiryFromDays(90);
     }
-    if (desc) desc.textContent = '컬리 거래명세서 PDF 파일을 드래그하거나 클릭하여 선택';
-    if (types) types.textContent = '.pdf 지원 (바코드 + 소비기한 자동 추출)';
-  } else {
-    if (fileInput) fileInput.accept = '.xlsx,.xls,.csv,.pdf';
-    if (icon) {
-      icon.className = 'fas fa-file-excel text-4xl text-gray-400 mb-3';
-    }
-    if (desc) desc.textContent = '발주서 엑셀 파일을 드래그하거나 클릭하여 선택';
-    if (types) types.textContent = '.xlsx, .xls, .csv, .pdf 지원';
+    return;
   }
+  
+  // 파일 업로드 모드
+  if (dropZone) dropZone.classList.remove('hidden');
+  if (pasteZone) pasteZone.classList.add('hidden');
+  
+  if (fileInput) fileInput.accept = '.xlsx,.xls,.csv';
+  if (icon) {
+    icon.className = 'fas fa-file-excel text-4xl text-gray-400 mb-3';
+  }
+  if (desc) desc.textContent = '발주서 엑셀 파일을 드래그하거나 클릭하여 선택';
+  if (types) types.textContent = '.xlsx, .xls, .csv 지원';
 }
+
+// 컬리 소비기한 설정 (생산일 기준 + 일수)
+function setKurlyExpiryFromDays(days) {
+  const prodDate = document.getElementById('order-prod-date')?.value;
+  if (!prodDate) {
+    showToast('생산일을 먼저 선택해주세요', 'warning');
+    return;
+  }
+  const d = new Date(prodDate);
+  d.setDate(d.getDate() + days);
+  document.getElementById('kurly-paste-expiry').value = d.toISOString().split('T')[0];
+}
+
+// 컬리 붙여넣기 지우기
+function clearKurlyPaste() {
+  document.getElementById('kurly-paste-input').value = '';
+}
+
+// 컬리 붙여넣기 데이터 처리
+async function processKurlyPaste() {
+  const pasteInput = document.getElementById('kurly-paste-input').value.trim();
+  const expiryDate = document.getElementById('kurly-paste-expiry').value;
+  const prodDate = document.getElementById('order-prod-date').value;
+  
+  if (!pasteInput) {
+    showToast('붙여넣기할 데이터가 없습니다', 'warning');
+    return;
+  }
+  
+  if (!expiryDate) {
+    showToast('소비기한을 입력해주세요', 'warning');
+    return;
+  }
+  
+  if (!prodDate) {
+    showToast('생산일을 선택해주세요', 'warning');
+    return;
+  }
+  
+  showToast('데이터 분석 중...', 'info');
+  
+  // 바코드 데이터 로드
+  try {
+    const barcodeResult = await api('/daily-report/barcodes');
+    window.productionBarcodes = barcodeResult.data || [];
+  } catch (e) {
+    window.productionBarcodes = [];
+  }
+  
+  // 생산명 데이터 로드
+  try {
+    const prodResult = await api('/admin/production-items');
+    window.productionItemsData = prodResult.data || [];
+  } catch (e) {
+    window.productionItemsData = [];
+  }
+  
+  // 데이터 파싱 (탭, 쉼표, 공백으로 구분)
+  const lines = pasteInput.split(/[\r\n]+/).filter(line => line.trim());
+  const extractedItems = [];
+  
+  for (const line of lines) {
+    // 탭, 쉼표, 여러 공백으로 구분
+    const parts = line.split(/[\t,]+|\s{2,}/).map(p => p.trim()).filter(p => p);
+    
+    if (parts.length >= 2) {
+      // 바코드 찾기 (880으로 시작하는 13자리 또는 숫자로 된 바코드)
+      let barcode = null;
+      let quantity = null;
+      
+      for (const part of parts) {
+        if (/^880\d{10}$/.test(part) || /^\d{8,14}$/.test(part)) {
+          barcode = part;
+        } else if (/^\d{1,5}$/.test(part) && parseInt(part) > 0 && parseInt(part) < 100000) {
+          quantity = parseInt(part);
+        }
+      }
+      
+      if (barcode && quantity) {
+        extractedItems.push({ barcode, quantity, expiryDate });
+      }
+    }
+  }
+  
+  console.log('📋 파싱된 품목:', extractedItems.length, '개');
+  
+  if (extractedItems.length === 0) {
+    showToast('유효한 바코드/수량 데이터를 찾을 수 없습니다', 'warning');
+    return;
+  }
+  
+  // 바코드로 제품 매칭
+  const matchedItems = extractedItems.map(item => {
+    const barcodeData = window.productionBarcodes.find(b => b.barcode === item.barcode);
+    const productionItem = barcodeData ? window.productionItemsData?.find(p => p.production_code === barcodeData.production_code) : null;
+    
+    const displayName = barcodeData?.product_name || barcodeData?.production_name || `바코드: ${item.barcode}`;
+    
+    if (barcodeData) {
+      return {
+        originalName: displayName,
+        cleanName: displayName,
+        quantity: item.quantity,
+        barcode: item.barcode,
+        expiryDate: item.expiryDate,
+        matchedProduct: {
+          item_code: barcodeData.production_code,
+          item_name: barcodeData.production_name || displayName,
+          matchType: 'barcode'
+        },
+        productionItem: productionItem,
+        hasBOM: productionItem?.bom_count > 0 || true
+      };
+    }
+    
+    return {
+      originalName: displayName,
+      cleanName: displayName,
+      quantity: item.quantity,
+      barcode: item.barcode,
+      expiryDate: item.expiryDate,
+      matchedProduct: null,
+      productionItem: null,
+      hasBOM: false
+    };
+  });
+  
+  console.log('📋 매칭 결과:', matchedItems.length, '개, 매칭됨:', matchedItems.filter(m => m.matchedProduct).length);
+  
+  // 미리보기 표시
+  window.orderUploadData = {
+    fileName: '컬리 붙여넣기',
+    channel: 'kurly_paste',
+    items: matchedItems,
+    hasExpiryDates: true
+  };
+  
+  showOrderPreview(matchedItems, '컬리 붙여넣기 (' + extractedItems.length + '개 품목)');
+  showToast(`${matchedItems.length}개 품목 처리 완료 (매칭: ${matchedItems.filter(m => m.matchedProduct).length}개)`, 'success');
+}
+
+window.setKurlyExpiryFromDays = setKurlyExpiryFromDays;
+window.clearKurlyPaste = clearKurlyPaste;
+window.processKurlyPaste = processKurlyPaste;
 
 window.processKurlyPdfFile = processKurlyPdfFile;
 window.updateFileAccept = updateFileAccept;

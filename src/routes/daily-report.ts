@@ -84,12 +84,12 @@ dailyReport.post('/barcodes', async (c) => {
     await c.env.DB.prepare(`
       INSERT INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity)
       VALUES (?, ?, ?, ?, ?)
-    `).bind(production_code, barcode, product_name || null, channel || null, box_quantity || 1).run()
+    `).bind(production_code, barcode, product_name || null, channel || '', box_quantity || 1).run()
     
     return c.json({ success: true, message: '바코드가 등록되었습니다.' })
   } catch (e: any) {
     if (e.message?.includes('UNIQUE')) {
-      return c.json({ success: false, error: '이미 등록된 바코드입니다.' }, 409)
+      return c.json({ success: false, error: `이 바코드는 동일 채널(${channel || '미지정'})에 이미 등록되어 있습니다.` }, 409)
     }
     throw e
   }

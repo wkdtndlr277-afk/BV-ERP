@@ -2088,6 +2088,71 @@ admin.post('/migrate/add-barcode-expiry', async (c) => {
   }
 })
 
+// 바코드 UNIQUE 제약 조건 변경 (barcode + channel 조합으로)
+admin.post('/migrate/barcode-unique-channel', async (c) => {
+  const { env } = c
+  const results: string[] = []
+  
+  try {
+    // 1. 기존 데이터 백업 (expiry_days 컬럼 없을 수 있음)
+    const existingData = await env.DB.prepare(`
+      SELECT production_code, barcode, product_name, channel, box_quantity, created_at
+      FROM production_barcodes
+    `).all()
+    results.push(`기존 데이터 ${existingData.results?.length || 0}건 백업 완료`)
+    
+    // 2. 기존 테이블 삭제
+    await env.DB.prepare(`DROP TABLE IF EXISTS production_barcodes_old`).run()
+    await env.DB.prepare(`ALTER TABLE production_barcodes RENAME TO production_barcodes_old`).run()
+    results.push('기존 테이블 이름 변경 완료')
+    
+    // 3. 새 테이블 생성 (barcode + channel 조합이 unique)
+    await env.DB.prepare(`
+      CREATE TABLE production_barcodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        production_code TEXT NOT NULL,
+        barcode TEXT NOT NULL,
+        product_name TEXT,
+        channel TEXT DEFAULT '',
+        box_quantity INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(barcode, channel)
+      )
+    `).run()
+    results.push('새 테이블 생성 완료 (UNIQUE: barcode + channel)')
+    
+    // 4. 데이터 복원
+    let insertCount = 0
+    for (const row of (existingData.results || []) as any[]) {
+      try {
+        await env.DB.prepare(`
+          INSERT INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(
+          row.production_code,
+          row.barcode,
+          row.product_name,
+          row.channel || '',
+          row.box_quantity || 1,
+          row.created_at
+        ).run()
+        insertCount++
+      } catch (e: any) {
+        results.push(`중복 제외: ${row.barcode} (${row.channel})`)
+      }
+    }
+    results.push(`데이터 복원 완료: ${insertCount}건`)
+    
+    // 5. 기존 테이블 삭제
+    await env.DB.prepare(`DROP TABLE production_barcodes_old`).run()
+    results.push('이전 테이블 정리 완료')
+    
+    return c.json({ success: true, message: '바코드 테이블 UNIQUE 제약 조건 변경 완료', details: results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message, details: results }, 500)
+  }
+})
+
 // 바코드 소비기한 수정
 admin.put('/barcodes/:id/expiry-days', async (c) => {
   const { env } = c

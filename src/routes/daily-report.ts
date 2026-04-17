@@ -74,7 +74,7 @@ dailyReport.get('/barcodes/lookup/:barcode', async (c) => {
 // 바코드 등록
 dailyReport.post('/barcodes', async (c) => {
   const body = await c.req.json()
-  const { production_code, barcode, product_name, channel, box_quantity, expiry_days } = body
+  const { production_code, barcode, product_name, channel, box_quantity } = body
   
   if (!production_code || !barcode) {
     return c.json({ success: false, error: '생산코드와 바코드는 필수입니다.' }, 400)
@@ -82,9 +82,9 @@ dailyReport.post('/barcodes', async (c) => {
   
   try {
     await c.env.DB.prepare(`
-      INSERT INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity, expiry_days)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(production_code, barcode, product_name || null, channel || null, box_quantity || 1, expiry_days || null).run()
+      INSERT INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(production_code, barcode, product_name || null, channel || null, box_quantity || 1).run()
     
     return c.json({ success: true, message: '바코드가 등록되었습니다.' })
   } catch (e: any) {
@@ -111,9 +111,9 @@ dailyReport.post('/barcodes/bulk', async (c) => {
   for (const item of items) {
     try {
       await c.env.DB.prepare(`
-        INSERT OR REPLACE INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity, expiry_days)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).bind(item.production_code, item.barcode, item.product_name || null, item.channel || null, item.box_quantity || 1, item.expiry_days || null).run()
+        INSERT OR REPLACE INTO production_barcodes (production_code, barcode, product_name, channel, box_quantity)
+        VALUES (?, ?, ?, ?, ?)
+      `).bind(item.production_code, item.barcode, item.product_name || null, item.channel || null, item.box_quantity || 1).run()
       success++
     } catch (e: any) {
       failed++

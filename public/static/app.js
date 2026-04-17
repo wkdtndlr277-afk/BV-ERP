@@ -32177,13 +32177,6 @@ async function showBarcodeModal(productionCode, productionName) {
                          class="w-16 border rounded px-2 py-1 text-sm text-center">
                   <span class="text-xs text-gray-400">EA/박스</span>
                 </div>
-                <div class="flex items-center gap-1">
-                  <label class="text-xs text-gray-500">소비기한:</label>
-                  <input type="number" min="1" value="${b.expiry_days || ''}" placeholder="-"
-                         onchange="updateBarcodeExpiryDays(${b.id}, this.value, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" 
-                         class="w-14 border rounded px-2 py-1 text-sm text-center ${b.expiry_days ? 'bg-blue-50' : ''}">
-                  <span class="text-xs text-gray-400">일</span>
-                </div>
                 <button onclick="deleteBarcode(${b.id}, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 p-1" title="삭제">
                   <i class="fas fa-times"></i>
                 </button>
@@ -32205,10 +32198,10 @@ async function showBarcodeModal(productionCode, productionName) {
             <label class="block text-sm text-gray-600 mb-1">주문 제품명 (선택)</label>
             <input type="text" id="new-barcode-product-name" class="w-full border rounded-lg px-4 py-2" placeholder="주문서에 표시되는 제품명">
           </div>
-          <div class="grid grid-cols-3 gap-3">
+          <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-sm text-gray-600 mb-1">판매 채널 (선택)</label>
-              <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2" onchange="suggestExpiryDays()">
+              <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2">
                 <option value="">선택안함</option>
                 <option value="쿠팡">쿠팡 (실온)</option>
                 <option value="쿠팡냉동">쿠팡냉동</option>
@@ -32223,15 +32216,6 @@ async function showBarcodeModal(productionCode, productionName) {
               <label class="block text-sm text-gray-600 mb-1">입수량 <span class="text-red-500">*</span></label>
               <input type="number" id="new-barcode-box-quantity" min="1" value="1" class="w-full border rounded-lg px-4 py-2" placeholder="EA/박스">
             </div>
-            <div>
-              <label class="block text-sm text-gray-600 mb-1">소비기한 (일)</label>
-              <input type="number" id="new-barcode-expiry-days" min="1" class="w-full border rounded-lg px-4 py-2" placeholder="예: 90 (냉동)">
-            </div>
-          </div>
-          <div class="flex gap-2 mt-2">
-            <button type="button" onclick="document.getElementById('new-barcode-expiry-days').value=''" class="px-3 py-1 bg-gray-100 rounded text-xs hover:bg-gray-200">기본값</button>
-            <button type="button" onclick="document.getElementById('new-barcode-expiry-days').value='7'" class="px-3 py-1 bg-green-100 text-green-700 rounded text-xs hover:bg-green-200">실온 7일</button>
-            <button type="button" onclick="document.getElementById('new-barcode-expiry-days').value='90'" class="px-3 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200">냉동 90일</button>
           </div>
         </div>
       </div>
@@ -32253,8 +32237,6 @@ async function addBarcode(productionCode, productionName) {
   const productName = document.getElementById('new-barcode-product-name').value.trim();
   const channel = document.getElementById('new-barcode-channel').value;
   const boxQuantity = parseInt(document.getElementById('new-barcode-box-quantity')?.value) || 1;
-  const expiryDaysVal = document.getElementById('new-barcode-expiry-days')?.value;
-  const expiryDays = expiryDaysVal ? parseInt(expiryDaysVal) : null;
   
   if (!barcode) {
     showToast('바코드를 입력하세요', 'warning');
@@ -32283,8 +32265,7 @@ async function addBarcode(productionCode, productionName) {
       barcode: barcode,
       product_name: productName || null,
       channel: channel || null,
-      box_quantity: boxQuantity,
-      expiry_days: expiryDays
+      box_quantity: boxQuantity
     });
     showToast('바코드가 추가되었습니다', 'success');
     // 데이터 새로고침 (UI 업데이트 위해)
@@ -32347,41 +32328,7 @@ async function updateBarcodeBoxQuantity(id, newQuantity, productionCode, product
 }
 window.updateBarcodeBoxQuantity = updateBarcodeBoxQuantity;
 
-// 바코드 소비기한 수정
-async function updateBarcodeExpiryDays(id, newDays, productionCode, productionName) {
-  const days = newDays ? parseInt(newDays) : null;
-  if (newDays && (isNaN(days) || days < 1)) {
-    showToast('소비기한은 1일 이상이어야 합니다', 'warning');
-    return;
-  }
-  
-  try {
-    await api(`/admin/barcodes/${id}/expiry-days`, 'PUT', { expiry_days: days });
-    showToast(days ? `소비기한이 ${days}일로 설정되었습니다` : '소비기한이 기본값으로 변경되었습니다', 'success');
-  } catch (e) {
-    showToast('소비기한 수정 실패: ' + (e.message || e), 'error');
-    showBarcodeModal(productionCode, productionName);
-  }
-}
-window.updateBarcodeExpiryDays = updateBarcodeExpiryDays;
 
-// 채널 선택 시 소비기한 자동 제안
-function suggestExpiryDays() {
-  const channel = document.getElementById('new-barcode-channel')?.value || '';
-  const expiryInput = document.getElementById('new-barcode-expiry-days');
-  if (!expiryInput) return;
-  
-  // 냉동 채널이면 90일 자동 제안
-  if (channel.includes('냉동')) {
-    if (!expiryInput.value) {
-      expiryInput.value = '90';
-      expiryInput.classList.add('bg-blue-50');
-    }
-  } else {
-    expiryInput.classList.remove('bg-blue-50');
-  }
-}
-window.suggestExpiryDays = suggestExpiryDays;
 
 // 바코드 삭제
 let isDeletingBarcode = false;

@@ -21878,14 +21878,26 @@ async function saveBOM() {
 }
 
 // BOM 수정
-function editBOM(id, itemCode, quantity, unit, bomTable) {
+async function editBOM(id, itemCode, quantity, unit, bomTable) {
   // bomTable 파라미터가 없으면 전역 변수에서 가져옴
   const table = bomTable || window.currentBOMTable || 'bom';
+  
+  // 마스터 데이터 확인 및 로드
+  if (!state.masterItems || state.masterItems.length === 0) {
+    showToast('데이터 로드 중...', 'info');
+    await loadMasterData();
+  }
   
   // 원재료 목록 가져오기 (원료, 부자재)
   const materials = state.masterItems.filter(item => 
     item.category === '원료' || item.category === '부자재'
   );
+  
+  if (materials.length === 0) {
+    showToast('원재료 목록을 불러올 수 없습니다', 'error');
+    return;
+  }
+  
   const materialOptions = materials.map(m => 
     `<option value="${m.item_code}" ${m.item_code === itemCode ? 'selected' : ''}>${m.item_name} (${m.item_code})</option>`
   ).join('');

@@ -144,38 +144,87 @@ app.get('/product/:productCode', async (c) => {
   try {
     const productCode = c.req.param('productCode');
     
-    // 제품 정보
-    const product = await c.env.DB.prepare(`
+    // 제품 정보 (master 또는 production_items에서 조회)
+    let product = await c.env.DB.prepare(`
       SELECT item_code, item_name, unit FROM master WHERE item_code = ? AND category = '제품'
     `).bind(productCode).first();
+    
+    let isProductionCode = false;
+    if (!product && productCode.startsWith('PR')) {
+      // production_items에서 조회
+      const productionItem = await c.env.DB.prepare(`
+        SELECT production_code, production_name FROM production_items WHERE production_code = ?
+      `).bind(productCode).first<any>();
+      
+      if (productionItem) {
+        isProductionCode = true;
+        product = {
+          item_code: productionItem.production_code,
+          item_name: productionItem.production_name,
+          unit: 'ea'
+        };
+      }
+    }
     
     if (!product) {
       return c.json({ success: false, error: '제품을 찾을 수 없습니다' }, 404);
     }
     
-    // BOM 조회 및 원가 계산
-    const bomResult = await c.env.DB.prepare(`
-      SELECT 
-        b.item_code,
-        b.quantity as bom_qty,
-        b.unit as bom_unit,
-        m.item_name,
-        mc.cost_per_unit,
-        mc.unit as cost_unit
-      FROM bom b
-      JOIN master m ON b.item_code = m.item_code
-      LEFT JOIN (
-        SELECT mc1.*
-        FROM material_costs mc1
-        INNER JOIN (
-          SELECT item_code, MAX(effective_date) as max_date
-          FROM material_costs
-          GROUP BY item_code
-        ) mc2 ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
-      ) mc ON b.item_code = mc.item_code
-      WHERE b.product_code = ?
-      ORDER BY b.sort_order
-    `).bind(productCode).all();
+    // BOM 조회 및 원가 계산 (production_bom 또는 bom 테이블에서)
+    let bomResult;
+    let bomTable = 'bom';
+    
+    if (isProductionCode) {
+      // production_bom 테이블에서 조회
+      bomResult = await c.env.DB.prepare(`
+        SELECT 
+          pb.material_code as item_code,
+          pb.quantity as bom_qty,
+          pb.unit as bom_unit,
+          COALESCE(m.item_name, pb.material_name) as item_name,
+          mc.cost_per_unit,
+          mc.unit as cost_unit
+        FROM production_bom pb
+        LEFT JOIN master m ON pb.material_code = m.item_code
+        LEFT JOIN (
+          SELECT mc1.*
+          FROM material_costs mc1
+          INNER JOIN (
+            SELECT item_code, MAX(effective_date) as max_date
+            FROM material_costs
+            GROUP BY item_code
+          ) mc2 ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
+        ) mc ON pb.material_code = mc.item_code
+        WHERE pb.production_code = ?
+        ORDER BY pb.id
+      `).bind(productCode).all();
+      bomTable = 'production_bom';
+    } else {
+      // bom 테이블에서 조회
+      bomResult = await c.env.DB.prepare(`
+        SELECT 
+          b.item_code,
+          b.quantity as bom_qty,
+          b.unit as bom_unit,
+          m.item_name,
+          mc.cost_per_unit,
+          mc.unit as cost_unit
+        FROM bom b
+        LEFT JOIN master m ON b.item_code = m.item_code
+        LEFT JOIN (
+          SELECT mc1.*
+          FROM material_costs mc1
+          INNER JOIN (
+            SELECT item_code, MAX(effective_date) as max_date
+            FROM material_costs
+            GROUP BY item_code
+          ) mc2 ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
+        ) mc ON b.item_code = mc.item_code
+        WHERE b.product_code = ?
+        ORDER BY b.sort_order
+      `).bind(productCode).all();
+      bomTable = 'bom';
+    }
     
     let totalMaterialCost = 0;
     const materials = bomResult.results.map((row: any) => {
@@ -207,12 +256,13 @@ app.get('/product/:productCode', async (c) => {
     return c.json({
       success: true,
       data: {
-        product_code: product.item_code,
-        product_name: product.item_name,
+        product_code: (product as any).item_code,
+        product_name: (product as any).item_name,
         materials,
         material_cost: Math.round(totalMaterialCost * 100) / 100,
         missing_cost_count: missingCostCount,
-        is_complete: missingCostCount === 0
+        is_complete: missingCostCount === 0,
+        bom_table: bomTable
       }
     });
   } catch (error: any) {
@@ -220,10 +270,10 @@ app.get('/product/:productCode', async (c) => {
   }
 });
 
-// 전체 제품 원가 목록 (최적화된 단일 쿼리)
+// 전체 제품 원가 목록 (production_items + production_bom 우선 사용)
 app.get('/products', async (c) => {
   try {
-    // 단일 쿼리로 모든 제품의 원가 계산
+    // production_items + production_bom 기준 원가 계산 (메인 데이터)
     const result = await c.env.DB.prepare(`
       WITH latest_costs AS (
         SELECT mc1.item_code, mc1.cost_per_unit, mc1.unit
@@ -236,30 +286,30 @@ app.get('/products', async (c) => {
       ),
       product_costs AS (
         SELECT 
-          b.product_code,
+          pb.production_code as product_code,
           SUM(
             CASE 
-              WHEN b.unit = 'g' AND lc.unit = 'kg' THEN (b.quantity / 1000.0) * COALESCE(lc.cost_per_unit, 0)
-              WHEN b.unit = 'kg' AND lc.unit = 'g' THEN (b.quantity * 1000.0) * COALESCE(lc.cost_per_unit, 0)
-              ELSE b.quantity * COALESCE(lc.cost_per_unit, 0)
+              WHEN pb.unit = 'g' AND lc.unit = 'kg' THEN (pb.quantity / 1000.0) * COALESCE(lc.cost_per_unit, 0)
+              WHEN pb.unit = 'kg' AND lc.unit = 'g' THEN (pb.quantity * 1000.0) * COALESCE(lc.cost_per_unit, 0)
+              ELSE pb.quantity * COALESCE(lc.cost_per_unit, 0)
             END
           ) as total_cost,
           COUNT(*) as bom_count,
           SUM(CASE WHEN lc.cost_per_unit IS NULL THEN 1 ELSE 0 END) as missing_items
-        FROM bom b
-        LEFT JOIN latest_costs lc ON b.item_code = lc.item_code
-        GROUP BY b.product_code
+        FROM production_bom pb
+        LEFT JOIN latest_costs lc ON pb.material_code = lc.item_code
+        GROUP BY pb.production_code
       )
       SELECT 
-        m.item_code as product_code,
-        m.item_name as product_name,
+        pi.production_code as product_code,
+        pi.production_name as product_name,
         COALESCE(pc.bom_count, 0) as bom_count,
         COALESCE(pc.total_cost, 0) as material_cost,
         COALESCE(pc.missing_items, 0) as missing_items
-      FROM master m
-      INNER JOIN product_costs pc ON m.item_code = pc.product_code
-      WHERE m.category = '제품'
-      ORDER BY m.item_name
+      FROM production_items pi
+      INNER JOIN product_costs pc ON pi.production_code = pc.product_code
+      WHERE pi.is_active = 1
+      ORDER BY pi.production_name
     `).all();
     
     const products = (result.results as any[]).map(row => ({
@@ -268,7 +318,8 @@ app.get('/products', async (c) => {
       bom_count: row.bom_count,
       material_cost: Math.round((row.material_cost || 0) * 100) / 100,
       missing_items: row.missing_items,
-      is_complete: row.missing_items === 0
+      is_complete: row.missing_items === 0,
+      bom_table: 'production_bom'
     }));
     
     return c.json({ success: true, data: products });

@@ -74,6 +74,62 @@ async function syncToProductionBom(db: any, productCode: string) {
   }
 }
 
+// production_bom → bom 역동기화 헬퍼 함수
+async function syncFromProductionBom(db: any, productionCode: string) {
+  try {
+    // 1. production_items에서 생산명 찾기
+    const productionItem = await db.prepare(
+      'SELECT production_name FROM production_items WHERE production_code = ?'
+    ).bind(productionCode).first() as any;
+    
+    if (!productionItem) {
+      console.log(`syncFromProductionBom: production_item not found for ${productionCode}`);
+      return;
+    }
+    
+    // 2. master에서 해당 제품 찾기 (이름으로 매칭)
+    let product = await db.prepare(`
+      SELECT item_code FROM master 
+      WHERE item_name = ? AND category = '제품'
+    `).bind(productionItem.production_name).first() as any;
+    
+    if (!product) {
+      console.log(`syncFromProductionBom: master product not found for ${productionItem.production_name}`);
+      return;
+    }
+    
+    const productCode = product.item_code;
+    
+    // 3. 기존 bom 삭제
+    await db.prepare(
+      'DELETE FROM bom WHERE product_code = ?'
+    ).bind(productCode).run();
+    
+    // 4. production_bom에서 bom으로 복사
+    const prodBomData = await db.prepare(`
+      SELECT material_code, material_name, quantity, unit
+      FROM production_bom
+      WHERE production_code = ?
+    `).bind(productionCode).all();
+    
+    for (const bom of prodBomData.results as any[]) {
+      await db.prepare(`
+        INSERT INTO bom (product_code, item_code, quantity, unit)
+        VALUES (?, ?, ?, ?)
+      `).bind(
+        productCode,
+        bom.material_code,
+        bom.quantity,
+        bom.unit || 'g'
+      ).run();
+    }
+    
+    console.log(`Reverse synced BOM: ${productionCode} -> ${productCode} (${prodBomData.results?.length || 0} items)`);
+  } catch (e) {
+    console.error('syncFromProductionBom error:', e);
+  }
+}
+
 // D1 바인딩 검증 미들웨어
 bomRoutes.use('*', async (c, next) => {
   if (!c.env.DB) {
@@ -442,6 +498,126 @@ bomRoutes.post('/sync-all', async (c) => {
   });
 });
 
+// production_bom → bom 전체 역동기화 (데이터 정합성 맞추기)
+bomRoutes.post('/sync-from-production', async (c) => {
+  try {
+    // 모든 production_items 가져오기
+    const productionItems = await c.env.DB.prepare(`
+      SELECT production_code, production_name FROM production_items WHERE is_active = 1
+    `).all();
+    
+    const results = { success: 0, failed: 0, details: [] as string[] };
+    
+    for (const item of productionItems.results as any[]) {
+      try {
+        // production_bom 데이터 가져오기
+        const prodBomData = await c.env.DB.prepare(`
+          SELECT material_code, quantity, unit FROM production_bom WHERE production_code = ?
+        `).bind(item.production_code).all();
+        
+        if (!prodBomData.results || prodBomData.results.length === 0) {
+          continue; // BOM이 없으면 스킵
+        }
+        
+        // master에서 해당 제품 찾기
+        const product = await c.env.DB.prepare(`
+          SELECT item_code FROM master WHERE item_name = ? AND category = '제품'
+        `).bind(item.production_name).first() as any;
+        
+        if (!product) {
+          results.details.push(`제품 미발견: ${item.production_name}`);
+          continue;
+        }
+        
+        // 기존 bom 삭제
+        await c.env.DB.prepare('DELETE FROM bom WHERE product_code = ?').bind(product.item_code).run();
+        
+        // production_bom → bom 복사
+        for (const bom of prodBomData.results as any[]) {
+          await c.env.DB.prepare(`
+            INSERT INTO bom (product_code, item_code, quantity, unit)
+            VALUES (?, ?, ?, ?)
+          `).bind(product.item_code, bom.material_code, bom.quantity, bom.unit || 'g').run();
+        }
+        
+        results.success++;
+        results.details.push(`동기화 완료: ${item.production_code} → ${product.item_code} (${prodBomData.results.length}개 원료)`);
+      } catch (e: any) {
+        results.failed++;
+        results.details.push(`오류 (${item.production_code}): ${e.message}`);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${results.success}건 동기화 완료, ${results.failed}건 실패`,
+      results
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// BOM 불일치 현황 조회
+bomRoutes.get('/sync-status', async (c) => {
+  try {
+    // 불일치 항목 찾기
+    const mismatches = await c.env.DB.prepare(`
+      WITH prod_bom_summary AS (
+        SELECT 
+          pb.production_code,
+          pi.production_name,
+          COUNT(*) as prod_bom_count,
+          SUM(pb.quantity) as prod_total_qty
+        FROM production_bom pb
+        JOIN production_items pi ON pb.production_code = pi.production_code
+        GROUP BY pb.production_code
+      ),
+      master_bom_summary AS (
+        SELECT 
+          b.product_code,
+          m.item_name as product_name,
+          COUNT(*) as bom_count,
+          SUM(b.quantity) as bom_total_qty
+        FROM bom b
+        JOIN master m ON b.product_code = m.item_code
+        WHERE m.category = '제품'
+        GROUP BY b.product_code
+      )
+      SELECT 
+        pbs.production_code,
+        pbs.production_name,
+        mbs.product_code,
+        pbs.prod_bom_count,
+        mbs.bom_count,
+        pbs.prod_total_qty,
+        mbs.bom_total_qty,
+        CASE 
+          WHEN mbs.product_code IS NULL THEN 'bom 테이블 없음'
+          WHEN pbs.prod_bom_count != mbs.bom_count THEN '원료 개수 불일치'
+          WHEN ABS(pbs.prod_total_qty - mbs.bom_total_qty) > 0.01 THEN '수량 불일치'
+          ELSE '정상'
+        END as status
+      FROM prod_bom_summary pbs
+      LEFT JOIN master_bom_summary mbs ON pbs.production_name = mbs.product_name
+      WHERE mbs.product_code IS NULL 
+         OR pbs.prod_bom_count != mbs.bom_count 
+         OR ABS(pbs.prod_total_qty - mbs.bom_total_qty) > 0.01
+      ORDER BY pbs.production_code
+    `).all();
+    
+    return c.json({
+      success: true,
+      data: {
+        mismatch_count: mismatches.results?.length || 0,
+        items: mismatches.results
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // BOM 수정
 bomRoutes.put('/:id', async (c) => {
   const id = c.req.param('id');
@@ -516,6 +692,15 @@ bomRoutes.put('/production/:id', async (c) => {
   const body = await c.req.json();
   const { material_code, quantity, unit } = body;
   
+  // 수정 전 production_code 가져오기
+  const existingBom = await c.env.DB.prepare(`
+    SELECT production_code FROM production_bom WHERE id = ?
+  `).bind(id).first() as any;
+  
+  if (!existingBom) {
+    return c.json({ success: false, error: 'production_bom을 찾을 수 없습니다.' }, 404);
+  }
+  
   // undefined 값을 null로 변환
   const safeMaterialCode = material_code !== undefined ? material_code : null;
   const safeQuantity = quantity !== undefined ? quantity : null;
@@ -540,8 +725,11 @@ bomRoutes.put('/production/:id', async (c) => {
   `).bind(safeMaterialCode, materialName, safeQuantity, safeUnit, id).run();
   
   if (result.meta.changes === 0) {
-    return c.json({ success: false, error: 'production_bom을 찾을 수 없습니다.' }, 404);
+    return c.json({ success: false, error: 'production_bom 수정에 실패했습니다.' }, 500);
   }
+  
+  // bom 테이블로 역동기화
+  await syncFromProductionBom(c.env.DB, existingBom.production_code);
   
   return c.json({ success: true, message: 'BOM이 수정되었습니다.' });
 });
@@ -550,12 +738,22 @@ bomRoutes.put('/production/:id', async (c) => {
 bomRoutes.delete('/production/:id', async (c) => {
   const id = c.req.param('id');
   
+  // 삭제 전 production_code 가져오기
+  const existingBom = await c.env.DB.prepare(`
+    SELECT production_code FROM production_bom WHERE id = ?
+  `).bind(id).first() as any;
+  
   const result = await c.env.DB.prepare(
     'DELETE FROM production_bom WHERE id = ?'
   ).bind(id).run();
   
   if (result.meta.changes === 0) {
     return c.json({ success: false, error: 'production_bom을 찾을 수 없습니다.' }, 404);
+  }
+  
+  // bom 테이블로 역동기화
+  if (existingBom?.production_code) {
+    await syncFromProductionBom(c.env.DB, existingBom.production_code);
   }
   
   return c.json({ success: true, message: 'BOM이 삭제되었습니다.' });

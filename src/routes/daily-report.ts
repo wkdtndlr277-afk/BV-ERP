@@ -264,17 +264,22 @@ dailyReport.get('/reports/:id', async (c) => {
       }
     }
     
-    // 3. 저장된 원재료 데이터 조회
+    // 3. 저장된 원재료 데이터 조회 (master/semi_finished_items 테이블과 조인하여 정확한 이름 조회)
     let savedMaterials: any[] = []
     try {
       const materials = await c.env.DB.prepare(`
-        SELECT material_code, material_name, unit, 
-               SUM(required_quantity) as total_quantity,
-               GROUP_CONCAT(DISTINCT production_code) as used_by
-        FROM production_daily_materials 
-        WHERE report_id = ?
-        GROUP BY material_code, material_name, unit
-        ORDER BY material_name
+        SELECT 
+          pdm.material_code, 
+          COALESCE(m.item_name, sf.item_name, pdm.material_name) as material_name, 
+          pdm.unit, 
+          SUM(pdm.required_quantity) as total_quantity,
+          GROUP_CONCAT(DISTINCT pdm.production_code) as used_by
+        FROM production_daily_materials pdm
+        LEFT JOIN master m ON pdm.material_code = m.item_code
+        LEFT JOIN semi_finished_items sf ON pdm.material_code = sf.item_code
+        WHERE pdm.report_id = ?
+        GROUP BY pdm.material_code, COALESCE(m.item_name, sf.item_name, pdm.material_name), pdm.unit
+        ORDER BY COALESCE(m.item_name, sf.item_name, pdm.material_name)
       `).bind(id).all()
       savedMaterials = materials.results as any[] || []
     } catch (matError) {
@@ -284,15 +289,60 @@ dailyReport.get('/reports/:id', async (c) => {
     // 4. 원재료 요약 생성
     let materials_summary: any[] = []
     
+    // 단위 변환 헬퍼 함수 (모든 무게를 g로 표준화)
+    const normalizeToGrams = (qty: number, unit: string): number => {
+      const unitLower = (unit || 'g').toLowerCase()
+      if (unitLower === 'kg') return qty * 1000
+      return qty // g, ea 등은 그대로
+    }
+    
     // 저장된 원재료 데이터가 있으면 사용 (실시간 계산보다 빠르고 안정적)
+    // 단, 동일 원료명의 중복 항목은 합산 처리 (코드 없는 항목과 있는 항목 병합)
+    // kg와 g 단위 차이도 변환하여 합산
     if (savedMaterials.length > 0) {
-      materials_summary = savedMaterials.map(m => ({
-        material_code: m.material_code || '',
-        material_name: m.material_name || '',
-        total_quantity: m.total_quantity || 0,
-        unit: m.unit || 'g',
+      const mergedMaterials = new Map<string, { material_code: string, material_name: string, total_quantity: number, unit: string }>()
+      
+      for (const m of savedMaterials) {
+        const name = m.material_name || ''
+        const code = m.material_code || ''
+        const unit = m.unit || 'g'
+        // 원료명으로만 키 생성 (단위가 달라도 합산)
+        const key = name
+        
+        const existing = mergedMaterials.get(key)
+        if (existing) {
+          // 기존 항목의 단위로 변환하여 합산
+          const existingUnit = existing.unit
+          let qtyToAdd = m.total_quantity || 0
+          
+          // 단위가 다르면 변환
+          if (unit !== existingUnit) {
+            if (existingUnit === 'g' && unit === 'kg') {
+              qtyToAdd = qtyToAdd * 1000 // kg -> g
+            } else if (existingUnit === 'kg' && unit === 'g') {
+              qtyToAdd = qtyToAdd / 1000 // g -> kg
+            }
+          }
+          
+          existing.total_quantity += qtyToAdd
+          // 코드가 있는 항목 우선
+          if (code && !existing.material_code) {
+            existing.material_code = code
+          }
+        } else {
+          mergedMaterials.set(key, {
+            material_code: code,
+            material_name: name,
+            total_quantity: m.total_quantity || 0,
+            unit: unit
+          })
+        }
+      }
+      
+      materials_summary = Array.from(mergedMaterials.values()).map(m => ({
+        ...m,
         lots: [] // LOT 정보는 별도 조회
-      }))
+      })).sort((a, b) => a.material_name.localeCompare(b.material_name))
     } else if (itemsList.length > 0) {
       // 저장된 데이터가 없으면 실시간 계산 (최적화된 버전)
       try {
@@ -338,7 +388,7 @@ dailyReport.get('/reports/:id', async (c) => {
           }
           
           // 원재료 집계
-          const allMaterials = new Map<string, { material_code: string, quantity: number, unit: string }>()
+          const allMaterials = new Map<string, { material_code: string, material_name: string, quantity: number, unit: string }>()
           const bomMap = new Map<string, any[]>()
           
           for (const row of allBomResults) {
@@ -348,6 +398,8 @@ dailyReport.get('/reports/:id', async (c) => {
             bomMap.get(row.production_code)!.push(row)
           }
           
+          // 원료 코드 기반 집계 (코드가 있으면 코드로, 없으면 이름으로)
+          // material_code 우선, 없으면 material_name으로 키 생성
           for (const item of itemsList) {
             const bomItems = bomMap.get(item.production_code) || []
             const boxQuantity = item.barcode ? (barcodeBoxQtyMap.get(item.barcode) || 1) : 1
@@ -355,13 +407,22 @@ dailyReport.get('/reports/:id', async (c) => {
             
             for (const bom of bomItems) {
               const requiredQty = (bom.quantity || 0) * actualItemCount
-              const key = `${bom.material_code || ''}|${bom.material_name || ''}|${bom.unit || 'g'}`
+              // 코드가 있으면 코드로, 없으면 이름으로 키 생성 (중복 방지)
+              const materialCode = bom.material_code || ''
+              const materialName = bom.material_name || ''
+              const key = materialCode ? `CODE:${materialCode}|${bom.unit || 'g'}` : `NAME:${materialName}|${bom.unit || 'g'}`
+              
               const existing = allMaterials.get(key)
               if (existing) {
                 existing.quantity += requiredQty
+                // 코드가 비어있던 항목에 코드가 있으면 업데이트
+                if (!existing.material_code && materialCode) {
+                  existing.material_code = materialCode
+                }
               } else {
                 allMaterials.set(key, { 
-                  material_code: bom.material_code || '', 
+                  material_code: materialCode, 
+                  material_name: materialName,
                   quantity: requiredQty, 
                   unit: bom.unit || 'g' 
                 })
@@ -369,16 +430,13 @@ dailyReport.get('/reports/:id', async (c) => {
             }
           }
           
-          materials_summary = Array.from(allMaterials.entries()).map(([key, val]) => {
-            const parts = key.split('|')
-            return { 
-              material_code: parts[0] || '', 
-              material_name: parts[1] || '', 
-              total_quantity: val.quantity, 
-              unit: parts[2] || 'g',
-              lots: []
-            }
-          }).sort((a, b) => (a.material_name || '').localeCompare(b.material_name || ''))
+          materials_summary = Array.from(allMaterials.values()).map(val => ({ 
+            material_code: val.material_code || '', 
+            material_name: val.material_name || '', 
+            total_quantity: val.quantity, 
+            unit: val.unit || 'g',
+            lots: []
+          })).sort((a, b) => (a.material_name || '').localeCompare(b.material_name || ''))
         }
       } catch (calcError) {
         console.error('원재료 계산 오류:', calcError)

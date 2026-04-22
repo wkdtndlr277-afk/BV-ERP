@@ -2345,18 +2345,27 @@ admin.get('/sync-bom-tables', async (c) => {
     await env.DB.prepare(`DELETE FROM production_bom`).run()
     
     // 3. 한번의 쿼리로 bom → production_bom 복사 (production_name 매칭)
+    // SF 계열은 semi_finished_items 테이블에서, 일반 원료는 master 테이블에서 이름 조회
     await env.DB.prepare(`
       INSERT INTO production_bom (production_code, material_code, material_name, quantity, unit)
       SELECT 
         pi.production_code,
         b.item_code,
-        COALESCE(mm.item_name, '알수없음'),
+        COALESCE(
+          mm.item_name,
+          sf.item_name,
+          CASE 
+            WHEN b.item_code LIKE 'SF%' THEN '반제품-' || b.item_code
+            ELSE '원료-' || b.item_code
+          END
+        ),
         b.quantity,
         b.unit
       FROM bom b
       JOIN master pm ON b.product_code = pm.item_code
       JOIN production_items pi ON pi.production_name = pm.item_name OR pi.alias1 = pm.item_name
       LEFT JOIN master mm ON b.item_code = mm.item_code
+      LEFT JOIN semi_finished_items sf ON b.item_code = sf.item_code
       WHERE pi.is_active = 1
     `).run()
     

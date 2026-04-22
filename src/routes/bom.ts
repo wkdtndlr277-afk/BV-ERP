@@ -48,10 +48,14 @@ async function syncToProductionBom(db: any, productCode: string) {
     ).bind(productionItem.production_code).run();
     
     // 3. bom 테이블에서 해당 제품의 BOM 가져와서 production_bom에 삽입
+    // SF 계열은 semi_finished_items, 일반 원료는 master에서 이름 조회
     const bomData = await db.prepare(`
-      SELECT b.item_code, m.item_name as material_name, b.quantity, b.unit
+      SELECT b.item_code, 
+             COALESCE(m.item_name, sf.item_name, '원료-' || b.item_code) as material_name, 
+             b.quantity, b.unit
       FROM bom b
       LEFT JOIN master m ON b.item_code = m.item_code
+      LEFT JOIN semi_finished_items sf ON b.item_code = sf.item_code
       WHERE b.product_code = ?
     `).bind(productCode).all();
     
@@ -143,17 +147,19 @@ bomRoutes.use('*', async (c, next) => {
 });
 
 // BOM 목록 조회 (제품별)
+// SF 계열은 semi_finished_items, 일반 원료는 master에서 이름 조회
 bomRoutes.get('/', async (c) => {
   const productCode = c.req.query('product_code');
   
   let query = `
     SELECT b.*, 
-           m.item_name as item_name,
-           m.unit as item_unit,
+           COALESCE(m.item_name, sf.item_name) as item_name,
+           COALESCE(m.unit, sf.unit) as item_unit,
            m.current_stock as item_stock,
            p.item_name as product_name
     FROM bom b
     LEFT JOIN master m ON b.item_code = m.item_code
+    LEFT JOIN semi_finished_items sf ON b.item_code = sf.item_code
     LEFT JOIN master p ON b.product_code = p.item_code
   `;
   const params: string[] = [];

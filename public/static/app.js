@@ -24799,13 +24799,14 @@ function showAddBarcodeModal(productionCode = null) {
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">판매채널</label>
         <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2" onchange="updateExpiryDaysSuggestion()">
-          <option value="">선택</option>
+          <option value="">선택안함</option>
           <option value="쿠팡">쿠팡 (실온)</option>
           <option value="쿠팡냉동">쿠팡냉동</option>
-          <option value="컬리">컬리</option>
+          <option value="컬리">컬리 (실온)</option>
           <option value="컬리냉동">컬리냉동</option>
-          <option value="생협">생협</option>
+          <option value="오아시스">오아시스</option>
           <option value="네이버">네이버</option>
+          <option value="배민">배민</option>
           <option value="기타">기타</option>
         </select>
       </div>
@@ -32711,6 +32712,7 @@ async function showBarcodeModal(productionCode, productionName) {
                 <option value="컬리냉동">컬리냉동</option>
                 <option value="오아시스">오아시스</option>
                 <option value="네이버">네이버</option>
+                <option value="배민">배민</option>
                 <option value="기타">기타</option>
               </select>
             </div>

@@ -447,7 +447,8 @@ productionRoutes.post('/batch', async (c) => {
   
   // 배치 크기 제한 (D1 batch() 사용으로 최적화됨)
   // batch()는 여러 쿼리를 단일 네트워크 요청으로 처리
-  const MAX_BATCH_SIZE = 30;
+  // D1의 batch() 성능 개선으로 150개까지 처리 가능
+  const MAX_BATCH_SIZE = 150;
   if (items.length > MAX_BATCH_SIZE) {
     return c.json({ 
       success: false, 
@@ -740,6 +741,29 @@ productionRoutes.post('/batch', async (c) => {
         success: true
       });
       successCount++;
+    }
+    
+    // 7단계: 생산일보 품목에 LOT 업데이트 (해당 날짜의 생산일보 품목)
+    try {
+      const dailyItemUpdates = preparedItems.map(p =>
+        c.env.DB.prepare(`
+          UPDATE production_daily_items 
+          SET lot_number = ?
+          WHERE production_code = ? 
+            AND quantity = ?
+            AND (lot_number IS NULL OR lot_number = '')
+            AND report_id IN (
+              SELECT id FROM production_daily_report WHERE report_date = ?
+            )
+        `).bind(p.productLot, p.item.product_code, p.item.quantity, productionDate)
+      );
+      
+      if (dailyItemUpdates.length > 0) {
+        await c.env.DB.batch(dailyItemUpdates);
+      }
+    } catch (e) {
+      console.error('Daily item LOT update error:', e);
+      // 실패해도 생산 등록은 계속 진행
     }
     
   } catch (error: any) {

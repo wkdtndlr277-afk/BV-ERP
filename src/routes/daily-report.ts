@@ -181,15 +181,19 @@ dailyReport.get('/reports/:id', async (c) => {
     return c.json({ success: false, error: '생산일보를 찾을 수 없습니다.' }, 404)
   }
   
-  // 품목 목록 (production 테이블에서 LOT 정보 JOIN)
+  // 품목 목록 (production_daily_items의 lot_number 우선 사용, 없으면 production 테이블에서 JOIN)
+  // production_daily_items에 직접 저장된 lot_number를 먼저 확인
   const reportDate = (report as any).report_date
   const items = await c.env.DB.prepare(`
-    SELECT pdi.*, p.lot_number
+    SELECT pdi.*, 
+           COALESCE(pdi.lot_number, p.lot_number, pi.lot_number) as lot_number,
+           COALESCE(pdi.channel, p.channel) as channel
     FROM production_daily_items pdi
     LEFT JOIN production p ON pdi.production_code = p.product_code AND p.prod_date = ?
+    LEFT JOIN production_inbound pi ON pdi.production_code = pi.production_code AND pi.inbound_date = ?
     WHERE pdi.report_id = ?
     ORDER BY pdi.id
-  `).bind(reportDate, id).all()
+  `).bind(reportDate, reportDate, id).all()
   
   // 원재료 사용량 (저장된 데이터)
   const materials = await c.env.DB.prepare(`
@@ -883,6 +887,66 @@ dailyReport.post('/auto-register-barcodes', async (c) => {
     success: true,
     data: { registered, skipped, errors: errors.length > 0 ? errors : undefined }
   })
+})
+
+// 생산일보 품목 LOT 업데이트 (생산등록 후 호출)
+dailyReport.put('/items/:id/lot', async (c) => {
+  const id = c.req.param('id')
+  const { lot_number } = await c.req.json()
+  
+  if (!lot_number) {
+    return c.json({ success: false, error: 'LOT 번호가 필요합니다.' }, 400)
+  }
+  
+  await c.env.DB.prepare(`
+    UPDATE production_daily_items 
+    SET lot_number = ?
+    WHERE id = ?
+  `).bind(lot_number, id).run()
+  
+  return c.json({ success: true, message: 'LOT가 업데이트되었습니다.' })
+})
+
+// 생산일보 품목 일괄 LOT 업데이트
+dailyReport.put('/items/batch-lot', async (c) => {
+  const { items } = await c.req.json()
+  // items: [{ id, lot_number }]
+  
+  if (!items || !Array.isArray(items)) {
+    return c.json({ success: false, error: '업데이트할 항목이 필요합니다.' }, 400)
+  }
+  
+  let updated = 0
+  for (const item of items) {
+    if (item.id && item.lot_number) {
+      await c.env.DB.prepare(`
+        UPDATE production_daily_items 
+        SET lot_number = ?
+        WHERE id = ?
+      `).bind(item.lot_number, item.id).run()
+      updated++
+    }
+  }
+  
+  return c.json({ success: true, message: `${updated}건 업데이트됨` })
+})
+
+// production_daily_items 테이블에 lot_number 컬럼 추가 마이그레이션
+dailyReport.post('/migrate-lot-column', async (c) => {
+  try {
+    // lot_number 컬럼 추가
+    try {
+      await c.env.DB.prepare(`ALTER TABLE production_daily_items ADD COLUMN lot_number TEXT`).run()
+    } catch (e: any) {
+      if (!e.message?.includes('duplicate column')) {
+        console.log('lot_number column already exists')
+      }
+    }
+    
+    return c.json({ success: true, message: 'lot_number 컬럼 마이그레이션 완료' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
 })
 
 export default dailyReport

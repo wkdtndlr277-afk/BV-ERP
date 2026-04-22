@@ -6425,19 +6425,18 @@ function downloadDailyLedger() {
     return;
   }
   
-  // LOT 포함 데이터 생성
+  // LOT 포함 데이터 생성 (품목명→품목명/LOT, LOT번호→거래처로 변경)
   const rows = [];
   data.forEach(item => {
     // 품목 요약
     rows.push({
       '품목코드': item.item_code,
-      '품목명': item.item_name,
+      '품목명/LOT': item.item_name,
       '구분': item.category,
       '단위': item.unit || '',
-      'LOT번호': '',
+      '거래처': '',
       '입고일': '',
       '소비기한': '',
-      '납품처': '',
       '전일재고': item.summary.carry_over || 0,
       '입고': item.summary.period_inbound || 0,
       '사용': item.summary.period_usage || 0,
@@ -6445,18 +6444,17 @@ function downloadDailyLedger() {
       '현재고': item.summary.closing_qty || 0,
       'LOT수': item.lot_count || 0
     });
-    // LOT 상세
+    // LOT 상세 (거래처 먼저, LOT는 품목명/LOT 컬럼에 표시)
     if (item.lots && item.lots.length > 0) {
       item.lots.forEach(lot => {
         rows.push({
           '품목코드': '',
-          '품목명': '',
+          '품목명/LOT': lot.lot_number || '',
           '구분': '',
           '단위': '',
-          'LOT번호': lot.lot_number || '',
+          '거래처': lot.supplier || '',
           '입고일': lot.inbound_date || '',
           '소비기한': lot.expiry_date || '',
-          '납품처': lot.supplier || '',
           '전일재고': lot.carry_over || 0,
           '입고': lot.period_inbound || 0,
           '사용': lot.period_usage || 0,
@@ -6470,13 +6468,12 @@ function downloadDailyLedger() {
   
   const columns = [
     { key: '품목코드', label: '품목코드' },
-    { key: '품목명', label: '품목명' },
+    { key: '품목명/LOT', label: '품목명/LOT' },
     { key: '구분', label: '구분' },
     { key: '단위', label: '단위' },
-    { key: 'LOT번호', label: 'LOT번호' },
+    { key: '거래처', label: '거래처' },
     { key: '입고일', label: '입고일' },
     { key: '소비기한', label: '소비기한' },
-    { key: '납품처', label: '납품처' },
     { key: '전일재고', label: '전일재고', type: 'number' },
     { key: '입고', label: '입고', type: 'number' },
     { key: '사용', label: '사용', type: 'number' },
@@ -6499,13 +6496,13 @@ function printDailyLedger() {
     return;
   }
   
-  // LOT 상세 포함 테이블 HTML 직접 생성
+  // LOT 상세 포함 테이블 HTML 직접 생성 (품목명→품목명/LOT, LOT→거래처로 변경)
   let tableHtml = `
     <table>
       <thead>
         <tr style="background:#e0e0e0;">
           <th>품목코드</th>
-          <th>품목명</th>
+          <th>품목명/LOT</th>
           <th>구분</th>
           <th>단위</th>
           <th style="text-align:right;">전일</th>
@@ -6513,7 +6510,7 @@ function printDailyLedger() {
           <th style="text-align:right;">사용</th>
           <th style="text-align:right;">조정</th>
           <th style="text-align:right;">현재고</th>
-          <th style="text-align:center;">LOT</th>
+          <th style="text-align:center;">거래처</th>
         </tr>
       </thead>
       <tbody>
@@ -6536,14 +6533,15 @@ function printDailyLedger() {
       </tr>
     `;
     
-    // LOT 상세 행들
+    // LOT 상세 행들 (거래처 먼저, LOT번호는 품목명/LOT 컬럼에)
     if (item.lots && item.lots.length > 0) {
       item.lots.forEach((lot, idx) => {
         tableHtml += `
           <tr style="font-size:10px; color:#555;">
             <td style="padding-left:20px;">${idx + 1}</td>
-            <td colspan="2">${lot.lot_number || '-'}</td>
-            <td style="text-align:center;">${lot.inbound_date || '-'} ~ ${lot.expiry_date || '-'}</td>
+            <td>${lot.lot_number || '-'}</td>
+            <td style="text-align:center;">${lot.inbound_date || '-'}</td>
+            <td style="text-align:center;">${lot.expiry_date || '-'}</td>
             <td style="text-align:right;">${lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-'}</td>
             <td style="text-align:right;">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
             <td style="text-align:right;">${lot.period_usage > 0 ? '-' + formatNumber(lot.period_usage) : '-'}</td>
@@ -6574,18 +6572,17 @@ function downloadMonthlyLedger() {
     return;
   }
   
-  // LOT 포함 데이터 생성
+  // LOT 포함 데이터 생성 (품목명→품목명/LOT, LOT번호→거래처로 변경)
   const rows = [];
   data.forEach(item => {
     rows.push({
       '품목코드': item.item_code,
-      '품목명': item.item_name,
+      '품목명/LOT': item.item_name,
       '구분': item.category,
       '단위': item.unit || '',
-      'LOT번호': '',
+      '거래처': '',
       '입고일': '',
       '소비기한': '',
-      '납품처': '',
       '월초재고': item.summary?.carry_over || item.opening_stock || 0,
       '입고': item.summary?.period_inbound || item.monthly_total?.inbound || 0,
       '사용': item.summary?.period_usage || item.monthly_total?.usage || 0,
@@ -6594,18 +6591,17 @@ function downloadMonthlyLedger() {
       '월말재고': item.summary?.closing_qty || item.closing_stock || 0,
       'LOT수': item.lot_count || ''
     });
-    // LOT 상세
+    // LOT 상세 (거래처 먼저, LOT번호는 품목명/LOT 컬럼에)
     if (item.lots && item.lots.length > 0) {
       item.lots.forEach(lot => {
         rows.push({
           '품목코드': '',
-          '품목명': '',
+          '품목명/LOT': lot.lot_number || '',
           '구분': '',
           '단위': '',
-          'LOT번호': lot.lot_number || '',
+          '거래처': lot.supplier || '',
           '입고일': lot.inbound_date || '',
           '소비기한': lot.expiry_date || '',
-          '납품처': lot.supplier || '',
           '월초재고': lot.carry_over || 0,
           '입고': lot.period_inbound || 0,
           '사용': lot.period_usage || 0,
@@ -6621,13 +6617,12 @@ function downloadMonthlyLedger() {
   const filename = `월별수불부_${period.year || new Date().getFullYear()}년${period.month || (new Date().getMonth()+1)}월`;
   const columns = [
     { key: '품목코드', label: '품목코드' },
-    { key: '품목명', label: '품목명' },
+    { key: '품목명/LOT', label: '품목명/LOT' },
     { key: '구분', label: '구분' },
     { key: '단위', label: '단위' },
-    { key: 'LOT번호', label: 'LOT번호' },
+    { key: '거래처', label: '거래처' },
     { key: '입고일', label: '입고일' },
     { key: '소비기한', label: '소비기한' },
-    { key: '납품처', label: '납품처' },
     { key: '월초재고', label: '월초재고', type: 'number' },
     { key: '입고', label: '입고', type: 'number' },
     { key: '사용', label: '사용', type: 'number' },
@@ -6660,7 +6655,7 @@ function printMonthlyLedger() {
     return;
   }
   
-  // LOT 상세 포함 테이블 HTML 직접 생성 (품목별 요약 / LOT별 상세) - 조정 컬럼 제거
+  // LOT 상세 포함 테이블 HTML 직접 생성 (품목명→품목명/LOT, LOT→거래처로 변경) - 조정 컬럼 제거
   // 조정을 월초재고에 포함
   const adjustedSummaryCarryOver = (summary.carry_over || 0) + (summary.period_adjustment || 0);
   
@@ -6669,14 +6664,14 @@ function printMonthlyLedger() {
       <thead>
         <tr style="background:#e0e0e0;">
           <th>품목코드</th>
-          <th>품목명</th>
+          <th>품목명/LOT</th>
           <th>구분</th>
           <th>단위</th>
           <th style="text-align:right;">월초</th>
           <th style="text-align:right;">입고</th>
           <th style="text-align:right;">사용</th>
           <th style="text-align:right;">월말</th>
-          <th style="text-align:center;">LOT</th>
+          <th style="text-align:center;">거래처</th>
         </tr>
       </thead>
       <tbody>
@@ -6701,7 +6696,7 @@ function printMonthlyLedger() {
       </tr>
     `;
     
-    // LOT 상세 행들 (선입선출 순서)
+    // LOT 상세 행들 (선입선출 순서) - 거래처 먼저, LOT번호는 품목명/LOT 컬럼에
     if (item.lots && item.lots.length > 0) {
       const sortedLots = item.lots.slice().sort((a, b) => (a.inbound_date || '').localeCompare(b.inbound_date || ''));
       sortedLots.forEach((lot, idx) => {
@@ -6710,8 +6705,9 @@ function printMonthlyLedger() {
         tableHtml += `
           <tr style="font-size:10px; color:#555;">
             <td style="padding-left:20px;">${idx + 1}</td>
-            <td colspan="2">${lot.lot_number || '-'}</td>
-            <td style="text-align:center;">${lot.inbound_date || '-'} ~ ${lot.expiry_date || '-'}</td>
+            <td>${lot.lot_number || '-'}</td>
+            <td style="text-align:center;">${lot.inbound_date || '-'}</td>
+            <td style="text-align:center;">${lot.expiry_date || '-'}</td>
             <td style="text-align:right;">${lotAdjustedCarryOver > 0 ? formatNumber(lotAdjustedCarryOver) : '-'}</td>
             <td style="text-align:right;">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
             <td style="text-align:right;">${lot.period_usage > 0 ? '-' + formatNumber(lot.period_usage) : '-'}</td>

@@ -6645,13 +6645,22 @@ function printMonthlyLedger() {
   const data = window.monthlyLedgerData || [];
   const period = window.monthlyLedgerPeriod || {};
   const summary = window.monthlyLedgerSummary || {};
+  const viewType = document.getElementById('monthly-view-type')?.value || 'summary';
   
   if (data.length === 0) {
     showToast('출력할 데이터가 없습니다. 먼저 조회해주세요.', 'warning');
     return;
   }
   
-  // LOT 상세 포함 테이블 HTML 직접 생성
+  const periodLabel = `${period.year || new Date().getFullYear()}년 ${period.month || (new Date().getMonth()+1)}월`;
+  
+  // 일별 추이 뷰 전용 출력
+  if (viewType === 'daily') {
+    printMonthlyDailyLedger(data, period, periodLabel);
+    return;
+  }
+  
+  // LOT 상세 포함 테이블 HTML 직접 생성 (품목별 요약 / LOT별 상세)
   let tableHtml = `
     <table>
       <thead>
@@ -6710,9 +6719,70 @@ function printMonthlyLedger() {
   
   tableHtml += '</tbody></table>';
   
-  const periodLabel = `${period.year || new Date().getFullYear()}년 ${period.month || (new Date().getMonth()+1)}월`;
   const title = `월별 수불부 (${periodLabel})`;
   const info = `<strong>월초:</strong> ${formatNumber(summary.carry_over || 0)} | <strong>입고:</strong> +${formatNumber(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatNumber(summary.period_usage || 0)} | <strong>월말:</strong> ${formatNumber(summary.closing_qty || 0)} | <strong>품목:</strong> ${data.length}건`;
+  
+  printData(title, tableHtml, info);
+}
+
+// 일별 추이 전용 출력
+function printMonthlyDailyLedger(data, period, periodLabel) {
+  const days = period.daysInMonth || 31;
+  
+  // 일별 추이 테이블 HTML 생성
+  let tableHtml = `
+    <style>
+      @media print {
+        @page { size: landscape; margin: 5mm; }
+        table { font-size: 8px !important; }
+        th, td { padding: 2px 3px !important; }
+      }
+    </style>
+    <table style="font-size:9px; border-collapse:collapse;">
+      <thead>
+        <tr style="background:#e0e0e0;">
+          <th style="min-width:100px; text-align:left;">품목명</th>
+          <th style="text-align:center; background:#d8b4fe;">월초</th>
+          ${Array.from({length: days}, (_, i) => 
+            `<th style="text-align:center; min-width:45px;">${i+1}일</th>`
+          ).join('')}
+          <th style="text-align:center; background:#fef08a; font-weight:bold;">월말</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+  
+  data.forEach(item => {
+    tableHtml += `
+      <tr style="border-bottom:1px solid #ddd;">
+        <td style="text-align:left;">
+          <div style="font-weight:bold;">${item.item_name}</div>
+          <div style="font-size:7px; color:#888;">${item.item_code} (${item.category})</div>
+        </td>
+        <td style="text-align:center; background:#f3e8ff;">${formatNumber(item.opening_stock)}</td>
+        ${item.daily_data.map(d => {
+          const hasActivity = d.inbound > 0 || d.usage > 0 || d.outbound > 0 || d.adjustment !== 0;
+          let cellContent = '';
+          if (hasActivity) {
+            if (d.inbound > 0) cellContent += `<div style="color:#2563eb;">+${formatNumber(d.inbound)}</div>`;
+            if (d.usage > 0) cellContent += `<div style="color:#ea580c;">-${formatNumber(d.usage)}</div>`;
+            if (d.outbound > 0) cellContent += `<div style="color:#dc2626;">-${formatNumber(d.outbound)}</div>`;
+            if (d.adjustment !== 0) cellContent += `<div style="color:#16a34a;">${d.adjustment > 0 ? '+' : ''}${formatNumber(d.adjustment)}</div>`;
+            cellContent += `<div style="font-weight:bold; border-top:1px solid #ccc; padding-top:1px;">${formatNumber(d.closing)}</div>`;
+          } else {
+            cellContent = `<span style="color:#9ca3af;">${formatNumber(d.closing)}</span>`;
+          }
+          return `<td style="text-align:center; ${hasActivity ? 'background:#eff6ff;' : ''}">${cellContent}</td>`;
+        }).join('')}
+        <td style="text-align:center; background:#fef9c3; font-weight:bold;">${formatNumber(item.closing_stock)}</td>
+      </tr>
+    `;
+  });
+  
+  tableHtml += '</tbody></table>';
+  
+  const title = `${periodLabel} 일별 수불 추이`;
+  const info = `<strong>품목:</strong> ${data.length}건 | <strong>기간:</strong> ${period.year}-${String(period.month).padStart(2,'0')}-01 ~ ${period.year}-${String(period.month).padStart(2,'0')}-${days}`;
   
   printData(title, tableHtml, info);
 }

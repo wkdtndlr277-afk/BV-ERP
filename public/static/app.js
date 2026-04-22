@@ -24567,8 +24567,22 @@ async function saveNewProduction() {
 
 // BOM 등록 모달
 async function showAddBomModal(productionCode = null) {
-  // 생산명 목록 로드
-  const items = window.productionManagementData || [];
+  showToast('데이터 로딩 중...', 'info');
+  
+  // 생산명 목록 로드 (항상 최신 데이터 가져오기)
+  try {
+    const productionRes = await api('/admin/production-items?limit=1000');
+    window.productionManagementData = productionRes.data || [];
+  } catch (e) {
+    console.error('생산명 로드 실패:', e);
+    window.productionManagementData = [];
+  }
+  const items = window.productionManagementData;
+  
+  if (items.length === 0) {
+    showToast('등록된 생산명이 없습니다. 먼저 생산명을 등록해주세요.', 'warning');
+    return;
+  }
   
   // 원료 목록 로드 (반제품 포함)
   if (!window.materialsList || window.materialsList.length === 0) {

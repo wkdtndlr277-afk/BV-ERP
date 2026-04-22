@@ -515,19 +515,27 @@ dailyReport.get('/reports/:id', async (c) => {
           }
         }
         
-        // 반제품 LOT 조회
+        // 반제품 LOT 조회 (최신 LOT 표시, 생산일보는 사용 예정량이므로 잔량 무관)
         if (sfCodes.length > 0) {
           for (let i = 0; i < sfCodes.length; i += batchSize) {
             const batch = sfCodes.slice(i, i + batchSize)
             try {
+              // semi_finished_lots 테이블에서 각 item_code별 최신 LOT 조회 (잔량 상관없이)
               const sfLotData = await c.env.DB.prepare(`
                 SELECT item_code, lot_number, expiry_date, remain_qty
                 FROM semi_finished_lots
                 WHERE item_code IN (${batch.map(() => '?').join(',')})
-                  AND remain_qty > 0
-                ORDER BY item_code, expiry_date ASC
+                ORDER BY item_code, prod_date DESC, id DESC
               `).bind(...batch).all()
-              materialLots.push(...(sfLotData.results || []))
+              
+              // 각 item_code별 최신 1개만 추가
+              const addedCodes = new Set<string>()
+              for (const row of (sfLotData.results || []) as any[]) {
+                if (!addedCodes.has(row.item_code)) {
+                  materialLots.push(row)
+                  addedCodes.add(row.item_code)
+                }
+              }
             } catch (e) {
               console.error('반제품 LOT 조회 오류:', e)
             }

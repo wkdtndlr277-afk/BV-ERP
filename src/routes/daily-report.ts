@@ -187,17 +187,66 @@ dailyReport.get('/reports/:id', async (c) => {
     // 2. 품목 목록 조회 (안전하게 처리)
     let itemsList: any[] = []
     try {
+      // 먼저 기본 품목 데이터 조회
       const items = await c.env.DB.prepare(`
-        SELECT pdi.*, 
-               COALESCE(pdi.lot_number, p.lot_number, pi.lot_number) as lot_number,
-               COALESCE(pdi.channel, p.channel) as channel
-        FROM production_daily_items pdi
-        LEFT JOIN production p ON pdi.production_code = p.product_code AND p.prod_date = ?
-        LEFT JOIN production_inbound pi ON pdi.production_code = pi.production_code AND pi.inbound_date = ?
-        WHERE pdi.report_id = ?
-        ORDER BY pdi.id
-      `).bind(reportDate, reportDate, id).all()
+        SELECT * FROM production_daily_items WHERE report_id = ? ORDER BY id
+      `).bind(id).all()
       itemsList = items.results as any[] || []
+      
+      // 해당 날짜의 생산 기록에서 LOT 정보 조회
+      const productionLots = await c.env.DB.prepare(`
+        SELECT product_code, lot_number, quantity, channel
+        FROM production 
+        WHERE prod_date = ?
+      `).bind(reportDate).all()
+      
+      // production_code + quantity로 매칭하여 LOT 할당
+      const lotMap = new Map<string, any[]>()
+      for (const p of productionLots.results as any[] || []) {
+        const key = `${p.product_code}_${p.quantity}`
+        if (!lotMap.has(key)) {
+          lotMap.set(key, [])
+        }
+        lotMap.get(key)!.push(p)
+      }
+      
+      // 단순 product_code 매칭용 맵도 생성
+      const simpleLotMap = new Map<string, any>()
+      for (const p of productionLots.results as any[] || []) {
+        if (!simpleLotMap.has(p.product_code)) {
+          simpleLotMap.set(p.product_code, p)
+        }
+      }
+      
+      // 각 품목에 LOT 할당
+      const usedLots = new Set<string>()
+      itemsList = itemsList.map((item: any) => {
+        // 이미 LOT가 있으면 그대로 사용
+        if (item.lot_number) {
+          return item
+        }
+        
+        // 1차 시도: production_code + quantity로 매칭
+        const key = `${item.production_code}_${item.quantity}`
+        const matchedLots = lotMap.get(key) || []
+        
+        for (const lot of matchedLots) {
+          if (!usedLots.has(lot.lot_number)) {
+            usedLots.add(lot.lot_number)
+            return { ...item, lot_number: lot.lot_number, channel: item.channel || lot.channel }
+          }
+        }
+        
+        // 2차 시도: production_code만으로 매칭
+        const simpleLot = simpleLotMap.get(item.production_code)
+        if (simpleLot && !usedLots.has(simpleLot.lot_number)) {
+          usedLots.add(simpleLot.lot_number)
+          return { ...item, lot_number: simpleLot.lot_number, channel: item.channel || simpleLot.channel }
+        }
+        
+        return item
+      })
+      
     } catch (itemError) {
       console.error('품목 목록 조회 오류:', itemError)
       // 간단한 조회로 폴백

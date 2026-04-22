@@ -218,8 +218,10 @@ dailyReport.get('/reports/:id', async (c) => {
         }
       }
       
-      // 각 품목에 LOT 할당
-      const usedLots = new Set<string>()
+      // 각 품목에 LOT 할당 (같은 product_code에 대해서는 LOT 중복 사용 허용)
+      // 사용 횟수 추적: "lot_number_productCode" -> 사용된 횟수
+      const lotUsageCount = new Map<string, number>()
+      
       itemsList = itemsList.map((item: any) => {
         // 이미 LOT가 있으면 그대로 사용
         if (item.lot_number) {
@@ -231,16 +233,18 @@ dailyReport.get('/reports/:id', async (c) => {
         const matchedLots = lotMap.get(key) || []
         
         for (const lot of matchedLots) {
-          if (!usedLots.has(lot.lot_number)) {
-            usedLots.add(lot.lot_number)
+          const usageKey = `${lot.lot_number}_${lot.product_code}_${lot.quantity}`
+          const used = lotUsageCount.get(usageKey) || 0
+          // 같은 조합은 1번만 사용 가능
+          if (used === 0) {
+            lotUsageCount.set(usageKey, used + 1)
             return { ...item, lot_number: lot.lot_number, channel: item.channel || lot.channel }
           }
         }
         
-        // 2차 시도: production_code만으로 매칭
+        // 2차 시도: production_code만으로 매칭 (LOT는 같은 product_code에 대해 여러 번 사용 가능)
         const simpleLot = simpleLotMap.get(item.production_code)
-        if (simpleLot && !usedLots.has(simpleLot.lot_number)) {
-          usedLots.add(simpleLot.lot_number)
+        if (simpleLot) {
           return { ...item, lot_number: simpleLot.lot_number, channel: item.channel || simpleLot.channel }
         }
         

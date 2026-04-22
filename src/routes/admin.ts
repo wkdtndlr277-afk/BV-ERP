@@ -4150,4 +4150,227 @@ admin.post('/convert-pr-to-pd', async (c) => {
   }
 })
 
+// 생산일보 기반 원료 사용 트랜잭션 동기화
+// 생산일보의 materials_summary를 기반으로 transactions 테이블에 사용 기록 생성
+admin.post('/sync-production-materials', async (c) => {
+  const { env } = c
+  const { report_id, date, dry_run } = await c.req.json()
+  
+  try {
+    let reports: any[] = []
+    
+    if (report_id) {
+      // 특정 생산일보만
+      const report = await env.DB.prepare(`SELECT * FROM production_daily_report WHERE id = ?`).bind(report_id).first()
+      if (report) reports = [report]
+    } else if (date) {
+      // 특정 날짜의 모든 생산일보
+      const result = await env.DB.prepare(`SELECT * FROM production_daily_report WHERE report_date = ?`).bind(date).all()
+      reports = result.results as any[]
+    } else {
+      return c.json({ success: false, error: 'report_id 또는 date가 필요합니다.' }, 400)
+    }
+    
+    if (reports.length === 0) {
+      return c.json({ success: false, error: '생산일보를 찾을 수 없습니다.' }, 404)
+    }
+    
+    const results: any[] = []
+    let totalInserted = 0
+    let totalSkipped = 0
+    
+    for (const report of reports) {
+      // 해당 생산일보의 원료 사용 정보 조회
+      const materials = await env.DB.prepare(`
+        SELECT material_code, material_name, required_quantity, unit
+        FROM production_daily_materials
+        WHERE report_id = ?
+      `).bind(report.id).all()
+      
+      const reportDate = report.report_date
+      const insertedItems: any[] = []
+      const skippedItems: any[] = []
+      
+      for (const mat of materials.results as any[]) {
+        const itemCode = mat.material_code
+        const quantity = mat.required_quantity || 0
+        
+        if (quantity <= 0) {
+          skippedItems.push({ item_code: itemCode, reason: '수량 0 이하' })
+          continue
+        }
+        
+        // 이미 해당 날짜에 같은 품목의 생산사용 트랜잭션이 있는지 확인
+        const existing = await env.DB.prepare(`
+          SELECT id FROM transactions 
+          WHERE item_code = ? AND trans_date = ? AND trans_type = '사용' 
+          AND memo LIKE '%생산일보%' AND memo LIKE ?
+        `).bind(itemCode, reportDate, `%${report.report_no}%`).first()
+        
+        if (existing) {
+          skippedItems.push({ item_code: itemCode, reason: '이미 존재' })
+          totalSkipped++
+          continue
+        }
+        
+        // g -> kg 변환 (단위가 g인 경우)
+        let quantityKg = quantity
+        if (mat.unit === 'g') {
+          quantityKg = quantity / 1000
+        }
+        
+        if (!dry_run) {
+          // 트랜잭션 INSERT (사용은 음수)
+          const now = new Date().toISOString().replace('T', ' ').substring(0, 19)
+          await env.DB.prepare(`
+            INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo, created_at)
+            VALUES (?, ?, '사용', ?, ?, ?)
+          `).bind(reportDate, itemCode, -quantityKg, `생산일보 동기화 (${report.report_no})`, now).run()
+          
+          // master 재고 차감
+          await env.DB.prepare(`
+            UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
+            WHERE item_code = ?
+          `).bind(quantityKg, itemCode).run()
+        }
+        
+        insertedItems.push({
+          item_code: itemCode,
+          name: mat.material_name,
+          quantity: quantityKg,
+          unit: 'kg'
+        })
+        totalInserted++
+      }
+      
+      results.push({
+        report_id: report.id,
+        report_no: report.report_no,
+        report_date: reportDate,
+        inserted: insertedItems.length,
+        skipped: skippedItems.length,
+        items: insertedItems,
+        skipped_items: skippedItems
+      })
+    }
+    
+    return c.json({
+      success: true,
+      dry_run: dry_run || false,
+      summary: {
+        reports_processed: reports.length,
+        total_inserted: totalInserted,
+        total_skipped: totalSkipped
+      },
+      results
+    })
+  } catch (error: any) {
+    console.error('Sync production materials error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 기간별 생산일보 원료 사용 일괄 동기화
+admin.post('/sync-production-materials-bulk', async (c) => {
+  const { env } = c
+  const { start_date, end_date, dry_run } = await c.req.json()
+  
+  if (!start_date || !end_date) {
+    return c.json({ success: false, error: 'start_date와 end_date가 필요합니다.' }, 400)
+  }
+  
+  try {
+    // 해당 기간의 모든 생산일보 조회
+    const reports = await env.DB.prepare(`
+      SELECT id, report_no, report_date 
+      FROM production_daily_report 
+      WHERE report_date >= ? AND report_date <= ?
+      ORDER BY report_date
+    `).bind(start_date, end_date).all()
+    
+    if (reports.results.length === 0) {
+      return c.json({ success: false, error: '해당 기간에 생산일보가 없습니다.' }, 404)
+    }
+    
+    let totalInserted = 0
+    let totalSkipped = 0
+    const reportResults: any[] = []
+    
+    for (const report of reports.results as any[]) {
+      // 해당 생산일보의 원료 사용 정보 조회
+      const materials = await env.DB.prepare(`
+        SELECT material_code, material_name, required_quantity, unit
+        FROM production_daily_materials
+        WHERE report_id = ?
+      `).bind(report.id).all()
+      
+      let inserted = 0
+      let skipped = 0
+      
+      for (const mat of materials.results as any[]) {
+        const itemCode = mat.material_code
+        const quantity = mat.required_quantity || 0
+        
+        if (quantity <= 0) {
+          skipped++
+          continue
+        }
+        
+        // 이미 존재하는지 확인
+        const existing = await env.DB.prepare(`
+          SELECT id FROM transactions 
+          WHERE item_code = ? AND trans_date = ? AND trans_type = '사용' 
+          AND memo LIKE '%생산일보%'
+        `).bind(itemCode, report.report_date).first()
+        
+        if (existing) {
+          skipped++
+          totalSkipped++
+          continue
+        }
+        
+        // g -> kg 변환
+        let quantityKg = mat.unit === 'g' ? quantity / 1000 : quantity
+        
+        if (!dry_run) {
+          const now = new Date().toISOString().replace('T', ' ').substring(0, 19)
+          await env.DB.prepare(`
+            INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo, created_at)
+            VALUES (?, ?, '사용', ?, ?, ?)
+          `).bind(report.report_date, itemCode, -quantityKg, `생산일보 동기화 (${report.report_no})`, now).run()
+          
+          await env.DB.prepare(`
+            UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
+            WHERE item_code = ?
+          `).bind(quantityKg, itemCode).run()
+        }
+        
+        inserted++
+        totalInserted++
+      }
+      
+      reportResults.push({
+        report_no: report.report_no,
+        date: report.report_date,
+        inserted,
+        skipped
+      })
+    }
+    
+    return c.json({
+      success: true,
+      dry_run: dry_run || false,
+      summary: {
+        reports_processed: reports.results.length,
+        total_inserted: totalInserted,
+        total_skipped: totalSkipped
+      },
+      results: reportResults
+    })
+  } catch (error: any) {
+    console.error('Sync production materials bulk error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

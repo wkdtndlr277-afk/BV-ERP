@@ -16248,9 +16248,11 @@ async function renderProduction() {
                 <option value="coupang">쿠팡</option>
                 <option value="kurly">컬리 (엑셀)</option>
                 <option value="kurly_paste">컬리 (붙여넣기) ⭐</option>
+                <option value="oasis_paste">오아시스 (붙여넣기) ⭐</option>
+                <option value="baemin_paste">배민 (붙여넣기) ⭐</option>
                 <option value="baemin">배민 (발주상세)</option>
                 <option value="bmart">비마트</option>
-                <option value="oasis">오아시스</option>
+                <option value="oasis">오아시스 (엑셀)</option>
                 <option value="direct_store">직영점</option>
                 <option value="production_plan">생산계획표</option>
               </select>
@@ -16307,6 +16309,90 @@ async function renderProduction() {
                 <i class="fas fa-eraser mr-1"></i> 지우기
               </button>
               <button onclick="processKurlyPaste()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+                <i class="fas fa-check mr-1"></i> 데이터 처리
+              </button>
+            </div>
+          </div>
+          
+          <!-- 오아시스 붙여넣기 영역 (숨김) -->
+          <div id="oasis-paste-zone" class="hidden">
+            <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+              <p class="text-green-800 font-medium"><i class="fas fa-clipboard mr-1"></i> 오아시스 발주서 붙여넣기</p>
+              <p class="text-sm text-green-600 mt-1">엑셀에서 <strong>바코드, 수량</strong> 열을 복사하여 아래에 붙여넣기 하세요</p>
+              <p class="text-xs text-green-500 mt-1">예시: 8809424534960 → 60 (탭 또는 줄바꿈으로 구분)</p>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 (공통) <span class="text-red-500">*</span></label>
+                <input type="date" id="oasis-paste-expiry" class="w-full border rounded-lg px-4 py-2">
+              </div>
+              <div class="flex items-end">
+                <button onclick="setPasteExpiryFromDays('oasis', 90)" class="px-3 py-2 bg-green-100 text-green-700 rounded-lg text-sm mr-2 hover:bg-green-200">+90일</button>
+                <button onclick="setPasteExpiryFromDays('oasis', 180)" class="px-3 py-2 bg-green-100 text-green-700 rounded-lg text-sm hover:bg-green-200">+180일</button>
+              </div>
+            </div>
+            
+            <textarea id="oasis-paste-input" 
+                      class="w-full border-2 border-dashed border-green-300 rounded-lg p-4 h-48 focus:border-green-500 focus:ring-2 focus:ring-green-200"
+                      placeholder="엑셀에서 복사한 데이터를 여기에 붙여넣기 (Ctrl+V)
+
+예시 (탭으로 구분):
+8809424534960	60
+8809424535134	100
+8809424534878	30
+
+또는 (한 줄씩):
+8809424534960, 60
+8809424535134, 100"></textarea>
+            
+            <div class="mt-4 flex justify-end gap-2">
+              <button onclick="clearPasteInput('oasis')" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+                <i class="fas fa-eraser mr-1"></i> 지우기
+              </button>
+              <button onclick="processPasteData('oasis')" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+                <i class="fas fa-check mr-1"></i> 데이터 처리
+              </button>
+            </div>
+          </div>
+          
+          <!-- 배민 붙여넣기 영역 (숨김) -->
+          <div id="baemin-paste-zone" class="hidden">
+            <div class="bg-cyan-50 border border-cyan-200 rounded-lg p-4 mb-4">
+              <p class="text-cyan-800 font-medium"><i class="fas fa-clipboard mr-1"></i> 배민 발주서 붙여넣기</p>
+              <p class="text-sm text-cyan-600 mt-1">엑셀에서 <strong>바코드, 수량</strong> 열을 복사하여 아래에 붙여넣기 하세요</p>
+              <p class="text-xs text-cyan-500 mt-1">예시: 8809424534960 → 60 (탭 또는 줄바꿈으로 구분)</p>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 (공통) <span class="text-red-500">*</span></label>
+                <input type="date" id="baemin-paste-expiry" class="w-full border rounded-lg px-4 py-2">
+              </div>
+              <div class="flex items-end">
+                <button onclick="setPasteExpiryFromDays('baemin', 90)" class="px-3 py-2 bg-cyan-100 text-cyan-700 rounded-lg text-sm mr-2 hover:bg-cyan-200">+90일</button>
+                <button onclick="setPasteExpiryFromDays('baemin', 180)" class="px-3 py-2 bg-cyan-100 text-cyan-700 rounded-lg text-sm hover:bg-cyan-200">+180일</button>
+              </div>
+            </div>
+            
+            <textarea id="baemin-paste-input" 
+                      class="w-full border-2 border-dashed border-cyan-300 rounded-lg p-4 h-48 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
+                      placeholder="엑셀에서 복사한 데이터를 여기에 붙여넣기 (Ctrl+V)
+
+예시 (탭으로 구분):
+8809424534960	60
+8809424535134	100
+8809424534878	30
+
+또는 (한 줄씩):
+8809424534960, 60
+8809424535134, 100"></textarea>
+            
+            <div class="mt-4 flex justify-end gap-2">
+              <button onclick="clearPasteInput('baemin')" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+                <i class="fas fa-eraser mr-1"></i> 지우기
+              </button>
+              <button onclick="processPasteData('baemin')" class="px-4 py-2 bg-cyan-600 text-white rounded-lg hover:bg-cyan-700">
                 <i class="fas fa-check mr-1"></i> 데이터 처리
               </button>
             </div>
@@ -17260,23 +17346,50 @@ function updateFileAccept() {
   const desc = document.getElementById('order-file-desc');
   const types = document.getElementById('order-file-types');
   const dropZone = document.getElementById('order-drop-zone');
-  const pasteZone = document.getElementById('kurly-paste-zone');
+  const kurlyPasteZone = document.getElementById('kurly-paste-zone');
+  const oasisPasteZone = document.getElementById('oasis-paste-zone');
+  const baeminPasteZone = document.getElementById('baemin-paste-zone');
+  
+  // 모든 붙여넣기 영역 숨기기
+  const hideAllPasteZones = () => {
+    if (kurlyPasteZone) kurlyPasteZone.classList.add('hidden');
+    if (oasisPasteZone) oasisPasteZone.classList.add('hidden');
+    if (baeminPasteZone) baeminPasteZone.classList.add('hidden');
+  };
   
   // 컬리 붙여넣기 모드
   if (channel === 'kurly_paste') {
     if (dropZone) dropZone.classList.add('hidden');
-    if (pasteZone) pasteZone.classList.remove('hidden');
-    // 기본 소비기한 설정 (생산일 + 90일)
+    hideAllPasteZones();
+    if (kurlyPasteZone) kurlyPasteZone.classList.remove('hidden');
     const prodDate = document.getElementById('order-prod-date')?.value;
-    if (prodDate) {
-      setKurlyExpiryFromDays(90);
-    }
+    if (prodDate) setKurlyExpiryFromDays(90);
+    return;
+  }
+  
+  // 오아시스 붙여넣기 모드
+  if (channel === 'oasis_paste') {
+    if (dropZone) dropZone.classList.add('hidden');
+    hideAllPasteZones();
+    if (oasisPasteZone) oasisPasteZone.classList.remove('hidden');
+    const prodDate = document.getElementById('order-prod-date')?.value;
+    if (prodDate) setPasteExpiryFromDays('oasis', 90);
+    return;
+  }
+  
+  // 배민 붙여넣기 모드
+  if (channel === 'baemin_paste') {
+    if (dropZone) dropZone.classList.add('hidden');
+    hideAllPasteZones();
+    if (baeminPasteZone) baeminPasteZone.classList.remove('hidden');
+    const prodDate = document.getElementById('order-prod-date')?.value;
+    if (prodDate) setPasteExpiryFromDays('baemin', 90);
     return;
   }
   
   // 파일 업로드 모드
   if (dropZone) dropZone.classList.remove('hidden');
-  if (pasteZone) pasteZone.classList.add('hidden');
+  hideAllPasteZones();
   
   if (fileInput) fileInput.accept = '.xlsx,.xls,.csv';
   if (icon) {
@@ -17429,6 +17542,152 @@ async function processKurlyPaste() {
 window.setKurlyExpiryFromDays = setKurlyExpiryFromDays;
 window.clearKurlyPaste = clearKurlyPaste;
 window.processKurlyPaste = processKurlyPaste;
+
+// 공통 소비기한 설정 함수 (오아시스/배민용)
+function setPasteExpiryFromDays(channel, days) {
+  const prodDate = document.getElementById('order-prod-date')?.value;
+  if (!prodDate) {
+    showToast('생산일을 먼저 선택해주세요', 'warning');
+    return;
+  }
+  const d = new Date(prodDate);
+  d.setDate(d.getDate() + days);
+  document.getElementById(`${channel}-paste-expiry`).value = d.toISOString().split('T')[0];
+}
+
+// 공통 입력 지우기 함수
+function clearPasteInput(channel) {
+  document.getElementById(`${channel}-paste-input`).value = '';
+}
+
+// 공통 붙여넣기 데이터 처리 함수 (오아시스/배민용)
+async function processPasteData(channel) {
+  const channelNames = { 'oasis': '오아시스', 'baemin': '배민' };
+  const channelName = channelNames[channel] || channel;
+  
+  const pasteInput = document.getElementById(`${channel}-paste-input`).value.trim();
+  const expiryDate = document.getElementById(`${channel}-paste-expiry`).value;
+  const prodDate = document.getElementById('order-prod-date').value;
+  
+  if (!pasteInput) {
+    showToast('붙여넣기할 데이터가 없습니다', 'warning');
+    return;
+  }
+  
+  if (!expiryDate) {
+    showToast('소비기한을 입력해주세요', 'warning');
+    return;
+  }
+  
+  if (!prodDate) {
+    showToast('생산일을 선택해주세요', 'warning');
+    return;
+  }
+  
+  showToast('데이터 분석 중...', 'info');
+  
+  // 바코드 데이터 로드
+  try {
+    const barcodeResult = await api('/daily-report/barcodes');
+    window.productionBarcodes = barcodeResult.data || [];
+  } catch (e) {
+    window.productionBarcodes = [];
+  }
+  
+  // 생산명 데이터 로드
+  try {
+    const prodResult = await api('/admin/production-items');
+    window.productionItemsData = prodResult.data || [];
+  } catch (e) {
+    window.productionItemsData = [];
+  }
+  
+  // 데이터 파싱 (탭, 쉼표, 공백으로 구분)
+  const lines = pasteInput.split(/[\r\n]+/).filter(line => line.trim());
+  const extractedItems = [];
+  
+  for (const line of lines) {
+    // 탭, 쉼표, 여러 공백으로 구분
+    const parts = line.split(/[\t,]+|\s{2,}/).map(p => p.trim()).filter(p => p);
+    
+    if (parts.length >= 2) {
+      let barcode = null;
+      let quantity = null;
+      
+      for (const part of parts) {
+        if (/^880\d{10}$/.test(part) || /^\d{8,14}$/.test(part)) {
+          barcode = part;
+        } else if (/^\d{1,5}$/.test(part) && parseInt(part) > 0 && parseInt(part) < 100000) {
+          quantity = parseInt(part);
+        }
+      }
+      
+      if (barcode && quantity) {
+        extractedItems.push({ barcode, quantity, expiryDate });
+      }
+    }
+  }
+  
+  console.log(`📋 ${channelName} 파싱된 품목:`, extractedItems.length, '개');
+  
+  if (extractedItems.length === 0) {
+    showToast('유효한 바코드/수량 데이터를 찾을 수 없습니다', 'warning');
+    return;
+  }
+  
+  // 바코드로 제품 매칭
+  const matchedItems = extractedItems.map(item => {
+    const barcodeData = window.productionBarcodes.find(b => b.barcode === item.barcode);
+    const productionItem = barcodeData ? window.productionItemsData?.find(p => p.production_code === barcodeData.production_code) : null;
+    
+    const displayName = barcodeData?.product_name || barcodeData?.production_name || `바코드: ${item.barcode}`;
+    
+    if (barcodeData) {
+      return {
+        originalName: displayName,
+        cleanName: displayName,
+        quantity: item.quantity,
+        barcode: item.barcode,
+        expiryDate: item.expiryDate,
+        matchedProduct: {
+          item_code: barcodeData.production_code,
+          item_name: barcodeData.production_name || displayName,
+          matchType: 'barcode'
+        },
+        productionItem: productionItem,
+        hasBOM: productionItem?.bom_count > 0 || true
+      };
+    }
+    
+    return {
+      originalName: displayName,
+      cleanName: displayName,
+      quantity: item.quantity,
+      barcode: item.barcode,
+      expiryDate: item.expiryDate,
+      matchedProduct: null,
+      productionItem: null,
+      hasBOM: false
+    };
+  });
+  
+  console.log(`📋 ${channelName} 매칭 결과:`, matchedItems.length, '개, 매칭됨:', matchedItems.filter(m => m.matchedProduct).length);
+  
+  // 미리보기 표시
+  window.orderUploadData = {
+    fileName: `${channelName} 붙여넣기`,
+    channel: `${channel}_paste`,
+    items: matchedItems,
+    hasExpiryDates: true
+  };
+  
+  showOrderPreview(matchedItems, `${channelName} 붙여넣기 (${extractedItems.length}개 품목)`);
+  showToast(`${matchedItems.length}개 품목 처리 완료 (매칭: ${matchedItems.filter(m => m.matchedProduct).length}개)`, 'success');
+}
+
+window.setPasteExpiryFromDays = setPasteExpiryFromDays;
+window.clearPasteInput = clearPasteInput;
+window.processPasteData = processPasteData;
 
 window.processKurlyPdfFile = processKurlyPdfFile;
 window.updateFileAccept = updateFileAccept;
@@ -19252,7 +19511,9 @@ function showDailyReportModal(reportData) {
                     'kurly_pdf': '컬리',
                     'bmart': 'B마트',
                     'oasis': '오아시스',
+                    'oasis_paste': '오아시스',
                     'baemin': '배민',
+                    'baemin_paste': '배민',
                     'direct_store': '직영점',
                     'generic': '기타',
                     'mixed': '복합',
@@ -19588,7 +19849,7 @@ async function printDailyReportById(reportId) {
       try {
         const channelMap = {
           'coupang': '쿠팡', 'kurly': '컬리', 'kurly_paste': '컬리', 'kurly_pdf': '컬리', 'bmart': 'B마트',
-          'oasis': '오아시스', 'baemin': '배민', 'direct_store': '직영점'
+          'oasis': '오아시스', 'oasis_paste': '오아시스', 'baemin': '배민', 'baemin_paste': '배민', 'direct_store': '직영점'
         };
         const channelName = channelMap[item.channel] || item.channel || '-';
         const productionName = String(item.production_name || item.production_code || '-');

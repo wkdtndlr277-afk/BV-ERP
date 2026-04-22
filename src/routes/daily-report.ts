@@ -222,6 +222,10 @@ dailyReport.get('/reports/:id', async (c) => {
       // 사용 횟수 추적: "lot_number_productCode" -> 사용된 횟수
       const lotUsageCount = new Map<string, number>()
       
+      // 날짜 기반 LOT 번호 생성을 위한 카운터 (생산 등록이 안 된 경우)
+      const dateStr = reportDate.replace(/-/g, '')
+      const autoLotCounter = new Map<string, number>()
+      
       itemsList = itemsList.map((item: any) => {
         // 이미 LOT가 있으면 그대로 사용
         if (item.lot_number) {
@@ -248,7 +252,14 @@ dailyReport.get('/reports/:id', async (c) => {
           return { ...item, lot_number: simpleLot.lot_number, channel: item.channel || simpleLot.channel }
         }
         
-        return item
+        // 3차: 생산 등록이 없는 경우 날짜 기반 자동 LOT 생성
+        // 형식: PRD-YYYYMMDD-제품코드-순번
+        const prodCode = item.production_code || 'UNKNOWN'
+        const counter = (autoLotCounter.get(prodCode) || 0) + 1
+        autoLotCounter.set(prodCode, counter)
+        const autoLot = `PRD-${dateStr}-${prodCode}-${String(counter).padStart(4, '0')}`
+        
+        return { ...item, lot_number: autoLot }
       })
       
     } catch (itemError) {
@@ -598,6 +609,15 @@ dailyReport.post('/reports/from-order', async (c) => {
     return c.json({ success: false, error: '생산일자와 품목 정보가 필요합니다.' }, 400)
   }
   
+  // ★ 동일 날짜에 기존 생산일보가 있는지 확인
+  const existingReport = await c.env.DB.prepare(`
+    SELECT id, report_no, order_file_name, total_products, total_quantity
+    FROM production_daily_report 
+    WHERE report_date = ? AND status IN ('draft', 'confirmed')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).bind(report_date).first() as { id: number, report_no: string, order_file_name: string | null, total_products: number, total_quantity: number } | null
+  
   // 1. 모든 필요한 데이터를 한 번에 로드 (최적화)
   const [barcodeData, productionData, bomData, legacyBomData] = await Promise.all([
     c.env.DB.prepare(`
@@ -653,15 +673,35 @@ dailyReport.post('/reports/from-order', async (c) => {
     }
   }
   
-  // 2. 생산일보 헤더 생성
-  const reportNo = `DR-${report_date.replace(/-/g, '')}-${Date.now().toString().slice(-4)}`
+  // 2. 생산일보 헤더 생성 또는 기존 생산일보에 추가
+  let reportId: number
+  let reportNo: string
+  let isNewReport = false
+  let existingFileNames: string[] = []
+  let existingTotalProducts = 0
+  let existingTotalQuantity = 0
   
-  const reportResult = await c.env.DB.prepare(`
-    INSERT INTO production_daily_report (report_date, report_no, order_file_name, created_by)
-    VALUES (?, ?, ?, ?)
-  `).bind(report_date, reportNo, order_file_name || null, created_by || null).run()
-  
-  const reportId = reportResult.meta.last_row_id
+  if (existingReport) {
+    // ★ 기존 생산일보가 있으면 해당 생산일보에 추가
+    reportId = existingReport.id
+    reportNo = existingReport.report_no
+    existingFileNames = existingReport.order_file_name ? existingReport.order_file_name.split(', ') : []
+    existingTotalProducts = existingReport.total_products || 0
+    existingTotalQuantity = existingReport.total_quantity || 0
+    console.log(`[daily-report] 기존 생산일보에 추가: ${reportNo} (ID: ${reportId})`)
+  } else {
+    // ★ 새로운 생산일보 생성
+    isNewReport = true
+    reportNo = `DR-${report_date.replace(/-/g, '')}-${Date.now().toString().slice(-4)}`
+    
+    const reportResult = await c.env.DB.prepare(`
+      INSERT INTO production_daily_report (report_date, report_no, order_file_name, created_by)
+      VALUES (?, ?, ?, ?)
+    `).bind(report_date, reportNo, order_file_name || null, created_by || null).run()
+    
+    reportId = reportResult.meta.last_row_id as number
+    console.log(`[daily-report] 새 생산일보 생성: ${reportNo} (ID: ${reportId})`)
+  }
   
   // 3. 품목별 처리 (메모리에서 매칭)
   let totalProducts = 0

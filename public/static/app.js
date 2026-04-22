@@ -19248,6 +19248,8 @@ function showDailyReportModal(reportData) {
                   const channelName = {
                     'coupang': '쿠팡',
                     'kurly': '컬리',
+                    'kurly_paste': '컬리',
+                    'kurly_pdf': '컬리',
                     'bmart': 'B마트',
                     'oasis': '오아시스',
                     'baemin': '배민',
@@ -19585,7 +19587,7 @@ async function printDailyReportById(reportId) {
     items.forEach((item, idx) => {
       try {
         const channelMap = {
-          'coupang': '쿠팡', 'kurly': '컬리', 'bmart': 'B마트',
+          'coupang': '쿠팡', 'kurly': '컬리', 'kurly_paste': '컬리', 'kurly_pdf': '컬리', 'bmart': 'B마트',
           'oasis': '오아시스', 'baemin': '배민', 'direct_store': '직영점'
         };
         const channelName = channelMap[item.channel] || item.channel || '-';
@@ -19900,7 +19902,7 @@ async function registerProductionFromDailyReport() {
       }
     }
     
-    hideLoading();
+    forceHideLoading();
     
     // 결과 표시 및 완료 처리
     const hasAnyResult = totalSuccess > 0 || totalSkipped > 0;
@@ -19928,7 +19930,7 @@ async function registerProductionFromDailyReport() {
     if (typeof loadDashboardData === 'function') loadDashboardData();
     
   } catch (e) {
-    hideLoading();
+    forceHideLoading();
     console.error('생산등록 오류:', e);
     showToast(`생산등록 오류: ${e.message || '서버 오류'}`, 'error');
     closeDailyReportModal();

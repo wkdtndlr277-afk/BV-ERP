@@ -6660,7 +6660,10 @@ function printMonthlyLedger() {
     return;
   }
   
-  // LOT 상세 포함 테이블 HTML 직접 생성 (품목별 요약 / LOT별 상세)
+  // LOT 상세 포함 테이블 HTML 직접 생성 (품목별 요약 / LOT별 상세) - 조정 컬럼 제거
+  // 조정을 월초재고에 포함
+  const adjustedSummaryCarryOver = (summary.carry_over || 0) + (summary.period_adjustment || 0);
+  
   let tableHtml = `
     <table>
       <thead>
@@ -6672,7 +6675,6 @@ function printMonthlyLedger() {
           <th style="text-align:right;">월초</th>
           <th style="text-align:right;">입고</th>
           <th style="text-align:right;">사용</th>
-          <th style="text-align:right;">조정</th>
           <th style="text-align:right;">월말</th>
           <th style="text-align:center;">LOT</th>
         </tr>
@@ -6681,6 +6683,9 @@ function printMonthlyLedger() {
   `;
   
   data.forEach(item => {
+    // 조정을 월초재고에 포함
+    const itemAdjustedCarryOver = (item.summary?.carry_over || 0) + (item.summary?.period_adjustment || 0);
+    
     // 품목 행
     tableHtml += `
       <tr style="background:#f9f9f9; font-weight:bold;">
@@ -6688,27 +6693,28 @@ function printMonthlyLedger() {
         <td>${item.item_name}</td>
         <td style="text-align:center;">${item.category}</td>
         <td style="text-align:center;">${item.unit || '-'}</td>
-        <td style="text-align:right;">${formatNumber(item.summary?.carry_over || 0)}</td>
+        <td style="text-align:right;">${formatNumber(itemAdjustedCarryOver)}</td>
         <td style="text-align:right;">${item.summary?.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-'}</td>
         <td style="text-align:right;">${item.summary?.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
-        <td style="text-align:right;">${item.summary?.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-'}</td>
         <td style="text-align:right;">${formatNumber(item.summary?.closing_qty || 0)}</td>
         <td style="text-align:center;">${item.lot_count || 0}건</td>
       </tr>
     `;
     
-    // LOT 상세 행들
+    // LOT 상세 행들 (선입선출 순서)
     if (item.lots && item.lots.length > 0) {
-      item.lots.forEach((lot, idx) => {
+      const sortedLots = item.lots.slice().sort((a, b) => (a.inbound_date || '').localeCompare(b.inbound_date || ''));
+      sortedLots.forEach((lot, idx) => {
+        // LOT별 조정을 이월에 포함
+        const lotAdjustedCarryOver = (lot.carry_over || 0) + (lot.period_adjustment || 0);
         tableHtml += `
           <tr style="font-size:10px; color:#555;">
             <td style="padding-left:20px;">${idx + 1}</td>
             <td colspan="2">${lot.lot_number || '-'}</td>
             <td style="text-align:center;">${lot.inbound_date || '-'} ~ ${lot.expiry_date || '-'}</td>
-            <td style="text-align:right;">${lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-'}</td>
+            <td style="text-align:right;">${lotAdjustedCarryOver > 0 ? formatNumber(lotAdjustedCarryOver) : '-'}</td>
             <td style="text-align:right;">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
             <td style="text-align:right;">${lot.period_usage > 0 ? '-' + formatNumber(lot.period_usage) : '-'}</td>
-            <td style="text-align:right;">${lot.period_adjustment !== 0 ? formatNumber(lot.period_adjustment) : '-'}</td>
             <td style="text-align:right;">${formatNumber(lot.closing_qty || 0)}</td>
             <td style="text-align:center;">${lot.supplier || '-'}</td>
           </tr>
@@ -6720,14 +6726,23 @@ function printMonthlyLedger() {
   tableHtml += '</tbody></table>';
   
   const title = `월별 수불부 (${periodLabel})`;
-  const info = `<strong>월초:</strong> ${formatNumber(summary.carry_over || 0)} | <strong>입고:</strong> +${formatNumber(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatNumber(summary.period_usage || 0)} | <strong>월말:</strong> ${formatNumber(summary.closing_qty || 0)} | <strong>품목:</strong> ${data.length}건`;
+  const info = `<strong>월초:</strong> ${formatNumber(adjustedSummaryCarryOver)} | <strong>입고:</strong> +${formatNumber(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatNumber(summary.period_usage || 0)} | <strong>월말:</strong> ${formatNumber(summary.closing_qty || 0)} | <strong>품목:</strong> ${data.length}건`;
   
   printData(title, tableHtml, info);
 }
 
-// 일별 추이 전용 출력
+// 일별 추이 전용 출력 - 조정 제거, 월초에 포함
 function printMonthlyDailyLedger(data, period, periodLabel) {
   const days = period.daysInMonth || 31;
+  
+  // 데이터 전처리: 첫날 조정을 월초재고에 포함
+  const processedData = data.map(item => {
+    const firstDayAdjustment = item.daily_data[0]?.adjustment || 0;
+    return {
+      ...item,
+      opening_stock: (item.opening_stock || 0) + firstDayAdjustment
+    };
+  });
   
   // 일별 추이 테이블 HTML 생성
   let tableHtml = `
@@ -6752,7 +6767,7 @@ function printMonthlyDailyLedger(data, period, periodLabel) {
       <tbody>
   `;
   
-  data.forEach(item => {
+  processedData.forEach(item => {
     tableHtml += `
       <tr style="border-bottom:1px solid #ddd;">
         <td style="text-align:left;">
@@ -6761,13 +6776,12 @@ function printMonthlyDailyLedger(data, period, periodLabel) {
         </td>
         <td style="text-align:center; background:#f3e8ff;">${formatNumber(item.opening_stock)}</td>
         ${item.daily_data.map(d => {
-          const hasActivity = d.inbound > 0 || d.usage > 0 || d.outbound > 0 || d.adjustment !== 0;
+          const hasActivity = d.inbound > 0 || d.usage > 0 || d.outbound > 0;
           let cellContent = '';
           if (hasActivity) {
             if (d.inbound > 0) cellContent += `<div style="color:#2563eb;">+${formatNumber(d.inbound)}</div>`;
             if (d.usage > 0) cellContent += `<div style="color:#ea580c;">-${formatNumber(d.usage)}</div>`;
             if (d.outbound > 0) cellContent += `<div style="color:#dc2626;">-${formatNumber(d.outbound)}</div>`;
-            if (d.adjustment !== 0) cellContent += `<div style="color:#16a34a;">${d.adjustment > 0 ? '+' : ''}${formatNumber(d.adjustment)}</div>`;
             cellContent += `<div style="font-weight:bold; border-top:1px solid #ccc; padding-top:1px;">${formatNumber(d.closing)}</div>`;
           } else {
             cellContent = `<span style="color:#9ca3af;">${formatNumber(d.closing)}</span>`;
@@ -6782,7 +6796,7 @@ function printMonthlyDailyLedger(data, period, periodLabel) {
   tableHtml += '</tbody></table>';
   
   const title = `${periodLabel} 일별 수불 추이`;
-  const info = `<strong>품목:</strong> ${data.length}건 | <strong>기간:</strong> ${period.year}-${String(period.month).padStart(2,'0')}-01 ~ ${period.year}-${String(period.month).padStart(2,'0')}-${days}`;
+  const info = `<strong>품목:</strong> ${processedData.length}건 | <strong>기간:</strong> ${period.year}-${String(period.month).padStart(2,'0')}-01 ~ ${period.year}-${String(period.month).padStart(2,'0')}-${days}`;
   
   printData(title, tableHtml, info);
 }
@@ -7000,7 +7014,10 @@ function renderMonthlySummaryView(result) {
   
   const periodLabel = period.year + '년 ' + parseInt(period.month) + '월';
   
-  // 제품의 경우: 입고→생산, 사용→출고로 통합표시
+  // 조정을 월초재고에 포함
+  const adjustedCarryOver = (summary.carry_over || 0) + (summary.period_adjustment || 0);
+  
+  // 제품의 경우: 입고→생산, 사용→출고로 통합표시 (조정 컬럼 제거)
   var headerHtml = '<div class="p-3 border-b bg-gradient-to-r from-purple-50 to-white flex justify-between items-center flex-wrap gap-2">' +
     '<div class="flex items-center gap-3">' +
       '<span class="text-lg font-bold text-gray-700">' + periodLabel + ' 수불부</span>' +
@@ -7008,15 +7025,14 @@ function renderMonthlySummaryView(result) {
       (isProduct ? '<span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">HACCP 제품 수불부</span>' : '') +
     '</div>' +
     '<div class="flex items-center gap-4 text-sm">' +
-      '<span class="text-purple-600"><b>월초</b> ' + formatNumber(summary.carry_over || 0) + '</span>' +
+      '<span class="text-purple-600"><b>월초</b> ' + formatNumber(adjustedCarryOver) + '</span>' +
       '<span class="' + terms.inboundColor + '"><b>' + terms.inbound + '</b> +' + formatNumber(summary.period_inbound || 0) + '</span>' +
       '<span class="' + terms.usageColor + '"><b>' + terms.usage + '</b> -' + formatNumber((summary.period_usage || 0) + (summary.period_outbound || 0)) + '</span>' +
-      '<span class="text-green-600"><b>조정</b> ' + formatNumber(summary.period_adjustment || 0) + '</span>' +
       '<span class="text-gray-800 font-bold"><b>월말</b> ' + formatNumber(summary.closing_qty || 0) + '</span>' +
     '</div>' +
   '</div>';
   
-  // 테이블 헤더 - 제품의 경우 사용/출고 통합
+  // 테이블 헤더 - 조정 컬럼 제거
   var theadHtml = '<thead><tr class="bg-gray-100 text-gray-600 text-xs">' +
     '<th class="p-2 text-left sticky left-0 bg-gray-100">품목명</th>' +
     '<th class="p-2 text-center">구분</th>' +
@@ -7025,29 +7041,29 @@ function renderMonthlySummaryView(result) {
     '<th class="p-2 text-right ' + terms.inboundColor + '">' + terms.inbound + '</th>' +
     '<th class="p-2 text-right ' + terms.usageColor + '">' + terms.usage + '</th>' +
     (isProduct ? '' : '<th class="p-2 text-right text-red-600">출고</th>') +
-    '<th class="p-2 text-right text-green-600">조정</th>' +
     '<th class="p-2 text-right font-bold bg-yellow-50">월말재고</th>' +
     '<th class="p-2 text-center">LOT</th>' +
   '</tr></thead>';
   
   var bodyHtml = '';
   if (data.length === 0) {
-    bodyHtml = '<tr><td colspan="' + (isProduct ? '9' : '10') + '" class="p-8 text-center text-gray-400">해당월 데이터가 없습니다.</td></tr>';
+    bodyHtml = '<tr><td colspan="' + (isProduct ? '8' : '9') + '" class="p-8 text-center text-gray-400">해당월 데이터가 없습니다.</td></tr>';
   } else {
     bodyHtml = data.map(function(item) {
       var itemTerms = getLedgerTerms(item.category);
       var totalUsage = (item.summary.period_usage || 0) + (item.summary.period_outbound || 0);
       var categoryClass = item.category === '원료' ? 'bg-green-100 text-green-700' : item.category === '제품' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700';
+      // 조정을 월초재고에 포함
+      var itemAdjustedCarryOver = (item.summary.carry_over || 0) + (item.summary.period_adjustment || 0);
       
       return '<tr class="border-b hover:bg-purple-50 ' + (item.summary.closing_qty <= 0 ? 'text-gray-400' : '') + '">' +
         '<td class="p-2 sticky left-0 bg-white"><div class="font-medium">' + item.item_name + '</div><div class="text-xs text-gray-400 font-mono">' + item.item_code + '</div></td>' +
         '<td class="p-2 text-center"><span class="px-2 py-0.5 text-xs rounded ' + categoryClass + '">' + item.category + '</span></td>' +
         '<td class="p-2 text-center text-xs text-gray-500">' + (item.unit || '-') + '</td>' +
-        '<td class="p-2 text-right text-purple-600">' + formatNumber(item.summary.carry_over) + '</td>' +
+        '<td class="p-2 text-right text-purple-600">' + formatNumber(itemAdjustedCarryOver) + '</td>' +
         '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-') + '</td>' +
         '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (totalUsage > 0 ? '-' + formatNumber(totalUsage) : '-') + '</td>' +
         (item.category === '제품' ? '' : '<td class="p-2 text-right text-red-600">' + (item.summary.period_outbound > 0 ? '-' + formatNumber(item.summary.period_outbound) : '-') + '</td>') +
-        '<td class="p-2 text-right text-green-600">' + (item.summary.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-') + '</td>' +
         '<td class="p-2 text-right font-bold bg-yellow-50">' + formatNumber(item.summary.closing_qty) + '</td>' +
         '<td class="p-2 text-center"><span class="text-xs ' + (item.lot_count > 0 ? 'text-indigo-600' : 'text-gray-400') + '">' + item.lot_count + '건</span></td>' +
       '</tr>';
@@ -7058,11 +7074,10 @@ function renderMonthlySummaryView(result) {
     '<td class="p-2 sticky left-0 bg-gray-100">합계</td>' +
     '<td class="p-2"></td>' +
     '<td class="p-2"></td>' +
-    '<td class="p-2 text-right text-purple-600">' + formatNumber(summary.carry_over || 0) + '</td>' +
+    '<td class="p-2 text-right text-purple-600">' + formatNumber(adjustedCarryOver) + '</td>' +
     '<td class="p-2 text-right ' + terms.inboundColor + '">+' + formatNumber(summary.period_inbound || 0) + '</td>' +
     '<td class="p-2 text-right ' + terms.usageColor + '">-' + formatNumber((summary.period_usage || 0) + (summary.period_outbound || 0)) + '</td>' +
     (isProduct ? '' : '<td class="p-2 text-right text-red-600">-' + formatNumber(summary.period_outbound || 0) + '</td>') +
-    '<td class="p-2 text-right text-green-600">' + formatNumber(summary.period_adjustment || 0) + '</td>' +
     '<td class="p-2 text-right bg-yellow-100">' + formatNumber(summary.closing_qty || 0) + '</td>' +
     '<td class="p-2 text-center">' + (result.total_lot_count || 0) + '건</td>' +
   '</tr></tfoot>';
@@ -7073,7 +7088,7 @@ function renderMonthlySummaryView(result) {
     '</table></div>';
 }
 
-// 월별 LOT 상세 렌더링
+// 월별 LOT 상세 렌더링 (조정 컬럼 제거, LOT별 선입선출 사용량 표시)
 function renderMonthlyLotView(result) {
   const data = result.data || [];
   const summary = result.summary || {};
@@ -7084,36 +7099,44 @@ function renderMonthlyLotView(result) {
   
   const periodLabel = period.year + '년 ' + parseInt(period.month) + '월';
   
-  // LOT 행 렌더링 헬퍼
+  // LOT 행 렌더링 헬퍼 - 조정 컬럼 제거, 이월에 조정 포함
   function renderMonthlyLotRow(lot, lotIdx, item, itemTerms) {
     var lotUsage = (lot.period_usage || 0) + (lot.period_outbound || 0);
     var expiryClass = isExpiringSoon(lot.expiry_date) ? 'text-red-600 font-bold' : '';
+    // 조정을 이월에 포함
+    var adjustedCarryOver = (lot.carry_over || 0) + (lot.period_adjustment || 0);
     
     return '<tr class="border-b hover:bg-indigo-50 ' + (lot.closing_qty <= 0 ? 'text-gray-400 bg-gray-50' : '') + '">' +
       '<td class="p-2 text-center"><span class="inline-flex items-center justify-center w-5 h-5 rounded-full ' + (lot.closing_qty > 0 ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-gray-500') + ' text-xs font-bold">' + (lotIdx + 1) + '</span></td>' +
-      '<td class="p-2 font-mono">' + (lot.lot_number || '-') + '</td>' +
-      '<td class="p-2 text-center">' + (lot.inbound_date || '-') + '</td>' +
-      '<td class="p-2 text-center ' + expiryClass + '">' + (lot.expiry_date || '-') + '</td>' +
-      '<td class="p-2 text-center text-gray-500">' + (lot.supplier || '-') + '</td>' +
-      '<td class="p-2 text-right text-purple-600">' + (lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-') + '</td>' +
+      '<td class="p-2 font-mono text-xs">' + (lot.lot_number || '-') + '</td>' +
+      '<td class="p-2 text-center text-xs">' + (lot.inbound_date || '-') + '</td>' +
+      '<td class="p-2 text-center text-xs ' + expiryClass + '">' + (lot.expiry_date || '-') + '</td>' +
+      '<td class="p-2 text-center text-gray-500 text-xs">' + (lot.supplier || '-') + '</td>' +
+      '<td class="p-2 text-right text-purple-600">' + (adjustedCarryOver > 0 ? formatNumber(adjustedCarryOver) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (lotUsage > 0 ? '-' + formatNumber(lotUsage) : '-') + '</td>' +
-      '<td class="p-2 text-right text-green-600">' + (lot.period_adjustment !== 0 ? formatNumber(lot.period_adjustment) : '-') + '</td>' +
       '<td class="p-2 text-right font-bold">' + formatNumber(lot.closing_qty) + ' <span class="font-normal text-gray-400">' + (item.unit || '') + '</span></td>' +
     '</tr>';
   }
   
-  // 품목 행 렌더링 헬퍼
+  // 품목 행 렌더링 헬퍼 - 조정 컬럼 제거
   function renderMonthlyItemRow(item, idx) {
     var itemTerms = getLedgerTerms(item.category);
     var totalUsage = (item.summary.period_usage || 0) + (item.summary.period_outbound || 0);
     var categoryClass = item.category === '원료' ? 'bg-green-100 text-green-700' : item.category === '제품' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700';
     var dateLabel = itemTerms.inbound === '생산' ? '생산일' : '입고일';
     var supplierLabel = itemTerms.inbound === '생산' ? '생산처' : '납품처';
+    // 조정을 월초재고에 포함
+    var adjustedCarryOver = (item.summary.carry_over || 0) + (item.summary.period_adjustment || 0);
     
     var lotTableHtml = '';
     if (item.lots && item.lots.length > 0) {
-      var lotRowsHtml = item.lots.map(function(lot, lotIdx) {
+      // LOT별 선입선출 순서로 정렬 (입고일 기준 오름차순)
+      var sortedLots = item.lots.slice().sort(function(a, b) {
+        return (a.inbound_date || '').localeCompare(b.inbound_date || '');
+      });
+      
+      var lotRowsHtml = sortedLots.map(function(lot, lotIdx) {
         return renderMonthlyLotRow(lot, lotIdx, item, itemTerms);
       }).join('');
       
@@ -7127,7 +7150,6 @@ function renderMonthlyLotView(result) {
         '<th class="p-2 text-right text-purple-600">이월</th>' +
         '<th class="p-2 text-right ' + itemTerms.inboundColor + '">' + itemTerms.inbound + '</th>' +
         '<th class="p-2 text-right ' + itemTerms.usageColor + '">' + itemTerms.usage + '</th>' +
-        '<th class="p-2 text-right text-green-600">조정</th>' +
         '<th class="p-2 text-right font-bold">잔량</th>' +
         '</tr></thead><tbody>' + lotRowsHtml + '</tbody></table></div>';
     } else {
@@ -7138,23 +7160,22 @@ function renderMonthlyLotView(result) {
       '<td class="p-2 text-center"><i class="fas fa-chevron-right text-gray-400 text-xs transition-transform" id="monthly-chevron-' + idx + '"></i></td>' +
       '<td class="p-2"><div class="font-medium">' + item.item_name + '</div><div class="text-xs text-gray-400 font-mono">' + item.item_code + '</div></td>' +
       '<td class="p-2 text-center"><span class="px-2 py-0.5 text-xs rounded ' + categoryClass + '">' + item.category + '</span></td>' +
-      '<td class="p-2 text-right text-purple-600">' + formatNumber(item.summary.carry_over) + '</td>' +
+      '<td class="p-2 text-right text-purple-600">' + formatNumber(adjustedCarryOver) + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (totalUsage > 0 ? '-' + formatNumber(totalUsage) : '-') + '</td>' +
-      '<td class="p-2 text-right text-green-600">' + (item.summary.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-') + '</td>' +
       '<td class="p-2 text-right font-bold">' + formatNumber(item.summary.closing_qty) + '</td>' +
       '<td class="p-2 text-center"><span class="px-2 py-0.5 text-xs rounded ' + (item.lot_count > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500') + '">' + item.lot_count + '</span></td>' +
     '</tr>' +
-    '<tr id="monthly-lot-' + idx + '" class="hidden"><td colspan="9" class="p-0 bg-indigo-50">' + lotTableHtml + '</td></tr>';
+    '<tr id="monthly-lot-' + idx + '" class="hidden"><td colspan="8" class="p-0 bg-indigo-50">' + lotTableHtml + '</td></tr>';
   }
   
   var bodyHtml = data.length === 0 
-    ? '<tr><td colspan="9" class="p-8 text-center text-gray-400">해당월 데이터가 없습니다.</td></tr>'
+    ? '<tr><td colspan="8" class="p-8 text-center text-gray-400">해당월 데이터가 없습니다.</td></tr>'
     : data.map(function(item, idx) { return renderMonthlyItemRow(item, idx); }).join('');
   
   contentEl.innerHTML = '<div class="p-3 border-b bg-gradient-to-r from-indigo-50 to-white flex justify-between items-center flex-wrap gap-2">' +
     '<div class="flex items-center gap-3">' +
-      '<span class="text-lg font-bold text-gray-700">' + periodLabel + ' LOT별 수불부</span>' +
+      '<span class="text-lg font-bold text-gray-700">' + periodLabel + ' LOT별 수불부 (선입선출)</span>' +
       '<span class="text-sm text-gray-500">품목 ' + data.length + '건, LOT ' + (result.total_lot_count || 0) + '건</span>' +
       (isProduct ? '<span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">HACCP 제품 수불부</span>' : '') +
       '<button onclick="toggleAllMonthlyLots()" class="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-300"><i class="fas fa-expand-alt mr-1"></i>전체 펼침/접기</button>' +
@@ -7168,7 +7189,6 @@ function renderMonthlyLotView(result) {
       '<th class="p-2 text-right text-purple-600">월초</th>' +
       '<th class="p-2 text-right ' + terms.inboundColor + '">' + terms.inbound + '</th>' +
       '<th class="p-2 text-right ' + terms.usageColor + '">' + terms.usage + '</th>' +
-      '<th class="p-2 text-right text-green-600">조정</th>' +
       '<th class="p-2 text-right font-bold">월말</th>' +
       '<th class="p-2 text-center">LOT</th>' +
     '</tr></thead>' +
@@ -7176,7 +7196,7 @@ function renderMonthlyLotView(result) {
   '</table></div>';
 }
 
-// 월별 일별 추이 렌더링 (엑셀 재고 시트 스타일)
+// 월별 일별 추이 렌더링 (엑셀 재고 시트 스타일) - 조정 제거, 월초에 포함
 function renderMonthlyDailyView(result) {
   const data = result.data || [];
   const period = result.period || {};
@@ -7185,11 +7205,29 @@ function renderMonthlyDailyView(result) {
   const periodLabel = `${period.year}년 ${parseInt(period.month)}월`;
   const days = period.daysInMonth || 31;
   
+  // 데이터 전처리: 조정을 월초재고에 포함
+  const processedData = data.map(item => {
+    // 첫 날의 조정값을 월초재고에 포함
+    const firstDayAdjustment = item.daily_data[0]?.adjustment || 0;
+    const adjustedOpeningStock = (item.opening_stock || 0) + firstDayAdjustment;
+    
+    return {
+      ...item,
+      opening_stock: adjustedOpeningStock,
+      // 각 일자의 조정은 표시하지 않음 (이미 월초에 포함됨)
+      daily_data: item.daily_data.map((d, idx) => ({
+        ...d,
+        // 첫 날 조정은 월초에 이미 포함됨
+        adjustment: idx === 0 ? 0 : d.adjustment
+      }))
+    };
+  });
+  
   contentEl.innerHTML = `
     <div class="p-3 border-b bg-gradient-to-r from-green-50 to-white flex justify-between items-center flex-wrap gap-2">
       <div class="flex items-center gap-3">
         <span class="text-lg font-bold text-gray-700">${periodLabel} 일별 수불 추이</span>
-        <span class="text-sm text-gray-500">품목 ${data.length}건</span>
+        <span class="text-sm text-gray-500">품목 ${processedData.length}건</span>
       </div>
       <div class="text-xs text-gray-500">
         <i class="fas fa-info-circle mr-1"></i> 가로 스크롤로 일자별 데이터 확인
@@ -7211,9 +7249,9 @@ function renderMonthlyDailyView(result) {
           </tr>
         </thead>
         <tbody>
-          ${data.length === 0 ? `
+          ${processedData.length === 0 ? `
             <tr><td colspan="${days + 3}" class="p-8 text-center text-gray-400">해당월 데이터가 없습니다.</td></tr>
-          ` : data.map((item, idx) => `
+          ` : processedData.map((item, idx) => `
             <tr class="border-b hover:bg-green-50 ${item.closing_stock <= 0 ? 'text-gray-400' : ''}">
               <td class="p-2 sticky left-0 bg-white z-10 border-r">
                 <div class="font-medium text-sm truncate max-w-[140px]" title="${item.item_name}">${item.item_name}</div>
@@ -7222,7 +7260,7 @@ function renderMonthlyDailyView(result) {
               </td>
               <td class="p-2 text-center border-r bg-purple-50 font-medium">${formatNumber(item.opening_stock)}</td>
               ${item.daily_data.map((d, dayIdx) => {
-                const hasActivity = d.inbound > 0 || d.usage > 0 || d.outbound > 0 || d.adjustment !== 0;
+                const hasActivity = d.inbound > 0 || d.usage > 0 || d.outbound > 0;
                 const isWeekend = (dayIdx + 1) % 7 === 0 || (dayIdx + 1) % 7 === 6;
                 return `
                   <td class="p-1 text-center ${isWeekend ? 'bg-gray-50' : ''} ${hasActivity ? 'bg-blue-50' : ''}">
@@ -7231,7 +7269,6 @@ function renderMonthlyDailyView(result) {
                         ${d.inbound > 0 ? `<div class="text-blue-600">+${formatNumber(d.inbound)}</div>` : ''}
                         ${d.usage > 0 ? `<div class="text-orange-600">-${formatNumber(d.usage)}</div>` : ''}
                         ${d.outbound > 0 ? `<div class="text-red-600">-${formatNumber(d.outbound)}</div>` : ''}
-                        ${d.adjustment !== 0 ? `<div class="text-green-600">${d.adjustment > 0 ? '+' : ''}${formatNumber(d.adjustment)}</div>` : ''}
                         <div class="font-medium border-t pt-0.5">${formatNumber(d.closing)}</div>
                       </div>
                     ` : `
@@ -17084,6 +17121,20 @@ function handleOrderFileSelect(e) {
 async function processMultipleOrderFiles(files) {
   if (!files || files.length === 0) return;
   
+  // PDF 파일이 있는지 확인 - PDF는 별도 처리
+  const pdfFiles = files.filter(f => f.name.toLowerCase().endsWith('.pdf'));
+  const otherFiles = files.filter(f => !f.name.toLowerCase().endsWith('.pdf'));
+  
+  // PDF 파일이 있으면 PDF 처리 함수로 전달 (첫 번째 PDF만)
+  if (pdfFiles.length > 0) {
+    console.log('📁 PDF 파일 감지:', pdfFiles.length, '개 → processPdfFile 호출');
+    await processPdfFile(pdfFiles[0]);
+    return;
+  }
+  
+  // PDF가 아닌 파일이 없으면 종료
+  if (otherFiles.length === 0) return;
+  
   // 마스터 데이터 확인 및 로드
   if (!state.masterItems || state.masterItems.length === 0) {
     showToast('마스터 데이터 로드 중...', 'info');
@@ -17110,13 +17161,14 @@ async function processMultipleOrderFiles(files) {
     window.productionBarcodes = [];
   }
   
-  showToast(`${files.length}개 파일 분석 중...`, 'info');
+  const filesToProcess = otherFiles; // PDF 제외한 파일만 처리
+  showToast(`${filesToProcess.length}개 파일 분석 중...`, 'info');
   
   let allItems = [];
   let fileNames = [];
   let detectedChannel = null;
   
-  for (const file of files) {
+  for (const file of filesToProcess) {
     try {
       const items = await parseSingleOrderFile(file);
       if (items.length > 0) {
@@ -17277,11 +17329,29 @@ async function processPdfFile(file) {
     }
     
     console.log('📄 추출된 텍스트 길이:', allText.length);
-    console.log('📄 텍스트 샘플 (처음 1000자):', allText.substring(0, 1000));
+    console.log('📄 텍스트 샘플 (처음 1500자):', allText.substring(0, 1500));
+    
+    // 공백/줄바꿈 제거한 텍스트 (바코드가 분리되어 추출될 수 있음)
+    const cleanText = allText.replace(/\s+/g, ' ');
     
     // 바코드 패턴 찾기 (880으로 시작하는 13자리)
-    const barcodePattern = /880\d{10}/g;
-    const foundBarcodes = allText.match(barcodePattern) || [];
+    // PDF에서 바코드가 분리될 수 있으므로 여러 패턴 시도
+    let barcodePattern = /880\d{10}/g;
+    let foundBarcodes = allText.match(barcodePattern) || [];
+    
+    // 바코드가 없으면 공백 제거 텍스트에서 다시 시도
+    if (foundBarcodes.length === 0) {
+      foundBarcodes = cleanText.match(barcodePattern) || [];
+    }
+    
+    // 여전히 없으면 880942453xxxx 패턴 (본비반트 바코드)
+    if (foundBarcodes.length === 0) {
+      // 숫자만 추출해서 13자리 바코드 찾기
+      const allNumbers = allText.replace(/[^0-9]/g, '');
+      const barcodeMatches = allNumbers.match(/880942453\d{4}/g) || [];
+      foundBarcodes = [...new Set(barcodeMatches)];
+    }
+    
     console.log('📄 발견된 바코드:', foundBarcodes.length, '개', foundBarcodes.slice(0, 5));
     
     // 컬리 거래명세서 형식: 바코드[품명]수량(소) 2026-11-07

@@ -16321,6 +16321,7 @@ async function renderProduction() {
                 <option value="oasis_paste">오아시스 (붙여넣기) ⭐</option>
                 <option value="baemin_paste">배민 (붙여넣기) ⭐</option>
                 <option value="baemin">배민 (발주상세)</option>
+                <option value="baemin_pdf">배민 (입고확인서 PDF) ⭐</option>
                 <option value="bmart">비마트</option>
                 <option value="oasis">오아시스 (엑셀)</option>
                 <option value="direct_store">직영점</option>
@@ -17047,9 +17048,9 @@ function handleOrderFileDrop(e) {
     console.log('📁 File dropped:', file.name, '| channel:', selectedChannel, '| isPDF:', fileName.endsWith('.pdf'));
     
     // PDF 파일 처리 (확장자 또는 채널로 판단)
-    if (fileName.endsWith('.pdf') || selectedChannel === 'kurly_pdf') {
-      console.log('📁 PDF 파일 → processKurlyPdfFile 호출');
-      processKurlyPdfFile(file);
+    if (fileName.endsWith('.pdf') || selectedChannel === 'kurly_pdf' || selectedChannel === 'baemin_pdf') {
+      console.log('📁 PDF 파일 → processPdfFile 호출');
+      processPdfFile(file);
       return;
     }
     
@@ -17068,9 +17069,9 @@ function handleOrderFileSelect(e) {
       const file = files[0];
       const fileName = file.name.toLowerCase();
       console.log('📁 Single file:', fileName, '| isPDF:', fileName.endsWith('.pdf'));
-      if (fileName.endsWith('.pdf') || selectedChannel === 'kurly_pdf') {
-        console.log('📁 PDF 파일 → processKurlyPdfFile 호출');
-        processKurlyPdfFile(file);
+      if (fileName.endsWith('.pdf') || selectedChannel === 'kurly_pdf' || selectedChannel === 'baemin_pdf') {
+        console.log('📁 PDF 파일 → processPdfFile 호출');
+        processPdfFile(file);
         return;
       }
     }
@@ -17229,8 +17230,8 @@ async function ensurePdfJsLoaded() {
 }
 
 // 컬리 PDF 거래명세서 처리
-async function processKurlyPdfFile(file) {
-  console.log('🔷 processKurlyPdfFile 시작:', file.name);
+async function processPdfFile(file) {
+  console.log('🔷 processPdfFile 시작:', file.name);
   showToast('PDF 분석 중...', 'info');
   
   try {
@@ -17314,7 +17315,68 @@ async function processKurlyPdfFile(file) {
     }
     console.log('📄 컬리 패턴 추출 결과:', extractedItems.length, '개');
     
-    // 대안 패턴: 바코드와 소비기한 개별 매칭
+    // 배민 입고확인서 패턴: 입고확인서, PO 번호, 바코드-상품명-소비기한-수량 테이블 형식
+    // PDF 텍스트에서 순차적으로 바코드/날짜/수량 추출
+    if (extractedItems.length === 0 && (allText.includes('입고확인서') || allText.includes('우아한형제들'))) {
+      console.log('📄 배민 입고확인서 패턴 시도');
+      
+      // 소비기한 패턴: 2026-06-30 또는 2026‑06‑30 (유니코드 하이픈)
+      const expiryPattern = /20\d{2}[-‑]\d{2}[-‑]\d{2}/g;
+      const allExpiries = allText.match(expiryPattern) || [];
+      // 입고예정일시 제외 (04-28 등)하고 06, 07 등 제품 소비기한만
+      const productExpiries = allExpiries.filter(d => {
+        const month = parseInt(d.split(/[-‑]/)[1]);
+        return month >= 5; // 5월 이후 날짜만 소비기한으로 간주
+      }).map(d => d.replace(/‑/g, '-')); // 유니코드 하이픈을 일반 하이픈으로
+      
+      console.log('📄 배민 소비기한 후보:', productExpiries);
+      
+      // 바코드별 데이터 추출 (테이블 행 순서대로)
+      const uniqueBarcodes = [...new Set(foundBarcodes)];
+      
+      // 바코드가 나타나는 순서대로 매칭
+      for (let i = 0; i < uniqueBarcodes.length; i++) {
+        const barcode = uniqueBarcodes[i];
+        const barcodeIdx = allText.indexOf(barcode);
+        
+        // 바코드 이후 텍스트에서 데이터 추출
+        const afterText = allText.substring(barcodeIdx, barcodeIdx + 500);
+        
+        // 소비기한: 바코드 이후 가장 가까운 날짜
+        const nearbyExpiry = afterText.match(/20\d{2}[-‑](0[5-9]|1[0-2])[-‑]\d{2}/);
+        const expiryDate = nearbyExpiry ? nearbyExpiry[0].replace(/‑/g, '-') : (productExpiries[i] || null);
+        
+        // 수량: "상온 40 1 40" 또는 "40 1 40" 패턴에서 마지막 숫자(총 수량)
+        // 배민 형식: 입수량 박스 낱개 → 박스 수량이 총 수량
+        const qtyPattern = /(?:상온|냉장|냉동)?\s*(\d+)\s+\d+\s+(\d+)/;
+        const qtyMatch = afterText.match(qtyPattern);
+        let quantity = 1;
+        if (qtyMatch) {
+          // 마지막 숫자가 총 입고수량
+          quantity = parseInt(qtyMatch[2]) || parseInt(qtyMatch[1]) || 1;
+        } else {
+          // 대안: 숫자 패턴에서 추출
+          const nums = afterText.match(/\b(\d{1,4})\b/g);
+          if (nums && nums.length >= 3) {
+            // 40, 1, 40 패턴에서 세 번째 숫자
+            quantity = parseInt(nums[2]) || 1;
+          }
+        }
+        
+        console.log(`📄 배민 바코드 ${barcode}: 소비기한=${expiryDate}, 수량=${quantity}`);
+        
+        extractedItems.push({
+          barcode: barcode,
+          productName: '',
+          quantity: quantity,
+          expiryDate: expiryDate
+        });
+      }
+      
+      console.log('📄 배민 패턴 추출 결과:', extractedItems.length, '개');
+    }
+    
+    // 대안 패턴: 바코드와 소비기한 개별 매칭 (컬리/배민 패턴 모두 실패 시)
     if (extractedItems.length === 0 && foundBarcodes.length > 0) {
       const uniqueBarcodes = [...new Set(foundBarcodes)];
       console.log('📄 대안 패턴 시도: 고유 바코드', uniqueBarcodes.length, '개');
@@ -17391,10 +17453,14 @@ async function processKurlyPdfFile(file) {
     
     console.log('📄 매칭 결과:', matchedItems.length, '개, 매칭됨:', matchedItems.filter(m => m.matchedProduct).length);
     
+    // PDF 유형 감지 (배민 또는 컬리)
+    const isBaemin = allText.includes('입고확인서') || allText.includes('우아한형제들') || file.name.includes('PO3');
+    const pdfChannel = isBaemin ? 'baemin_pdf' : 'kurly_pdf';
+    
     // 미리보기 표시
     window.orderUploadData = {
       fileName: file.name,
-      channel: 'kurly_pdf',
+      channel: pdfChannel,
       items: matchedItems,
       hasExpiryDates: matchedItems.some(m => m.expiryDate)
     };
@@ -17759,7 +17825,8 @@ window.setPasteExpiryFromDays = setPasteExpiryFromDays;
 window.clearPasteInput = clearPasteInput;
 window.processPasteData = processPasteData;
 
-window.processKurlyPdfFile = processKurlyPdfFile;
+window.processKurlyPdfFile = processPdfFile; // 호환성 유지
+window.processPdfFile = processPdfFile;
 window.updateFileAccept = updateFileAccept;
 
 // 발주서 파일 처리 (단일 파일용 - 호환성 유지)
@@ -17767,9 +17834,9 @@ async function processOrderFile(file) {
   const fileName = file.name.toLowerCase();
   const selectedChannel = document.getElementById('order-channel')?.value;
   
-  // PDF 파일 처리 (컬리 거래명세서)
-  if (fileName.endsWith('.pdf') || selectedChannel === 'kurly_pdf') {
-    await processKurlyPdfFile(file);
+  // PDF 파일 처리 (컬리 거래명세서, 배민 입고확인서)
+  if (fileName.endsWith('.pdf') || selectedChannel === 'kurly_pdf' || selectedChannel === 'baemin_pdf') {
+    await processPdfFile(file);
     return;
   }
   

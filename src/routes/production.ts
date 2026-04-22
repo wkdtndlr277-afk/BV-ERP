@@ -437,40 +437,49 @@ productionRoutes.post('/', async (c) => {
 // 빠른 일괄 생산 등록 (발주서 업로드용 - 원재료 차감 포함)
 // 주의: Cloudflare Workers CPU 제한으로 인해 한 번에 최대 30개까지만 처리
 productionRoutes.post('/batch', async (c) => {
-  const body = await c.req.json();
-  const { items, prod_date, production_date, memo, channel: defaultChannel } = body;
-  // items: [{ product_code, quantity, channel?, expiry_date?, barcode?, box_quantity? }]
-  
-  if (!items || items.length === 0) {
-    return c.json({ success: false, error: '등록할 항목이 없습니다.' }, 400);
-  }
-  
-  // 배치 크기 제한 (D1 batch() 사용으로 최적화됨)
-  // batch()는 여러 쿼리를 단일 네트워크 요청으로 처리
-  // D1의 batch() 성능 개선으로 150개까지 처리 가능
-  const MAX_BATCH_SIZE = 150;
-  if (items.length > MAX_BATCH_SIZE) {
-    return c.json({ 
-      success: false, 
-      error: `한 번에 최대 ${MAX_BATCH_SIZE}개까지만 등록할 수 있습니다. (요청: ${items.length}개)`,
-      max_batch_size: MAX_BATCH_SIZE,
-      requested_count: items.length
-    }, 400);
-  }
-  
-  // prod_date 또는 production_date 둘 다 지원
-  const productionDate = prod_date || production_date || new Date().toISOString().split('T')[0];
+  try {
+    const body = await c.req.json();
+    const { items, prod_date, production_date, memo, channel: defaultChannel } = body;
+    // items: [{ product_code, quantity, channel?, expiry_date?, barcode?, box_quantity? }]
+    
+    if (!items || items.length === 0) {
+      return c.json({ success: false, error: '등록할 항목이 없습니다.' }, 400);
+    }
+    
+    // 배치 크기 제한 (D1 batch() 사용으로 최적화됨)
+    // batch()는 여러 쿼리를 단일 네트워크 요청으로 처리
+    // D1의 batch() 성능 개선으로 150개까지 처리 가능
+    const MAX_BATCH_SIZE = 150;
+    if (items.length > MAX_BATCH_SIZE) {
+      return c.json({ 
+        success: false, 
+        error: `한 번에 최대 ${MAX_BATCH_SIZE}개까지만 등록할 수 있습니다. (요청: ${items.length}개)`,
+        max_batch_size: MAX_BATCH_SIZE,
+        requested_count: items.length
+      }, 400);
+    }
+    
+    // prod_date 또는 production_date 둘 다 지원
+    const productionDate = prod_date || production_date || new Date().toISOString().split('T')[0];
   
   // 중복 등록 방지: 해당 날짜에 이미 등록된 제품 확인
+  // SQLite는 바인딩 변수가 최대 999개이므로 배치로 나눠서 조회
   const productCodes = items.map((i: any) => i.product_code);
-  const placeholders = productCodes.map(() => '?').join(',');
+  const existingSet = new Set<string>();
   
-  const existingProductions = await c.env.DB.prepare(`
-    SELECT product_code FROM production 
-    WHERE prod_date = ? AND product_code IN (${placeholders})
-  `).bind(productionDate, ...productCodes).all<any>();
-  
-  const existingSet = new Set((existingProductions.results || []).map((p: any) => p.product_code));
+  const QUERY_BATCH_SIZE = 50; // 안전하게 50개씩 배치 처리
+  for (let i = 0; i < productCodes.length; i += QUERY_BATCH_SIZE) {
+    const batch = productCodes.slice(i, i + QUERY_BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+    const existingProductions = await c.env.DB.prepare(`
+      SELECT product_code FROM production 
+      WHERE prod_date = ? AND product_code IN (${placeholders})
+    `).bind(productionDate, ...batch).all<any>();
+    
+    for (const p of existingProductions.results || []) {
+      existingSet.add(p.product_code);
+    }
+  }
   
   // 이미 등록된 제품 필터링
   const newItems = items.filter((i: any) => !existingSet.has(i.product_code));
@@ -502,48 +511,67 @@ productionRoutes.post('/batch', async (c) => {
     });
   }
   
-  // 모든 제품 정보를 한 번에 조회 (master + production_items + production_barcodes)
-  const newPlaceholders = newProductCodes.map(() => '?').join(',');
+  // 모든 제품 정보를 배치로 조회 (master + production_items + production_barcodes)
+  // 1. master 테이블에서 조회 (배치 처리)
+  let allMasterProducts: any[] = [];
+  for (let i = 0; i < newProductCodes.length; i += QUERY_BATCH_SIZE) {
+    const batch = newProductCodes.slice(i, i + QUERY_BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+    const products = await c.env.DB.prepare(`
+      SELECT item_code, item_name, expiry_days FROM master 
+      WHERE item_code IN (${placeholders}) AND category = '제품'
+    `).bind(...batch).all<any>();
+    allMasterProducts = allMasterProducts.concat(products.results || []);
+  }
+  const products = { results: allMasterProducts };
   
-  // 1. master 테이블에서 조회
-  const products = await c.env.DB.prepare(`
-    SELECT item_code, item_name, expiry_days FROM master 
-    WHERE item_code IN (${newPlaceholders}) AND category = '제품'
-  `).bind(...newProductCodes).all<any>();
+  // 2. production_items 테이블에서 조회 (배치 처리)
+  let allProductionItems: any[] = [];
+  for (let i = 0; i < newProductCodes.length; i += QUERY_BATCH_SIZE) {
+    const batch = newProductCodes.slice(i, i + QUERY_BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+    const productionItemsBatch = await c.env.DB.prepare(`
+      SELECT production_code as item_code, production_name as item_name, shelf_life_days as expiry_days 
+      FROM production_items 
+      WHERE production_code IN (${placeholders})
+    `).bind(...batch).all<any>();
+    allProductionItems = allProductionItems.concat(productionItemsBatch.results || []);
+  }
+  const productionItems = { results: allProductionItems };
   
-  // 2. production_items 테이블에서 조회
-  const productionItems = await c.env.DB.prepare(`
-    SELECT production_code as item_code, production_name as item_name, shelf_life_days as expiry_days 
-    FROM production_items 
-    WHERE production_code IN (${newPlaceholders})
-  `).bind(...newProductCodes).all<any>();
-  
-  // 3. production_barcodes 테이블에서도 조회 (바코드 매핑된 경우, box_quantity 및 expiry_days 포함)
-  const barcodeItems = await c.env.DB.prepare(`
-    SELECT pb.production_code as item_code, 
-           pi.production_name as item_name,
-           COALESCE(pi.shelf_life_days, 7) as default_expiry_days,
-           pb.box_quantity,
-           pb.barcode,
-           pb.expiry_days as barcode_expiry_days,
-           pb.channel
-    FROM production_barcodes pb
-    LEFT JOIN production_items pi ON pb.production_code = pi.production_code
-    WHERE pb.production_code IN (${newPlaceholders})
-  `).bind(...newProductCodes).all<any>();
+  // 3. production_barcodes 테이블에서도 조회 (배치 처리)
+  // 참고: expiry_days는 production_items.shelf_life_days에서 가져옴
+  let allBarcodeItems: any[] = [];
+  for (let i = 0; i < newProductCodes.length; i += QUERY_BATCH_SIZE) {
+    const batch = newProductCodes.slice(i, i + QUERY_BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+    const barcodeItemsBatch = await c.env.DB.prepare(`
+      SELECT pb.production_code as item_code, 
+             pi.production_name as item_name,
+             COALESCE(pi.shelf_life_days, 7) as default_expiry_days,
+             pb.box_quantity,
+             pb.barcode,
+             pb.channel
+      FROM production_barcodes pb
+      LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+      WHERE pb.production_code IN (${placeholders})
+    `).bind(...batch).all<any>();
+    allBarcodeItems = allBarcodeItems.concat(barcodeItemsBatch.results || []);
+  }
+  const barcodeItems = { results: allBarcodeItems };
   
   // production_code별 box_quantity 맵 (채널별로 다를 수 있으므로 대표값 사용)
   const boxQuantityMap = new Map<string, number>();
-  // 바코드별 소비기한 맵 (바코드 → expiry_days)
-  const barcodeExpiryMap = new Map<string, number>();
+  // production_code별 기본 소비기한 맵 (production_items.shelf_life_days 기반)
+  const productionExpiryMap = new Map<string, number>();
   for (const b of barcodeItems.results || []) {
     // 여러 바코드가 있을 경우, 가장 큰 box_quantity 사용 (안전하게)
     const current = boxQuantityMap.get(b.item_code) || 1;
     boxQuantityMap.set(b.item_code, Math.max(current, b.box_quantity || 1));
     
-    // 바코드별 소비기한 저장 (barcode_expiry_days가 설정된 경우만)
-    if (b.barcode && b.barcode_expiry_days) {
-      barcodeExpiryMap.set(b.barcode, b.barcode_expiry_days);
+    // production_code별 소비기한 저장
+    if (b.default_expiry_days && !productionExpiryMap.has(b.item_code)) {
+      productionExpiryMap.set(b.item_code, b.default_expiry_days);
     }
   }
   
@@ -565,27 +593,41 @@ productionRoutes.post('/batch', async (c) => {
     }
   }
   
-  // 모든 BOM 정보를 한 번에 조회 (기존 bom 테이블 + production_bom 테이블)
-  const allBom = await c.env.DB.prepare(`
-    SELECT b.product_code, b.item_code, b.quantity, b.unit,
-           COALESCE(m1.item_code, m2.item_code) as matched_item_code,
-           COALESCE(m1.item_name, m2.item_name) as item_name
-    FROM bom b
-    LEFT JOIN master m1 ON b.item_code = m1.item_code
-    LEFT JOIN master m2 ON (
-      (b.item_code LIKE 'RM%' AND m2.item_code = 'R' || SUBSTR(b.item_code, 3)) OR
-      (b.item_code LIKE 'R%' AND b.item_code NOT LIKE 'RM%' AND m2.item_code = 'RM' || SUBSTR(b.item_code, 2))
-    )
-    WHERE b.product_code IN (${newPlaceholders})
-  `).bind(...newProductCodes).all<any>();
+  // 모든 BOM 정보를 배치로 조회 (기존 bom 테이블 + production_bom 테이블)
+  let allBomResults: any[] = [];
+  for (let i = 0; i < newProductCodes.length; i += QUERY_BATCH_SIZE) {
+    const batch = newProductCodes.slice(i, i + QUERY_BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+    const bomBatch = await c.env.DB.prepare(`
+      SELECT b.product_code, b.item_code, b.quantity, b.unit,
+             COALESCE(m1.item_code, m2.item_code) as matched_item_code,
+             COALESCE(m1.item_name, m2.item_name) as item_name
+      FROM bom b
+      LEFT JOIN master m1 ON b.item_code = m1.item_code
+      LEFT JOIN master m2 ON (
+        (b.item_code LIKE 'RM%' AND m2.item_code = 'R' || SUBSTR(b.item_code, 3)) OR
+        (b.item_code LIKE 'R%' AND b.item_code NOT LIKE 'RM%' AND m2.item_code = 'RM' || SUBSTR(b.item_code, 2))
+      )
+      WHERE b.product_code IN (${placeholders})
+    `).bind(...batch).all<any>();
+    allBomResults = allBomResults.concat(bomBatch.results || []);
+  }
+  const allBom = { results: allBomResults };
   
-  // production_bom 테이블에서도 조회
-  const prodBom = await c.env.DB.prepare(`
-    SELECT pb.production_code as product_code, pb.material_code as item_code, 
-           pb.quantity, pb.unit, pb.material_code as matched_item_code, pb.material_name as item_name
-    FROM production_bom pb
-    WHERE pb.production_code IN (${newPlaceholders})
-  `).bind(...newProductCodes).all<any>();
+  // production_bom 테이블에서도 배치 조회
+  let allProdBomResults: any[] = [];
+  for (let i = 0; i < newProductCodes.length; i += QUERY_BATCH_SIZE) {
+    const batch = newProductCodes.slice(i, i + QUERY_BATCH_SIZE);
+    const placeholders = batch.map(() => '?').join(',');
+    const prodBomBatch = await c.env.DB.prepare(`
+      SELECT pb.production_code as product_code, pb.material_code as item_code, 
+             pb.quantity, pb.unit, pb.material_code as matched_item_code, pb.material_name as item_name
+      FROM production_bom pb
+      WHERE pb.production_code IN (${placeholders})
+    `).bind(...batch).all<any>();
+    allProdBomResults = allProdBomResults.concat(prodBomBatch.results || []);
+  }
+  const prodBom = { results: allProdBomResults };
   
   // BOM을 제품별로 그룹핑
   const bomMap = new Map<string, any[]>();
@@ -632,11 +674,8 @@ productionRoutes.post('/batch', async (c) => {
     
     const productLot = `PRD-${productionDate.replace(/-/g, '')}-${item.product_code}-${String(Date.now()).slice(-4)}`;
     
-    // 소비기한 우선순위: 1) 바코드별 설정 → 2) 생산명 기본값 → 3) 7일
-    let expiryDays = product.expiry_days || 7;
-    if (item.barcode && barcodeExpiryMap.has(item.barcode)) {
-      expiryDays = barcodeExpiryMap.get(item.barcode)!;
-    }
+    // 소비기한 우선순위: 1) production_items.shelf_life_days → 2) master.expiry_days → 3) 7일
+    let expiryDays = productionExpiryMap.get(item.product_code) || product.expiry_days || 7;
     
     const itemExpiryDate = item.expiry_date || (() => {
       const d = new Date(productionDate);
@@ -844,6 +883,15 @@ productionRoutes.post('/batch', async (c) => {
       results
     }
   });
+  
+  } catch (error: any) {
+    console.error('Production batch API error:', error);
+    return c.json({ 
+      success: false, 
+      error: '생산 등록 중 오류가 발생했습니다.',
+      detail: error.message || String(error)
+    }, 500);
+  }
 });
 
 // 생산 취소 (원복)

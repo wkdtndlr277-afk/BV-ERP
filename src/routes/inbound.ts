@@ -232,18 +232,24 @@ inboundRoutes.get('/', async (c) => {
   const start_date = c.req.query('start_date');
   const end_date = c.req.query('end_date');
   const has_remain = c.req.query('has_remain'); // 잔량 있는 것만
+  const include_unlinked = c.req.query('include_unlinked'); // 마스터 없는 품목 포함
   
   let query = `
     SELECT i.*, 
-           COALESCE(m.item_name, s.item_name) as item_name, 
-           COALESCE(m.category, '부자재') as category, 
-           COALESCE(m.unit, s.unit) as unit 
+           COALESCE(m.item_name, s.item_name, i.item_code) as item_name, 
+           COALESCE(m.category, CASE WHEN s.item_code IS NOT NULL THEN '부자재' ELSE '미등록' END) as category, 
+           COALESCE(m.unit, s.unit, 'EA') as unit 
     FROM inbound i 
     LEFT JOIN master m ON i.item_code = m.item_code
     LEFT JOIN supplies s ON i.item_code = s.item_code
-    WHERE (m.item_code IS NOT NULL OR s.item_code IS NOT NULL)
+    WHERE 1=1
   `;
   const params: any[] = [];
+  
+  // 마스터 없는 품목 제외 (기본값) - 이전 호환성 유지
+  if (include_unlinked !== 'true') {
+    query += ' AND (m.item_code IS NOT NULL OR s.item_code IS NOT NULL)';
+  }
   
   if (item_code) {
     query += ' AND i.item_code = ?';
@@ -694,6 +700,42 @@ inboundRoutes.get('/debug-columns', async (c) => {
       columns,
       has_is_sample: columns.includes('is_sample'),
       has_is_sanitary: columns.includes('is_sanitary')
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 디버그: 누락된 입고 데이터 확인 (master/supplies에 없는 품목)
+inboundRoutes.get('/debug-missing', async (c) => {
+  try {
+    // inbound 테이블 전체 건수
+    const totalResult = await c.env.DB.prepare('SELECT COUNT(*) as total FROM inbound').first<{total: number}>();
+    
+    // master 또는 supplies에 있는 품목의 입고 건수
+    const linkedResult = await c.env.DB.prepare(`
+      SELECT COUNT(*) as linked FROM inbound i
+      WHERE EXISTS (SELECT 1 FROM master m WHERE m.item_code = i.item_code)
+         OR EXISTS (SELECT 1 FROM supplies s WHERE s.item_code = i.item_code)
+    `).first<{linked: number}>();
+    
+    // 누락된 입고 목록 (품목 마스터에 없는 것)
+    const missingResult = await c.env.DB.prepare(`
+      SELECT DISTINCT i.item_code, COUNT(*) as inbound_count, SUM(i.remain_qty) as total_remain
+      FROM inbound i
+      WHERE NOT EXISTS (SELECT 1 FROM master m WHERE m.item_code = i.item_code)
+        AND NOT EXISTS (SELECT 1 FROM supplies s WHERE s.item_code = i.item_code)
+      GROUP BY i.item_code
+      ORDER BY inbound_count DESC
+      LIMIT 20
+    `).all();
+    
+    return c.json({ 
+      success: true, 
+      total_inbound: totalResult?.total || 0,
+      linked_inbound: linkedResult?.linked || 0,
+      missing_count: (totalResult?.total || 0) - (linkedResult?.linked || 0),
+      missing_items: missingResult.results
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

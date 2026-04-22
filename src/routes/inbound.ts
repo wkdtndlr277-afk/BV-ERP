@@ -706,6 +706,27 @@ inboundRoutes.get('/debug-columns', async (c) => {
   }
 });
 
+// 원료인데 위생자재로 잘못 표시된 데이터 수정
+inboundRoutes.post('/fix-sanitary', async (c) => {
+  try {
+    // 원료 카테고리인데 is_sanitary=1인 입고 데이터를 is_sanitary=0으로 수정
+    const result = await c.env.DB.prepare(`
+      UPDATE inbound 
+      SET is_sanitary = 0, updated_at = CURRENT_TIMESTAMP
+      WHERE is_sanitary = 1 
+        AND item_code IN (SELECT item_code FROM master WHERE category = '원료')
+    `).run();
+    
+    return c.json({ 
+      success: true, 
+      message: '원료 품목의 위생자재 플래그가 수정되었습니다.',
+      updated_count: result.meta?.changes || 0
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 디버그: 누락된 입고 데이터 확인 (master/supplies에 없는 품목)
 inboundRoutes.get('/debug-missing', async (c) => {
   try {

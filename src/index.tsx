@@ -757,7 +757,7 @@ app.get('/*', (c) => {
     <!-- Modal Container -->
     <div id="modal-container"></div>
     
-    <script src="/static/app.js?v=${SYSTEM_VERSION}&t=${Date.now()}"></script>
+    <script src="/static/app.js?v=1776829220?v=${SYSTEM_VERSION}&t=${Date.now()}"></script>
 </body>
 </html>
   `);

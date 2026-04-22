@@ -264,14 +264,14 @@ dailyReport.get('/reports/:id', async (c) => {
       }
     }
     
-    // 3. 저장된 원재료 데이터 조회 (master/semi_finished_items 테이블과 조인, 부자재 제외)
-    // 부자재(supplies 테이블에 있는 항목)는 생산일보 원료에서 제외
+    // 3. 저장된 원재료 데이터 조회 (master/semi_finished_items 테이블과 조인)
+    // 부자재(supplies) 제외, 삭제된 원료(master/semi_finished_items에 없는 코드) 제외
     let savedMaterials: any[] = []
     try {
       const materials = await c.env.DB.prepare(`
         SELECT 
           pdm.material_code, 
-          COALESCE(m.item_name, sf.item_name, pdm.material_name) as material_name, 
+          COALESCE(m.item_name, sf.item_name) as material_name, 
           pdm.unit, 
           SUM(pdm.required_quantity) as total_quantity,
           GROUP_CONCAT(DISTINCT pdm.production_code) as used_by
@@ -281,8 +281,9 @@ dailyReport.get('/reports/:id', async (c) => {
         LEFT JOIN supplies sp ON pdm.material_code = sp.item_code
         WHERE pdm.report_id = ?
           AND sp.item_code IS NULL
-        GROUP BY pdm.material_code, COALESCE(m.item_name, sf.item_name, pdm.material_name), pdm.unit
-        ORDER BY COALESCE(m.item_name, sf.item_name, pdm.material_name)
+          AND (m.item_code IS NOT NULL OR sf.item_code IS NOT NULL)
+        GROUP BY pdm.material_code, COALESCE(m.item_name, sf.item_name), pdm.unit
+        ORDER BY COALESCE(m.item_name, sf.item_name)
       `).bind(id).all()
       savedMaterials = materials.results as any[] || []
     } catch (matError) {

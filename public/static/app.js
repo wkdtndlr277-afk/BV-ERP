@@ -17141,10 +17141,10 @@ async function processMultipleOrderFiles(files) {
   const pdfFiles = files.filter(f => f.name.toLowerCase().endsWith('.pdf'));
   const otherFiles = files.filter(f => !f.name.toLowerCase().endsWith('.pdf'));
   
-  // PDF 파일이 있으면 PDF 처리 함수로 전달 (첫 번째 PDF만)
+  // PDF 파일이 있으면 모든 PDF 처리 함수로 전달
   if (pdfFiles.length > 0) {
-    console.log('📁 PDF 파일 감지:', pdfFiles.length, '개 → processPdfFile 호출');
-    await processPdfFile(pdfFiles[0]);
+    console.log('📁 PDF 파일 감지:', pdfFiles.length, '개 → processMultiplePdfFiles 호출');
+    await processMultiplePdfFiles(pdfFiles);
     return;
   }
   
@@ -17297,7 +17297,224 @@ async function ensurePdfJsLoaded() {
   });
 }
 
-// 컬리 PDF 거래명세서 처리
+// 다중 PDF 파일 처리 함수
+async function processMultiplePdfFiles(pdfFiles) {
+  console.log('🔷 processMultiplePdfFiles 시작:', pdfFiles.length, '개 파일');
+  showToast(`${pdfFiles.length}개 PDF 분석 중...`, 'info');
+  
+  try {
+    // PDF.js 로드 확인
+    await ensurePdfJsLoaded();
+    
+    // 마스터/생산명/바코드 데이터 로드
+    if (!state.masterItems || state.masterItems.length === 0) {
+      await loadMasterData();
+    }
+    
+    try {
+      const prodResult = await api('/admin/production-items');
+      window.productionItemsData = prodResult.data || [];
+    } catch (e) {
+      window.productionItemsData = [];
+    }
+    
+    try {
+      const barcodeResult = await api('/daily-report/barcodes');
+      window.productionBarcodes = barcodeResult.data || [];
+    } catch (e) {
+      window.productionBarcodes = [];
+    }
+    
+    // 모든 PDF에서 품목 추출
+    let allMatchedItems = [];
+    let allFileNames = [];
+    let detectedChannel = null;
+    
+    for (const file of pdfFiles) {
+      console.log('📄 PDF 처리 중:', file.name);
+      
+      const extractedItems = await extractItemsFromPdf(file);
+      if (extractedItems.items.length > 0) {
+        allMatchedItems = allMatchedItems.concat(extractedItems.items);
+        allFileNames.push(file.name);
+        if (!detectedChannel) {
+          detectedChannel = extractedItems.channel;
+        }
+      }
+    }
+    
+    if (allMatchedItems.length === 0) {
+      showToast('PDF에서 품목을 찾을 수 없습니다', 'warning');
+      return;
+    }
+    
+    // 동일 바코드 품목 수량 합산
+    const itemMap = new Map();
+    for (const item of allMatchedItems) {
+      const key = item.barcode || item.cleanName || item.originalName;
+      if (itemMap.has(key)) {
+        itemMap.get(key).quantity += item.quantity;
+      } else {
+        itemMap.set(key, { ...item });
+      }
+    }
+    const mergedItems = Array.from(itemMap.values());
+    
+    console.log('📄 총 추출 품목:', allMatchedItems.length, '개, 합산 후:', mergedItems.length, '개');
+    
+    // 미리보기 표시
+    window.orderUploadData = {
+      fileName: allFileNames.join(', '),
+      channel: detectedChannel || 'bmart',
+      items: mergedItems,
+      hasExpiryDates: mergedItems.some(m => m.expiryDate)
+    };
+    
+    showOrderPreview(mergedItems, allFileNames.join(', '));
+    showToast(`${pdfFiles.length}개 PDF에서 총 ${mergedItems.length}개 품목 추출 완료`, 'success');
+    
+  } catch (e) {
+    console.error('다중 PDF 처리 오류:', e);
+    showToast('PDF 파일 처리 실패: ' + e.message, 'error');
+  }
+}
+
+// 단일 PDF에서 품목 추출 (내부용)
+async function extractItemsFromPdf(file) {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  
+  let allText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    const pageText = textContent.items.map(item => item.str).join(' ');
+    allText += pageText + '\n';
+  }
+  
+  // 바코드 추출 (기존 로직)
+  let foundBarcodes = [];
+  const barcodePattern = /880\d{10}/g;
+  foundBarcodes = allText.match(barcodePattern) || [];
+  
+  if (foundBarcodes.length === 0) {
+    const cleanText = allText.replace(/\s+/g, ' ');
+    foundBarcodes = cleanText.match(barcodePattern) || [];
+  }
+  
+  // 분리된 바코드 패턴 (10자리 + 3자리)
+  if (foundBarcodes.length === 0) {
+    const splitBarcodePattern = /(880\d{7})[\s\n]*([(\[]?)(\d{3})/g;
+    let splitMatch;
+    const splitBarcodes = [];
+    while ((splitMatch = splitBarcodePattern.exec(allText)) !== null) {
+      const fullBarcode = splitMatch[1] + splitMatch[3];
+      splitBarcodes.push(fullBarcode);
+    }
+    foundBarcodes = [...new Set(splitBarcodes)];
+  }
+  
+  // 숫자만 추출해서 바코드 찾기
+  if (foundBarcodes.length === 0) {
+    const allNumbers = allText.replace(/[^0-9]/g, '');
+    const barcodeMatches = allNumbers.match(/880942453\d{4}/g) || [];
+    foundBarcodes = [...new Set(barcodeMatches)];
+  }
+  
+  // 소비기한 추출
+  const expiryPattern = /20\d{2}[-‑]\d{2}[-‑]\d{2}/g;
+  const allExpiries = allText.match(expiryPattern) || [];
+  const productExpiries = allExpiries.filter(d => {
+    const month = parseInt(d.split(/[-‑]/)[1]);
+    return month >= 5;
+  }).map(d => d.replace(/‑/g, '-'));
+  
+  // 품목 추출
+  const extractedItems = [];
+  const isBaemin = allText.includes('입고확인서') || allText.includes('우아한형제들');
+  
+  if (isBaemin && foundBarcodes.length > 0) {
+    // 배민 입고확인서 형식
+    const processedBarcodes = new Set();
+    const orderedUniqueBarcodes = foundBarcodes.filter(bc => {
+      if (processedBarcodes.has(bc)) return false;
+      processedBarcodes.add(bc);
+      return true;
+    });
+    
+    for (let i = 0; i < orderedUniqueBarcodes.length; i++) {
+      const barcode = orderedUniqueBarcodes[i];
+      const barcode10 = barcode.substring(0, 10);
+      const barcodeIdx = allText.indexOf(barcode10);
+      const afterText = allText.substring(barcodeIdx, barcodeIdx + 500);
+      
+      // 소비기한
+      const nearbyExpiry = afterText.match(/20\d{2}[-‑](0[5-9]|1[0-2])[-‑]\d{2}/);
+      let expiryDate = nearbyExpiry ? nearbyExpiry[0].replace(/‑/g, '-') : (productExpiries[i] || null);
+      
+      // 수량
+      let quantity = 1;
+      const qtyPattern1 = /(?:상온|냉장|냉동)\s+(\d+)\s+(\d+)\s+(\d+)/;
+      const qtyMatch1 = afterText.match(qtyPattern1);
+      if (qtyMatch1) {
+        quantity = parseInt(qtyMatch1[3]) || 1;
+      } else {
+        const nums = afterText.match(/\b(\d{1,4})\b/g);
+        if (nums && nums.length >= 3) {
+          const firstThree = nums.slice(0, 4).map(n => parseInt(n));
+          const validQtys = firstThree.filter(n => n < 2000);
+          if (validQtys.length > 0) {
+            quantity = Math.max(...validQtys);
+          }
+        }
+      }
+      
+      extractedItems.push({ barcode, productName: '', quantity, expiryDate });
+    }
+  }
+  
+  // 바코드로 제품 매칭
+  const matchedItems = extractedItems.map(item => {
+    const barcodeData = window.productionBarcodes.find(b => b.barcode === item.barcode);
+    const productionItem = barcodeData ? window.productionItemsData?.find(p => p.production_code === barcodeData.production_code) : null;
+    const displayName = item.productName || barcodeData?.product_name || barcodeData?.production_name || `바코드: ${item.barcode}`;
+    
+    if (barcodeData) {
+      return {
+        originalName: displayName,
+        cleanName: displayName,
+        quantity: item.quantity,
+        barcode: item.barcode,
+        expiryDate: item.expiryDate,
+        matchedProduct: {
+          item_code: barcodeData.production_code,
+          item_name: barcodeData.production_name || displayName,
+          matchType: 'barcode'
+        },
+        productionItem: productionItem,
+        hasBOM: productionItem?.bom_count > 0 || true
+      };
+    }
+    
+    return {
+      originalName: displayName,
+      cleanName: displayName,
+      quantity: item.quantity,
+      barcode: item.barcode,
+      expiryDate: item.expiryDate,
+      matchedProduct: null,
+      productionItem: null,
+      hasBOM: false
+    };
+  });
+  
+  // 채널 결정 (배민 입고확인서 → 비마트로 표기)
+  const channel = isBaemin ? 'bmart' : 'kurly_pdf';
+  
+  return { items: matchedItems, channel };
+}
+
+// 컬리 PDF 거래명세서 처리 (단일 파일용)
 async function processPdfFile(file) {
   console.log('🔷 processPdfFile 시작:', file.name);
   showToast('PDF 분석 중...', 'info');
@@ -17599,9 +17816,9 @@ async function processPdfFile(file) {
     
     console.log('📄 매칭 결과:', matchedItems.length, '개, 매칭됨:', matchedItems.filter(m => m.matchedProduct).length);
     
-    // PDF 유형 감지 (배민 또는 컬리)
+    // PDF 유형 감지 (배민 입고확인서 → 비마트로 표기)
     const isBaemin = allText.includes('입고확인서') || allText.includes('우아한형제들') || file.name.includes('PO3');
-    const pdfChannel = isBaemin ? 'baemin_pdf' : 'kurly_pdf';
+    const pdfChannel = isBaemin ? 'bmart' : 'kurly_pdf'; // 배민 입고확인서는 비마트로 표기
     
     // 미리보기 표시
     window.orderUploadData = {

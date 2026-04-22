@@ -17344,7 +17344,24 @@ async function processPdfFile(file) {
       foundBarcodes = cleanText.match(barcodePattern) || [];
     }
     
-    // 여전히 없으면 880942453xxxx 패턴 (본비반트 바코드)
+    // 여전히 없으면 분리된 바코드 패턴 시도
+    // 배민 입고확인서에서 바코드가 "8809424535" + 줄바꿈 + "301" 형태로 분리됨
+    if (foundBarcodes.length === 0) {
+      console.log('📄 분리된 바코드 패턴 시도...');
+      // 10자리 바코드 + 공백/줄바꿈 + 3자리 패턴
+      const splitBarcodePattern = /(880\d{7})[\s\n]*([\(]?)(\d{3})/g;
+      let splitMatch;
+      const splitBarcodes = [];
+      while ((splitMatch = splitBarcodePattern.exec(allText)) !== null) {
+        // 10자리 + 3자리 = 13자리 바코드
+        const fullBarcode = splitMatch[1] + splitMatch[3];
+        splitBarcodes.push(fullBarcode);
+        console.log(`📄 분리 바코드 발견: ${splitMatch[1]} + ${splitMatch[3]} = ${fullBarcode}`);
+      }
+      foundBarcodes = [...new Set(splitBarcodes)];
+    }
+    
+    // 여전히 없으면 숫자만 추출해서 880942453xxxx 패턴 시도
     if (foundBarcodes.length === 0) {
       // 숫자만 추출해서 13자리 바코드 찾기
       const allNumbers = allText.replace(/[^0-9]/g, '');
@@ -17352,7 +17369,7 @@ async function processPdfFile(file) {
       foundBarcodes = [...new Set(barcodeMatches)];
     }
     
-    console.log('📄 발견된 바코드:', foundBarcodes.length, '개', foundBarcodes.slice(0, 5));
+    console.log('📄 발견된 바코드:', foundBarcodes.length, '개', foundBarcodes);
     
     // 컬리 거래명세서 형식: 바코드[품명]수량(소) 2026-11-07
     // 예: 8809424534960[브로드카세] 저당 호밀 통밀 바게트 310gx260(소) 2026-11-07
@@ -17390,10 +17407,24 @@ async function processPdfFile(file) {
     if (extractedItems.length === 0 && (allText.includes('입고확인서') || allText.includes('우아한형제들'))) {
       console.log('📄 배민 입고확인서 패턴 시도');
       
+      // 바코드가 없으면 분리된 바코드 재시도 (배민 형식)
+      if (foundBarcodes.length === 0) {
+        console.log('📄 배민 분리 바코드 재시도...');
+        const splitBarcodePattern = /(880\d{7})[\s\n]*([\(]?)(\d{3})/g;
+        let splitMatch;
+        const splitBarcodes = [];
+        while ((splitMatch = splitBarcodePattern.exec(allText)) !== null) {
+          const fullBarcode = splitMatch[1] + splitMatch[3];
+          splitBarcodes.push(fullBarcode);
+        }
+        foundBarcodes = splitBarcodes; // 중복 허용 (순서 유지를 위해)
+        console.log('📄 배민 분리 바코드:', foundBarcodes.length, '개');
+      }
+      
       // 소비기한 패턴: 2026-06-30 또는 2026‑06‑30 (유니코드 하이픈)
       const expiryPattern = /20\d{2}[-‑]\d{2}[-‑]\d{2}/g;
       const allExpiries = allText.match(expiryPattern) || [];
-      // 입고예정일시 제외 (04-28 등)하고 06, 07 등 제품 소비기한만
+      // 입고예정일시 제외 (04-28 등)하고 05 이후 월의 날짜만 제품 소비기한으로 간주
       const productExpiries = allExpiries.filter(d => {
         const month = parseInt(d.split(/[-‑]/)[1]);
         return month >= 5; // 5월 이후 날짜만 소비기한으로 간주
@@ -17402,34 +17433,63 @@ async function processPdfFile(file) {
       console.log('📄 배민 소비기한 후보:', productExpiries);
       
       // 바코드별 데이터 추출 (테이블 행 순서대로)
-      const uniqueBarcodes = [...new Set(foundBarcodes)];
+      // 분리된 바코드의 경우 중복을 유지하여 순서대로 처리
+      const processedBarcodes = new Set();
+      const orderedUniqueBarcodes = foundBarcodes.filter(bc => {
+        if (processedBarcodes.has(bc)) return false;
+        processedBarcodes.add(bc);
+        return true;
+      });
+      
+      console.log('📄 처리할 바코드 순서:', orderedUniqueBarcodes);
       
       // 바코드가 나타나는 순서대로 매칭
-      for (let i = 0; i < uniqueBarcodes.length; i++) {
-        const barcode = uniqueBarcodes[i];
-        const barcodeIdx = allText.indexOf(barcode);
+      for (let i = 0; i < orderedUniqueBarcodes.length; i++) {
+        const barcode = orderedUniqueBarcodes[i];
+        // 원본 텍스트에서 10자리 바코드 부분으로 검색 (분리된 형식 대응)
+        const barcode10 = barcode.substring(0, 10);
+        const barcodeIdx = allText.indexOf(barcode10);
         
         // 바코드 이후 텍스트에서 데이터 추출
         const afterText = allText.substring(barcodeIdx, barcodeIdx + 500);
         
-        // 소비기한: 바코드 이후 가장 가까운 날짜
+        // 소비기한: 바코드 이후 가장 가까운 날짜 (5월 이후)
         const nearbyExpiry = afterText.match(/20\d{2}[-‑](0[5-9]|1[0-2])[-‑]\d{2}/);
-        const expiryDate = nearbyExpiry ? nearbyExpiry[0].replace(/‑/g, '-') : (productExpiries[i] || null);
+        let expiryDate = nearbyExpiry ? nearbyExpiry[0].replace(/‑/g, '-') : null;
         
-        // 수량: "상온 40 1 40" 또는 "40 1 40" 패턴에서 마지막 숫자(총 수량)
-        // 배민 형식: 입수량 박스 낱개 → 박스 수량이 총 수량
-        const qtyPattern = /(?:상온|냉장|냉동)?\s*(\d+)\s+\d+\s+(\d+)/;
-        const qtyMatch = afterText.match(qtyPattern);
+        // 소비기한을 못 찾으면 productExpiries에서 순서대로 할당
+        if (!expiryDate && productExpiries[i]) {
+          expiryDate = productExpiries[i];
+        }
+        
+        console.log(`📄 바코드 ${barcode}: 주변 소비기한 = ${nearbyExpiry?.[0]}, 최종 = ${expiryDate}`);
+        
+        // 수량 추출: 배민 입고확인서 형식
+        // 형식: 냉동 박스수 입수량 총수량 소비기한
+        // 예: "냉동 20 4 80 2026‑12‑ 03" → 총수량 = 80
         let quantity = 1;
-        if (qtyMatch) {
-          // 마지막 숫자가 총 입고수량
-          quantity = parseInt(qtyMatch[2]) || parseInt(qtyMatch[1]) || 1;
+        
+        // 패턴 1: "냉동/냉장/상온 박스 입수 총수량" 형식
+        const qtyPattern1 = /(?:상온|냉장|냉동)\s+(\d+)\s+(\d+)\s+(\d+)/;
+        const qtyMatch1 = afterText.match(qtyPattern1);
+        
+        if (qtyMatch1) {
+          // 세 번째 숫자가 총 입고수량 (박스 * 입수량)
+          quantity = parseInt(qtyMatch1[3]) || 1;
+          console.log(`📄 수량 패턴1 매칭: ${qtyMatch1[1]} x ${qtyMatch1[2]} = ${quantity}`);
         } else {
-          // 대안: 숫자 패턴에서 추출
+          // 패턴 2: 숫자 시퀀스에서 추출 (박스, 입수, 총수량, 날짜 순)
+          // "20 4 80 2026" 에서 세 번째 숫자
           const nums = afterText.match(/\b(\d{1,4})\b/g);
           if (nums && nums.length >= 3) {
-            // 40, 1, 40 패턴에서 세 번째 숫자
-            quantity = parseInt(nums[2]) || 1;
+            // 첫 3개 숫자 중 가장 큰 숫자를 총수량으로 (합리적 휴리스틱)
+            const firstThree = nums.slice(0, 4).map(n => parseInt(n));
+            // 연도 제외 (2026 등)
+            const validQtys = firstThree.filter(n => n < 2000);
+            if (validQtys.length > 0) {
+              quantity = Math.max(...validQtys);
+            }
+            console.log(`📄 수량 패턴2 (숫자 시퀀스): ${nums.slice(0, 4)} → ${quantity}`);
           }
         }
         

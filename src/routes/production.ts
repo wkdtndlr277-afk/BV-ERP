@@ -653,6 +653,10 @@ productionRoutes.post('/batch', async (c) => {
   // 최적화: 모든 데이터를 먼저 준비한 후 병렬 배치 처리
   // ============================================
   
+  // 디버그: BOM 맵 상태 로깅
+  console.log(`[production/batch] BOM 조회 결과: bom 테이블 ${allBom.results?.length || 0}건, production_bom 테이블 ${prodBom.results?.length || 0}건`);
+  console.log(`[production/batch] bomMap 키 목록 (처음 10개): ${Array.from(bomMap.keys()).slice(0, 10).join(', ')}`);
+  
   const materialDeductions = new Map<string, { qty: number, itemName: string, memos: string[] }>();
   const nextDayStr = (() => {
     const d = new Date(productionDate);
@@ -692,6 +696,7 @@ productionRoutes.post('/batch', async (c) => {
     
     // BOM 처리 (메모리에서만)
     const bomItems = bomMap.get(item.product_code) || [];
+    console.log(`[production/batch] ${item.product_code}: BOM ${bomItems.length}건 (bomMap에서 조회)`);
     for (const bom of bomItems) {
       const actualItemCode = bom.matched_item_code || bom.item_code;
       const requiredQty = bom.quantity * actualItemCount;
@@ -846,31 +851,69 @@ productionRoutes.post('/batch', async (c) => {
     }
     
     // 트랜잭션 기록 (반제품도 포함)
+    // created_at 명시적 지정 (D1 batch에서 DEFAULT 값이 누락되는 문제 방지)
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    
     if (isSemiFinished) {
       materialTransactions.push(
-        c.env.DB.prepare(`INSERT INTO semi_finished_transactions (trans_date, item_code, trans_type, quantity, memo) VALUES (?, ?, '사용', ?, ?)`)
-          .bind(productionDate, itemCode, -data.qty, memoText)
+        c.env.DB.prepare(`INSERT INTO semi_finished_transactions (trans_date, item_code, trans_type, quantity, memo, created_at) VALUES (?, ?, '사용', ?, ?, ?)`)
+          .bind(productionDate, itemCode, -data.qty, memoText, now)
       );
     } else {
+      // 일반 원료: transactions 테이블에 기록 (사용은 음수로 저장)
       materialTransactions.push(
-        c.env.DB.prepare(`INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo) VALUES (?, ?, '사용', ?, ?)`)
-          .bind(productionDate, itemCode, data.qty, memoText)
+        c.env.DB.prepare(`INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo, created_at) VALUES (?, ?, '사용', ?, ?, ?)`)
+          .bind(productionDate, itemCode, -data.qty, memoText, now)
       );
     }
   }
   
+  console.log(`[production/batch] 원료 차감 시작: materialUpdates=${materialUpdates.length}, semiFinishedUpdates=${semiFinishedUpdates.length}, materialTransactions=${materialTransactions.length}`);
+  
+  let materialDeductionSuccess = true;
+  let transactionRecordSuccess = true;
+  let transactionError = '';
+  
   try {
     if (materialUpdates.length > 0) {
+      console.log(`[production/batch] master 재고 차감 ${materialUpdates.length}건 실행`);
       await c.env.DB.batch(materialUpdates);
     }
     if (semiFinishedUpdates.length > 0) {
+      console.log(`[production/batch] 반제품 차감 ${semiFinishedUpdates.length}건 실행`);
       await c.env.DB.batch(semiFinishedUpdates);
     }
-    if (materialTransactions.length > 0) {
-      await c.env.DB.batch(materialTransactions);
-    }
-  } catch (e) {
+    console.log(`[production/batch] 재고 차감 완료`);
+  } catch (e: any) {
+    materialDeductionSuccess = false;
     console.error('Material deduction batch error:', e);
+    console.error('Error details:', e.message, e.cause);
+  }
+  
+  // 트랜잭션 기록은 별도로 처리 (재고 차감이 실패해도 기록 시도)
+  // D1 batch()에서 AUTOINCREMENT가 작동하지 않는 문제로 인해 개별 INSERT 실행
+  let txSuccessCount = 0;
+  let txFailCount = 0;
+  
+  if (materialTransactions.length > 0) {
+    console.log(`[production/batch] transactions 기록 ${materialTransactions.length}건 실행 (개별)`);
+    
+    for (const txStatement of materialTransactions) {
+      try {
+        await txStatement.run();
+        txSuccessCount++;
+      } catch (e: any) {
+        txFailCount++;
+        console.error('Transaction insert error:', e.message);
+      }
+    }
+    
+    console.log(`[production/batch] transactions 기록 완료: 성공=${txSuccessCount}, 실패=${txFailCount}`);
+    
+    if (txFailCount > 0) {
+      transactionRecordSuccess = false;
+      transactionError = `${txFailCount}/${materialTransactions.length} 트랜잭션 기록 실패`;
+    }
   }
   
   return c.json({
@@ -880,6 +923,9 @@ productionRoutes.post('/batch', async (c) => {
       success: successCount,
       fail: failCount,
       materials_deducted: materialDeductions.size,
+      material_deduction_success: materialDeductionSuccess,
+      transaction_record_success: transactionRecordSuccess,
+      transaction_error: transactionError || null,
       results
     }
   });

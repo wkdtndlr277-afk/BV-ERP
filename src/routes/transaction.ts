@@ -861,7 +861,10 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
   
   if (period_type === 'monthly') {
     startDate = `${year}-${month.padStart(2, '0')}-01`;
-    endDate = new Date(parseInt(year), parseInt(month), 0).toISOString().split('T')[0];
+    // month는 1-12 기준이므로, 다음 달의 0일 = 해당 월의 마지막 날
+    // 예: month=4 → new Date(2026, 4, 0) = 2026-04-30 (JavaScript month는 0-indexed)
+    const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+    endDate = `${year}-${month.padStart(2, '0')}-${lastDay.toString().padStart(2, '0')}`;
   } else {
     startDate = date;
     endDate = date;

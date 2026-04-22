@@ -7099,15 +7099,22 @@ function renderMonthlyLotView(result) {
   
   const periodLabel = period.year + '년 ' + parseInt(period.month) + '월';
   
-  // LOT 행 렌더링 헬퍼 - 조정 컬럼 제거, 이월에 조정 포함
+  // LOT 행 렌더링 헬퍼 - FIFO 사용량 표시
   function renderMonthlyLotRow(lot, lotIdx, item, itemTerms) {
-    var lotUsage = (lot.period_usage || 0) + (lot.period_outbound || 0);
+    // FIFO 사용량 우선, 없으면 기존 값 사용
+    var fifoUsage = lot.fifo_usage !== undefined ? lot.fifo_usage : (lot.period_usage || 0);
+    var fifoOutbound = lot.fifo_outbound !== undefined ? lot.fifo_outbound : (lot.period_outbound || 0);
+    var lotUsage = fifoUsage + fifoOutbound;
     var expiryClass = isExpiringSoon(lot.expiry_date) ? 'text-red-600 font-bold' : '';
     // 조정을 이월에 포함
     var adjustedCarryOver = (lot.carry_over || 0) + (lot.period_adjustment || 0);
+    // FIFO 마감 재고 우선
+    var closingQty = lot.fifo_closing !== undefined ? lot.fifo_closing : (lot.closing_qty || 0);
+    // FIFO 순서 표시
+    var fifoOrder = lot.fifo_order || lot.order || (lotIdx + 1);
     
-    return '<tr class="border-b hover:bg-indigo-50 ' + (lot.closing_qty <= 0 ? 'text-gray-400 bg-gray-50' : '') + '">' +
-      '<td class="p-2 text-center"><span class="inline-flex items-center justify-center w-5 h-5 rounded-full ' + (lot.closing_qty > 0 ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-gray-500') + ' text-xs font-bold">' + (lotIdx + 1) + '</span></td>' +
+    return '<tr class="border-b hover:bg-indigo-50 ' + (closingQty <= 0 ? 'text-gray-400 bg-gray-50' : '') + '">' +
+      '<td class="p-2 text-center"><span class="inline-flex items-center justify-center w-5 h-5 rounded-full ' + (closingQty > 0 ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-gray-500') + ' text-xs font-bold" title="FIFO 순서">' + fifoOrder + '</span></td>' +
       '<td class="p-2 font-mono text-xs">' + (lot.lot_number || '-') + '</td>' +
       '<td class="p-2 text-center text-xs">' + (lot.inbound_date || '-') + '</td>' +
       '<td class="p-2 text-center text-xs ' + expiryClass + '">' + (lot.expiry_date || '-') + '</td>' +
@@ -7115,7 +7122,7 @@ function renderMonthlyLotView(result) {
       '<td class="p-2 text-right text-purple-600">' + (adjustedCarryOver > 0 ? formatNumber(adjustedCarryOver) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (lotUsage > 0 ? '-' + formatNumber(lotUsage) : '-') + '</td>' +
-      '<td class="p-2 text-right font-bold">' + formatNumber(lot.closing_qty) + ' <span class="font-normal text-gray-400">' + (item.unit || '') + '</span></td>' +
+      '<td class="p-2 text-right font-bold">' + formatNumber(closingQty) + ' <span class="font-normal text-gray-400">' + (item.unit || '') + '</span></td>' +
     '</tr>';
   }
   
@@ -7131,8 +7138,17 @@ function renderMonthlyLotView(result) {
     
     var lotTableHtml = '';
     if (item.lots && item.lots.length > 0) {
-      // LOT별 선입선출 순서로 정렬 (입고일 기준 오름차순)
+      // LOT별 FIFO 순서로 정렬 (유효기간 → 입고일 오름차순)
       var sortedLots = item.lots.slice().sort(function(a, b) {
+        // FIFO 순서가 있으면 우선 사용
+        if (a.fifo_order !== undefined && b.fifo_order !== undefined) {
+          return a.fifo_order - b.fifo_order;
+        }
+        // 유효기간 오름차순
+        if (a.expiry_date && b.expiry_date && a.expiry_date !== b.expiry_date) {
+          return a.expiry_date.localeCompare(b.expiry_date);
+        }
+        // 입고일 오름차순
         return (a.inbound_date || '').localeCompare(b.inbound_date || '');
       });
       

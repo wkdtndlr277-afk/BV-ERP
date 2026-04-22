@@ -1102,7 +1102,7 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       c.env.DB.prepare(lotQuery).bind(...lotParams).all()
     ]);
     
-    // LOT 데이터를 item_code별로 그룹화
+    // LOT 데이터를 item_code별로 그룹화 (FIFO 순서: 유효기간 → 입고일 오름차순)
     const lotsByItem: Record<string, any[]> = {};
     for (const lot of (lotResult.results || [])) {
       if (!lotsByItem[lot.item_code]) {
@@ -1113,17 +1113,17 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       // 기간 내 신규 입고 LOT인지 확인
       const isNewLot = lot.inbound_date >= startDate && lot.inbound_date <= endDate;
       
-      // 마감재고 = 현재 remain_qty
-      const lotClosingQty = lot.remain_qty;
+      // 마감재고 = 현재 remain_qty (마이너스 방지)
+      const lotClosingQty = Math.max(0, lot.remain_qty);
       
       // 기간 내 입고량 (신규 LOT만 해당)
       const lotPeriodInbound = isNewLot ? lot.origin_qty : 0;
       
-      // 이월 = 마감 - 입고 + 사용 + 출고 - 조정
-      const lotCarryOver = isNewLot ? 0 : (lotClosingQty - lotPeriodInbound + lot.period_usage + lot.period_outbound - lot.period_adjustment);
+      // 이월 = 마감 - 입고 + 사용 + 출고 - 조정 (마이너스 방지)
+      let lotCarryOver = isNewLot ? 0 : (lotClosingQty - lotPeriodInbound + lot.period_usage + lot.period_outbound - lot.period_adjustment);
+      lotCarryOver = Math.max(0, lotCarryOver); // 이월 재고도 마이너스 방지
       
       lotsByItem[lot.item_code].push({
-        order: lotsByItem[lot.item_code].length + 1,
         lot_number: lot.lot_number,
         inbound_date: lot.inbound_date,
         expiry_date: lot.expiry_date,
@@ -1133,24 +1133,84 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
         quality_status: lot.quality_status,
         carry_over: lotCarryOver,
         period_inbound: lotPeriodInbound,
-        period_usage: lot.period_usage,
+        period_usage: lot.period_usage, // 원본 사용량 (FIFO 분배 전)
         period_outbound: lot.period_outbound,
         period_adjustment: lot.period_adjustment,
-        closing_qty: lotClosingQty
+        closing_qty: lotClosingQty,
+        isNewLot: isNewLot
       });
     }
     
-    // 품목 데이터 변환 및 LOT 매핑
+    // FIFO 순서로 정렬 (유효기간 → 입고일)
+    for (const itemCode of Object.keys(lotsByItem)) {
+      lotsByItem[itemCode].sort((a, b) => {
+        // 1. 유효기간 오름차순 (null은 마지막)
+        if (a.expiry_date && b.expiry_date) {
+          if (a.expiry_date !== b.expiry_date) {
+            return a.expiry_date.localeCompare(b.expiry_date);
+          }
+        } else if (a.expiry_date) {
+          return -1;
+        } else if (b.expiry_date) {
+          return 1;
+        }
+        // 2. 입고일 오름차순
+        return a.inbound_date.localeCompare(b.inbound_date);
+      });
+      
+      // FIFO 순서 번호 부여
+      lotsByItem[itemCode].forEach((lot, idx) => {
+        lot.order = idx + 1;
+        lot.fifo_order = idx + 1;
+      });
+    }
+    
+    // 품목 데이터 변환 및 LOT 매핑 + FIFO 사용량 분배
     let totalLotCount = 0;
     const itemData = (itemResult.results || []).map((item: any) => {
       const lots = lotsByItem[item.item_code] || [];
       totalLotCount += lots.length;
       
       // 정방향 계산: 월초재고 = 기간 이전 입고 - 사용 - 출고 + 조정
-      const carryOver = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
+      let carryOver = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
+      
+      // 마이너스 월초재고 방지: 로트 합계와 비교하여 보정
+      const lotCarryOverSum = lots.reduce((sum: number, lot: any) => sum + lot.carry_over, 0);
+      if (carryOver < 0 && lotCarryOverSum >= 0) {
+        carryOver = lotCarryOverSum; // 로트 합계로 보정
+      } else if (carryOver < 0) {
+        carryOver = 0; // 마이너스면 0으로
+      }
+      
+      // FIFO 사용량 분배: 총 사용량을 FIFO 순서로 로트에 분배
+      const totalUsage = item.period_usage || 0;
+      const totalOutbound = item.period_outbound || 0;
+      let remainingUsage = totalUsage;
+      let remainingOutbound = totalOutbound;
+      
+      // FIFO 사용량 분배
+      for (const lot of lots) {
+        // 해당 로트의 사용 가능 재고 = 이월 + 입고 + 조정
+        const availableForUsage = lot.carry_over + lot.period_inbound + lot.period_adjustment;
+        
+        // FIFO 사용량 계산 (0 이하로 내려가지 않음)
+        const fifoUsage = Math.min(remainingUsage, Math.max(0, availableForUsage));
+        lot.fifo_usage = fifoUsage;
+        remainingUsage -= fifoUsage;
+        
+        // 사용 후 남은 재고에서 출고
+        const afterUsage = availableForUsage - fifoUsage;
+        const fifoOutbound = Math.min(remainingOutbound, Math.max(0, afterUsage));
+        lot.fifo_outbound = fifoOutbound;
+        remainingOutbound -= fifoOutbound;
+        
+        // FIFO 기반 마감 재고 재계산
+        lot.fifo_closing = Math.max(0, lot.carry_over + lot.period_inbound - lot.fifo_usage - lot.fifo_outbound + lot.period_adjustment);
+      }
       
       // 월말재고 = 월초재고 + 기간입고 - 기간사용 - 기간출고 + 기간조정
-      const closingQty = carryOver + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
+      let closingQty = carryOver + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
+      closingQty = Math.max(0, closingQty); // 마이너스 방지
       
       return {
         item_code: item.item_code,

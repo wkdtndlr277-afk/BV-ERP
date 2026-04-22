@@ -17380,21 +17380,129 @@ async function extractItemsFromPdf(file) {
   const arrayBuffer = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
   
+  // 좌표 기반 텍스트 추출 (행 단위 그룹핑)
   let allText = '';
+  let textItemsWithCoords = []; // 좌표 포함 텍스트 아이템
+  
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
+    
+    // 좌표 포함하여 저장
+    textContent.items.forEach(item => {
+      if (item.str && item.str.trim()) {
+        textItemsWithCoords.push({
+          text: item.str,
+          x: item.transform[4],
+          y: item.transform[5],
+          page: i
+        });
+      }
+    });
+    
     const pageText = textContent.items.map(item => item.str).join(' ');
     allText += pageText + '\n';
   }
   
+  console.log('📄 PDF 텍스트 추출 완료, 아이템 수:', textItemsWithCoords.length);
+  
+  // 줄바꿈된 소비기한 병합 함수
+  function mergeIncompleteExpiry(text) {
+    // 불완전한 날짜 패턴 (YYYY-MM- 로 끝나는 경우) + 줄바꿈/공백 + 일자
+    let merged = text;
+    
+    // 패턴 1: 2026-06- + 공백/줄바꿈 + 30 → 2026-06-30
+    merged = merged.replace(/(20\d{2}[-‑](0[1-9]|1[0-2])[-‑])[\s\n]+(\d{1,2})(?!\d)/g, '$1$3');
+    
+    // 패턴 2: 2026-06 + 공백/줄바꿈 + -30 또는 - + 30
+    merged = merged.replace(/(20\d{2}[-‑](0[1-9]|1[0-2]))[\s\n]+[-‑]?[\s\n]*(\d{1,2})(?!\d)/g, '$1-$3');
+    
+    // 패턴 3: 2026- + 06-30 (월이 분리된 경우)
+    merged = merged.replace(/(20\d{2}[-‑])[\s\n]+((0[1-9]|1[0-2])[-‑]\d{1,2})/g, '$1$2');
+    
+    return merged;
+  }
+  
+  // 소비기한 유효성 검증 및 완성 함수
+  function validateAndCompleteExpiry(dateStr, surroundingText) {
+    if (!dateStr) return null;
+    
+    const normalized = dateStr.replace(/‑/g, '-').trim();
+    
+    // 완전한 날짜인지 확인 (YYYY-MM-DD)
+    if (/^20\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(normalized)) {
+      return normalized;
+    }
+    
+    // 불완전한 경우 주변 텍스트에서 누락된 부분 찾기
+    // 예: 2026-06- 인 경우
+    const partialMatch = normalized.match(/^(20\d{2})-(0[1-9]|1[0-2])-?$/);
+    if (partialMatch && surroundingText) {
+      // 주변에서 일자(1-31) 찾기
+      const dayMatch = surroundingText.match(/\b(0?[1-9]|[12]\d|3[01])\b/);
+      if (dayMatch) {
+        const day = dayMatch[1].padStart(2, '0');
+        return `${partialMatch[1]}-${partialMatch[2]}-${day}`;
+      }
+    }
+    
+    return null;
+  }
+  
+  // 좌표 기반 행 그룹핑 및 소비기한 추출
+  function extractExpiryByRow(items, targetBarcode) {
+    // Y좌표로 행 그룹핑 (같은 행 = Y좌표 차이 5 이내)
+    const rows = [];
+    const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x); // 위→아래, 좌→우
+    
+    sorted.forEach(item => {
+      const existingRow = rows.find(row => Math.abs(row.y - item.y) < 5);
+      if (existingRow) {
+        existingRow.items.push(item);
+        existingRow.text += ' ' + item.text;
+      } else {
+        rows.push({ y: item.y, items: [item], text: item.text });
+      }
+    });
+    
+    // 바코드가 포함된 행 찾기
+    const barcodeRow = rows.find(row => row.text.includes(targetBarcode) || row.text.includes(targetBarcode.substring(0, 10)));
+    if (!barcodeRow) return null;
+    
+    // 같은 행에서 소비기한 패턴 찾기
+    const mergedRowText = mergeIncompleteExpiry(barcodeRow.text);
+    const expiryInRow = mergedRowText.match(/20\d{2}[-‑](0[1-9]|1[0-2])[-‑](0[1-9]|[12]\d|3[01])/);
+    if (expiryInRow) {
+      return expiryInRow[0].replace(/‑/g, '-');
+    }
+    
+    // 같은 행에서 못 찾으면 인접 행 확인
+    const rowIdx = rows.indexOf(barcodeRow);
+    for (let offset = 1; offset <= 2; offset++) {
+      const nextRow = rows[rowIdx + offset];
+      if (nextRow) {
+        const nextMerged = mergeIncompleteExpiry(nextRow.text);
+        const expiryNext = nextMerged.match(/20\d{2}[-‑](0[1-9]|1[0-2])[-‑](0[1-9]|[12]\d|3[01])/);
+        if (expiryNext) {
+          return expiryNext[0].replace(/‑/g, '-');
+        }
+      }
+    }
+    
+    return null;
+  }
+  
+  // 텍스트 전처리: 줄바꿈된 소비기한 병합
+  const mergedText = mergeIncompleteExpiry(allText);
+  console.log('📅 소비기한 병합 처리 완료');
+  
   // 바코드 추출 (기존 로직)
   let foundBarcodes = [];
   const barcodePattern = /880\d{10}/g;
-  foundBarcodes = allText.match(barcodePattern) || [];
+  foundBarcodes = mergedText.match(barcodePattern) || [];
   
   if (foundBarcodes.length === 0) {
-    const cleanText = allText.replace(/\s+/g, ' ');
+    const cleanText = mergedText.replace(/\s+/g, ' ');
     foundBarcodes = cleanText.match(barcodePattern) || [];
   }
   
@@ -17412,18 +17520,20 @@ async function extractItemsFromPdf(file) {
   
   // 숫자만 추출해서 바코드 찾기
   if (foundBarcodes.length === 0) {
-    const allNumbers = allText.replace(/[^0-9]/g, '');
+    const allNumbers = mergedText.replace(/[^0-9]/g, '');
     const barcodeMatches = allNumbers.match(/880942453\d{4}/g) || [];
     foundBarcodes = [...new Set(barcodeMatches)];
   }
   
-  // 소비기한 추출
-  const expiryPattern = /20\d{2}[-‑]\d{2}[-‑]\d{2}/g;
-  const allExpiries = allText.match(expiryPattern) || [];
+  // 소비기한 추출 (병합된 텍스트에서)
+  const expiryPattern = /20\d{2}[-‑](0[1-9]|1[0-2])[-‑](0[1-9]|[12]\d|3[01])/g;
+  const allExpiries = mergedText.match(expiryPattern) || [];
   const productExpiries = allExpiries.filter(d => {
     const month = parseInt(d.split(/[-‑]/)[1]);
-    return month >= 5;
+    return month >= 5; // 5월 이후 (생산 소비기한으로 추정)
   }).map(d => d.replace(/‑/g, '-'));
+  
+  console.log('📅 추출된 소비기한들:', productExpiries);
   
   // 품목 추출
   const extractedItems = [];
@@ -17438,17 +17548,42 @@ async function extractItemsFromPdf(file) {
       return true;
     });
     
+    console.log('📦 배민 입고확인서 바코드:', orderedUniqueBarcodes.length, '개');
+    
     for (let i = 0; i < orderedUniqueBarcodes.length; i++) {
       const barcode = orderedUniqueBarcodes[i];
       const barcode10 = barcode.substring(0, 10);
-      const barcodeIdx = allText.indexOf(barcode10);
-      const afterText = allText.substring(barcodeIdx, barcodeIdx + 500);
+      const barcodeIdx = mergedText.indexOf(barcode10);
+      const afterText = mergedText.substring(barcodeIdx, barcodeIdx + 600);
       
-      // 소비기한
-      const nearbyExpiry = afterText.match(/20\d{2}[-‑](0[5-9]|1[0-2])[-‑]\d{2}/);
-      let expiryDate = nearbyExpiry ? nearbyExpiry[0].replace(/‑/g, '-') : (productExpiries[i] || null);
+      // 소비기한 추출 (다단계)
+      let expiryDate = null;
       
-      // 수량
+      // 1단계: 좌표 기반 같은 행에서 찾기
+      expiryDate = extractExpiryByRow(textItemsWithCoords, barcode);
+      
+      // 2단계: 병합된 텍스트에서 바코드 근처 찾기
+      if (!expiryDate) {
+        const nearbyExpiry = afterText.match(/20\d{2}[-‑](0[1-9]|1[0-2])[-‑](0[1-9]|[12]\d|3[01])/);
+        expiryDate = nearbyExpiry ? nearbyExpiry[0].replace(/‑/g, '-') : null;
+      }
+      
+      // 3단계: 불완전한 날짜 완성 시도
+      if (!expiryDate) {
+        const partialDate = afterText.match(/20\d{2}[-‑](0[1-9]|1[0-2])[-‑]?/);
+        if (partialDate) {
+          expiryDate = validateAndCompleteExpiry(partialDate[0], afterText.substring(partialDate.index, partialDate.index + 50));
+        }
+      }
+      
+      // 4단계: 순서대로 매칭 (fallback)
+      if (!expiryDate && productExpiries[i]) {
+        expiryDate = productExpiries[i];
+      }
+      
+      console.log(`📅 바코드 ${barcode} 소비기한:`, expiryDate);
+      
+      // 수량 추출
       let quantity = 1;
       const qtyPattern1 = /(?:상온|냉장|냉동)\s+(\d+)\s+(\d+)\s+(\d+)/;
       const qtyMatch1 = afterText.match(qtyPattern1);

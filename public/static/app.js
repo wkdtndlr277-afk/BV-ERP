@@ -6207,10 +6207,10 @@ function renderDailyLotDetail(result, date) {
     
     return '<tr class="border-b border-gray-200 hover:bg-indigo-50 ' + (lot.closing_qty <= 0 ? 'text-gray-400 bg-gray-100' : '') + '">' +
       '<td class="p-2 text-center"><span class="inline-flex items-center justify-center w-5 h-5 rounded-full ' + (lot.closing_qty > 0 ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-gray-500') + ' text-xs font-bold">' + (lotIdx + 1) + '</span></td>' +
-      '<td class="p-2 font-mono ' + lotNumClass + '">' + (lot.lot_number || '-') + '</td>' +
+      '<td class="p-2 text-center text-gray-500">' + (lot.supplier || '-') + '</td>' +
       '<td class="p-2 text-center">' + (lot.inbound_date || '-') + '</td>' +
       '<td class="p-2 text-center ' + (status === 'expired' || status === 'urgent' ? 'text-red-600 font-bold' : '') + '">' + (lot.expiry_date || '-') + '</td>' +
-      '<td class="p-2 text-center text-gray-500">' + (lot.supplier || '-') + '</td>' +
+      '<td class="p-2 font-mono ' + lotNumClass + '">' + (lot.lot_number || '-') + '</td>' +
       '<td class="p-2 text-right text-purple-600">' + (lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (lotUsage > 0 ? '-' + formatNumber(lotUsage) : '-') + '</td>' +
@@ -6237,10 +6237,10 @@ function renderDailyLotDetail(result, date) {
       lotTableHtml = '<div class="p-2 pl-8"><table class="w-full text-xs border rounded overflow-hidden">' +
         '<thead><tr class="bg-indigo-50 text-indigo-700">' +
         '<th class="p-2 text-center w-10">순서</th>' +
-        '<th class="p-2 text-left">LOT 번호</th>' +
+        '<th class="p-2 text-center">거래처</th>' +
         '<th class="p-2 text-center">' + dateLabel + '</th>' +
         '<th class="p-2 text-center">소비기한</th>' +
-        '<th class="p-2 text-center">' + supplierLabel + '</th>' +
+        '<th class="p-2 text-left">LOT</th>' +
         '<th class="p-2 text-right text-purple-600">전일</th>' +
         '<th class="p-2 text-right ' + itemTerms.inboundColor + '">' + itemTerms.inbound + '</th>' +
         '<th class="p-2 text-right ' + itemTerms.usageColor + '">' + itemTerms.usage + '</th>' +
@@ -6287,14 +6287,14 @@ function renderDailyLotDetail(result, date) {
   '<div class="overflow-x-auto"><table class="w-full text-sm" id="daily-lot-table">' +
     '<thead><tr class="bg-gray-100 text-gray-600 text-xs">' +
       '<th class="p-2 w-6"></th>' +
-      '<th class="p-2 text-left">품목명</th>' +
+      '<th class="p-2 text-left">품목명/LOT</th>' +
       '<th class="p-2 text-center">구분</th>' +
       '<th class="p-2 text-right text-purple-600">전일</th>' +
       '<th class="p-2 text-right ' + terms.inboundColor + '">' + terms.inbound + '</th>' +
       '<th class="p-2 text-right ' + terms.usageColor + '">' + terms.usage + '</th>' +
       '<th class="p-2 text-right text-green-600">조정</th>' +
       '<th class="p-2 text-right font-bold">현재고</th>' +
-      '<th class="p-2 text-center">LOT</th>' +
+      '<th class="p-2 text-center">거래처</th>' +
     '</tr></thead>' +
     '<tbody>' + bodyHtml + '</tbody>' +
   '</table></div>';
@@ -7042,7 +7042,7 @@ function renderMonthlySummaryView(result) {
     '<th class="p-2 text-right ' + terms.usageColor + '">' + terms.usage + '</th>' +
     (isProduct ? '' : '<th class="p-2 text-right text-red-600">출고</th>') +
     '<th class="p-2 text-right font-bold bg-yellow-50">월말재고</th>' +
-    '<th class="p-2 text-center">LOT</th>' +
+    '<th class="p-2 text-center">거래처</th>' +
   '</tr></thead>';
   
   var bodyHtml = '';
@@ -7115,10 +7115,10 @@ function renderMonthlyLotView(result) {
     
     return '<tr class="border-b hover:bg-indigo-50 ' + (closingQty <= 0 ? 'text-gray-400 bg-gray-50' : '') + '">' +
       '<td class="p-2 text-center"><span class="inline-flex items-center justify-center w-5 h-5 rounded-full ' + (closingQty > 0 ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-gray-500') + ' text-xs font-bold" title="FIFO 순서">' + fifoOrder + '</span></td>' +
-      '<td class="p-2 font-mono text-xs">' + (lot.lot_number || '-') + '</td>' +
+      '<td class="p-2 text-center text-gray-500 text-xs">' + (lot.supplier || '-') + '</td>' +
       '<td class="p-2 text-center text-xs">' + (lot.inbound_date || '-') + '</td>' +
       '<td class="p-2 text-center text-xs ' + expiryClass + '">' + (lot.expiry_date || '-') + '</td>' +
-      '<td class="p-2 text-center text-gray-500 text-xs">' + (lot.supplier || '-') + '</td>' +
+      '<td class="p-2 font-mono text-xs">' + (lot.lot_number || '-') + '</td>' +
       '<td class="p-2 text-right text-purple-600">' + (adjustedCarryOver > 0 ? formatNumber(adjustedCarryOver) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (lotUsage > 0 ? '-' + formatNumber(lotUsage) : '-') + '</td>' +
@@ -7159,10 +7159,10 @@ function renderMonthlyLotView(result) {
       lotTableHtml = '<div class="p-2 pl-8"><table class="w-full text-xs border rounded bg-white overflow-hidden">' +
         '<thead><tr class="bg-indigo-100 text-indigo-700">' +
         '<th class="p-2 text-center w-10">순서</th>' +
-        '<th class="p-2 text-left">LOT</th>' +
+        '<th class="p-2 text-left">거래처</th>' +
         '<th class="p-2 text-center">' + dateLabel + '</th>' +
         '<th class="p-2 text-center">소비기한</th>' +
-        '<th class="p-2 text-center">' + supplierLabel + '</th>' +
+        '<th class="p-2 text-center">LOT</th>' +
         '<th class="p-2 text-right text-purple-600">이월</th>' +
         '<th class="p-2 text-right ' + itemTerms.inboundColor + '">' + itemTerms.inbound + '</th>' +
         '<th class="p-2 text-right ' + itemTerms.usageColor + '">' + itemTerms.usage + '</th>' +
@@ -7200,13 +7200,13 @@ function renderMonthlyLotView(result) {
   '<div class="overflow-x-auto max-h-[70vh]"><table class="w-full text-sm">' +
     '<thead class="sticky top-0 bg-gray-100 z-10"><tr class="text-gray-600 text-xs">' +
       '<th class="p-2 w-6"></th>' +
-      '<th class="p-2 text-left">품목명</th>' +
+      '<th class="p-2 text-left">품목명/LOT</th>' +
       '<th class="p-2 text-center">구분</th>' +
       '<th class="p-2 text-right text-purple-600">월초</th>' +
       '<th class="p-2 text-right ' + terms.inboundColor + '">' + terms.inbound + '</th>' +
       '<th class="p-2 text-right ' + terms.usageColor + '">' + terms.usage + '</th>' +
       '<th class="p-2 text-right font-bold">월말</th>' +
-      '<th class="p-2 text-center">LOT</th>' +
+      '<th class="p-2 text-center">거래처</th>' +
     '</tr></thead>' +
     '<tbody>' + bodyHtml + '</tbody>' +
   '</table></div>';

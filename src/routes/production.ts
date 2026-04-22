@@ -735,12 +735,12 @@ productionRoutes.post('/batch', async (c) => {
       await c.env.DB.batch(productionInserts);
     }
     
-    // 3단계: 입고 기록 일괄 INSERT
+    // 3단계: 입고 기록 일괄 INSERT (PDF에서 추출한 소비기한 우선 사용)
     const inboundInserts = preparedItems.map(p =>
       c.env.DB.prepare(`
         INSERT INTO production_inbound (lot_number, production_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, memo)
-        VALUES (?, ?, ?, date(?, '+' || ? || ' days'), ?, ?, '합격', ?)
-      `).bind(p.productLot, p.item.product_code, productionDate, productionDate, p.expiryDays, p.item.quantity, p.item.quantity, '생산입고')
+        VALUES (?, ?, ?, ?, ?, ?, '합격', ?)
+      `).bind(p.productLot, p.item.product_code, productionDate, p.itemExpiryDate, p.item.quantity, p.item.quantity, '생산입고')
     );
     
     if (inboundInserts.length > 0) {
@@ -937,6 +937,70 @@ productionRoutes.post('/batch', async (c) => {
       error: '생산 등록 중 오류가 발생했습니다.',
       detail: error.message || String(error)
     }, 500);
+  }
+});
+
+// 소비기한 일괄 수정 API (특정 날짜의 배민/비마트 생산 데이터)
+productionRoutes.post('/fix-expiry-dates', async (c) => {
+  try {
+    const { prod_date, items } = await c.req.json<{
+      prod_date: string;
+      items: Array<{ barcode: string; expiry_date: string }>;
+    }>();
+    
+    if (!prod_date || !items || items.length === 0) {
+      return c.json({ success: false, error: 'prod_date와 items가 필요합니다.' }, 400);
+    }
+    
+    console.log(`[fix-expiry-dates] ${prod_date} 날짜의 소비기한 수정 시작: ${items.length}건`);
+    
+    // 바코드 → 생산코드 매핑 조회
+    const barcodeList = items.map(i => i.barcode);
+    const placeholders = barcodeList.map(() => '?').join(',');
+    
+    const barcodeMapping = await c.env.DB.prepare(`
+      SELECT barcode, production_code FROM production_barcodes WHERE barcode IN (${placeholders})
+    `).bind(...barcodeList).all<{ barcode: string; production_code: string }>();
+    
+    const barcodeToCode = new Map<string, string>();
+    for (const row of barcodeMapping.results || []) {
+      barcodeToCode.set(row.barcode, row.production_code);
+    }
+    
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const item of items) {
+      const productCode = barcodeToCode.get(item.barcode);
+      if (!productCode) {
+        console.log(`[fix-expiry-dates] 바코드 ${item.barcode}: 매핑 없음`);
+        failCount++;
+        continue;
+      }
+      
+      // production 테이블 업데이트
+      await c.env.DB.prepare(`
+        UPDATE production SET expiry_date = ? WHERE prod_date = ? AND product_code = ?
+      `).bind(item.expiry_date, prod_date, productCode).run();
+      
+      // production_inbound 테이블 업데이트
+      await c.env.DB.prepare(`
+        UPDATE production_inbound SET expiry_date = ? 
+        WHERE production_code = ? AND inbound_date = ?
+      `).bind(item.expiry_date, productCode, prod_date).run();
+      
+      console.log(`[fix-expiry-dates] ${productCode} → ${item.expiry_date} 업데이트 완료`);
+      successCount++;
+    }
+    
+    return c.json({
+      success: true,
+      data: { total: items.length, success: successCount, fail: failCount }
+    });
+    
+  } catch (error: any) {
+    console.error('fix-expiry-dates error:', error);
+    return c.json({ success: false, error: error.message }, 500);
   }
 });
 

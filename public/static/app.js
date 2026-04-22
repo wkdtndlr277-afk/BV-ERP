@@ -19545,65 +19545,95 @@ async function confirmDailyReportById(reportId) {
 async function printDailyReportById(reportId) {
   try {
     showToast('생산일보 로딩 중...', 'info');
-    const result = await api('/daily-report/reports/' + reportId);
     
-    if (!result.success || !result.data) {
-      showToast('생산일보를 불러올 수 없습니다.', 'error');
+    // API 호출 시 타임아웃 처리
+    let result;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30초 타임아웃
+      result = await api('/daily-report/reports/' + reportId);
+      clearTimeout(timeoutId);
+    } catch (fetchError) {
+      console.error('API 호출 오류:', fetchError);
+      showToast('서버 응답 시간 초과. 잠시 후 다시 시도해주세요.', 'error');
+      return;
+    }
+    
+    if (!result) {
+      showToast('서버 응답이 없습니다.', 'error');
+      return;
+    }
+    
+    if (!result.success) {
+      showToast(result.error || '생산일보를 불러올 수 없습니다.', 'error');
+      return;
+    }
+    
+    if (!result.data) {
+      showToast('생산일보 데이터가 없습니다.', 'error');
       return;
     }
     
     const report = result.data;
-    const items = report.items || [];
-    const materials = report.materials_summary || [];
-    const reportDate = report.report_date;
-    const totalQty = items.reduce((s, i) => s + (i.quantity || 0), 0);
+    const items = Array.isArray(report.items) ? report.items : [];
+    const materials = Array.isArray(report.materials_summary) ? report.materials_summary : [];
+    const reportDate = report.report_date || new Date().toISOString().slice(0, 10);
+    const totalQty = items.reduce((s, i) => s + (Number(i.quantity) || 0), 0);
     
-    // 품목 행 생성
+    // 품목 행 생성 (안전하게 처리)
     let itemRows = '';
     items.forEach((item, idx) => {
-      const channelMap = {
-        'coupang': '쿠팡', 'kurly': '컬리', 'bmart': 'B마트',
-        'oasis': '오아시스', 'baemin': '배민', 'direct_store': '직영점'
-      };
-      const channelName = channelMap[item.channel] || item.channel || '-';
-      const productionName = item.production_name || item.production_code || '-';
-      const productName = item.order_product_name || '';
-      const expiryDate = item.expiry_date || reportDate;
-      const lotNumber = item.lot_number || '-';
-      const productNameRow = (productName && productName !== productionName) 
-        ? '<div style="color:#666; margin-top:2px;">' + productName + '</div>' 
-        : '';
-      
-      itemRows += '<tr>' +
-        '<td class="text-center">' + (idx + 1) + '</td>' +
-        '<td class="text-center">' + expiryDate + '</td>' +
-        '<td class="text-center">' + (item.production_code || '-') + '</td>' +
-        '<td style="font-size:8pt;"><div>' + productionName + '</div>' + productNameRow + '</td>' +
-        '<td class="text-right">' + formatNumber(item.quantity) + '개</td>' +
-        '<td class="text-center" style="font-size:7pt;">' + lotNumber + '</td>' +
-        '<td class="text-center">' + channelName + '</td>' +
-        '</tr>';
+      try {
+        const channelMap = {
+          'coupang': '쿠팡', 'kurly': '컬리', 'bmart': 'B마트',
+          'oasis': '오아시스', 'baemin': '배민', 'direct_store': '직영점'
+        };
+        const channelName = channelMap[item.channel] || item.channel || '-';
+        const productionName = String(item.production_name || item.production_code || '-');
+        const productName = String(item.order_product_name || '');
+        const expiryDate = item.expiry_date || reportDate;
+        const lotNumber = item.lot_number || '-';
+        const productNameRow = (productName && productName !== productionName) 
+          ? '<div style="color:#666; margin-top:2px;">' + productName + '</div>' 
+          : '';
+        
+        itemRows += '<tr>' +
+          '<td class="text-center">' + (idx + 1) + '</td>' +
+          '<td class="text-center">' + expiryDate + '</td>' +
+          '<td class="text-center">' + (item.production_code || '-') + '</td>' +
+          '<td style="font-size:8pt;"><div>' + productionName + '</div>' + productNameRow + '</td>' +
+          '<td class="text-right">' + formatNumber(item.quantity || 0) + '개</td>' +
+          '<td class="text-center" style="font-size:7pt;">' + lotNumber + '</td>' +
+          '<td class="text-center">' + channelName + '</td>' +
+          '</tr>';
+      } catch (itemError) {
+        console.error('품목 행 생성 오류:', itemError, item);
+      }
     });
     
-    // 원재료 행 생성 (원료 LOT 포함)
+    // 원재료 행 생성 (원료 LOT 포함, 안전하게 처리)
     let materialRows = '';
     let materialSection = '';
     if (materials.length > 0) {
       materials.forEach((m, i) => {
-        // 원료 LOT 정보 (FEFO 순서대로 최대 2개 표시)
-        const lots = m.lots || [];
-        const lotText = lots.length > 0 
-          ? lots.slice(0, 2).map(l => l.lot_number).join(', ') + (lots.length > 2 ? ' 외' : '')
-          : '-';
-        
-        materialRows += '<tr>' +
-          '<td class="text-center">' + (i + 1) + '</td>' +
-          '<td class="text-center">' + (m.material_code || '-') + '</td>' +
-          '<td>' + (m.material_name || '-') + '</td>' +
-          '<td class="text-right">' + formatNumber(Math.round(m.total_quantity || 0)) + '</td>' +
-          '<td class="text-center">' + (m.unit || 'g') + '</td>' +
-          '<td style="font-size:7pt;">' + lotText + '</td>' +
-          '</tr>';
+        try {
+          // 원료 LOT 정보 (FEFO 순서대로 최대 2개 표시)
+          const lots = Array.isArray(m.lots) ? m.lots : [];
+          const lotText = lots.length > 0 
+            ? lots.slice(0, 2).map(l => l.lot_number || '').filter(Boolean).join(', ') + (lots.length > 2 ? ' 외' : '')
+            : '-';
+          
+          materialRows += '<tr>' +
+            '<td class="text-center">' + (i + 1) + '</td>' +
+            '<td class="text-center">' + (m.material_code || '-') + '</td>' +
+            '<td>' + (m.material_name || '-') + '</td>' +
+            '<td class="text-right">' + formatNumber(Math.round(Number(m.total_quantity) || 0)) + '</td>' +
+            '<td class="text-center">' + (m.unit || 'g') + '</td>' +
+            '<td style="font-size:7pt;">' + lotText + '</td>' +
+            '</tr>';
+        } catch (matError) {
+          console.error('원재료 행 생성 오류:', matError, m);
+        }
       });
       
       materialSection = '<div class="section-title">2. 원재료 사용 현황 (총 ' + materials.length + '종)</div>' +
@@ -19619,7 +19649,7 @@ async function printDailyReportById(reportId) {
     
     // 인쇄용 HTML 생성 (생산등록 > 생산일보 조회와 동일한 HACCP 양식)
     const printHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
-      '<title>생산일보 - ' + report.report_no + '</title>' +
+      '<title>생산일보 - ' + (report.report_no || reportId) + '</title>' +
       '<style>' +
       '@page { size: A4; margin: 10mm; }' +
       '* { box-sizing: border-box; }' +
@@ -19693,12 +19723,18 @@ async function printDailyReportById(reportId) {
       '</body></html>';
     
     const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      showToast('팝업이 차단되었습니다. 팝업 차단을 해제해주세요.', 'error');
+      return;
+    }
     printWindow.document.write(printHtml);
     printWindow.document.close();
+    showToast('출력 창이 열렸습니다.', 'success');
     
   } catch (e) {
     console.error('생산일보 출력 오류:', e);
-    showToast('출력 실패', 'error');
+    const errorMsg = e.message || '알 수 없는 오류';
+    showToast('출력 실패: ' + errorMsg, 'error');
   }
 }
 

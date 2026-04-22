@@ -168,202 +168,263 @@ dailyReport.get('/reports', async (c) => {
   })
 })
 
-// 생산일보 상세 조회 (품목 + 원재료 포함)
+// 생산일보 상세 조회 (품목 + 원재료 포함) - 안정성 강화 버전
 dailyReport.get('/reports/:id', async (c) => {
   const id = c.req.param('id')
   
-  // 기본 정보
-  const report = await c.env.DB.prepare(`
-    SELECT * FROM production_daily_report WHERE id = ?
-  `).bind(id).first()
-  
-  if (!report) {
-    return c.json({ success: false, error: '생산일보를 찾을 수 없습니다.' }, 404)
-  }
-  
-  // 품목 목록 (production_daily_items의 lot_number 우선 사용, 없으면 production 테이블에서 JOIN)
-  // production_daily_items에 직접 저장된 lot_number를 먼저 확인
-  const reportDate = (report as any).report_date
-  const items = await c.env.DB.prepare(`
-    SELECT pdi.*, 
-           COALESCE(pdi.lot_number, p.lot_number, pi.lot_number) as lot_number,
-           COALESCE(pdi.channel, p.channel) as channel
-    FROM production_daily_items pdi
-    LEFT JOIN production p ON pdi.production_code = p.product_code AND p.prod_date = ?
-    LEFT JOIN production_inbound pi ON pdi.production_code = pi.production_code AND pi.inbound_date = ?
-    WHERE pdi.report_id = ?
-    ORDER BY pdi.id
-  `).bind(reportDate, reportDate, id).all()
-  
-  // 원재료 사용량 (저장된 데이터)
-  const materials = await c.env.DB.prepare(`
-    SELECT material_name, unit, 
-           SUM(required_quantity) as total_quantity,
-           GROUP_CONCAT(DISTINCT production_code) as used_by
-    FROM production_daily_materials 
-    WHERE report_id = ?
-    GROUP BY material_name, unit
-    ORDER BY material_name
-  `).bind(id).all()
-  
-  let materials_summary: any[] = []
-  
-  // 저장된 원재료 데이터가 있고 material_code가 있으면 사용
-  const savedMaterials = materials.results as any[] || []
-  const hasMaterialCode = savedMaterials.length > 0 && savedMaterials.some(m => m.material_code)
-  
-  if (hasMaterialCode) {
-    materials_summary = savedMaterials.map(m => ({
-      material_code: m.material_code || '',
-      material_name: m.material_name,
-      total_quantity: m.total_quantity || m.required_quantity,
-      unit: m.unit
-    }))
-  } else {
-    // 저장된 데이터가 없거나 material_code가 없으면 실시간으로 계산
-    const itemsList = items.results as any[]
-    if (itemsList.length > 0) {
-      // production_code 목록 및 바코드 목록 추출
-      const productionCodes = [...new Set(itemsList.map(i => i.production_code).filter(c => c && c !== 'UNKNOWN'))]
-      const barcodes = [...new Set(itemsList.map(i => i.barcode).filter(b => b))]
-      
-      if (productionCodes.length > 0) {
-        // 바코드별 box_quantity 조회
-        let barcodeBoxQuantityMap = new Map<string, number>()
-        if (barcodes.length > 0) {
-          const batchSize = 100
-          for (let i = 0; i < barcodes.length; i += batchSize) {
-            const batch = barcodes.slice(i, i + batchSize)
-            const barcodeData = await c.env.DB.prepare(`
-              SELECT barcode, box_quantity FROM production_barcodes
-              WHERE barcode IN (${batch.map(() => '?').join(',')})
-            `).bind(...batch).all()
-            for (const row of barcodeData.results as any[]) {
-              barcodeBoxQuantityMap.set(row.barcode, row.box_quantity || 1)
-            }
-          }
-        }
-        
-        // production_bom에서 BOM 데이터 조회 (material_code 포함)
-        // SQLite는 IN 절에 999개까지만 지원하므로 배치 처리
-        let allBomResults: any[] = []
-        const batchSize = 100
-        for (let i = 0; i < productionCodes.length; i += batchSize) {
-          const batch = productionCodes.slice(i, i + batchSize)
-          const bomData = await c.env.DB.prepare(`
-            SELECT production_code, material_code, material_name, quantity, unit
-            FROM production_bom
-            WHERE production_code IN (${batch.map(() => '?').join(',')})
-          `).bind(...batch).all()
-          allBomResults = allBomResults.concat(bomData.results || [])
-        }
-        
-        // 품목별 수량으로 원재료 집계 (material_code 포함, box_quantity 적용)
-        const allMaterials = new Map<string, { material_code: string, quantity: number, unit: string }>()
-        const bomMap = new Map<string, any[]>()
-        
-        for (const row of allBomResults) {
-          if (!bomMap.has(row.production_code)) {
-            bomMap.set(row.production_code, [])
-          }
-          bomMap.get(row.production_code)!.push(row)
-        }
-        
-        for (const item of itemsList) {
-          const bomItems = bomMap.get(item.production_code) || []
-          // box_quantity: 바코드별 입수량 (박스당 개수), 기본값 1
-          const boxQuantity = item.barcode ? (barcodeBoxQuantityMap.get(item.barcode) || 1) : 1
-          const actualItemCount = item.quantity * boxQuantity  // 실제 생산 개수 = 박스수 × 입수량
-          for (const bom of bomItems) {
-            const requiredQty = (bom.quantity || 0) * actualItemCount
-            const key = `${bom.material_code || ''}|${bom.material_name}|${bom.unit || 'g'}`
-            const existing = allMaterials.get(key)
-            if (existing) {
-              existing.quantity += requiredQty
-            } else {
-              allMaterials.set(key, { material_code: bom.material_code || '', quantity: requiredQty, unit: bom.unit || 'g' })
-            }
-          }
-        }
-        
-        materials_summary = Array.from(allMaterials.entries()).map(([key, val]) => {
-          const [code, name, unit] = key.split('|')
-          return { material_code: code, material_name: name, total_quantity: val.quantity, unit }
-        }).sort((a, b) => a.material_name.localeCompare(b.material_name))
-      }
-    }
-  }
-  
-  // 원료별 LOT 정보 조회 (FEFO: 유통기한 빠른 순)
-  const materialCodes = materials_summary.map((m: any) => m.material_code).filter((c: string) => c)
-  
-  // 일반 원료 코드와 반제품(SF) 코드 분리
-  const regularCodes = materialCodes.filter((c: string) => !c.startsWith('SF'))
-  const sfCodes = materialCodes.filter((c: string) => c.startsWith('SF'))
-  
-  let materialLots: any[] = []
-  
-  // 1. 일반 원료 LOT 조회 (inbound 테이블)
-  if (regularCodes.length > 0) {
-    const batchSize = 100
-    for (let i = 0; i < regularCodes.length; i += batchSize) {
-      const batch = regularCodes.slice(i, i + batchSize)
-      const lotData = await c.env.DB.prepare(`
-        SELECT item_code, lot_number, expiry_date, remain_qty
-        FROM inbound
-        WHERE item_code IN (${batch.map(() => '?').join(',')})
-          AND remain_qty > 0
-        ORDER BY item_code, expiry_date ASC
-      `).bind(...batch).all()
-      materialLots = materialLots.concat(lotData.results || [])
-    }
-  }
-  
-  // 2. 반제품(SF) LOT 조회 (semi_finished_lots 테이블)
-  if (sfCodes.length > 0) {
-    const batchSize = 100
-    for (let i = 0; i < sfCodes.length; i += batchSize) {
-      const batch = sfCodes.slice(i, i + batchSize)
-      const sfLotData = await c.env.DB.prepare(`
-        SELECT item_code, lot_number, expiry_date, remain_qty
-        FROM semi_finished_lots
-        WHERE item_code IN (${batch.map(() => '?').join(',')})
-          AND remain_qty > 0
-        ORDER BY item_code, expiry_date ASC
-      `).bind(...batch).all()
-      materialLots = materialLots.concat(sfLotData.results || [])
-    }
-  }
-  
-  // materials_summary에 LOT 정보 추가
-  if (materialLots.length > 0) {
-    const lotMap = new Map<string, any[]>()
-    for (const lot of materialLots) {
-      if (!lotMap.has(lot.item_code)) {
-        lotMap.set(lot.item_code, [])
-      }
-      lotMap.get(lot.item_code)!.push({
-        lot_number: lot.lot_number,
-        expiry_date: lot.expiry_date,
-        remain_qty: lot.remain_qty
-      })
+  try {
+    // 1. 기본 정보 조회
+    const report = await c.env.DB.prepare(`
+      SELECT * FROM production_daily_report WHERE id = ?
+    `).bind(id).first()
+    
+    if (!report) {
+      return c.json({ success: false, error: '생산일보를 찾을 수 없습니다.' }, 404)
     }
     
-    materials_summary = materials_summary.map((m: any) => ({
-      ...m,
-      lots: lotMap.get(m.material_code) || []
-    }))
-  }
-  
-  return c.json({
-    success: true,
-    data: {
-      ...report,
-      items: items.results,
-      materials: materials.results,
-      materials_summary
+    const reportDate = (report as any).report_date
+    
+    // 2. 품목 목록 조회 (안전하게 처리)
+    let itemsList: any[] = []
+    try {
+      const items = await c.env.DB.prepare(`
+        SELECT pdi.*, 
+               COALESCE(pdi.lot_number, p.lot_number, pi.lot_number) as lot_number,
+               COALESCE(pdi.channel, p.channel) as channel
+        FROM production_daily_items pdi
+        LEFT JOIN production p ON pdi.production_code = p.product_code AND p.prod_date = ?
+        LEFT JOIN production_inbound pi ON pdi.production_code = pi.production_code AND pi.inbound_date = ?
+        WHERE pdi.report_id = ?
+        ORDER BY pdi.id
+      `).bind(reportDate, reportDate, id).all()
+      itemsList = items.results as any[] || []
+    } catch (itemError) {
+      console.error('품목 목록 조회 오류:', itemError)
+      // 간단한 조회로 폴백
+      try {
+        const simpleItems = await c.env.DB.prepare(`
+          SELECT * FROM production_daily_items WHERE report_id = ? ORDER BY id
+        `).bind(id).all()
+        itemsList = simpleItems.results as any[] || []
+      } catch (fallbackError) {
+        console.error('품목 폴백 조회 오류:', fallbackError)
+      }
     }
-  })
+    
+    // 3. 저장된 원재료 데이터 조회
+    let savedMaterials: any[] = []
+    try {
+      const materials = await c.env.DB.prepare(`
+        SELECT material_code, material_name, unit, 
+               SUM(required_quantity) as total_quantity,
+               GROUP_CONCAT(DISTINCT production_code) as used_by
+        FROM production_daily_materials 
+        WHERE report_id = ?
+        GROUP BY material_code, material_name, unit
+        ORDER BY material_name
+      `).bind(id).all()
+      savedMaterials = materials.results as any[] || []
+    } catch (matError) {
+      console.error('원재료 조회 오류:', matError)
+    }
+    
+    // 4. 원재료 요약 생성
+    let materials_summary: any[] = []
+    
+    // 저장된 원재료 데이터가 있으면 사용 (실시간 계산보다 빠르고 안정적)
+    if (savedMaterials.length > 0) {
+      materials_summary = savedMaterials.map(m => ({
+        material_code: m.material_code || '',
+        material_name: m.material_name || '',
+        total_quantity: m.total_quantity || 0,
+        unit: m.unit || 'g',
+        lots: [] // LOT 정보는 별도 조회
+      }))
+    } else if (itemsList.length > 0) {
+      // 저장된 데이터가 없으면 실시간 계산 (최적화된 버전)
+      try {
+        const productionCodes = [...new Set(itemsList.map(i => i.production_code).filter(c => c && c !== 'UNKNOWN'))]
+        const barcodes = [...new Set(itemsList.map(i => i.barcode).filter(b => b))]
+        
+        if (productionCodes.length > 0) {
+          // 바코드별 box_quantity 맵 생성
+          const barcodeBoxQtyMap = new Map<string, number>()
+          if (barcodes.length > 0) {
+            const batchSize = 50 // 더 작은 배치로 안정성 확보
+            for (let i = 0; i < barcodes.length; i += batchSize) {
+              const batch = barcodes.slice(i, i + batchSize)
+              try {
+                const barcodeData = await c.env.DB.prepare(`
+                  SELECT barcode, box_quantity FROM production_barcodes
+                  WHERE barcode IN (${batch.map(() => '?').join(',')})
+                `).bind(...batch).all()
+                for (const row of barcodeData.results as any[]) {
+                  barcodeBoxQtyMap.set(row.barcode, row.box_quantity || 1)
+                }
+              } catch (e) {
+                console.error('바코드 조회 오류:', e)
+              }
+            }
+          }
+          
+          // BOM 데이터 조회 (배치 처리)
+          const allBomResults: any[] = []
+          const batchSize = 50
+          for (let i = 0; i < productionCodes.length; i += batchSize) {
+            const batch = productionCodes.slice(i, i + batchSize)
+            try {
+              const bomData = await c.env.DB.prepare(`
+                SELECT production_code, material_code, material_name, quantity, unit
+                FROM production_bom
+                WHERE production_code IN (${batch.map(() => '?').join(',')})
+              `).bind(...batch).all()
+              allBomResults.push(...(bomData.results || []))
+            } catch (e) {
+              console.error('BOM 조회 오류:', e)
+            }
+          }
+          
+          // 원재료 집계
+          const allMaterials = new Map<string, { material_code: string, quantity: number, unit: string }>()
+          const bomMap = new Map<string, any[]>()
+          
+          for (const row of allBomResults) {
+            if (!bomMap.has(row.production_code)) {
+              bomMap.set(row.production_code, [])
+            }
+            bomMap.get(row.production_code)!.push(row)
+          }
+          
+          for (const item of itemsList) {
+            const bomItems = bomMap.get(item.production_code) || []
+            const boxQuantity = item.barcode ? (barcodeBoxQtyMap.get(item.barcode) || 1) : 1
+            const actualItemCount = (item.quantity || 0) * boxQuantity
+            
+            for (const bom of bomItems) {
+              const requiredQty = (bom.quantity || 0) * actualItemCount
+              const key = `${bom.material_code || ''}|${bom.material_name || ''}|${bom.unit || 'g'}`
+              const existing = allMaterials.get(key)
+              if (existing) {
+                existing.quantity += requiredQty
+              } else {
+                allMaterials.set(key, { 
+                  material_code: bom.material_code || '', 
+                  quantity: requiredQty, 
+                  unit: bom.unit || 'g' 
+                })
+              }
+            }
+          }
+          
+          materials_summary = Array.from(allMaterials.entries()).map(([key, val]) => {
+            const parts = key.split('|')
+            return { 
+              material_code: parts[0] || '', 
+              material_name: parts[1] || '', 
+              total_quantity: val.quantity, 
+              unit: parts[2] || 'g',
+              lots: []
+            }
+          }).sort((a, b) => (a.material_name || '').localeCompare(b.material_name || ''))
+        }
+      } catch (calcError) {
+        console.error('원재료 계산 오류:', calcError)
+      }
+    }
+    
+    // 5. 원료별 LOT 정보 조회 (선택적 - 실패해도 응답은 반환)
+    try {
+      const materialCodes = materials_summary.map(m => m.material_code).filter(c => c)
+      
+      if (materialCodes.length > 0) {
+        const regularCodes = materialCodes.filter(c => !c.startsWith('SF'))
+        const sfCodes = materialCodes.filter(c => c.startsWith('SF'))
+        
+        const materialLots: any[] = []
+        const batchSize = 50
+        
+        // 일반 원료 LOT 조회
+        if (regularCodes.length > 0) {
+          for (let i = 0; i < regularCodes.length; i += batchSize) {
+            const batch = regularCodes.slice(i, i + batchSize)
+            try {
+              const lotData = await c.env.DB.prepare(`
+                SELECT item_code, lot_number, expiry_date, remain_qty
+                FROM inbound
+                WHERE item_code IN (${batch.map(() => '?').join(',')})
+                  AND remain_qty > 0
+                ORDER BY item_code, expiry_date ASC
+              `).bind(...batch).all()
+              materialLots.push(...(lotData.results || []))
+            } catch (e) {
+              console.error('원료 LOT 조회 오류:', e)
+            }
+          }
+        }
+        
+        // 반제품 LOT 조회
+        if (sfCodes.length > 0) {
+          for (let i = 0; i < sfCodes.length; i += batchSize) {
+            const batch = sfCodes.slice(i, i + batchSize)
+            try {
+              const sfLotData = await c.env.DB.prepare(`
+                SELECT item_code, lot_number, expiry_date, remain_qty
+                FROM semi_finished_lots
+                WHERE item_code IN (${batch.map(() => '?').join(',')})
+                  AND remain_qty > 0
+                ORDER BY item_code, expiry_date ASC
+              `).bind(...batch).all()
+              materialLots.push(...(sfLotData.results || []))
+            } catch (e) {
+              console.error('반제품 LOT 조회 오류:', e)
+            }
+          }
+        }
+        
+        // LOT 정보 매핑
+        if (materialLots.length > 0) {
+          const lotMap = new Map<string, any[]>()
+          for (const lot of materialLots) {
+            if (!lotMap.has(lot.item_code)) {
+              lotMap.set(lot.item_code, [])
+            }
+            lotMap.get(lot.item_code)!.push({
+              lot_number: lot.lot_number,
+              expiry_date: lot.expiry_date,
+              remain_qty: lot.remain_qty
+            })
+          }
+          
+          materials_summary = materials_summary.map(m => ({
+            ...m,
+            lots: lotMap.get(m.material_code) || []
+          }))
+        }
+      }
+    } catch (lotError) {
+      console.error('LOT 정보 조회 오류:', lotError)
+      // LOT 조회 실패해도 계속 진행
+    }
+    
+    // 6. 최종 응답 반환
+    return c.json({
+      success: true,
+      data: {
+        ...report,
+        items: itemsList,
+        materials: savedMaterials,
+        materials_summary
+      }
+    })
+    
+  } catch (error) {
+    console.error('생산일보 상세 조회 전체 오류:', error)
+    return c.json({ 
+      success: false, 
+      error: '생산일보 조회 중 오류가 발생했습니다.',
+      detail: error instanceof Error ? error.message : String(error)
+    }, 500)
+  }
 })
 
 // 발주서 → 생산일보 변환 (최적화 버전)

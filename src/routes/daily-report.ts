@@ -264,7 +264,8 @@ dailyReport.get('/reports/:id', async (c) => {
       }
     }
     
-    // 3. 저장된 원재료 데이터 조회 (master/semi_finished_items 테이블과 조인하여 정확한 이름 조회)
+    // 3. 저장된 원재료 데이터 조회 (master/semi_finished_items 테이블과 조인, 부자재 제외)
+    // 부자재(supplies 테이블에 있는 항목)는 생산일보 원료에서 제외
     let savedMaterials: any[] = []
     try {
       const materials = await c.env.DB.prepare(`
@@ -277,7 +278,9 @@ dailyReport.get('/reports/:id', async (c) => {
         FROM production_daily_materials pdm
         LEFT JOIN master m ON pdm.material_code = m.item_code
         LEFT JOIN semi_finished_items sf ON pdm.material_code = sf.item_code
+        LEFT JOIN supplies sp ON pdm.material_code = sp.item_code
         WHERE pdm.report_id = ?
+          AND sp.item_code IS NULL
         GROUP BY pdm.material_code, COALESCE(m.item_name, sf.item_name, pdm.material_name), pdm.unit
         ORDER BY COALESCE(m.item_name, sf.item_name, pdm.material_name)
       `).bind(id).all()
@@ -336,6 +339,45 @@ dailyReport.get('/reports/:id', async (c) => {
             total_quantity: m.total_quantity || 0,
             unit: unit
           })
+        }
+      }
+      
+      // 원료명이 코드처럼 보이는 항목들의 실제 이름 조회 (코드와 이름이 같은 경우)
+      const codeLikeNames = Array.from(mergedMaterials.values())
+        .filter(m => m.material_code && m.material_name === m.material_code)
+        .map(m => m.material_code)
+      
+      if (codeLikeNames.length > 0) {
+        try {
+          // master 테이블에서 이름 조회
+          const masterNames = await c.env.DB.prepare(`
+            SELECT item_code, item_name FROM master WHERE item_code IN (${codeLikeNames.map(() => '?').join(',')})
+          `).bind(...codeLikeNames).all()
+          
+          const nameMap = new Map<string, string>()
+          for (const row of (masterNames.results || []) as any[]) {
+            if (row.item_name) nameMap.set(row.item_code, row.item_name)
+          }
+          
+          // semi_finished_items에서도 조회
+          const sfNames = await c.env.DB.prepare(`
+            SELECT item_code, item_name FROM semi_finished_items WHERE item_code IN (${codeLikeNames.map(() => '?').join(',')})
+          `).bind(...codeLikeNames).all()
+          
+          for (const row of (sfNames.results || []) as any[]) {
+            if (row.item_name && !nameMap.has(row.item_code)) {
+              nameMap.set(row.item_code, row.item_name)
+            }
+          }
+          
+          // 이름 업데이트
+          for (const mat of mergedMaterials.values()) {
+            if (mat.material_code && mat.material_name === mat.material_code && nameMap.has(mat.material_code)) {
+              mat.material_name = nameMap.get(mat.material_code)!
+            }
+          }
+        } catch (e) {
+          console.error('원료명 조회 오류:', e)
         }
       }
       
@@ -1116,6 +1158,126 @@ dailyReport.post('/migrate-lot-column', async (c) => {
     }
     
     return c.json({ success: true, message: 'lot_number 컬럼 마이그레이션 완료' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ===== 디버그 API: 원료명 조인 테스트 =====
+dailyReport.get('/debug/material-join/:reportId', async (c) => {
+  const reportId = c.req.param('reportId')
+  const materialCode = c.req.query('code') || 'RM1014'
+  
+  try {
+    // 1. production_daily_materials 원본 데이터
+    const pdmData = await c.env.DB.prepare(`
+      SELECT material_code, material_name, unit, required_quantity 
+      FROM production_daily_materials 
+      WHERE report_id = ? AND material_code = ?
+    `).bind(reportId, materialCode).all()
+    
+    // 2. master 테이블에서 직접 조회
+    const masterData = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category FROM master WHERE item_code = ?
+    `).bind(materialCode).first()
+    
+    // 3. supplies 테이블에서 직접 조회 (부자재)
+    let suppliesData = null
+    try {
+      suppliesData = await c.env.DB.prepare(`
+        SELECT item_code, item_name, category FROM supplies WHERE item_code = ?
+      `).bind(materialCode).first()
+    } catch (e) {
+      // supplies 테이블이 없을 수 있음
+    }
+    
+    // 4. COALESCE 조인 결과 (supplies 포함)
+    const joinResult = await c.env.DB.prepare(`
+      SELECT 
+        pdm.material_code,
+        pdm.material_name as pdm_name,
+        m.item_name as master_name,
+        sp.item_name as supplies_name,
+        sf.item_name as sf_name,
+        COALESCE(m.item_name, sp.item_name, sf.item_name, pdm.material_name) as coalesce_result
+      FROM production_daily_materials pdm
+      LEFT JOIN master m ON pdm.material_code = m.item_code
+      LEFT JOIN supplies sp ON pdm.material_code = sp.item_code
+      LEFT JOIN semi_finished_items sf ON pdm.material_code = sf.item_code
+      WHERE pdm.report_id = ? AND pdm.material_code = ?
+    `).bind(reportId, materialCode).all()
+    
+    return c.json({
+      success: true,
+      debug: {
+        query_params: { reportId, materialCode },
+        pdm_raw: pdmData.results,
+        master_direct: masterData,
+        supplies_direct: suppliesData,
+        join_result: joinResult.results
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ===== 원료명 일괄 업데이트 API =====
+dailyReport.post('/fix-material-names/:reportId', async (c) => {
+  const reportId = c.req.param('reportId')
+  
+  try {
+    // 1. 마스터 테이블에서 모든 원료 코드-이름 매핑 가져오기
+    const masterItems = await c.env.DB.prepare(`
+      SELECT item_code, item_name FROM master WHERE item_name IS NOT NULL
+    `).all()
+    const masterMap = new Map((masterItems.results as any[]).map(m => [m.item_code, m.item_name]))
+    
+    // 2. semi_finished_items에서 매핑 추가
+    const sfItems = await c.env.DB.prepare(`
+      SELECT item_code, item_name FROM semi_finished_items WHERE item_name IS NOT NULL
+    `).all()
+    for (const sf of sfItems.results as any[]) {
+      if (!masterMap.has(sf.item_code)) {
+        masterMap.set(sf.item_code, sf.item_name)
+      }
+    }
+    
+    // 3. production_daily_materials에서 잘못된 이름을 가진 항목 찾기
+    const wrongNames = await c.env.DB.prepare(`
+      SELECT DISTINCT pdm.material_code, pdm.material_name
+      FROM production_daily_materials pdm
+      WHERE pdm.report_id = ?
+        AND pdm.material_code IS NOT NULL 
+        AND pdm.material_code != ''
+        AND pdm.material_name = pdm.material_code
+    `).bind(reportId).all()
+    
+    const updates: any[] = []
+    
+    // 4. 각 잘못된 항목에 대해 올바른 이름으로 업데이트
+    for (const item of wrongNames.results as any[]) {
+      const correctName = masterMap.get(item.material_code)
+      if (correctName && correctName !== item.material_name) {
+        await c.env.DB.prepare(`
+          UPDATE production_daily_materials 
+          SET material_name = ?
+          WHERE report_id = ? AND material_code = ?
+        `).bind(correctName, reportId, item.material_code).run()
+        
+        updates.push({
+          code: item.material_code,
+          old_name: item.material_name,
+          new_name: correctName
+        })
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${updates.length}개 원료명 수정 완료`,
+      updates
+    })
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500)
   }

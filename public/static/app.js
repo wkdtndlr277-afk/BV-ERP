@@ -2399,7 +2399,7 @@ async function renderInbound() {
           <!-- 위생자재 입고 옵션 (카테고리가 위생자재일 때 자동 체크) -->
           <div id="sanitary-option-container" class="border-t pt-4 hidden">
             <label class="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" id="inbound-is-sanitary" class="w-5 h-5 text-teal-600 rounded" checked disabled>
+              <input type="checkbox" id="inbound-is-sanitary" class="w-5 h-5 text-teal-600 rounded">
               <span class="font-medium text-teal-700"><i class="fas fa-pump-soap mr-1"></i> 위생자재</span>
               <span class="text-xs text-gray-500">(위생자재 카테고리는 별도 수불부에서 관리됩니다)</span>
             </label>
@@ -30097,6 +30097,8 @@ async function loadInboundQuery() {
     if (supplier) params.append('supplier', supplier);
     if (itemSearch) params.append('item_search', itemSearch);
     params.append('is_sample', sampleFilter);
+    // 위생자재 필터: 기본적으로 모든 데이터 조회 (위생자재 포함)
+    params.append('is_sanitary', 'all');
     
     const result = await api(`/inbound/query?${params}`);
     const data = result.data;

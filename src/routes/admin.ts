@@ -2045,6 +2045,39 @@ admin.post('/migrate/add-box-quantity', async (c) => {
   }
 })
 
+// 원료의 is_sanitary를 0으로 수정 (잘못 입고된 데이터)
+admin.post('/migrate/fix-raw-material-sanitary', async (c) => {
+  const { env } = c
+  const results: string[] = []
+  
+  try {
+    // 원료인데 is_sanitary=1인 데이터 확인
+    const wrongData = await env.DB.prepare(`
+      SELECT i.id, i.lot_number, i.item_code, m.item_name, m.category, i.is_sanitary
+      FROM inbound i
+      JOIN master m ON i.item_code = m.item_code
+      WHERE m.category = '원료' AND i.is_sanitary = 1
+    `).all();
+    
+    results.push(`원료인데 is_sanitary=1인 데이터: ${wrongData.results?.length || 0}건`);
+    
+    if (wrongData.results && wrongData.results.length > 0) {
+      // 수정
+      const updateResult = await env.DB.prepare(`
+        UPDATE inbound SET is_sanitary = 0 
+        WHERE item_code IN (SELECT item_code FROM master WHERE category = '원료')
+        AND is_sanitary = 1
+      `).run();
+      
+      results.push(`${updateResult.meta?.changes || 0}건 수정 완료`);
+    }
+    
+    return c.json({ success: true, message: '원료 is_sanitary 수정 완료', details: results, wrongData: wrongData.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message, details: results }, 500);
+  }
+})
+
 // inbound 테이블 NULL id 수정 마이그레이션
 admin.post('/migrate/fix-inbound-ids', async (c) => {
   const { env } = c

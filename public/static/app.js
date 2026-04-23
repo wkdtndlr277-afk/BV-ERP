@@ -6425,28 +6425,41 @@ function downloadDailyLedger() {
     return;
   }
   
-  // LOT 포함 데이터 생성 (품목명→품목명/LOT, LOT번호→거래처로 변경)
+  // 제외 항목: 정제수(RM184), 마스크(RT1021)
+  const isExcludedItem = (item) => item.item_code === 'RM184' || item.item_name === '정제수' || item.item_code === 'RT1021';
+  const isJeongjesuItem = (item) => item.item_code === 'RM184' || item.item_name === '정제수';
+  
+  // 제외 항목 필터링
+  const filteredData = data.filter(item => !isExcludedItem(item) || isJeongjesuItem(item));
+  
+  // LOT 포함 데이터 생성
   const rows = [];
-  data.forEach(item => {
+  filteredData.forEach(item => {
+    const isJeongjesu = isJeongjesuItem(item);
     // 품목 요약
     rows.push({
       '품목코드': item.item_code,
-      '품목명/LOT': item.item_name,
+      '품목명/LOT': item.item_name + (isJeongjesu ? ' (사용량만)' : ''),
       '구분': item.category,
       '단위': item.unit || '',
       '거래처': '',
       '입고일': '',
       '소비기한': '',
-      '전일재고': item.summary.carry_over || 0,
-      '입고': item.summary.period_inbound || 0,
-      '사용': item.summary.period_usage || 0,
-      '조정': item.summary.period_adjustment || 0,
-      '현재고': item.summary.closing_qty || 0,
-      'LOT수': item.lot_count || 0
+      '전일재고': isJeongjesu ? '-' : (item.summary?.carry_over || 0),
+      '입고': isJeongjesu ? '-' : (item.summary?.period_inbound || 0),
+      '사용': item.summary?.period_usage || 0,
+      '조정': isJeongjesu ? '-' : (item.summary?.period_adjustment || 0),
+      '현재고': isJeongjesu ? '-' : (item.summary?.closing_qty || 0),
+      'LOT수': isJeongjesu ? '-' : (item.lot_count || 0)
     });
-    // LOT 상세 (거래처 먼저, LOT는 품목명/LOT 컬럼에 표시)
-    if (item.lots && item.lots.length > 0) {
-      item.lots.forEach(lot => {
+    // LOT 상세 - 정제수는 LOT 출력 안함
+    // 당월 입고 LOT(isNewLot: true)만 표시, 이월 LOT는 월초재고에 합산됨
+    if (!isJeongjesu && item.lots && item.lots.length > 0) {
+      // 당월 입고 LOT만 필터링 (isNewLot: true)
+      const newLots = item.lots.filter(lot => lot.isNewLot === true);
+      // FIFO 순서대로 정렬 (입고일 기준)
+      const sortedLots = newLots.slice().sort((a, b) => (a.inbound_date || '').localeCompare(b.inbound_date || ''));
+      sortedLots.forEach(lot => {
         rows.push({
           '품목코드': '',
           '품목명/LOT': lot.lot_number || '',
@@ -6455,11 +6468,11 @@ function downloadDailyLedger() {
           '거래처': lot.supplier || '',
           '입고일': lot.inbound_date || '',
           '소비기한': lot.expiry_date || '',
-          '전일재고': lot.carry_over || 0,
+          '전일재고': '-',
           '입고': lot.period_inbound || 0,
-          '사용': lot.period_usage || 0,
+          '사용': lot.fifo_usage || lot.period_usage || 0,
           '조정': lot.period_adjustment || 0,
-          '현재고': lot.closing_qty || 0,
+          '현재고': lot.fifo_closing !== undefined ? lot.fifo_closing : (lot.closing_qty || 0),
           'LOT수': ''
         });
       });
@@ -6496,15 +6509,23 @@ function printDailyLedger() {
     return;
   }
   
-  // LOT 상세 포함 테이블 HTML 직접 생성 (품목명→품목명/LOT, LOT→거래처로 변경)
+  // 제외 항목: 정제수(RM184), 마스크(RT1021)
+  const isExcludedItem = (item) => item.item_code === 'RM184' || item.item_name === '정제수' || item.item_code === 'RT1021';
+  const isJeongjesuItem = (item) => item.item_code === 'RM184' || item.item_name === '정제수';
+  
+  // 제외 항목 필터링
+  const filteredData = data.filter(item => !isExcludedItem(item) || isJeongjesuItem(item));
+  
+  // LOT 상세 포함 테이블 HTML 직접 생성
+  // 헤더: 품목코드 | 품목명/LOT | 입고일 | 소비기한 | 전일 | 입고 | 사용 | 조정 | 현재고 | 거래처
   let tableHtml = `
     <table>
       <thead>
         <tr style="background:#e0e0e0;">
           <th>품목코드</th>
           <th>품목명/LOT</th>
-          <th>구분</th>
-          <th>단위</th>
+          <th>입고일</th>
+          <th>소비기한</th>
           <th style="text-align:right;">전일</th>
           <th style="text-align:right;">입고</th>
           <th style="text-align:right;">사용</th>
@@ -6516,37 +6537,45 @@ function printDailyLedger() {
       <tbody>
   `;
   
-  data.forEach(item => {
-    // 품목 행
+  filteredData.forEach(item => {
+    const isJeongjesu = isJeongjesuItem(item);
+    // 품목 행 (구분/단위 대신 입고일/소비기한 열에 구분/단위 표시)
     tableHtml += `
       <tr style="background:#f9f9f9; font-weight:bold;">
         <td>${item.item_code}</td>
-        <td>${item.item_name}</td>
-        <td style="text-align:center;">${item.category}</td>
+        <td>${item.item_name}${isJeongjesu ? ' <span style="color:#888;">(사용량만)</span>' : ''}</td>
+        <td style="text-align:center;">${item.category || '-'}</td>
         <td style="text-align:center;">${item.unit || '-'}</td>
-        <td style="text-align:right;">${formatNumber(item.summary?.carry_over || 0)}</td>
-        <td style="text-align:right;">${item.summary?.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-'}</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : formatNumber(item.summary?.carry_over || 0)}</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : (item.summary?.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-')}</td>
         <td style="text-align:right;">${item.summary?.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
-        <td style="text-align:right;">${item.summary?.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-'}</td>
-        <td style="text-align:right;">${formatNumber(item.summary?.closing_qty || 0)}</td>
-        <td style="text-align:center;">${item.lot_count || 0}건</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : (item.summary?.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-')}</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : formatNumber(item.summary?.closing_qty || 0)}</td>
+        <td style="text-align:center;">${isJeongjesu ? '-' : (item.lot_count || 0) + '건'}</td>
       </tr>
     `;
     
-    // LOT 상세 행들 (거래처 먼저, LOT번호는 품목명/LOT 컬럼에)
-    if (item.lots && item.lots.length > 0) {
-      item.lots.forEach((lot, idx) => {
+    // LOT 상세 행들 - 정제수는 LOT 출력 안함
+    // 당월 입고 LOT(isNewLot: true)만 표시, 이월 LOT는 월초재고에 합산됨
+    if (!isJeongjesu && item.lots && item.lots.length > 0) {
+      // 당월 입고 LOT만 필터링 (isNewLot: true)
+      const newLots = item.lots.filter(lot => lot.isNewLot === true);
+      // FIFO 순서대로 정렬 (입고일 기준)
+      const sortedLots = newLots.slice().sort((a, b) => (a.inbound_date || '').localeCompare(b.inbound_date || ''));
+      sortedLots.forEach((lot, idx) => {
+        const usage = lot.fifo_usage || lot.period_usage || 0;
+        const closing = lot.fifo_closing !== undefined ? lot.fifo_closing : (lot.closing_qty || 0);
         tableHtml += `
           <tr style="font-size:10px; color:#555;">
             <td style="padding-left:20px;">${idx + 1}</td>
             <td>${lot.lot_number || '-'}</td>
             <td style="text-align:center;">${lot.inbound_date || '-'}</td>
             <td style="text-align:center;">${lot.expiry_date || '-'}</td>
-            <td style="text-align:right;">${lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-'}</td>
+            <td style="text-align:right;">-</td>
             <td style="text-align:right;">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
-            <td style="text-align:right;">${lot.period_usage > 0 ? '-' + formatNumber(lot.period_usage) : '-'}</td>
+            <td style="text-align:right;">${usage > 0 ? '-' + formatNumber(usage) : '-'}</td>
             <td style="text-align:right;">${lot.period_adjustment !== 0 ? formatNumber(lot.period_adjustment) : '-'}</td>
-            <td style="text-align:right;">${formatNumber(lot.closing_qty || 0)}</td>
+            <td style="text-align:right;">${formatNumber(closing)}</td>
             <td style="text-align:center;">${lot.supplier || '-'}</td>
           </tr>
         `;
@@ -6557,7 +6586,7 @@ function printDailyLedger() {
   tableHtml += '</tbody></table>';
   
   const title = `일별 수불부 (${period.start_date || formatDate(new Date())})`;
-  const info = `<strong>전일:</strong> ${formatNumber(summary.carry_over || 0)} | <strong>입고:</strong> +${formatNumber(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatNumber(summary.period_usage || 0)} | <strong>현재고:</strong> ${formatNumber(summary.closing_qty || 0)} | <strong>품목:</strong> ${data.length}건`;
+  const info = `<strong>전일:</strong> ${formatNumber(summary.carry_over || 0)} | <strong>입고:</strong> +${formatNumber(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatNumber(summary.period_usage || 0)} | <strong>현재고:</strong> ${formatNumber(summary.closing_qty || 0)} | <strong>품목:</strong> ${filteredData.length}건`;
   
   printData(title, tableHtml, info);
 }
@@ -6572,28 +6601,41 @@ function downloadMonthlyLedger() {
     return;
   }
   
-  // LOT 포함 데이터 생성 (품목명→품목명/LOT, LOT번호→거래처로 변경)
+  // 제외 항목: 정제수(RM184), 마스크(RT1021)
+  const isExcludedItem = (item) => item.item_code === 'RM184' || item.item_name === '정제수' || item.item_code === 'RT1021';
+  const isJeongjesuItem = (item) => item.item_code === 'RM184' || item.item_name === '정제수';
+  
+  // 제외 항목 필터링
+  const filteredData = data.filter(item => !isExcludedItem(item) || isJeongjesuItem(item));
+  
+  // LOT 포함 데이터 생성
   const rows = [];
-  data.forEach(item => {
+  filteredData.forEach(item => {
+    const isJeongjesu = isJeongjesuItem(item);
     rows.push({
       '품목코드': item.item_code,
-      '품목명/LOT': item.item_name,
+      '품목명/LOT': item.item_name + (isJeongjesu ? ' (사용량만)' : ''),
       '구분': item.category,
       '단위': item.unit || '',
       '거래처': '',
       '입고일': '',
       '소비기한': '',
-      '월초재고': item.summary?.carry_over || item.opening_stock || 0,
-      '입고': item.summary?.period_inbound || item.monthly_total?.inbound || 0,
+      '월초재고': isJeongjesu ? '-' : (item.summary?.carry_over || item.opening_stock || 0),
+      '입고': isJeongjesu ? '-' : (item.summary?.period_inbound || item.monthly_total?.inbound || 0),
       '사용': item.summary?.period_usage || item.monthly_total?.usage || 0,
-      '출고': item.summary?.period_outbound || item.monthly_total?.outbound || 0,
-      '조정': item.summary?.period_adjustment || item.monthly_total?.adjustment || 0,
-      '월말재고': item.summary?.closing_qty || item.closing_stock || 0,
-      'LOT수': item.lot_count || ''
+      '출고': isJeongjesu ? '-' : (item.summary?.period_outbound || item.monthly_total?.outbound || 0),
+      '조정': isJeongjesu ? '-' : (item.summary?.period_adjustment || item.monthly_total?.adjustment || 0),
+      '월말재고': isJeongjesu ? '-' : (item.summary?.closing_qty || item.closing_stock || 0),
+      'LOT수': isJeongjesu ? '-' : (item.lot_count || '')
     });
-    // LOT 상세 (거래처 먼저, LOT번호는 품목명/LOT 컬럼에)
-    if (item.lots && item.lots.length > 0) {
-      item.lots.forEach(lot => {
+    // LOT 상세 - 정제수는 LOT 출력 안함
+    // 당월 입고 LOT(isNewLot: true)만 표시, 이월 LOT는 월초재고에 합산됨
+    if (!isJeongjesu && item.lots && item.lots.length > 0) {
+      // 당월 입고 LOT만 필터링 (isNewLot: true)
+      const newLots = item.lots.filter(lot => lot.isNewLot === true);
+      // FIFO 순서대로 정렬 (입고일 기준)
+      const sortedLots = newLots.slice().sort((a, b) => (a.inbound_date || '').localeCompare(b.inbound_date || ''));
+      sortedLots.forEach(lot => {
         rows.push({
           '품목코드': '',
           '품목명/LOT': lot.lot_number || '',
@@ -6602,12 +6644,12 @@ function downloadMonthlyLedger() {
           '거래처': lot.supplier || '',
           '입고일': lot.inbound_date || '',
           '소비기한': lot.expiry_date || '',
-          '월초재고': lot.carry_over || 0,
+          '월초재고': '-',
           '입고': lot.period_inbound || 0,
-          '사용': lot.period_usage || 0,
-          '출고': lot.period_outbound || 0,
+          '사용': lot.fifo_usage || lot.period_usage || 0,
+          '출고': lot.fifo_outbound || lot.period_outbound || 0,
           '조정': lot.period_adjustment || 0,
-          '월말재고': lot.closing_qty || 0,
+          '월말재고': lot.fifo_closing !== undefined ? lot.fifo_closing : (lot.closing_qty || 0),
           'LOT수': ''
         });
       });
@@ -6655,7 +6697,15 @@ function printMonthlyLedger() {
     return;
   }
   
-  // LOT 상세 포함 테이블 HTML 직접 생성 (품목명→품목명/LOT, LOT→거래처로 변경) - 조정 컬럼 제거
+  // 제외 항목: 정제수(RM184), 마스크(RT1021)
+  const isExcludedItem = (item) => item.item_code === 'RM184' || item.item_name === '정제수' || item.item_code === 'RT1021';
+  const isJeongjesuItem = (item) => item.item_code === 'RM184' || item.item_name === '정제수';
+  
+  // 제외 항목 필터링
+  const filteredData = data.filter(item => !isExcludedItem(item) || isJeongjesuItem(item));
+  
+  // LOT 상세 포함 테이블 HTML 직접 생성 - 조정 컬럼 제거
+  // 헤더: 품목코드 | 품목명/LOT | 입고일 | 소비기한 | 월초 | 입고 | 사용 | 월말 | 거래처
   // 조정을 월초재고에 포함
   const adjustedSummaryCarryOver = (summary.carry_over || 0) + (summary.period_adjustment || 0);
   
@@ -6665,8 +6715,8 @@ function printMonthlyLedger() {
         <tr style="background:#e0e0e0;">
           <th>품목코드</th>
           <th>품목명/LOT</th>
-          <th>구분</th>
-          <th>단위</th>
+          <th>입고일</th>
+          <th>소비기한</th>
           <th style="text-align:right;">월초</th>
           <th style="text-align:right;">입고</th>
           <th style="text-align:right;">사용</th>
@@ -6677,41 +6727,45 @@ function printMonthlyLedger() {
       <tbody>
   `;
   
-  data.forEach(item => {
+  filteredData.forEach(item => {
+    const isJeongjesu = isJeongjesuItem(item);
     // 조정을 월초재고에 포함
     const itemAdjustedCarryOver = (item.summary?.carry_over || 0) + (item.summary?.period_adjustment || 0);
     
-    // 품목 행
+    // 품목 행 (입고일/소비기한 열에 구분/단위 표시)
     tableHtml += `
       <tr style="background:#f9f9f9; font-weight:bold;">
         <td>${item.item_code}</td>
-        <td>${item.item_name}</td>
-        <td style="text-align:center;">${item.category}</td>
+        <td>${item.item_name}${isJeongjesu ? ' <span style="color:#888;">(사용량만)</span>' : ''}</td>
+        <td style="text-align:center;">${item.category || '-'}</td>
         <td style="text-align:center;">${item.unit || '-'}</td>
-        <td style="text-align:right;">${formatNumber(itemAdjustedCarryOver)}</td>
-        <td style="text-align:right;">${item.summary?.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-'}</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : formatNumber(itemAdjustedCarryOver)}</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : (item.summary?.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-')}</td>
         <td style="text-align:right;">${item.summary?.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
-        <td style="text-align:right;">${formatNumber(item.summary?.closing_qty || 0)}</td>
-        <td style="text-align:center;">${item.lot_count || 0}건</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : formatNumber(item.summary?.closing_qty || 0)}</td>
+        <td style="text-align:center;">${isJeongjesu ? '-' : (item.lot_count || 0) + '건'}</td>
       </tr>
     `;
     
-    // LOT 상세 행들 (선입선출 순서) - 거래처 먼저, LOT번호는 품목명/LOT 컬럼에
-    if (item.lots && item.lots.length > 0) {
-      const sortedLots = item.lots.slice().sort((a, b) => (a.inbound_date || '').localeCompare(b.inbound_date || ''));
+    // LOT 상세 행들 (FIFO 순서) - 정제수는 LOT 출력 안함
+    // 당월 입고 LOT(isNewLot: true)만 표시, 이월 LOT는 월초재고에 합산됨
+    if (!isJeongjesu && item.lots && item.lots.length > 0) {
+      // 당월 입고 LOT만 필터링 (isNewLot: true)
+      const newLots = item.lots.filter(lot => lot.isNewLot === true);
+      const sortedLots = newLots.slice().sort((a, b) => (a.inbound_date || '').localeCompare(b.inbound_date || ''));
       sortedLots.forEach((lot, idx) => {
-        // LOT별 조정을 이월에 포함
-        const lotAdjustedCarryOver = (lot.carry_over || 0) + (lot.period_adjustment || 0);
+        const usage = lot.fifo_usage || lot.period_usage || 0;
+        const closing = lot.fifo_closing !== undefined ? lot.fifo_closing : (lot.closing_qty || 0);
         tableHtml += `
           <tr style="font-size:10px; color:#555;">
             <td style="padding-left:20px;">${idx + 1}</td>
             <td>${lot.lot_number || '-'}</td>
             <td style="text-align:center;">${lot.inbound_date || '-'}</td>
             <td style="text-align:center;">${lot.expiry_date || '-'}</td>
-            <td style="text-align:right;">${lotAdjustedCarryOver > 0 ? formatNumber(lotAdjustedCarryOver) : '-'}</td>
+            <td style="text-align:right;">-</td>
             <td style="text-align:right;">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
-            <td style="text-align:right;">${lot.period_usage > 0 ? '-' + formatNumber(lot.period_usage) : '-'}</td>
-            <td style="text-align:right;">${formatNumber(lot.closing_qty || 0)}</td>
+            <td style="text-align:right;">${usage > 0 ? '-' + formatNumber(usage) : '-'}</td>
+            <td style="text-align:right;">${formatNumber(closing)}</td>
             <td style="text-align:center;">${lot.supplier || '-'}</td>
           </tr>
         `;
@@ -6722,7 +6776,7 @@ function printMonthlyLedger() {
   tableHtml += '</tbody></table>';
   
   const title = `월별 수불부 (${periodLabel})`;
-  const info = `<strong>월초:</strong> ${formatNumber(adjustedSummaryCarryOver)} | <strong>입고:</strong> +${formatNumber(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatNumber(summary.period_usage || 0)} | <strong>월말:</strong> ${formatNumber(summary.closing_qty || 0)} | <strong>품목:</strong> ${data.length}건`;
+  const info = `<strong>월초:</strong> ${formatNumber(adjustedSummaryCarryOver)} | <strong>입고:</strong> +${formatNumber(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatNumber(summary.period_usage || 0)} | <strong>월말:</strong> ${formatNumber(summary.closing_qty || 0)} | <strong>품목:</strong> ${filteredData.length}건`;
   
   printData(title, tableHtml, info);
 }
@@ -6925,6 +6979,11 @@ async function loadMonthlyLedger() {
     return;
   }
   
+  // 새 조회 시 수정 데이터 초기화
+  window.monthlyCarryOverEdits = {};
+  // 수정 모드 해제
+  document.body.classList.remove('carry-over-edit-mode');
+  
   const year = document.getElementById('monthly-year')?.value || new Date().getFullYear();
   const month = document.getElementById('monthly-month')?.value || String(new Date().getMonth() + 1).padStart(2, '0');
   const viewType = document.getElementById('monthly-view-type')?.value || 'summary';
@@ -7010,6 +7069,11 @@ function renderMonthlySummaryView(result) {
   
   const periodLabel = period.year + '년 ' + parseInt(period.month) + '월';
   
+  // 수정된 월초재고 저장소 초기화 (window 전역 변수)
+  if (!window.monthlyCarryOverEdits) {
+    window.monthlyCarryOverEdits = {};
+  }
+  
   // 조정을 월초재고에 포함
   const adjustedCarryOver = (summary.carry_over || 0) + (summary.period_adjustment || 0);
   
@@ -7019,12 +7083,14 @@ function renderMonthlySummaryView(result) {
       '<span class="text-lg font-bold text-gray-700">' + periodLabel + ' 수불부</span>' +
       '<span class="text-sm text-gray-500">품목 ' + data.length + '건</span>' +
       (isProduct ? '<span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">HACCP 제품 수불부</span>' : '') +
+      '<button onclick="toggleCarryOverEditMode()" id="edit-mode-btn" class="ml-2 px-3 py-1 text-xs bg-orange-100 text-orange-700 hover:bg-orange-200 rounded transition"><i class="fas fa-edit mr-1"></i>월초재고 수정</button>' +
+      '<span id="edit-mode-indicator" class="hidden text-xs text-orange-600 font-bold"><i class="fas fa-exclamation-circle mr-1"></i>수정모드</span>' +
     '</div>' +
     '<div class="flex items-center gap-4 text-sm">' +
-      '<span class="text-purple-600"><b>월초</b> ' + formatNumber(adjustedCarryOver) + '</span>' +
+      '<span class="text-purple-600"><b>월초</b> <span id="summary-carry-over">' + formatNumber(adjustedCarryOver) + '</span></span>' +
       '<span class="' + terms.inboundColor + '"><b>' + terms.inbound + '</b> +' + formatNumber(summary.period_inbound || 0) + '</span>' +
       '<span class="' + terms.usageColor + '"><b>' + terms.usage + '</b> -' + formatNumber((summary.period_usage || 0) + (summary.period_outbound || 0)) + '</span>' +
-      '<span class="text-gray-800 font-bold"><b>월말</b> ' + formatNumber(summary.closing_qty || 0) + '</span>' +
+      '<span class="text-gray-800 font-bold"><b>월말</b> <span id="summary-closing-qty">' + formatNumber(summary.closing_qty || 0) + '</span></span>' +
     '</div>' +
   '</div>';
   
@@ -7045,43 +7111,218 @@ function renderMonthlySummaryView(result) {
   if (data.length === 0) {
     bodyHtml = '<tr><td colspan="' + (isProduct ? '8' : '9') + '" class="p-8 text-center text-gray-400">해당월 데이터가 없습니다.</td></tr>';
   } else {
-    bodyHtml = data.map(function(item) {
+    bodyHtml = data.map(function(item, idx) {
       var itemTerms = getLedgerTerms(item.category);
       var totalUsage = (item.summary.period_usage || 0) + (item.summary.period_outbound || 0);
       var categoryClass = item.category === '원료' ? 'bg-green-100 text-green-700' : item.category === '제품' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700';
       // 조정을 월초재고에 포함
-      var itemAdjustedCarryOver = (item.summary.carry_over || 0) + (item.summary.period_adjustment || 0);
+      var originalCarryOver = (item.summary.carry_over || 0) + (item.summary.period_adjustment || 0);
+      // 수정된 값이 있으면 사용
+      var editedCarryOver = window.monthlyCarryOverEdits[item.item_code];
+      var itemAdjustedCarryOver = editedCarryOver !== undefined ? editedCarryOver : originalCarryOver;
+      // 월말재고 재계산: 월초 + 입고 - 사용 - 출고
+      var calculatedClosing = itemAdjustedCarryOver + (item.summary.period_inbound || 0) - (item.summary.period_usage || 0) - (item.summary.period_outbound || 0);
+      var isEdited = editedCarryOver !== undefined;
       
-      return '<tr class="border-b hover:bg-purple-50 ' + (item.summary.closing_qty <= 0 ? 'text-gray-400' : '') + '">' +
+      return '<tr class="border-b hover:bg-purple-50 ' + (calculatedClosing <= 0 ? 'text-gray-400' : '') + '" data-item-code="' + item.item_code + '" data-idx="' + idx + '">' +
         '<td class="p-2 sticky left-0 bg-white"><div class="font-medium">' + item.item_name + '</div><div class="text-xs text-gray-400 font-mono">' + item.item_code + '</div></td>' +
         '<td class="p-2 text-center"><span class="px-2 py-0.5 text-xs rounded ' + categoryClass + '">' + item.category + '</span></td>' +
         '<td class="p-2 text-center text-xs text-gray-500">' + (item.unit || '-') + '</td>' +
-        '<td class="p-2 text-right text-purple-600">' + formatNumber(itemAdjustedCarryOver) + '</td>' +
+        '<td class="p-2 text-right carry-over-cell ' + (isEdited ? 'bg-orange-100' : '') + '">' +
+          '<span class="carry-over-display text-purple-600 ' + (isEdited ? 'font-bold text-orange-600' : '') + '">' + formatNumber(itemAdjustedCarryOver) + '</span>' +
+          '<input type="number" step="0.01" class="carry-over-input hidden w-20 px-1 py-0.5 text-right border border-orange-400 rounded text-sm" value="' + itemAdjustedCarryOver.toFixed(2) + '" data-original="' + originalCarryOver + '" data-item-code="' + item.item_code + '">' +
+        '</td>' +
         '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-') + '</td>' +
         '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (totalUsage > 0 ? '-' + formatNumber(totalUsage) : '-') + '</td>' +
         (item.category === '제품' ? '' : '<td class="p-2 text-right text-red-600">' + (item.summary.period_outbound > 0 ? '-' + formatNumber(item.summary.period_outbound) : '-') + '</td>') +
-        '<td class="p-2 text-right font-bold bg-yellow-50">' + formatNumber(item.summary.closing_qty) + '</td>' +
+        '<td class="p-2 text-right font-bold bg-yellow-50 closing-qty-cell ' + (isEdited ? 'text-orange-600' : '') + '">' + formatNumber(calculatedClosing) + '</td>' +
         '<td class="p-2 text-center"><span class="text-xs ' + (item.lot_count > 0 ? 'text-indigo-600' : 'text-gray-400') + '">' + item.lot_count + '건</span></td>' +
       '</tr>';
     }).join('');
   }
   
+  // 합계 계산 (수정된 값 반영)
+  var totalCarryOver = 0;
+  var totalClosing = 0;
+  data.forEach(function(item) {
+    var originalCarryOver = (item.summary.carry_over || 0) + (item.summary.period_adjustment || 0);
+    var editedCarryOver = window.monthlyCarryOverEdits[item.item_code];
+    var itemCarryOver = editedCarryOver !== undefined ? editedCarryOver : originalCarryOver;
+    totalCarryOver += itemCarryOver;
+    var closing = itemCarryOver + (item.summary.period_inbound || 0) - (item.summary.period_usage || 0) - (item.summary.period_outbound || 0);
+    totalClosing += closing;
+  });
+  
   var tfootHtml = '<tfoot><tr class="bg-gray-100 font-bold text-sm">' +
     '<td class="p-2 sticky left-0 bg-gray-100">합계</td>' +
     '<td class="p-2"></td>' +
     '<td class="p-2"></td>' +
-    '<td class="p-2 text-right text-purple-600">' + formatNumber(adjustedCarryOver) + '</td>' +
+    '<td class="p-2 text-right text-purple-600" id="total-carry-over">' + formatNumber(totalCarryOver) + '</td>' +
     '<td class="p-2 text-right ' + terms.inboundColor + '">+' + formatNumber(summary.period_inbound || 0) + '</td>' +
     '<td class="p-2 text-right ' + terms.usageColor + '">-' + formatNumber((summary.period_usage || 0) + (summary.period_outbound || 0)) + '</td>' +
     (isProduct ? '' : '<td class="p-2 text-right text-red-600">-' + formatNumber(summary.period_outbound || 0) + '</td>') +
-    '<td class="p-2 text-right bg-yellow-100">' + formatNumber(summary.closing_qty || 0) + '</td>' +
+    '<td class="p-2 text-right bg-yellow-100" id="total-closing-qty">' + formatNumber(totalClosing) + '</td>' +
     '<td class="p-2 text-center">' + (result.total_lot_count || 0) + '건</td>' +
   '</tr></tfoot>';
   
   contentEl.innerHTML = headerHtml + 
-    '<div class="overflow-x-auto"><table class="w-full text-sm">' + 
+    '<div class="overflow-x-auto"><table class="w-full text-sm" id="monthly-summary-table">' + 
     theadHtml + '<tbody>' + bodyHtml + '</tbody>' + tfootHtml + 
     '</table></div>';
+  
+  // 수정 이벤트 리스너 추가
+  document.querySelectorAll('.carry-over-input').forEach(function(input) {
+    input.addEventListener('change', handleCarryOverChange);
+    input.addEventListener('keyup', function(e) {
+      if (e.key === 'Enter') {
+        handleCarryOverChange(e);
+        input.blur();
+      }
+    });
+  });
+}
+
+// 월초재고 수정 모드 토글
+function toggleCarryOverEditMode() {
+  const isEditMode = document.body.classList.toggle('carry-over-edit-mode');
+  const editBtn = document.getElementById('edit-mode-btn');
+  const editIndicator = document.getElementById('edit-mode-indicator');
+  
+  if (isEditMode) {
+    editBtn.innerHTML = '<i class="fas fa-check mr-1"></i>수정 완료';
+    editBtn.className = 'ml-2 px-3 py-1 text-xs bg-green-500 text-white hover:bg-green-600 rounded transition';
+    editIndicator.classList.remove('hidden');
+    // 입력 필드 표시
+    document.querySelectorAll('.carry-over-display').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.carry-over-input').forEach(el => el.classList.remove('hidden'));
+  } else {
+    editBtn.innerHTML = '<i class="fas fa-edit mr-1"></i>월초재고 수정';
+    editBtn.className = 'ml-2 px-3 py-1 text-xs bg-orange-100 text-orange-700 hover:bg-orange-200 rounded transition';
+    editIndicator.classList.add('hidden');
+    // 입력 필드 숨기고 표시 값 업데이트
+    document.querySelectorAll('.carry-over-display').forEach(el => el.classList.remove('hidden'));
+    document.querySelectorAll('.carry-over-input').forEach(el => el.classList.add('hidden'));
+    // 수정된 값이 있으면 window.monthlyLedgerData에 반영
+    updateMonthlyLedgerDataWithEdits();
+  }
+}
+
+// 월초재고 변경 처리
+function handleCarryOverChange(e) {
+  const input = e.target;
+  const itemCode = input.dataset.itemCode;
+  const newValue = parseFloat(input.value) || 0;
+  const originalValue = parseFloat(input.dataset.original) || 0;
+  
+  // 수정된 값 저장
+  if (Math.abs(newValue - originalValue) > 0.001) {
+    window.monthlyCarryOverEdits[itemCode] = newValue;
+  } else {
+    delete window.monthlyCarryOverEdits[itemCode];
+  }
+  
+  // 해당 행의 월말재고 재계산
+  const row = input.closest('tr');
+  const data = window.monthlyLedgerData || [];
+  const item = data.find(d => d.item_code === itemCode);
+  if (item) {
+    const inbound = item.summary.period_inbound || 0;
+    const usage = item.summary.period_usage || 0;
+    const outbound = item.summary.period_outbound || 0;
+    const calculatedClosing = newValue + inbound - usage - outbound;
+    
+    // UI 업데이트
+    const closingCell = row.querySelector('.closing-qty-cell');
+    closingCell.textContent = formatNumber(calculatedClosing);
+    
+    // 수정된 값 표시 업데이트
+    const displayEl = row.querySelector('.carry-over-display');
+    displayEl.textContent = formatNumber(newValue);
+    
+    // 수정 여부에 따른 스타일 변경
+    const isEdited = window.monthlyCarryOverEdits[itemCode] !== undefined;
+    const carryOverCell = row.querySelector('.carry-over-cell');
+    if (isEdited) {
+      carryOverCell.classList.add('bg-orange-100');
+      displayEl.classList.add('font-bold', 'text-orange-600');
+      displayEl.classList.remove('text-purple-600');
+      closingCell.classList.add('text-orange-600');
+    } else {
+      carryOverCell.classList.remove('bg-orange-100');
+      displayEl.classList.remove('font-bold', 'text-orange-600');
+      displayEl.classList.add('text-purple-600');
+      closingCell.classList.remove('text-orange-600');
+    }
+    
+    // 합계 업데이트
+    updateMonthlySummaryTotals();
+  }
+}
+
+// 합계 업데이트
+function updateMonthlySummaryTotals() {
+  const data = window.monthlyLedgerData || [];
+  var totalCarryOver = 0;
+  var totalClosing = 0;
+  
+  data.forEach(function(item) {
+    var originalCarryOver = (item.summary.carry_over || 0) + (item.summary.period_adjustment || 0);
+    var editedCarryOver = window.monthlyCarryOverEdits ? window.monthlyCarryOverEdits[item.item_code] : undefined;
+    var itemCarryOver = editedCarryOver !== undefined ? editedCarryOver : originalCarryOver;
+    totalCarryOver += itemCarryOver;
+    var closing = itemCarryOver + (item.summary.period_inbound || 0) - (item.summary.period_usage || 0) - (item.summary.period_outbound || 0);
+    totalClosing += closing;
+  });
+  
+  const totalCarryOverEl = document.getElementById('total-carry-over');
+  const totalClosingEl = document.getElementById('total-closing-qty');
+  const summaryCarryOverEl = document.getElementById('summary-carry-over');
+  const summaryClosingEl = document.getElementById('summary-closing-qty');
+  
+  if (totalCarryOverEl) totalCarryOverEl.textContent = formatNumber(totalCarryOver);
+  if (totalClosingEl) totalClosingEl.textContent = formatNumber(totalClosing);
+  if (summaryCarryOverEl) summaryCarryOverEl.textContent = formatNumber(totalCarryOver);
+  if (summaryClosingEl) summaryClosingEl.textContent = formatNumber(totalClosing);
+}
+
+// 수정된 데이터를 window.monthlyLedgerData에 반영 (출력/다운로드용)
+function updateMonthlyLedgerDataWithEdits() {
+  const data = window.monthlyLedgerData || [];
+  const edits = window.monthlyCarryOverEdits || {};
+  
+  data.forEach(function(item) {
+    if (edits[item.item_code] !== undefined) {
+      // 원본 값 보존
+      if (item.summary._original_carry_over === undefined) {
+        item.summary._original_carry_over = item.summary.carry_over;
+        item.summary._original_adjustment = item.summary.period_adjustment;
+      }
+      // 수정된 월초재고 적용 (조정을 0으로 설정하고 carry_over에 전체 값 할당)
+      item.summary.carry_over = edits[item.item_code];
+      item.summary.period_adjustment = 0;
+      // 월말재고 재계산
+      item.summary.closing_qty = edits[item.item_code] + (item.summary.period_inbound || 0) - (item.summary.period_usage || 0) - (item.summary.period_outbound || 0);
+      item._isEdited = true;
+    }
+  });
+  
+  // 합계 업데이트
+  if (window.monthlyLedgerSummary) {
+    var totalCarryOver = 0;
+    var totalClosing = 0;
+    data.forEach(function(item) {
+      totalCarryOver += (item.summary.carry_over || 0) + (item.summary.period_adjustment || 0);
+      totalClosing += item.summary.closing_qty || 0;
+    });
+    window.monthlyLedgerSummary.carry_over = totalCarryOver;
+    window.monthlyLedgerSummary.period_adjustment = 0;
+    window.monthlyLedgerSummary.closing_qty = totalClosing;
+  }
+  
+  // 수정 사항이 있으면 알림
+  if (Object.keys(edits).length > 0) {
+    showToast('월초재고 수정이 반영되었습니다. 출력/다운로드 시 수정된 값이 적용됩니다.', 'success');
+  }
 }
 
 // 월별 LOT 상세 렌더링 (조정 컬럼 제거, LOT별 선입선출 사용량 표시)
@@ -26006,6 +26247,10 @@ window.printDailyLedger = printDailyLedger;
 window.printMonthlyLedger = printMonthlyLedger;
 window.downloadDailyLedger = downloadDailyLedger;
 window.downloadMonthlyLedger = downloadMonthlyLedger;
+window.toggleCarryOverEditMode = toggleCarryOverEditMode;
+window.handleCarryOverChange = handleCarryOverChange;
+window.updateMonthlySummaryTotals = updateMonthlySummaryTotals;
+window.updateMonthlyLedgerDataWithEdits = updateMonthlyLedgerDataWithEdits;
 
 
 // ========== 생산계획 관리 (간소화 버전) ==========
@@ -33295,15 +33540,20 @@ async function showBarcodeModal(productionCode, productionName) {
           ${barcodes.length === 0 ? `
             <div class="text-center py-4 text-gray-400">등록된 바코드가 없습니다.</div>
           ` : barcodes.map(b => `
-            <div class="flex items-center justify-between px-3 py-2 hover:bg-gray-50">
-              <div class="flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="font-mono text-sm">${b.barcode}</span>
-                  ${b.channel ? `<span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">${b.channel}</span>` : ''}
+            <div class="flex flex-col px-3 py-2 hover:bg-gray-50 gap-2">
+              <div class="flex items-center justify-between">
+                <div class="flex-1">
+                  <div class="flex items-center gap-2">
+                    <span class="font-mono text-sm">${b.barcode}</span>
+                    ${b.channel ? `<span class="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">${b.channel}</span>` : ''}
+                  </div>
+                  ${b.product_name ? `<div class="text-gray-400 text-xs mt-0.5">${b.product_name}</div>` : ''}
                 </div>
-                ${b.product_name ? `<div class="text-gray-400 text-xs mt-0.5">${b.product_name}</div>` : ''}
+                <button onclick="deleteBarcode(${b.id}, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 p-1" title="삭제">
+                  <i class="fas fa-times"></i>
+                </button>
               </div>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-4 flex-wrap">
                 <div class="flex items-center gap-1">
                   <label class="text-xs text-gray-500">입수량:</label>
                   <input type="number" min="1" value="${b.box_quantity || 1}" 
@@ -33311,9 +33561,16 @@ async function showBarcodeModal(productionCode, productionName) {
                          class="w-16 border rounded px-2 py-1 text-sm text-center">
                   <span class="text-xs text-gray-400">EA/박스</span>
                 </div>
-                <button onclick="deleteBarcode(${b.id}, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700 p-1" title="삭제">
-                  <i class="fas fa-times"></i>
-                </button>
+                ${b.channel === '오아시스' ? `
+                <div class="flex items-center gap-1">
+                  <label class="text-xs text-green-600 font-medium">소비기한:</label>
+                  <input type="number" min="1" max="365" value="${b.expiry_days || ''}" 
+                         placeholder="일수"
+                         onchange="updateBarcodeExpiryDays(${b.id}, this.value, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" 
+                         class="w-16 border border-green-300 rounded px-2 py-1 text-sm text-center focus:ring-green-500 focus:border-green-500">
+                  <span class="text-xs text-green-600">일</span>
+                </div>
+                ` : ''}
               </div>
             </div>
           `).join('')}
@@ -33335,7 +33592,7 @@ async function showBarcodeModal(productionCode, productionName) {
           <div class="grid grid-cols-2 gap-3">
             <div>
               <label class="block text-sm text-gray-600 mb-1">판매 채널 (선택)</label>
-              <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2">
+              <select id="new-barcode-channel" class="w-full border rounded-lg px-4 py-2" onchange="toggleBarcodeExpiryField()">
                 <option value="">선택안함</option>
                 <option value="쿠팡">쿠팡 (실온)</option>
                 <option value="쿠팡냉동">쿠팡냉동</option>
@@ -33350,6 +33607,25 @@ async function showBarcodeModal(productionCode, productionName) {
             <div>
               <label class="block text-sm text-gray-600 mb-1">입수량 <span class="text-red-500">*</span></label>
               <input type="number" id="new-barcode-box-quantity" min="1" value="1" class="w-full border rounded-lg px-4 py-2" placeholder="EA/박스">
+            </div>
+          </div>
+          <!-- 오아시스 채널 선택 시 소비기한 입력 필드 -->
+          <div id="new-barcode-expiry-container" class="hidden">
+            <div class="bg-green-50 border border-green-200 rounded-lg p-3">
+              <label class="block text-sm text-green-700 font-medium mb-2">
+                <i class="fas fa-calendar-alt mr-1"></i>
+                소비기한 (오아시스용)
+              </label>
+              <div class="flex items-center gap-2">
+                <input type="number" id="new-barcode-expiry-days" min="1" max="365" 
+                       class="w-24 border border-green-300 rounded-lg px-4 py-2 focus:ring-green-500 focus:border-green-500" 
+                       placeholder="일수">
+                <span class="text-sm text-green-600">일 (예: 빵 7일, 쿠키 90일)</span>
+              </div>
+              <p class="text-xs text-green-600 mt-1">
+                <i class="fas fa-info-circle mr-1"></i>
+                생산일 기준 소비기한 일수를 입력하세요. 미입력 시 생산명 기본 소비기한이 적용됩니다.
+              </p>
             </div>
           </div>
         </div>
@@ -33372,6 +33648,19 @@ async function addBarcode(productionCode, productionName) {
   const productName = document.getElementById('new-barcode-product-name').value.trim();
   const channel = document.getElementById('new-barcode-channel').value;
   const boxQuantity = parseInt(document.getElementById('new-barcode-box-quantity')?.value) || 1;
+  
+  // 오아시스 채널인 경우 소비기한 값 가져오기
+  let expiryDays = null;
+  if (channel === '오아시스') {
+    const expiryValue = document.getElementById('new-barcode-expiry-days')?.value;
+    if (expiryValue) {
+      expiryDays = parseInt(expiryValue);
+      if (isNaN(expiryDays) || expiryDays < 1 || expiryDays > 365) {
+        showToast('소비기한은 1~365일 사이여야 합니다', 'warning');
+        return;
+      }
+    }
+  }
   
   if (!barcode) {
     showToast('바코드를 입력하세요', 'warning');
@@ -33400,7 +33689,8 @@ async function addBarcode(productionCode, productionName) {
       barcode: barcode,
       product_name: productName || null,
       channel: channel || null,
-      box_quantity: boxQuantity
+      box_quantity: boxQuantity,
+      expiry_days: expiryDays
     });
     showToast('바코드가 추가되었습니다', 'success');
     // 데이터 새로고침 (UI 업데이트 위해)
@@ -33462,6 +33752,42 @@ async function updateBarcodeBoxQuantity(id, newQuantity, productionCode, product
   }
 }
 window.updateBarcodeBoxQuantity = updateBarcodeBoxQuantity;
+
+// 오아시스 채널 선택 시 소비기한 필드 표시/숨김
+function toggleBarcodeExpiryField() {
+  const channel = document.getElementById('new-barcode-channel')?.value;
+  const expiryContainer = document.getElementById('new-barcode-expiry-container');
+  if (expiryContainer) {
+    if (channel === '오아시스') {
+      expiryContainer.classList.remove('hidden');
+    } else {
+      expiryContainer.classList.add('hidden');
+      // 다른 채널 선택 시 소비기한 값 초기화
+      const expiryInput = document.getElementById('new-barcode-expiry-days');
+      if (expiryInput) expiryInput.value = '';
+    }
+  }
+}
+window.toggleBarcodeExpiryField = toggleBarcodeExpiryField;
+
+// 바코드 소비기한 수정 (오아시스 채널용)
+async function updateBarcodeExpiryDays(id, newDays, productionCode, productionName) {
+  const days = newDays ? parseInt(newDays) : null;
+  if (days !== null && (isNaN(days) || days < 1 || days > 365)) {
+    showToast('소비기한은 1~365일 사이여야 합니다', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/admin/barcodes/${id}/expiry-days`, 'PUT', { expiry_days: days });
+    showToast(days ? `소비기한이 ${days}일로 설정되었습니다` : '소비기한이 초기화되었습니다', 'success');
+  } catch (e) {
+    showToast('소비기한 수정 실패: ' + (e.message || e), 'error');
+    // 모달 새로고침하여 원래 값 복원
+    showBarcodeModal(productionCode, productionName);
+  }
+}
+window.updateBarcodeExpiryDays = updateBarcodeExpiryDays;
 
 
 

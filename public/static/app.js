@@ -16698,10 +16698,24 @@ async function renderProduction() {
               <p class="text-xs text-green-500 mt-1">예시: 8809424534960 → 60 (탭 또는 줄바꿈으로 구분)</p>
             </div>
             
+            <!-- 소비기한 안내 -->
+            <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+              <p class="text-yellow-800 text-sm">
+                <i class="fas fa-info-circle mr-1"></i>
+                <strong>소비기한 적용 우선순위:</strong> 바코드별 소비기한 → 공통 소비기한
+              </p>
+              <p class="text-yellow-600 text-xs mt-1">
+                바코드별 소비기한은 <strong>관리자 모드 → 시스템관리 → 생산명 관리 → 바코드</strong>에서 등록하세요
+              </p>
+            </div>
+            
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
               <div class="md:col-span-2">
-                <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 (공통) <span class="text-red-500">*</span></label>
-                <input type="date" id="oasis-paste-expiry" class="w-full border rounded-lg px-4 py-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  소비기한 (공통) 
+                  <span class="text-gray-400 text-xs ml-1">- 바코드별 소비기한 미등록 품목에 적용</span>
+                </label>
+                <input type="date" id="oasis-paste-expiry" class="w-full border rounded-lg px-4 py-2" placeholder="바코드별 소비기한이 없는 품목에 적용">
               </div>
               <div class="flex items-end">
                 <button onclick="setPasteExpiryFromDays('oasis', 90)" class="px-3 py-2 bg-green-100 text-green-700 rounded-lg text-sm mr-2 hover:bg-green-200">+90일</button>
@@ -18452,16 +18466,11 @@ async function processPasteData(channel) {
   const channelName = channelNames[channel] || channel;
   
   const pasteInput = document.getElementById(`${channel}-paste-input`).value.trim();
-  const expiryDate = document.getElementById(`${channel}-paste-expiry`).value;
+  const commonExpiryDate = document.getElementById(`${channel}-paste-expiry`).value;
   const prodDate = document.getElementById('order-prod-date').value;
   
   if (!pasteInput) {
     showToast('붙여넣기할 데이터가 없습니다', 'warning');
-    return;
-  }
-  
-  if (!expiryDate) {
-    showToast('소비기한을 입력해주세요', 'warning');
     return;
   }
   
@@ -18509,7 +18518,7 @@ async function processPasteData(channel) {
       }
       
       if (barcode && quantity) {
-        extractedItems.push({ barcode, quantity, expiryDate });
+        extractedItems.push({ barcode, quantity });
       }
     }
   }
@@ -18521,6 +18530,10 @@ async function processPasteData(channel) {
     return;
   }
   
+  // 오아시스: 바코드별 소비기한 우선 적용
+  const isOasis = channel === 'oasis';
+  const missingExpiryBarcodes = [];
+  
   // 바코드로 제품 매칭
   const matchedItems = extractedItems.map(item => {
     const barcodeData = window.productionBarcodes.find(b => b.barcode === item.barcode);
@@ -18528,13 +18541,35 @@ async function processPasteData(channel) {
     
     const displayName = barcodeData?.product_name || barcodeData?.production_name || `바코드: ${item.barcode}`;
     
+    // 소비기한 결정: 바코드별 expiry_days > 공통 소비기한
+    let itemExpiryDate = commonExpiryDate;
+    let expirySource = 'common'; // 소비기한 출처 (common: 공통, barcode: 바코드별)
+    
+    if (isOasis && barcodeData?.expiry_days) {
+      // 바코드에 expiry_days가 설정되어 있으면 생산일 기준으로 계산
+      const pd = new Date(prodDate);
+      pd.setDate(pd.getDate() + barcodeData.expiry_days);
+      itemExpiryDate = pd.toISOString().split('T')[0];
+      expirySource = 'barcode';
+    }
+    
+    // 오아시스는 소비기한 필수 - 바코드별 소비기한도 없고 공통 소비기한도 없으면 오류 표시
+    if (isOasis && !itemExpiryDate) {
+      missingExpiryBarcodes.push({
+        barcode: item.barcode,
+        productName: displayName
+      });
+    }
+    
     if (barcodeData) {
       return {
         originalName: displayName,
         cleanName: displayName,
         quantity: item.quantity,
         barcode: item.barcode,
-        expiryDate: item.expiryDate,
+        expiryDate: itemExpiryDate,
+        expiryDays: barcodeData.expiry_days,
+        expirySource: expirySource,
         matchedProduct: {
           item_code: barcodeData.production_code,
           item_name: barcodeData.production_name || displayName,
@@ -18545,17 +18580,62 @@ async function processPasteData(channel) {
       };
     }
     
+    // 미등록 바코드도 소비기한 검사
+    if (isOasis && !itemExpiryDate) {
+      missingExpiryBarcodes.push({
+        barcode: item.barcode,
+        productName: displayName
+      });
+    }
+    
     return {
       originalName: displayName,
       cleanName: displayName,
       quantity: item.quantity,
       barcode: item.barcode,
-      expiryDate: item.expiryDate,
+      expiryDate: itemExpiryDate,
+      expiryDays: null,
+      expirySource: itemExpiryDate ? 'common' : null,
       matchedProduct: null,
       productionItem: null,
       hasBOM: false
     };
   });
+  
+  // 오아시스: 소비기한 누락된 바코드가 있으면 처리 중단
+  if (isOasis && missingExpiryBarcodes.length > 0) {
+    const barcodeList = missingExpiryBarcodes.slice(0, 5).map(b => `• ${b.barcode}`).join('\n');
+    const moreText = missingExpiryBarcodes.length > 5 ? `\n... 외 ${missingExpiryBarcodes.length - 5}개` : '';
+    
+    showModal('소비기한 미등록 바코드', `
+      <div class="text-left">
+        <p class="text-red-600 font-medium mb-3">
+          <i class="fas fa-exclamation-triangle mr-2"></i>
+          다음 바코드에 소비기한이 설정되지 않았습니다.
+        </p>
+        <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+          <p class="text-sm text-gray-700 mb-2">소비기한 누락 바코드 (${missingExpiryBarcodes.length}개):</p>
+          <pre class="text-xs text-red-700 whitespace-pre-wrap">${barcodeList}${moreText}</pre>
+        </div>
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          <p class="text-sm text-yellow-800 font-medium mb-2">
+            <i class="fas fa-info-circle mr-1"></i> 해결 방법
+          </p>
+          <ol class="text-sm text-yellow-700 list-decimal list-inside space-y-1">
+            <li><strong>관리자 모드 → 시스템관리 → 생산명 관리</strong>에서 해당 바코드의 소비기한(일수) 등록</li>
+            <li>또는 위의 <strong>소비기한(공통)</strong> 필드에 날짜 입력</li>
+          </ol>
+        </div>
+      </div>
+    `, `
+      <button onclick="closeModal()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">닫기</button>
+      <button onclick="closeModal(); navigateTo('admin'); setTimeout(() => { document.querySelector('[data-subtab=\\'system-mgmt\\']')?.click(); }, 500);" 
+              class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+        <i class="fas fa-cog mr-1"></i> 생산명 관리로 이동
+      </button>
+    `);
+    return;
+  }
   
   console.log(`📋 ${channelName} 매칭 결과:`, matchedItems.length, '개, 매칭됨:', matchedItems.filter(m => m.matchedProduct).length);
   
@@ -18568,7 +18648,16 @@ async function processPasteData(channel) {
   };
   
   showOrderPreview(matchedItems, `${channelName} 붙여넣기 (${extractedItems.length}개 품목)`);
-  showToast(`${matchedItems.length}개 품목 처리 완료 (매칭: ${matchedItems.filter(m => m.matchedProduct).length}개)`, 'success');
+  
+  // 소비기한 적용 상태 표시
+  const barcodeExpiryCount = matchedItems.filter(m => m.expirySource === 'barcode').length;
+  const commonExpiryCount = matchedItems.filter(m => m.expirySource === 'common').length;
+  
+  let expiryMessage = `${matchedItems.length}개 품목 처리 완료`;
+  if (isOasis && barcodeExpiryCount > 0) {
+    expiryMessage += ` (바코드별 소비기한: ${barcodeExpiryCount}개, 공통: ${commonExpiryCount}개)`;
+  }
+  showToast(expiryMessage, 'success');
 }
 
 window.setPasteExpiryFromDays = setPasteExpiryFromDays;

@@ -27514,6 +27514,468 @@ async function deleteFrozenStockLot(id) {
   }
 }
 
+// ===== 제품 추적 시스템 (Product Tracker) =====
+// 바코드/생산코드/생산명으로 검색하여 연관된 모든 데이터 조회
+
+function showProductTrackerModal() {
+  showModal('🔍 제품 추적 시스템', `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <p class="text-sm text-blue-700">
+          <i class="fas fa-info-circle mr-1"></i>
+          <strong>바코드, 생산코드, 생산명</strong>으로 검색하면 관련된 모든 정보를 조회합니다.
+        </p>
+        <p class="text-xs text-blue-600 mt-1">
+          BOM 데이터, 바코드 목록, 생산이력, 입고이력, 생산일보 등 전체 히스토리 확인
+        </p>
+      </div>
+      
+      <!-- 검색 입력 -->
+      <div class="flex gap-2">
+        <div class="relative flex-1">
+          <input type="text" id="product-tracker-search" 
+                 placeholder="바코드, 생산코드, 생산명 입력..." 
+                 class="w-full border rounded-lg px-4 py-3 pr-10 text-lg"
+                 onkeyup="handleProductTrackerKeyup(event)"
+                 oninput="handleProductTrackerAutocomplete(event)">
+          <button onclick="executeProductTracker()" 
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-search text-xl"></i>
+          </button>
+        </div>
+        <button onclick="executeProductTracker()" class="bg-indigo-600 text-white px-6 py-3 rounded-lg hover:bg-indigo-700">
+          검색
+        </button>
+      </div>
+      
+      <!-- 자동완성 목록 -->
+      <div id="product-tracker-autocomplete" class="hidden border rounded-lg shadow-lg max-h-48 overflow-y-auto"></div>
+      
+      <!-- 검색 결과 -->
+      <div id="product-tracker-result" class="hidden"></div>
+    </div>
+  `, `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">닫기</button>
+  `, { width: 'max-w-5xl' });
+  
+  // 검색창 포커스
+  setTimeout(() => document.getElementById('product-tracker-search')?.focus(), 100);
+}
+
+// 검색 엔터키 처리
+function handleProductTrackerKeyup(event) {
+  if (event.key === 'Enter') {
+    executeProductTracker();
+  }
+}
+
+// 자동완성 (디바운스 적용)
+let productTrackerDebounce = null;
+async function handleProductTrackerAutocomplete(event) {
+  const query = event.target.value.trim();
+  const autocompleteEl = document.getElementById('product-tracker-autocomplete');
+  
+  if (query.length < 2) {
+    autocompleteEl?.classList.add('hidden');
+    return;
+  }
+  
+  clearTimeout(productTrackerDebounce);
+  productTrackerDebounce = setTimeout(async () => {
+    try {
+      const result = await api(`/admin/product-tracker/search?q=${encodeURIComponent(query)}`);
+      if (result.success && result.data.length > 0) {
+        autocompleteEl.innerHTML = result.data.map(item => `
+          <div class="px-4 py-2 hover:bg-indigo-50 cursor-pointer border-b last:border-b-0"
+               onclick="selectProductTrackerItem('${item.production_code}')">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="font-medium text-indigo-600">${item.production_code}</span>
+                <span class="text-gray-700 ml-2">${item.production_name}</span>
+              </div>
+              <div class="text-xs text-gray-500">
+                ${item.barcode_count > 0 ? `<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded">${item.barcode_count}개 바코드</span>` : ''}
+                ${item.channels ? `<span class="ml-1">${item.channels}</span>` : ''}
+              </div>
+            </div>
+          </div>
+        `).join('');
+        autocompleteEl.classList.remove('hidden');
+      } else {
+        autocompleteEl.classList.add('hidden');
+      }
+    } catch (e) {
+      autocompleteEl.classList.add('hidden');
+    }
+  }, 300);
+}
+
+// 자동완성 선택
+function selectProductTrackerItem(productionCode) {
+  document.getElementById('product-tracker-search').value = productionCode;
+  document.getElementById('product-tracker-autocomplete')?.classList.add('hidden');
+  executeProductTracker();
+}
+
+// 제품 추적 실행
+async function executeProductTracker() {
+  const query = document.getElementById('product-tracker-search')?.value.trim();
+  if (!query) {
+    showToast('검색어를 입력해주세요', 'warning');
+    return;
+  }
+  
+  document.getElementById('product-tracker-autocomplete')?.classList.add('hidden');
+  
+  const resultEl = document.getElementById('product-tracker-result');
+  resultEl.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-4xl text-indigo-600"></i><p class="mt-2 text-gray-500">검색 중...</p></div>';
+  resultEl.classList.remove('hidden');
+  
+  try {
+    const result = await api(`/admin/product-tracker?q=${encodeURIComponent(query)}`);
+    
+    if (result.success) {
+      renderProductTrackerResult(result.data, result.searched);
+    } else {
+      resultEl.innerHTML = `
+        <div class="text-center py-8 text-red-500">
+          <i class="fas fa-exclamation-triangle text-4xl"></i>
+          <p class="mt-2">${result.error || '검색 결과가 없습니다'}</p>
+          <p class="text-sm text-gray-500 mt-1">검색어: "${query}"</p>
+        </div>
+      `;
+    }
+  } catch (e) {
+    resultEl.innerHTML = `<div class="text-center py-8 text-red-500"><i class="fas fa-exclamation-triangle text-4xl"></i><p class="mt-2">검색 오류: ${e.message}</p></div>`;
+  }
+}
+
+// 제품 추적 결과 렌더링
+function renderProductTrackerResult(data, searched) {
+  const resultEl = document.getElementById('product-tracker-result');
+  const { production_item, barcodes, bom, history, stats } = data;
+  
+  resultEl.innerHTML = `
+    <div class="space-y-4">
+      <!-- 검색 결과 요약 -->
+      <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-bold text-indigo-800">
+              ${production_item?.production_name || '알 수 없음'}
+            </h3>
+            <p class="text-sm text-indigo-600">
+              <span class="font-mono">${production_item?.production_code || '-'}</span>
+              ${production_item?.item_code ? `<span class="ml-2">(품목코드: ${production_item.item_code})</span>` : ''}
+            </p>
+          </div>
+          <div class="text-right text-sm">
+            <p class="text-gray-500">검색어: <span class="font-mono">${searched.query}</span></p>
+            <p class="text-gray-400 text-xs">매칭: ${searched.matched_production_code}</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 통계 요약 -->
+      <div class="grid grid-cols-5 gap-3">
+        <div class="bg-blue-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-blue-600">${stats.total_barcodes}</div>
+          <div class="text-xs text-gray-500">바코드</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-green-600">${stats.total_bom_items}</div>
+          <div class="text-xs text-gray-500">BOM 원료</div>
+        </div>
+        <div class="bg-purple-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-purple-600">${stats.total_production_records}</div>
+          <div class="text-xs text-gray-500">생산이력</div>
+        </div>
+        <div class="bg-orange-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-orange-600">${formatNumber(stats.total_production_qty)}</div>
+          <div class="text-xs text-gray-500">총생산량</div>
+        </div>
+        <div class="bg-pink-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-pink-600">${stats.total_daily_reports}</div>
+          <div class="text-xs text-gray-500">생산일보</div>
+        </div>
+      </div>
+      
+      <!-- 탭 메뉴 -->
+      <div class="border-b">
+        <button onclick="switchProductTrackerTab('barcodes')" id="pt-tab-barcodes" 
+                class="pt-tab px-4 py-2 border-b-2 border-indigo-500 text-indigo-600 font-medium">
+          바코드 (${barcodes.length})
+        </button>
+        <button onclick="switchProductTrackerTab('bom')" id="pt-tab-bom" 
+                class="pt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          BOM (${bom.total_count})
+        </button>
+        <button onclick="switchProductTrackerTab('production')" id="pt-tab-production" 
+                class="pt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          생산이력 (${history.production.length})
+        </button>
+        <button onclick="switchProductTrackerTab('inbound')" id="pt-tab-inbound" 
+                class="pt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          입고이력 (${history.inbound.length})
+        </button>
+        <button onclick="switchProductTrackerTab('reports')" id="pt-tab-reports" 
+                class="pt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          생산일보 (${history.daily_reports.length})
+        </button>
+      </div>
+      
+      <!-- 탭 컨텐츠 -->
+      <div id="pt-tab-content" class="max-h-80 overflow-y-auto">
+        ${renderProductTrackerBarcodes(barcodes)}
+      </div>
+    </div>
+  `;
+  
+  // 데이터 저장 (탭 전환용)
+  window.productTrackerData = data;
+}
+
+// 탭 전환
+function switchProductTrackerTab(tab) {
+  document.querySelectorAll('.pt-tab').forEach(el => {
+    el.classList.remove('border-indigo-500', 'text-indigo-600');
+    el.classList.add('border-transparent', 'text-gray-500');
+  });
+  
+  const activeTab = document.getElementById(`pt-tab-${tab}`);
+  if (activeTab) {
+    activeTab.classList.remove('border-transparent', 'text-gray-500');
+    activeTab.classList.add('border-indigo-500', 'text-indigo-600');
+  }
+  
+  const content = document.getElementById('pt-tab-content');
+  const data = window.productTrackerData;
+  if (!content || !data) return;
+  
+  switch(tab) {
+    case 'barcodes':
+      content.innerHTML = renderProductTrackerBarcodes(data.barcodes);
+      break;
+    case 'bom':
+      content.innerHTML = renderProductTrackerBom(data.bom);
+      break;
+    case 'production':
+      content.innerHTML = renderProductTrackerProduction(data.history.production);
+      break;
+    case 'inbound':
+      content.innerHTML = renderProductTrackerInbound(data.history.inbound);
+      break;
+    case 'reports':
+      content.innerHTML = renderProductTrackerReports(data.history.daily_reports);
+      break;
+  }
+}
+
+// 바코드 목록 렌더링
+function renderProductTrackerBarcodes(barcodes) {
+  if (!barcodes || barcodes.length === 0) {
+    return '<div class="text-center py-6 text-gray-400">등록된 바코드가 없습니다</div>';
+  }
+  
+  // 채널별 그룹화
+  const grouped = {};
+  barcodes.forEach(b => {
+    const ch = b.channel || '미지정';
+    if (!grouped[ch]) grouped[ch] = [];
+    grouped[ch].push(b);
+  });
+  
+  return Object.entries(grouped).map(([channel, items]) => `
+    <div class="mb-4">
+      <h4 class="font-medium text-gray-700 mb-2 flex items-center">
+        <span class="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-sm">${channel}</span>
+        <span class="text-xs text-gray-400 ml-2">${items.length}개</span>
+      </h4>
+      <table class="w-full text-sm">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-3 py-2 text-left">바코드</th>
+            <th class="px-3 py-2 text-left">상품명</th>
+            <th class="px-3 py-2 text-center">박스수량</th>
+            <th class="px-3 py-2 text-center">소비기한(일)</th>
+            <th class="px-3 py-2 text-left">등록일</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          ${items.map(b => `
+            <tr class="hover:bg-gray-50">
+              <td class="px-3 py-2 font-mono text-indigo-600">${b.barcode}</td>
+              <td class="px-3 py-2">${b.product_name || '-'}</td>
+              <td class="px-3 py-2 text-center">${b.box_quantity || 1}</td>
+              <td class="px-3 py-2 text-center">${b.expiry_days || '-'}</td>
+              <td class="px-3 py-2 text-gray-500 text-xs">${b.created_at?.split(' ')[0] || '-'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `).join('');
+}
+
+// BOM 렌더링
+function renderProductTrackerBom(bom) {
+  const allBom = [...(bom.production_bom || []), ...(bom.legacy_bom || [])];
+  
+  if (allBom.length === 0) {
+    return '<div class="text-center py-6 text-red-400"><i class="fas fa-exclamation-triangle mr-2"></i>BOM 데이터가 없습니다. 생산명/BOM 관리에서 등록해주세요.</div>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">원재료 코드</th>
+          <th class="px-3 py-2 text-left">원재료명</th>
+          <th class="px-3 py-2 text-right">사용량</th>
+          <th class="px-3 py-2 text-center">단위</th>
+          <th class="px-3 py-2 text-left">분류</th>
+          <th class="px-3 py-2 text-center">소스</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${bom.production_bom.map(b => `
+          <tr class="hover:bg-gray-50">
+            <td class="px-3 py-2 font-mono text-sm">${b.material_code}</td>
+            <td class="px-3 py-2 font-medium">${b.material_name || b.material_code}</td>
+            <td class="px-3 py-2 text-right">${formatNumber(b.quantity, 2)}</td>
+            <td class="px-3 py-2 text-center">${b.unit || 'g'}</td>
+            <td class="px-3 py-2 text-gray-500">${b.category || '-'}</td>
+            <td class="px-3 py-2 text-center"><span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">production_bom</span></td>
+          </tr>
+        `).join('')}
+        ${bom.legacy_bom.map(b => `
+          <tr class="hover:bg-yellow-50">
+            <td class="px-3 py-2 font-mono text-sm">${b.material_code}</td>
+            <td class="px-3 py-2 font-medium">${b.material_name || b.material_code}</td>
+            <td class="px-3 py-2 text-right">${formatNumber(b.quantity, 2)}</td>
+            <td class="px-3 py-2 text-center">${b.unit || 'g'}</td>
+            <td class="px-3 py-2 text-gray-500">${b.category || '-'}</td>
+            <td class="px-3 py-2 text-center"><span class="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-xs">bom (legacy)</span></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 생산이력 렌더링
+function renderProductTrackerProduction(productions) {
+  if (!productions || productions.length === 0) {
+    return '<div class="text-center py-6 text-gray-400">생산 이력이 없습니다</div>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">생산일</th>
+          <th class="px-3 py-2 text-left">LOT번호</th>
+          <th class="px-3 py-2 text-right">수량</th>
+          <th class="px-3 py-2 text-center">채널</th>
+          <th class="px-3 py-2 text-center">소비기한</th>
+          <th class="px-3 py-2 text-center">상태</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${productions.map(p => `
+          <tr class="hover:bg-gray-50">
+            <td class="px-3 py-2">${p.prod_date}</td>
+            <td class="px-3 py-2 font-mono text-xs">${p.lot_number || '-'}</td>
+            <td class="px-3 py-2 text-right font-medium">${formatNumber(p.quantity)}</td>
+            <td class="px-3 py-2 text-center text-xs">${p.channel || '-'}</td>
+            <td class="px-3 py-2 text-center">${p.expiry_date || '-'}</td>
+            <td class="px-3 py-2 text-center">
+              <span class="px-2 py-0.5 rounded text-xs ${p.status === '완료' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}">${p.status || '-'}</span>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 입고이력 렌더링
+function renderProductTrackerInbound(inbounds) {
+  if (!inbounds || inbounds.length === 0) {
+    return '<div class="text-center py-6 text-gray-400">입고 이력이 없습니다</div>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">입고일</th>
+          <th class="px-3 py-2 text-left">LOT번호</th>
+          <th class="px-3 py-2 text-right">입고량</th>
+          <th class="px-3 py-2 text-right">잔량</th>
+          <th class="px-3 py-2 text-center">소비기한</th>
+          <th class="px-3 py-2 text-center">상태</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${inbounds.map(i => `
+          <tr class="hover:bg-gray-50 ${i.remain_qty <= 0 ? 'bg-gray-100 text-gray-400' : ''}">
+            <td class="px-3 py-2">${i.inbound_date}</td>
+            <td class="px-3 py-2 font-mono text-xs">${i.lot_number || '-'}</td>
+            <td class="px-3 py-2 text-right">${formatNumber(i.origin_qty)}</td>
+            <td class="px-3 py-2 text-right font-medium ${i.remain_qty > 0 ? 'text-green-600' : ''}">${formatNumber(i.remain_qty)}</td>
+            <td class="px-3 py-2 text-center">${i.expiry_date || '-'}</td>
+            <td class="px-3 py-2 text-center">
+              <span class="px-2 py-0.5 rounded text-xs ${i.quality_status === '합격' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${i.quality_status || '-'}</span>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 생산일보 렌더링
+function renderProductTrackerReports(reports) {
+  if (!reports || reports.length === 0) {
+    return '<div class="text-center py-6 text-gray-400">생산일보 이력이 없습니다</div>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">일보번호</th>
+          <th class="px-3 py-2 text-left">생산일</th>
+          <th class="px-3 py-2 text-right">수량</th>
+          <th class="px-3 py-2 text-center">채널</th>
+          <th class="px-3 py-2 text-center">상태</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${reports.map(r => `
+          <tr class="hover:bg-gray-50 cursor-pointer" onclick="viewDailyReportDetail(${r.report_id})">
+            <td class="px-3 py-2 font-mono text-indigo-600">${r.report_no}</td>
+            <td class="px-3 py-2">${r.report_date}</td>
+            <td class="px-3 py-2 text-right font-medium">${formatNumber(r.quantity)}</td>
+            <td class="px-3 py-2 text-center text-xs">${r.channel || '-'}</td>
+            <td class="px-3 py-2 text-center">
+              <span class="px-2 py-0.5 rounded text-xs ${
+                r.report_status === 'registered' ? 'bg-green-100 text-green-700' :
+                r.report_status === 'confirmed' ? 'bg-blue-100 text-blue-700' :
+                'bg-yellow-100 text-yellow-700'
+              }">${r.report_status === 'registered' ? '등록완료' : r.report_status === 'confirmed' ? '확정' : '대기'}</span>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 전역 함수 등록
+window.showProductTrackerModal = showProductTrackerModal;
+
 // ===== 바코드 기반 생산계획표 생성 =====
 
 // 쿠팡 발주서 파싱 (바코드 추출)

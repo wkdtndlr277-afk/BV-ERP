@@ -4446,4 +4446,225 @@ admin.post('/sync-production-materials-bulk', async (c) => {
   }
 })
 
+// ===== 제품 추적 시스템 (Product Tracker) =====
+// 바코드/생산코드/생산명으로 검색하여 연관된 모든 데이터 조회
+
+admin.get('/product-tracker', async (c) => {
+  const { env } = c
+  const query = c.req.query('q')?.trim()
+  const searchType = c.req.query('type') || 'auto' // auto, barcode, production_code, production_name
+  
+  if (!query) {
+    return c.json({ success: false, error: '검색어를 입력해주세요' }, 400)
+  }
+  
+  try {
+    let productionCode: string | null = null
+    let barcodeInfo: any = null
+    let productionItem: any = null
+    
+    // 1. 검색 타입에 따라 생산코드 찾기
+    if (searchType === 'auto' || searchType === 'barcode') {
+      // 바코드로 검색
+      barcodeInfo = await env.DB.prepare(`
+        SELECT pb.*, pi.production_name, pi.shelf_life_days as pi_shelf_life_days
+        FROM production_barcodes pb
+        LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+        WHERE pb.barcode = ?
+      `).bind(query).first()
+      
+      if (barcodeInfo) {
+        productionCode = barcodeInfo.production_code
+      }
+    }
+    
+    if (!productionCode && (searchType === 'auto' || searchType === 'production_code')) {
+      // 생산코드로 검색
+      productionItem = await env.DB.prepare(`
+        SELECT * FROM production_items WHERE production_code = ?
+      `).bind(query).first()
+      
+      if (productionItem) {
+        productionCode = productionItem.production_code
+      }
+    }
+    
+    if (!productionCode && (searchType === 'auto' || searchType === 'production_name')) {
+      // 생산명으로 검색 (부분 일치)
+      productionItem = await env.DB.prepare(`
+        SELECT * FROM production_items WHERE production_name LIKE ?
+      `).bind(`%${query}%`).first()
+      
+      if (productionItem) {
+        productionCode = productionItem.production_code
+      }
+    }
+    
+    if (!productionCode) {
+      return c.json({ 
+        success: false, 
+        error: '검색 결과가 없습니다',
+        searched: { query, type: searchType }
+      }, 404)
+    }
+    
+    // 2. 생산품목 정보 조회
+    if (!productionItem) {
+      productionItem = await env.DB.prepare(`
+        SELECT * FROM production_items WHERE production_code = ?
+      `).bind(productionCode).first()
+    }
+    
+    // 3. 모든 관련 바코드 조회
+    const barcodes = await env.DB.prepare(`
+      SELECT * FROM production_barcodes 
+      WHERE production_code = ?
+      ORDER BY channel, created_at DESC
+    `).bind(productionCode).all()
+    
+    // 4. BOM 데이터 조회 (production_bom + bom 테이블)
+    const productionBom = await env.DB.prepare(`
+      SELECT pb.*, m.item_name as material_name, m.unit, m.category
+      FROM production_bom pb
+      LEFT JOIN master m ON pb.material_code = m.item_code
+      WHERE pb.production_code = ?
+      ORDER BY pb.id
+    `).bind(productionCode).all()
+    
+    // 기존 bom 테이블에서도 조회 (item_code 기준)
+    const itemCode = productionItem?.item_code
+    let legacyBom: any = { results: [] }
+    if (itemCode) {
+      legacyBom = await env.DB.prepare(`
+        SELECT b.*, m.item_name as material_name, m.unit, m.category
+        FROM bom b
+        LEFT JOIN master m ON b.material_code = m.item_code
+        WHERE b.product_code = ?
+        ORDER BY b.id
+      `).bind(itemCode).all()
+    }
+    
+    // 5. 생산 이력 조회 (최근 50건)
+    const productionHistory = await env.DB.prepare(`
+      SELECT p.*, 
+        (SELECT SUM(quantity) FROM production WHERE product_code = p.product_code AND prod_date = p.prod_date) as daily_total
+      FROM production p
+      WHERE p.product_code = ?
+      ORDER BY p.prod_date DESC, p.created_at DESC
+      LIMIT 50
+    `).bind(productionCode).all()
+    
+    // 6. 생산입고 이력 조회 (최근 50건)
+    const inboundHistory = await env.DB.prepare(`
+      SELECT * FROM production_inbound
+      WHERE production_code = ?
+      ORDER BY inbound_date DESC, created_at DESC
+      LIMIT 50
+    `).bind(productionCode).all()
+    
+    // 7. 생산일보 이력 조회 (최근 30건)
+    const dailyReportItems = await env.DB.prepare(`
+      SELECT dri.*, dr.report_no, dr.report_date, dr.status as report_status
+      FROM production_daily_items dri
+      JOIN production_daily_report dr ON dri.report_id = dr.id
+      WHERE dri.production_code = ?
+      ORDER BY dr.report_date DESC
+      LIMIT 30
+    `).bind(productionCode).all()
+    
+    // 8. 출고 이력 조회 (최근 30건) - product_outbound 테이블 사용
+    let outboundHistory: any = { results: [] }
+    try {
+      outboundHistory = await env.DB.prepare(`
+        SELECT * FROM product_outbound
+        WHERE production_code = ? OR lot_number LIKE ?
+        ORDER BY outbound_date DESC
+        LIMIT 30
+      `).bind(productionCode, `%${productionCode}%`).all()
+    } catch (e) {
+      // 테이블이 없으면 무시
+    }
+    
+    // 9. 통계 계산
+    const stats = {
+      total_barcodes: barcodes.results?.length || 0,
+      total_bom_items: (productionBom.results?.length || 0) + (legacyBom.results?.length || 0),
+      total_production_records: productionHistory.results?.length || 0,
+      total_production_qty: productionHistory.results?.reduce((sum: number, p: any) => sum + (p.quantity || 0), 0) || 0,
+      total_inbound_records: inboundHistory.results?.length || 0,
+      total_daily_reports: dailyReportItems.results?.length || 0,
+      channels: [...new Set((barcodes.results || []).map((b: any) => b.channel))].filter(Boolean)
+    }
+    
+    return c.json({
+      success: true,
+      searched: { query, type: searchType, matched_production_code: productionCode },
+      data: {
+        // 기본 정보
+        production_item: productionItem,
+        searched_barcode: barcodeInfo,
+        
+        // 바코드 목록 (채널별)
+        barcodes: barcodes.results || [],
+        
+        // BOM 데이터
+        bom: {
+          production_bom: productionBom.results || [],
+          legacy_bom: legacyBom.results || [],
+          total_count: (productionBom.results?.length || 0) + (legacyBom.results?.length || 0)
+        },
+        
+        // 이력 데이터
+        history: {
+          production: productionHistory.results || [],
+          inbound: inboundHistory.results || [],
+          daily_reports: dailyReportItems.results || [],
+          outbound: outboundHistory.results || []
+        },
+        
+        // 통계
+        stats
+      }
+    })
+  } catch (error: any) {
+    console.error('Product tracker error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 제품 추적 - 빠른 검색 (자동완성용)
+admin.get('/product-tracker/search', async (c) => {
+  const { env } = c
+  const query = c.req.query('q')?.trim()
+  
+  if (!query || query.length < 2) {
+    return c.json({ success: true, data: [] })
+  }
+  
+  try {
+    // 바코드, 생산코드, 생산명에서 검색
+    const results = await env.DB.prepare(`
+      SELECT DISTINCT 
+        pi.production_code,
+        pi.production_name,
+        pi.item_code,
+        (SELECT COUNT(*) FROM production_barcodes WHERE production_code = pi.production_code) as barcode_count,
+        (SELECT GROUP_CONCAT(DISTINCT channel) FROM production_barcodes WHERE production_code = pi.production_code) as channels
+      FROM production_items pi
+      LEFT JOIN production_barcodes pb ON pi.production_code = pb.production_code
+      WHERE pi.production_code LIKE ? 
+         OR pi.production_name LIKE ?
+         OR pb.barcode LIKE ?
+         OR pb.product_name LIKE ?
+      GROUP BY pi.production_code
+      ORDER BY pi.production_name
+      LIMIT 20
+    `).bind(`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`).all()
+    
+    return c.json({ success: true, data: results.results || [] })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

@@ -2045,6 +2045,46 @@ admin.post('/migrate/add-box-quantity', async (c) => {
   }
 })
 
+// inbound 테이블 NULL id 수정 마이그레이션
+admin.post('/migrate/fix-inbound-ids', async (c) => {
+  const { env } = c
+  const results: string[] = []
+  
+  try {
+    // 1. 현재 최대 id 조회
+    const maxIdResult = await env.DB.prepare('SELECT MAX(id) as max_id FROM inbound WHERE id IS NOT NULL').first() as any;
+    let nextId = (maxIdResult?.max_id || 0) + 1;
+    results.push(`현재 최대 id: ${maxIdResult?.max_id || 0}, 다음 id: ${nextId}`);
+    
+    // 2. NULL id 개수 확인
+    const nullCount = await env.DB.prepare('SELECT COUNT(*) as cnt FROM inbound WHERE id IS NULL').first() as any;
+    results.push(`NULL id 개수: ${nullCount?.cnt || 0}`);
+    
+    if (nullCount?.cnt > 0) {
+      // 3. NULL id 레코드를 rowid 순서대로 업데이트
+      const nullRows = await env.DB.prepare('SELECT rowid, lot_number FROM inbound WHERE id IS NULL ORDER BY rowid').all();
+      
+      let updated = 0;
+      for (const row of nullRows.results || []) {
+        await env.DB.prepare('UPDATE inbound SET id = ?, created_at = COALESCE(created_at, CURRENT_TIMESTAMP), updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP) WHERE rowid = ?')
+          .bind(nextId, (row as any).rowid)
+          .run();
+        nextId++;
+        updated++;
+      }
+      results.push(`${updated}건 id 할당 완료`);
+    }
+    
+    // 4. 확인
+    const finalCheck = await env.DB.prepare('SELECT COUNT(*) as cnt FROM inbound WHERE id IS NULL').first() as any;
+    results.push(`수정 후 NULL id 개수: ${finalCheck?.cnt || 0}`);
+    
+    return c.json({ success: true, message: 'inbound id 수정 완료', details: results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message, details: results }, 500);
+  }
+})
+
 // 바코드별 소비기한(expiry_days) 컬럼 추가 마이그레이션
 admin.post('/migrate/add-barcode-expiry', async (c) => {
   const { env } = c

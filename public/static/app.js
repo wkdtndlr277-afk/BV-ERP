@@ -855,6 +855,7 @@ async function api(endpoint, method = 'GET', data = null) {
 // Load Master Data
 async function loadMasterData() {
   try {
+    console.log('loadMasterData: 시작');
     const [items, suppliers, semiFinished] = await Promise.all([
       api('/master'),
       api('/suppliers'),
@@ -863,6 +864,13 @@ async function loadMasterData() {
     state.masterItems = items.data || [];
     state.suppliers = suppliers.data || [];
     state.semiFinishedItems = semiFinished.data || [];
+    console.log('loadMasterData: 완료', {
+      masterItems: state.masterItems.length,
+      원료: state.masterItems.filter(m => m.category === '원료').length,
+      부자재: state.masterItems.filter(m => m.category === '부자재').length,
+      suppliers: state.suppliers.length,
+      semiFinished: state.semiFinishedItems.length
+    });
   } catch (e) {
     console.error('Failed to load master data:', e);
   }
@@ -2275,8 +2283,15 @@ async function renderInbound() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
   
+  // 마스터 데이터가 없으면 새로 로드
+  if (!state.masterItems || state.masterItems.length === 0) {
+    console.log('renderInbound: 마스터 데이터 로드 필요');
+    await loadMasterData();
+  }
+  
   // Store master items for search
   window.inboundMasterItems = state.masterItems;
+  console.log('renderInbound: 마스터 아이템 수:', window.inboundMasterItems?.length || 0);
   
   content.innerHTML = `
     <div class="max-w-2xl mx-auto space-y-6">

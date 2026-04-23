@@ -10,6 +10,21 @@ function generateLotNumber(itemCode: string, date: string, sequence: number): st
   return `${dateStr}-${itemCode}-${String(sequence).padStart(3, '0')}`;
 }
 
+// 디버그: inbound 테이블 구조 확인
+inboundRoutes.get('/debug-table', async (c) => {
+  const tableInfo = await c.env.DB.prepare("PRAGMA table_info(inbound)").all();
+  const sampleData = await c.env.DB.prepare("SELECT * FROM inbound LIMIT 3").all();
+  const recentData = await c.env.DB.prepare("SELECT * FROM inbound ORDER BY rowid DESC LIMIT 5").all();
+  const nullIdCount = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM inbound WHERE id IS NULL").first();
+  return c.json({ 
+    success: true, 
+    columns: tableInfo.results,
+    sample: sampleData.results,
+    recent: recentData.results,
+    nullIdCount: nullIdCount
+  });
+});
+
 // 입고 일별/월별 조회 (통계 포함)
 inboundRoutes.get('/query', async (c) => {
   const view_type = c.req.query('view_type') || 'daily'; // daily, monthly
@@ -372,12 +387,17 @@ inboundRoutes.post('/', async (c) => {
   // 부자재는 expiry_date가 없을 수 있으므로 null 처리
   const expiryDateValue = expiry_date || null;
   
+  // 다음 id 값 조회 (AUTOINCREMENT가 없으므로 수동으로 생성)
+  const maxIdResult = await c.env.DB.prepare('SELECT MAX(id) as max_id FROM inbound').first<{ max_id: number }>();
+  const nextId = (maxIdResult?.max_id || 0) + 1;
+  
   if (hasSampleColumn && hasSanitaryColumn) {
     // 샘플 + 위생자재 컬럼 둘 다 있는 경우
     await c.env.DB.prepare(`
-      INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, is_sanitary, storage_location)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO inbound (id, lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, is_sanitary, storage_location, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).bind(
+      nextId,
       lot_number, 
       item_code, 
       inbound_date, 
@@ -393,9 +413,10 @@ inboundRoutes.post('/', async (c) => {
   } else if (hasSanitaryColumn) {
     // 위생자재 컬럼만 있는 경우 (is_sample 컬럼 없음)
     await c.env.DB.prepare(`
-      INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sanitary)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO inbound (id, lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sanitary, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).bind(
+      nextId,
       lot_number, 
       item_code, 
       inbound_date, 
@@ -409,9 +430,10 @@ inboundRoutes.post('/', async (c) => {
   } else if (hasSampleColumn) {
     // 샘플 컬럼만 있는 경우
     await c.env.DB.prepare(`
-      INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, storage_location)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO inbound (id, lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, is_sample, storage_location, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).bind(
+      nextId,
       lot_number, 
       item_code, 
       inbound_date, 
@@ -426,9 +448,10 @@ inboundRoutes.post('/', async (c) => {
   } else {
     // 기존 스키마
     await c.env.DB.prepare(`
-      INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO inbound (id, lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     `).bind(
+      nextId,
       lot_number, 
       item_code, 
       inbound_date, 

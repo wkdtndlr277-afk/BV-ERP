@@ -20666,7 +20666,7 @@ async function loadDailyReportList() {
       const statusText = report.status === 'registered' ? '등록완료' :
                          report.status === 'confirmed' ? '확정' : '대기';
       const canConfirm = report.status === 'draft';
-      const canRegister = report.status === 'confirmed';
+      const canRegister = report.status === 'draft' || report.status === 'confirmed'; // 대기, 확정 상태에서 모두 생산등록 가능
       tableRows += `
         <tr class="border-b hover:bg-gray-50">
           <td class="px-3 py-2 font-mono text-xs">${report.report_no}</td>
@@ -21005,10 +21005,11 @@ async function registerDailyReportById(reportId) {
     
     showToast('생산등록 처리 중...', 'info');
     
-    // 배치 생산등록 API 호출
+    // 배치 생산등록 API 호출 (소비기한 포함)
     const batchItems = matchedItems.map(item => ({
       product_code: item.production_code,
       quantity: item.quantity,
+      expiry_date: item.expiry_date || null, // 소비기한 전달
       channel: item.channel || 'coupang',
       memo: `생산일보 자동등록 (${report.report_no})`
     }));

@@ -609,14 +609,26 @@ dailyReport.post('/reports/from-order', async (c) => {
     return c.json({ success: false, error: '생산일자와 품목 정보가 필요합니다.' }, 400)
   }
   
-  // ★ 동일 날짜에 기존 생산일보가 있는지 확인
-  const existingReport = await c.env.DB.prepare(`
-    SELECT id, report_no, order_file_name, total_products, total_quantity
-    FROM production_daily_report 
-    WHERE report_date = ? AND status IN ('draft', 'confirmed')
-    ORDER BY created_at DESC
-    LIMIT 1
-  `).bind(report_date).first() as { id: number, report_no: string, order_file_name: string | null, total_products: number, total_quantity: number } | null
+  // ★ 동일 날짜+채널에 기존 생산일보가 있는지 확인
+  // 채널별로 별도의 생산일보를 관리 (오아시스, 컬리, 쿠팡 등)
+  const channelPattern = channel ? `%${channel.replace('_paste', '')}%` : null
+  
+  let existingReport: { id: number, report_no: string, order_file_name: string | null, total_products: number, total_quantity: number } | null = null
+  
+  if (channelPattern) {
+    // 채널이 지정된 경우: 동일 채널의 생산일보 검색
+    existingReport = await c.env.DB.prepare(`
+      SELECT id, report_no, order_file_name, total_products, total_quantity
+      FROM production_daily_report 
+      WHERE report_date = ? AND status IN ('draft', 'confirmed')
+        AND (order_file_name LIKE ? OR order_file_name LIKE ?)
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).bind(report_date, channelPattern, `%${channel}%`).first() as typeof existingReport
+  }
+  
+  // 채널 기반 검색 실패 시 - 새로운 생산일보로 처리
+  // (다른 채널의 생산일보에 합치지 않음)
   
   // 1. 모든 필요한 데이터를 한 번에 로드 (최적화)
   const [barcodeData, productionData, bomData, legacyBomData] = await Promise.all([

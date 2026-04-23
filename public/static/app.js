@@ -6986,6 +6986,43 @@ function switchMonthlyTab(tab) {
   loadMonthlyLedger();
 }
 
+// 저장된 월초재고 수정값 적용
+function applyOpeningStockAdjustments(data, adjustmentsMap) {
+  if (!data || !adjustmentsMap || Object.keys(adjustmentsMap).length === 0) return;
+  
+  for (const item of data) {
+    if (!item || !item.item_code) continue;
+    
+    const adjustedValue = adjustmentsMap[item.item_code];
+    if (adjustedValue !== undefined) {
+      // 원래 값 보존
+      const originalCarryOver = (item.summary?.carry_over || 0) + (item.summary?.period_adjustment || 0);
+      item._original_opening_stock = originalCarryOver;
+      item._has_saved_adjustment = true;
+      
+      // 수정된 값 적용
+      if (item.summary) {
+        item.summary.carry_over = adjustedValue;
+        item.summary.period_adjustment = 0;
+        
+        // 월말재고 재계산
+        const inbound = item.summary.period_inbound || 0;
+        const usage = item.summary.period_usage || 0;
+        const outbound = item.summary.period_outbound || 0;
+        item.summary.closing_qty = adjustedValue + inbound - usage - outbound;
+      }
+      
+      // opening_stock 필드도 업데이트 (일별 추이용)
+      if (item.opening_stock !== undefined) {
+        item._original_opening_stock_field = item.opening_stock;
+        item.opening_stock = adjustedValue;
+      }
+      
+      console.log(`Applied saved opening stock for ${item.item_code}: ${originalCarryOver} -> ${adjustedValue}`);
+    }
+  }
+}
+
 // 월별 수불부 로드
 async function loadMonthlyLedger() {
   const contentEl = document.getElementById('monthly-content');
@@ -7023,12 +7060,27 @@ async function loadMonthlyLedger() {
     if (category) params.append('category', category);
     if (search) params.append('search', search);
     
+    // 저장된 월초재고 수정 데이터 로드
+    let savedOpeningStockAdjustments = {};
+    try {
+      const openingStockResult = await api(`/transactions/opening-stock?year=${year}&month=${month}`);
+      if (openingStockResult.success && openingStockResult.adjustments_map) {
+        savedOpeningStockAdjustments = openingStockResult.adjustments_map;
+        console.log('Loaded saved opening stock adjustments:', Object.keys(savedOpeningStockAdjustments).length);
+      }
+    } catch (e) {
+      console.warn('Failed to load opening stock adjustments:', e);
+    }
+    window.savedOpeningStockAdjustments = savedOpeningStockAdjustments;
+    
     if (viewType === 'daily') {
       // 일별 추이 (엑셀 재고 시트 스타일)
       const url = `/transactions/monthly-daily-ledger?${params.toString()}`;
       console.log('Monthly daily API URL:', url);
       const result = await api(url);
       console.log('Monthly daily result:', { dataLength: result?.data?.length });
+      // 저장된 월초재고 적용
+      applyOpeningStockAdjustments(result.data, savedOpeningStockAdjustments);
       window.monthlyLedgerData = result.data || [];
       window.monthlyLedgerPeriod = result.period || { year, month };
       window.monthlyLedgerSummary = result.summary || {};
@@ -7041,6 +7093,8 @@ async function loadMonthlyLedger() {
       console.log('Monthly lot API URL:', url);
       const result = await api(url);
       console.log('Monthly lot result:', { dataLength: result?.data?.length });
+      // 저장된 월초재고 적용
+      applyOpeningStockAdjustments(result.data, savedOpeningStockAdjustments);
       window.monthlyLedgerData = result.data || [];
       window.monthlyLedgerPeriod = result.period || {};
       window.monthlyLedgerSummary = result.summary || {};
@@ -7053,6 +7107,8 @@ async function loadMonthlyLedger() {
       console.log('Monthly summary API URL:', url);
       const result = await api(url);
       console.log('Monthly summary result:', { dataLength: result?.data?.length, summary: result?.summary });
+      // 저장된 월초재고 적용
+      applyOpeningStockAdjustments(result.data, savedOpeningStockAdjustments);
       window.monthlyLedgerData = result.data || [];
       window.monthlyLedgerPeriod = result.period || {};
       window.monthlyLedgerSummary = result.summary || {};
@@ -7198,7 +7254,7 @@ function renderMonthlySummaryView(result) {
 }
 
 // 월초재고 수정 모드 토글
-function toggleCarryOverEditMode() {
+async function toggleCarryOverEditMode() {
   const isEditMode = document.body.classList.toggle('carry-over-edit-mode');
   const editBtn = document.getElementById('edit-mode-btn');
   const editIndicator = document.getElementById('edit-mode-indicator');
@@ -7217,8 +7273,62 @@ function toggleCarryOverEditMode() {
     // 입력 필드 숨기고 표시 값 업데이트
     document.querySelectorAll('.carry-over-display').forEach(el => el.classList.remove('hidden'));
     document.querySelectorAll('.carry-over-input').forEach(el => el.classList.add('hidden'));
-    // 수정된 값이 있으면 window.monthlyLedgerData에 반영
-    updateMonthlyLedgerDataWithEdits();
+    
+    // 수정된 값이 있으면 서버에 저장
+    const edits = window.monthlyCarryOverEdits || {};
+    const editCount = Object.keys(edits).length;
+    
+    if (editCount > 0) {
+      try {
+        // 저장 확인 메시지
+        const period = window.monthlyLedgerPeriod || {};
+        const year = period.year || new Date().getFullYear();
+        const month = period.month || (new Date().getMonth() + 1);
+        
+        editBtn.disabled = true;
+        editBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>저장 중...';
+        
+        // 배치 저장 API 호출
+        const adjustments = [];
+        const data = window.monthlyLedgerData || [];
+        
+        for (const itemCode of Object.keys(edits)) {
+          const item = data.find(d => d.item_code === itemCode);
+          const originalValue = item ? (item.summary.carry_over || 0) + (item.summary.period_adjustment || 0) : 0;
+          adjustments.push({
+            item_code: itemCode,
+            adjusted_value: edits[itemCode],
+            original_value: originalValue
+          });
+        }
+        
+        const result = await api('/transactions/opening-stock/batch', 'POST', {
+          year: year,
+          month: month,
+          adjustments: adjustments,
+          created_by: window.currentUser?.name || 'system'
+        });
+        
+        if (result.success) {
+          showToast(`월초재고 ${editCount}건이 서버에 저장되었습니다.`, 'success');
+          // 수정된 값을 window.monthlyLedgerData에 반영
+          updateMonthlyLedgerDataWithEdits();
+        } else {
+          showToast('월초재고 저장 실패: ' + (result.error || '알 수 없는 오류'), 'error');
+        }
+        
+        editBtn.disabled = false;
+        editBtn.innerHTML = '<i class="fas fa-edit mr-1"></i>월초재고 수정';
+      } catch (error) {
+        console.error('Opening stock save error:', error);
+        showToast('월초재고 저장 중 오류가 발생했습니다.', 'error');
+        editBtn.disabled = false;
+        editBtn.innerHTML = '<i class="fas fa-edit mr-1"></i>월초재고 수정';
+      }
+    } else {
+      // 수정 없이 종료
+      updateMonthlyLedgerDataWithEdits();
+    }
   }
 }
 

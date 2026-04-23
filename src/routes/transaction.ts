@@ -2883,4 +2883,173 @@ transactionRoutes.post('/recalculate-stock', async (c) => {
   }
 });
 
+// ========== 월초재고 수정 API ==========
+
+// 월초재고 수정 테이블 생성 (자동)
+async function ensureOpeningStockTable(db: any) {
+  await db.prepare(`
+    CREATE TABLE IF NOT EXISTS opening_stock_adjustments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      item_code TEXT NOT NULL,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      adjusted_value REAL NOT NULL,
+      original_value REAL,
+      memo TEXT,
+      created_by TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(item_code, year, month)
+    )
+  `).run();
+  
+  // 인덱스 생성
+  await db.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_opening_stock_period ON opening_stock_adjustments(year, month)
+  `).run();
+}
+
+// 월초재고 수정 저장 (단일)
+transactionRoutes.post('/opening-stock', async (c) => {
+  try {
+    const { item_code, year, month, adjusted_value, original_value, memo, created_by } = await c.req.json();
+    
+    if (!item_code || !year || !month || adjusted_value === undefined) {
+      return c.json({ success: false, error: 'item_code, year, month, adjusted_value가 필요합니다.' }, 400);
+    }
+    
+    await ensureOpeningStockTable(c.env.DB);
+    
+    // UPSERT (INSERT OR REPLACE)
+    await c.env.DB.prepare(`
+      INSERT INTO opening_stock_adjustments (item_code, year, month, adjusted_value, original_value, memo, created_by, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      ON CONFLICT(item_code, year, month) DO UPDATE SET
+        adjusted_value = excluded.adjusted_value,
+        original_value = COALESCE(opening_stock_adjustments.original_value, excluded.original_value),
+        memo = excluded.memo,
+        created_by = excluded.created_by,
+        updated_at = datetime('now')
+    `).bind(item_code, year, month, adjusted_value, original_value, memo || null, created_by || null).run();
+    
+    return c.json({ 
+      success: true, 
+      message: '월초재고가 저장되었습니다.',
+      data: { item_code, year, month, adjusted_value }
+    });
+  } catch (error: any) {
+    console.error('Opening stock save error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 월초재고 수정 저장 (배치)
+transactionRoutes.post('/opening-stock/batch', async (c) => {
+  try {
+    const { year, month, adjustments, created_by } = await c.req.json();
+    
+    if (!year || !month || !adjustments || !Array.isArray(adjustments)) {
+      return c.json({ success: false, error: 'year, month, adjustments 배열이 필요합니다.' }, 400);
+    }
+    
+    await ensureOpeningStockTable(c.env.DB);
+    
+    let savedCount = 0;
+    let deletedCount = 0;
+    
+    for (const adj of adjustments) {
+      if (adj.delete) {
+        // 삭제 요청
+        await c.env.DB.prepare(`
+          DELETE FROM opening_stock_adjustments WHERE item_code = ? AND year = ? AND month = ?
+        `).bind(adj.item_code, year, month).run();
+        deletedCount++;
+      } else {
+        // 저장 요청
+        await c.env.DB.prepare(`
+          INSERT INTO opening_stock_adjustments (item_code, year, month, adjusted_value, original_value, memo, created_by, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+          ON CONFLICT(item_code, year, month) DO UPDATE SET
+            adjusted_value = excluded.adjusted_value,
+            original_value = COALESCE(opening_stock_adjustments.original_value, excluded.original_value),
+            memo = excluded.memo,
+            created_by = excluded.created_by,
+            updated_at = datetime('now')
+        `).bind(adj.item_code, year, month, adj.adjusted_value, adj.original_value || null, adj.memo || null, created_by || null).run();
+        savedCount++;
+      }
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: `월초재고 ${savedCount}건 저장, ${deletedCount}건 삭제되었습니다.`,
+      saved_count: savedCount,
+      deleted_count: deletedCount
+    });
+  } catch (error: any) {
+    console.error('Opening stock batch save error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 월초재고 수정 조회 (특정 년월)
+transactionRoutes.get('/opening-stock', async (c) => {
+  try {
+    const year = parseInt(c.req.query('year') || '');
+    const month = parseInt(c.req.query('month') || '');
+    
+    if (!year || !month) {
+      return c.json({ success: false, error: 'year, month가 필요합니다.' }, 400);
+    }
+    
+    await ensureOpeningStockTable(c.env.DB);
+    
+    const result = await c.env.DB.prepare(`
+      SELECT o.*, m.item_name
+      FROM opening_stock_adjustments o
+      LEFT JOIN master m ON o.item_code = m.item_code
+      WHERE o.year = ? AND o.month = ?
+      ORDER BY o.item_code
+    `).bind(year, month).all();
+    
+    // item_code를 키로 하는 맵으로 변환
+    const adjustmentsMap: { [key: string]: number } = {};
+    for (const row of (result.results || []) as any[]) {
+      adjustmentsMap[row.item_code] = row.adjusted_value;
+    }
+    
+    return c.json({ 
+      success: true, 
+      data: result.results,
+      adjustments_map: adjustmentsMap,
+      count: result.results?.length || 0
+    });
+  } catch (error: any) {
+    console.error('Opening stock get error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 월초재고 수정 삭제 (단일)
+transactionRoutes.delete('/opening-stock', async (c) => {
+  try {
+    const item_code = c.req.query('item_code');
+    const year = parseInt(c.req.query('year') || '');
+    const month = parseInt(c.req.query('month') || '');
+    
+    if (!item_code || !year || !month) {
+      return c.json({ success: false, error: 'item_code, year, month가 필요합니다.' }, 400);
+    }
+    
+    await c.env.DB.prepare(`
+      DELETE FROM opening_stock_adjustments WHERE item_code = ? AND year = ? AND month = ?
+    `).bind(item_code, year, month).run();
+    
+    return c.json({ success: true, message: '월초재고 수정이 삭제되었습니다.' });
+  } catch (error: any) {
+    console.error('Opening stock delete error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default transactionRoutes;

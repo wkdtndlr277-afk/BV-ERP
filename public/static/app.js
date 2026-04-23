@@ -27562,23 +27562,45 @@ function parseCoupangOrderWithBarcode(workbook) {
 
 // 바코드 기반 생산계획표 업로드 모달
 function showBarcodeProductionPlanModal() {
+  // 저장된 파일 목록 초기화
+  window.barcodeOrderFiles = [];
+  window.barcodeOrderAllItems = [];
+  
   showModal('바코드 기반 생산계획표', `
     <div class="space-y-4">
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <p class="text-sm text-blue-700">
           <i class="fas fa-info-circle mr-1"></i>
-          쿠팡 발주서(엑셀)를 업로드하면 바코드를 추출하여 BOM 데이터와 매칭합니다.
-          매칭 결과로 원재료 소요량이 자동 계산됩니다.
+          발주서(엑셀)를 업로드하면 바코드를 추출하여 BOM 데이터와 매칭합니다.
+          <strong>여러 파일을 동시에 선택</strong>하거나, 추가로 업로드할 수 있습니다.
+        </p>
+        <p class="text-xs text-blue-600 mt-1">
+          ※ 생산계획표는 원재료 재고에 영향을 주지 않습니다. 생산 전 필요량 확인 용도입니다.
         </p>
       </div>
       
-      <div class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center" id="barcode-plan-dropzone">
+      <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center" id="barcode-plan-dropzone"
+           ondragover="event.preventDefault(); this.classList.add('border-green-500', 'bg-green-50');"
+           ondragleave="this.classList.remove('border-green-500', 'bg-green-50');"
+           ondrop="handleBarcodeOrderDrop(event)">
         <i class="fas fa-file-excel text-4xl text-green-500 mb-3"></i>
         <p class="text-gray-600 mb-2">발주서 엑셀 파일을 드래그하거나 클릭하여 선택하세요</p>
-        <input type="file" id="barcode-plan-file" accept=".xlsx,.xls" class="hidden" onchange="handleBarcodeOrderUpload(event)">
+        <p class="text-xs text-gray-400 mb-3">여러 파일 동시 선택 가능 (Ctrl+클릭 또는 드래그)</p>
+        <input type="file" id="barcode-plan-file" accept=".xlsx,.xls" class="hidden" multiple onchange="handleBarcodeOrderUpload(event)">
         <button onclick="document.getElementById('barcode-plan-file').click()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
           <i class="fas fa-upload mr-1"></i> 파일 선택
         </button>
+      </div>
+      
+      <!-- 업로드된 파일 목록 -->
+      <div id="barcode-plan-files" class="hidden">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-sm font-medium text-gray-700">업로드된 파일</span>
+          <button onclick="clearBarcodeOrderFiles()" class="text-xs text-red-500 hover:text-red-700">
+            <i class="fas fa-trash mr-1"></i>전체 삭제
+          </button>
+        </div>
+        <div id="barcode-plan-file-list" class="flex flex-wrap gap-2"></div>
       </div>
       
       <div id="barcode-plan-result" class="hidden"></div>
@@ -27588,55 +27610,190 @@ function showBarcodeProductionPlanModal() {
   `);
 }
 
-// 발주서 업로드 처리 (바코드 매칭)
-async function handleBarcodeOrderUpload(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+// 드래그앤드롭 처리
+async function handleBarcodeOrderDrop(event) {
+  event.preventDefault();
+  event.target.classList.remove('border-green-500', 'bg-green-50');
   
+  const files = Array.from(event.dataTransfer.files).filter(f => 
+    f.name.endsWith('.xlsx') || f.name.endsWith('.xls')
+  );
+  
+  if (files.length === 0) {
+    showToast('엑셀 파일만 업로드 가능합니다', 'warning');
+    return;
+  }
+  
+  await processMultipleBarcodeOrderFiles(files);
+}
+
+// 파일 목록 초기화
+function clearBarcodeOrderFiles() {
+  window.barcodeOrderFiles = [];
+  window.barcodeOrderAllItems = [];
+  document.getElementById('barcode-plan-files')?.classList.add('hidden');
+  document.getElementById('barcode-plan-file-list').innerHTML = '';
+  document.getElementById('barcode-plan-result')?.classList.add('hidden');
+}
+
+// 발주서 업로드 처리 (바코드 매칭) - 여러 파일 지원
+async function handleBarcodeOrderUpload(event) {
+  const files = Array.from(event.target.files);
+  if (files.length === 0) return;
+  
+  await processMultipleBarcodeOrderFiles(files);
+  event.target.value = '';
+}
+
+// 여러 파일 처리
+async function processMultipleBarcodeOrderFiles(files) {
   if (typeof XLSX === 'undefined') {
     showToast('엑셀 라이브러리 로드 중...', 'info');
     return;
   }
   
-  showToast('파일 분석 중...', 'info');
+  showToast(`${files.length}개 파일 분석 중...`, 'info');
   
-  try {
-    const arrayBuffer = await file.arrayBuffer();
-    const workbook = XLSX.read(arrayBuffer, { type: 'array' });
-    
-    // 쿠팡 발주서 파싱 (바코드 포함)
-    const items = parseCoupangOrderWithBarcode(workbook);
-    
-    if (items.length === 0) {
-      showToast('파싱된 데이터가 없습니다', 'warning');
-      return;
+  let totalNewItems = 0;
+  const newFileNames = [];
+  
+  for (const file of files) {
+    // 이미 업로드된 파일인지 확인
+    if (window.barcodeOrderFiles.some(f => f.name === file.name)) {
+      continue;
     }
     
-    showToast(`${items.length}개 품목 발견, 바코드 매칭 중...`, 'info');
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      
+      // 쿠팡 발주서 파싱 (바코드 포함)
+      const items = parseCoupangOrderWithBarcode(workbook);
+      
+      if (items.length > 0) {
+        // 파일 정보 저장
+        window.barcodeOrderFiles.push({
+          name: file.name,
+          itemCount: items.length,
+          items: items
+        });
+        
+        // 전체 아이템에 추가 (소스 파일 정보 포함)
+        items.forEach(item => {
+          item.source_file = file.name;
+          window.barcodeOrderAllItems.push(item);
+        });
+        
+        totalNewItems += items.length;
+        newFileNames.push(file.name);
+      }
+    } catch (e) {
+      console.error(`파일 처리 오류 (${file.name}):`, e);
+    }
+  }
+  
+  if (totalNewItems === 0) {
+    showToast('새로 추가된 품목이 없습니다', 'warning');
+    return;
+  }
+  
+  // 파일 목록 UI 업데이트
+  updateBarcodeFileListUI();
+  
+  showToast(`${newFileNames.length}개 파일에서 ${totalNewItems}개 품목 추가됨`, 'success');
+  
+  // 전체 아이템으로 생산계획표 생성
+  await generateBarcodeProductionPlan();
+}
+
+// 파일 목록 UI 업데이트
+function updateBarcodeFileListUI() {
+  const filesContainer = document.getElementById('barcode-plan-files');
+  const fileList = document.getElementById('barcode-plan-file-list');
+  
+  if (!filesContainer || !fileList) return;
+  
+  if (window.barcodeOrderFiles.length === 0) {
+    filesContainer.classList.add('hidden');
+    return;
+  }
+  
+  filesContainer.classList.remove('hidden');
+  fileList.innerHTML = window.barcodeOrderFiles.map((f, idx) => `
+    <div class="flex items-center gap-2 bg-gray-100 px-3 py-1.5 rounded-lg text-sm">
+      <i class="fas fa-file-excel text-green-600"></i>
+      <span class="max-w-[150px] truncate" title="${f.name}">${f.name}</span>
+      <span class="text-gray-500">(${f.itemCount})</span>
+      <button onclick="removeBarcodeOrderFile(${idx})" class="text-red-400 hover:text-red-600 ml-1">
+        <i class="fas fa-times"></i>
+      </button>
+    </div>
+  `).join('');
+}
+
+// 개별 파일 삭제
+async function removeBarcodeOrderFile(idx) {
+  const fileName = window.barcodeOrderFiles[idx]?.name;
+  if (!fileName) return;
+  
+  // 파일 목록에서 제거
+  window.barcodeOrderFiles.splice(idx, 1);
+  
+  // 해당 파일의 아이템들 제거
+  window.barcodeOrderAllItems = window.barcodeOrderAllItems.filter(item => item.source_file !== fileName);
+  
+  // UI 업데이트
+  updateBarcodeFileListUI();
+  
+  if (window.barcodeOrderAllItems.length > 0) {
+    await generateBarcodeProductionPlan();
+  } else {
+    document.getElementById('barcode-plan-result')?.classList.add('hidden');
+  }
+}
+
+// 생산계획표 생성 (API 호출)
+async function generateBarcodeProductionPlan() {
+  const items = window.barcodeOrderAllItems;
+  if (items.length === 0) return;
+  
+  showToast(`${items.length}개 품목 바코드 매칭 중...`, 'info');
+  
+  try {
+    // 같은 바코드 품목 수량 합산
+    const mergedItems = {};
+    items.forEach(item => {
+      const key = item.barcode || item.product_name;
+      if (mergedItems[key]) {
+        mergedItems[key].quantity += item.quantity;
+      } else {
+        mergedItems[key] = { ...item };
+      }
+    });
+    
+    const mergedItemList = Object.values(mergedItems);
     
     // API 호출 - 바코드 매칭 및 생산계획표 생성
     const result = await api('/daily-report/production-plan', 'POST', {
-      items: items.map(i => ({
+      items: mergedItemList.map(i => ({
         product_name: i.product_name,
         barcode: i.barcode,
         quantity: i.quantity
       })),
-      order_no: file.name.match(/\d+/)?.[0] || null,
+      order_no: window.barcodeOrderFiles.map(f => f.name.match(/\d+/)?.[0] || '').filter(Boolean).join(', ') || null,
       order_date: formatDate(new Date())
     });
     
     if (result.success) {
-      renderBarcodeProductionPlanResult(result.data, file.name);
+      const fileNames = window.barcodeOrderFiles.map(f => f.name).join(', ');
+      renderBarcodeProductionPlanResult(result.data, fileNames);
     } else {
       showToast(result.error || '생산계획표 생성 실패', 'error');
     }
-    
   } catch (e) {
     console.error(e);
-    showToast('파일 처리 오류: ' + e.message, 'error');
+    showToast('생산계획표 생성 오류: ' + e.message, 'error');
   }
-  
-  event.target.value = '';
 }
 
 // 생산계획표 결과 렌더링
@@ -27689,9 +27846,11 @@ function renderBarcodeProductionPlanResult(data, fileName) {
       
       <!-- 생산일 선택 -->
       <div class="flex items-center gap-3 pt-2 border-t">
-        <label class="text-sm font-medium text-gray-700">생산일:</label>
+        <label class="text-sm font-medium text-gray-700">생산예정일:</label>
         <input type="date" id="production-plan-date" value="${new Date().toISOString().split('T')[0]}" 
-               class="border rounded-lg px-3 py-1.5 text-sm">
+               class="border rounded-lg px-3 py-1.5 text-sm"
+               onchange="updateProductionPlanExpiryDates()">
+        <span class="text-xs text-gray-500">(소비기한 계산 기준일)</span>
       </div>
       
       <!-- 액션 버튼 -->
@@ -27702,13 +27861,16 @@ function renderBarcodeProductionPlanResult(data, fileName) {
               <i class="fas fa-barcode mr-1"></i> 미매칭 바코드 등록
             </button>
           ` : ''}
+          <button onclick="document.getElementById('barcode-plan-file').click()" class="bg-gray-600 text-white px-4 py-2 rounded-lg hover:bg-gray-700 text-sm">
+            <i class="fas fa-plus mr-1"></i> 파일 추가
+          </button>
         </div>
         <div class="flex gap-2">
           <button onclick="downloadProductionPlanExcel()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm">
             <i class="fas fa-file-excel mr-1"></i> 엑셀
           </button>
-          <button onclick="convertToProductionReport()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm ${matched_items.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}" ${matched_items.length === 0 ? 'disabled' : ''}>
-            <i class="fas fa-clipboard-list mr-1"></i> 생산일보 전환
+          <button onclick="printProductionPlanReport()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm ${matched_items.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}" ${matched_items.length === 0 ? 'disabled' : ''}>
+            <i class="fas fa-print mr-1"></i> 생산계획표 출력
           </button>
         </div>
       </div>
@@ -27747,7 +27909,7 @@ function renderMatchedItemsTable(items) {
       </thead>
       <tbody class="divide-y">
         ${items.map(item => {
-          const expiryDate = calculateExpiryDate(item.shelf_life_days);
+          const expiryDate = calculateExpiryDateFromPlanDate(item.shelf_life_days);
           return `
           <tr class="hover:bg-gray-50">
             <td class="px-3 py-2">
@@ -27922,7 +28084,340 @@ function downloadProductionPlanExcel() {
   showToast('엑셀 다운로드 완료', 'success');
 }
 
-// 바코드 생산계획 → 생산일보 변환
+// 생산예정일 변경 시 소비기한 업데이트
+function updateProductionPlanExpiryDates() {
+  const data = window.barcodeProductionPlanData;
+  if (!data) return;
+  
+  // 현재 탭이 매칭 품목이면 다시 렌더링
+  const content = document.getElementById('plan-result-content');
+  const activeTab = document.querySelector('.plan-result-tab.border-indigo-500');
+  if (content && activeTab && activeTab.id === 'plan-tab-matched') {
+    content.innerHTML = renderMatchedItemsTable(data.matched_items);
+  }
+}
+
+// 소비기한 계산 (생산예정일 기준)
+function calculateExpiryDateFromPlanDate(shelfLifeDays) {
+  if (!shelfLifeDays) return null;
+  const dateInput = document.getElementById('production-plan-date');
+  const baseDate = dateInput ? new Date(dateInput.value) : new Date();
+  baseDate.setDate(baseDate.getDate() + shelfLifeDays);
+  return baseDate.toISOString().split('T')[0];
+}
+
+// 생산계획표 출력 (다품종 소량 생산용)
+function printProductionPlanReport() {
+  const data = window.barcodeProductionPlanData;
+  const fileName = window.barcodeProductionPlanFileName;
+  
+  if (!data || !data.matched_items || data.matched_items.length === 0) {
+    showToast('출력할 품목이 없습니다', 'warning');
+    return;
+  }
+  
+  const dateInput = document.getElementById('production-plan-date');
+  const planDate = dateInput ? dateInput.value : new Date().toISOString().split('T')[0];
+  const formattedDate = planDate.replace(/-/g, '.');
+  
+  // 생산명별로 그룹화
+  const groupedByProduction = {};
+  data.matched_items.forEach(item => {
+    const key = item.production_code;
+    if (!groupedByProduction[key]) {
+      groupedByProduction[key] = {
+        production_code: item.production_code,
+        production_name: item.production_name,
+        shelf_life_days: item.shelf_life_days,
+        bom_items: item.bom_items || [],
+        bom_count: item.bom_count || 0,
+        items: [],
+        total_quantity: 0
+      };
+    }
+    groupedByProduction[key].items.push(item);
+    groupedByProduction[key].total_quantity += item.quantity;
+  });
+  
+  const productionGroups = Object.values(groupedByProduction);
+  
+  // 인쇄용 HTML 생성
+  const printHtml = `
+    <!DOCTYPE html>
+    <html lang="ko">
+    <head>
+      <meta charset="UTF-8">
+      <title>생산계획표 - ${formattedDate}</title>
+      <style>
+        @media print {
+          @page { 
+            size: A4; 
+            margin: 10mm; 
+          }
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          .no-print { display: none !important; }
+          .page-break { page-break-before: always; }
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+          font-family: 'Malgun Gothic', sans-serif; 
+          font-size: 9pt;
+          line-height: 1.4;
+        }
+        .header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 2px solid #333;
+          padding-bottom: 8px;
+          margin-bottom: 12px;
+        }
+        .header h1 { font-size: 16pt; }
+        .header-info { text-align: right; font-size: 9pt; color: #666; }
+        
+        .summary-box {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 8px;
+          margin-bottom: 12px;
+          background: #f8f9fa;
+          padding: 10px;
+          border-radius: 4px;
+        }
+        .summary-item {
+          text-align: center;
+        }
+        .summary-item .label { font-size: 8pt; color: #666; }
+        .summary-item .value { font-size: 14pt; font-weight: bold; color: #333; }
+        
+        .section { margin-bottom: 15px; }
+        .section-title {
+          background: #4f46e5;
+          color: white;
+          padding: 6px 10px;
+          font-weight: bold;
+          font-size: 10pt;
+          margin-bottom: 5px;
+        }
+        
+        /* 생산 품목 카드 - 다품종 소량 생산용 */
+        .production-grid {
+          display: grid;
+          grid-template-columns: repeat(2, 1fr);
+          gap: 8px;
+        }
+        .production-card {
+          border: 1px solid #ddd;
+          border-radius: 4px;
+          padding: 8px;
+          background: #fff;
+          page-break-inside: avoid;
+        }
+        .production-card.no-bom {
+          border-color: #f87171;
+          background: #fef2f2;
+        }
+        .card-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-bottom: 1px solid #eee;
+          padding-bottom: 5px;
+          margin-bottom: 5px;
+        }
+        .card-title {
+          font-weight: bold;
+          font-size: 10pt;
+          color: #333;
+        }
+        .card-code { font-size: 8pt; color: #666; }
+        .card-qty {
+          background: #4f46e5;
+          color: white;
+          padding: 2px 8px;
+          border-radius: 10px;
+          font-weight: bold;
+          font-size: 10pt;
+        }
+        .card-expiry {
+          font-size: 8pt;
+          color: #2563eb;
+          text-align: right;
+        }
+        .card-bom {
+          font-size: 8pt;
+          color: #666;
+          margin-top: 3px;
+        }
+        .card-orders {
+          font-size: 7pt;
+          color: #888;
+          margin-top: 3px;
+          max-height: 30px;
+          overflow: hidden;
+        }
+        
+        /* 원재료 소요량 테이블 */
+        .materials-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 8pt;
+        }
+        .materials-table th, .materials-table td {
+          border: 1px solid #ddd;
+          padding: 4px 6px;
+        }
+        .materials-table th {
+          background: #f3f4f6;
+          font-weight: bold;
+          text-align: left;
+        }
+        .materials-table .qty { text-align: right; }
+        
+        .footer {
+          margin-top: 15px;
+          padding-top: 8px;
+          border-top: 1px solid #ddd;
+          font-size: 8pt;
+          color: #888;
+          display: flex;
+          justify-content: space-between;
+        }
+        
+        .print-btn {
+          position: fixed;
+          top: 10px;
+          right: 10px;
+          background: #4f46e5;
+          color: white;
+          padding: 10px 20px;
+          border: none;
+          border-radius: 5px;
+          cursor: pointer;
+          font-size: 12pt;
+        }
+        .print-btn:hover { background: #4338ca; }
+      </style>
+    </head>
+    <body>
+      <button onclick="window.print()" class="print-btn no-print">🖨️ 인쇄</button>
+      
+      <div class="header">
+        <h1>📋 생산계획표</h1>
+        <div class="header-info">
+          <div><strong>생산예정일:</strong> ${formattedDate}</div>
+          <div>발주서: ${fileName || '-'}</div>
+        </div>
+      </div>
+      
+      <div class="summary-box">
+        <div class="summary-item">
+          <div class="label">총 생산품목</div>
+          <div class="value">${productionGroups.length}</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">총 발주품목</div>
+          <div class="value">${data.matched_items.length}</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">총 수량</div>
+          <div class="value">${formatNumber(data.summary.total_quantity)}</div>
+        </div>
+        <div class="summary-item">
+          <div class="label">필요 원재료</div>
+          <div class="value">${data.materials_summary.length}</div>
+        </div>
+      </div>
+      
+      <div class="section">
+        <div class="section-title">📦 생산 품목별 현황 (${productionGroups.length}종)</div>
+        <div class="production-grid">
+          ${productionGroups.map(group => {
+            const expiryDate = calculateExpiryDateFromPlanDate(group.shelf_life_days);
+            const orderNames = group.items.map(i => i.product_name.substring(0, 20)).join(', ');
+            return `
+              <div class="production-card ${group.bom_count === 0 ? 'no-bom' : ''}">
+                <div class="card-header">
+                  <div>
+                    <div class="card-title">${group.production_name}</div>
+                    <div class="card-code">${group.production_code}</div>
+                  </div>
+                  <div class="card-qty">${group.total_quantity}개</div>
+                </div>
+                <div class="card-expiry">
+                  소비기한: ${expiryDate || '-'} ${group.shelf_life_days ? `(+${group.shelf_life_days}일)` : ''}
+                </div>
+                <div class="card-bom">
+                  BOM: ${group.bom_count > 0 ? `${group.bom_count}개 원료` : '<span style="color:#ef4444;">미등록</span>'}
+                </div>
+                <div class="card-orders">발주: ${orderNames}</div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+      
+      <div class="section">
+        <div class="section-title">🧪 원재료 소요량 (${data.materials_summary.length}종)</div>
+        <table class="materials-table">
+          <thead>
+            <tr>
+              <th style="width:50%">원재료명</th>
+              <th class="qty" style="width:25%">필요량</th>
+              <th class="qty" style="width:25%">kg 환산</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.materials_summary.map(m => `
+              <tr>
+                <td>${m.material_name}</td>
+                <td class="qty">${formatNumber(m.quantity)} ${m.unit}</td>
+                <td class="qty">${m.quantity_kg ? formatNumber(m.quantity_kg, 2) + ' kg' : '-'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      
+      ${data.unmatched_items.length > 0 ? `
+        <div class="section">
+          <div class="section-title" style="background:#f97316;">⚠️ 미매칭 품목 (${data.unmatched_items.length}개) - 확인 필요</div>
+          <table class="materials-table">
+            <thead>
+              <tr>
+                <th>발주상품명</th>
+                <th>바코드</th>
+                <th class="qty">수량</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.unmatched_items.map(item => `
+                <tr>
+                  <td>${item.product_name}</td>
+                  <td style="font-family:monospace;">${item.barcode || '-'}</td>
+                  <td class="qty">${item.quantity}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
+      
+      <div class="footer">
+        <div>※ 본 계획표는 생산 전 원재료 소요량 확인용이며, 재고에 영향을 주지 않습니다.</div>
+        <div>출력일시: ${new Date().toLocaleString('ko-KR')}</div>
+      </div>
+    </body>
+    </html>
+  `;
+  
+  // 새 창에서 인쇄
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(printHtml);
+  printWindow.document.close();
+}
+
+// 바코드 생산계획 → 생산일보 변환 (유지 - 필요시 사용)
 async function convertToProductionReport() {
   const data = window.barcodeProductionPlanData;
   const fileName = window.barcodeProductionPlanFileName;

@@ -28008,15 +28008,37 @@ function parseCoupangOrderWithBarcode(workbook) {
         currentItem = null;
       }
     }
-    // 바코드 행 (880으로 시작)
-    else if (currentItem && col2.startsWith('880')) {
+    // 바코드 행 (880으로 시작하는 숫자)
+    else if (currentItem && col2.match(/^880\d{10,}$/)) {
       currentItem.barcode = col2;
+    }
+    // 다른 열에서도 바코드 찾기 (880으로 시작하는 13자리 숫자)
+    else if (currentItem && !currentItem.barcode) {
+      for (let j = 0; j < row.length; j++) {
+        const cellVal = String(row[j] || '').trim();
+        if (cellVal.match(/^880\d{10,}$/)) {
+          currentItem.barcode = cellVal;
+          break;
+        }
+      }
     }
     // 합계 행이면 종료
     else if (no && String(no).includes('합계')) {
       if (currentItem) items.push(currentItem);
       break;
     }
+  }
+  
+  // 디버그: 파싱 결과 출력
+  console.log('[발주서 파싱] 품목 수:', items.length);
+  console.log('[발주서 파싱] 바코드 추출 현황:', 
+    items.filter(i => i.barcode).length + '개 성공, ' +
+    items.filter(i => !i.barcode).length + '개 없음');
+  
+  // 바코드 없는 품목 경고
+  const noBarcodeItems = items.filter(i => !i.barcode);
+  if (noBarcodeItems.length > 0) {
+    console.warn('[발주서 파싱] 바코드 없는 품목:', noBarcodeItems.map(i => i.product_name));
   }
   
   return items;
@@ -28234,6 +28256,21 @@ async function generateBarcodeProductionPlan() {
     });
     
     const mergedItemList = Object.values(mergedItems);
+    
+    // 디버그: 바코드 파싱 결과 확인
+    console.log('[생산계획표] 파싱된 품목:', mergedItemList.map(i => ({
+      name: i.product_name?.substring(0, 30),
+      barcode: i.barcode,
+      qty: i.quantity
+    })));
+    
+    // 바코드가 있는 품목 수 출력
+    const withBarcode = mergedItemList.filter(i => i.barcode);
+    const withoutBarcode = mergedItemList.filter(i => !i.barcode);
+    console.log(`[생산계획표] 바코드 있음: ${withBarcode.length}개, 없음: ${withoutBarcode.length}개`);
+    if (withoutBarcode.length > 0) {
+      console.log('[생산계획표] 바코드 없는 품목:', withoutBarcode.map(i => i.product_name?.substring(0, 40)));
+    }
     
     // API 호출 - 바코드 매칭 및 생산계획표 생성
     const result = await api('/daily-report/production-plan', 'POST', {

@@ -21301,6 +21301,7 @@ async function saveBarcodeMapping(count) {
 }
 
 // 일괄 생산 등록 실행 (배치 API 사용으로 속도 개선)
+// 생산일보도 함께 자동 생성
 async function executeOrderProduction() {
   if (!window.orderUploadData) return;
   
@@ -21322,20 +21323,49 @@ async function executeOrderProduction() {
   }
   
   const channel = window.orderUploadData.channel;
-  const memo = `발주서 업로드 (${channel.toUpperCase()})`;
+  const channelDisplay = channel?.replace('_paste', '').toUpperCase() || 'UNKNOWN';
+  const memo = `발주서 업로드 (${channelDisplay})`;
   
-  if (!confirm(`${selectedItems.length}개 제품을 일괄 생산 등록하시겠습니까?`)) return;
+  if (!confirm(`${selectedItems.length}개 제품을 일괄 생산 등록하시겠습니까?\n\n※ 생산일보도 함께 생성됩니다.`)) return;
   
-  showToast('일괄 생산 등록 중...', 'info');
+  showToast('생산일보 생성 및 생산 등록 중...', 'info');
   
   try {
-    // 배치 API로 한 번에 등록 (소비기한, 바코드 포함)
+    // 1단계: 생산일보 먼저 생성
+    const reportItems = selectedItems.map(item => ({
+      barcode: item.barcode || null,
+      product_name: item.originalName,
+      quantity: item.quantity,
+      production_code: item.matchedProduct?.item_code || item.productionItem?.production_code || null,
+      channel: channel,
+      expiry_date: item.expiryDate || null
+    }));
+    
+    let reportNo = null;
+    try {
+      const reportResult = await api('/daily-report/reports/from-order', 'POST', {
+        report_date: prodDate,
+        order_file_name: window.orderUploadData.fileName,
+        items: reportItems,
+        channel: channel,
+        created_by: state.currentUser?.name || 'system'
+      });
+      
+      if (reportResult.success) {
+        reportNo = reportResult.data.report_no;
+        console.log('생산일보 생성 완료:', reportNo);
+      }
+    } catch (reportError) {
+      console.warn('생산일보 생성 실패 (생산 등록은 계속됨):', reportError);
+    }
+    
+    // 2단계: 배치 API로 생산 등록
     const batchItems = selectedItems.map(item => ({
       product_code: item.matchedProduct.item_code,
       quantity: item.quantity,
-      expiry_date: item.expiryDate || null, // PDF에서 추출한 소비기한
-      barcode: item.barcode || null,        // 바코드 정보
-      channel: channel || 'unknown'          // 판매처
+      expiry_date: item.expiryDate || null,
+      barcode: item.barcode || null,
+      channel: channel || 'unknown'
     }));
     
     const result = await api('/production/batch', 'POST', {
@@ -21347,7 +21377,11 @@ async function executeOrderProduction() {
     
     if (result.success) {
       const { success, fail } = result.data;
-      showToast(`생산 등록 완료: ${success}건 성공${fail > 0 ? `, ${fail}건 실패` : ''}`, 'success');
+      let message = `생산 등록 완료: ${success}건 성공`;
+      if (fail > 0) message += `, ${fail}건 실패`;
+      if (reportNo) message += ` (일보: ${reportNo})`;
+      
+      showToast(message, 'success');
       cancelOrderUpload();
       await loadMasterData();
       loadTodayProduction();

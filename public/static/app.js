@@ -35252,7 +35252,7 @@ async function loadSystemManagementTab() {
   container.innerHTML = `
     <div class="space-y-6">
       <!-- 빠른 통계 -->
-      <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
         <div class="bg-blue-50 rounded-lg p-4 cursor-pointer hover:bg-blue-100 transition-colors" onclick="switchSystemMgmtTab('materials')">
           <div class="flex items-center gap-3">
             <i class="fas fa-cubes text-blue-600 text-2xl"></i>
@@ -35295,6 +35295,15 @@ async function loadSystemManagementTab() {
             <div>
               <div class="text-xl font-bold text-gray-800" id="smgmt-stat-bom">-</div>
               <div class="text-sm text-gray-500">BOM 등록</div>
+            </div>
+          </div>
+        </div>
+        <div class="bg-indigo-50 rounded-lg p-4 cursor-pointer hover:bg-indigo-100 transition-colors" onclick="showProductTrackerModal()">
+          <div class="flex items-center gap-3">
+            <i class="fas fa-search text-indigo-600 text-2xl"></i>
+            <div>
+              <div class="text-xl font-bold text-gray-800"><i class="fas fa-barcode text-sm"></i></div>
+              <div class="text-sm text-gray-500">제품 추적</div>
             </div>
           </div>
         </div>

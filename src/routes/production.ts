@@ -23,8 +23,8 @@ productionRoutes.get('/', async (c) => {
              pi.alias1
            ) as barcode_product_name,
            COALESCE(
-             (SELECT channel FROM production_barcodes WHERE production_code = p.product_code LIMIT 1),
-             p.channel
+             p.channel,
+             (SELECT channel FROM production_barcodes WHERE production_code = p.product_code LIMIT 1)
            ) as channel,
            COALESCE(m.unit, 'EA') as product_unit,
            COALESCE(pi.shelf_life_days, 7) as shelf_life_days,
@@ -462,33 +462,39 @@ productionRoutes.post('/batch', async (c) => {
     // prod_date 또는 production_date 둘 다 지원
     const productionDate = prod_date || production_date || new Date().toISOString().split('T')[0];
   
-  // 중복 등록 방지: 해당 날짜에 이미 등록된 제품 확인
+  // 중복 등록 방지: 해당 날짜+채널에 이미 등록된 제품 확인
+  // 채널별로 별도 등록 가능 (쿠팡, 오아시스 등 다른 채널이면 허용)
   // SQLite는 바인딩 변수가 최대 999개이므로 배치로 나눠서 조회
   const productCodes = items.map((i: any) => i.product_code);
-  const existingSet = new Set<string>();
+  const existingSet = new Set<string>(); // "product_code|channel" 형태로 저장
   
   const QUERY_BATCH_SIZE = 50; // 안전하게 50개씩 배치 처리
   for (let i = 0; i < productCodes.length; i += QUERY_BATCH_SIZE) {
     const batch = productCodes.slice(i, i + QUERY_BATCH_SIZE);
     const placeholders = batch.map(() => '?').join(',');
     const existingProductions = await c.env.DB.prepare(`
-      SELECT product_code FROM production 
+      SELECT product_code, channel FROM production 
       WHERE prod_date = ? AND product_code IN (${placeholders})
     `).bind(productionDate, ...batch).all<any>();
     
     for (const p of existingProductions.results || []) {
-      existingSet.add(p.product_code);
+      // 채널 정규화: oasis_paste → 오아시스, 쿠팡 → 쿠팡 등
+      const normalizedChannel = (p.channel || 'unknown').toLowerCase().replace('_paste', '');
+      existingSet.add(`${p.product_code}|${normalizedChannel}`);
     }
   }
   
-  // 이미 등록된 제품 필터링
-  const newItems = items.filter((i: any) => !existingSet.has(i.product_code));
+  // 이미 등록된 제품 필터링 (동일 채널만 필터)
+  const newItems = items.filter((i: any) => {
+    const itemChannel = (i.channel || defaultChannel || 'unknown').toLowerCase().replace('_paste', '');
+    return !existingSet.has(`${i.product_code}|${itemChannel}`);
+  });
   
   if (newItems.length === 0) {
     return c.json({ 
       success: false, 
-      error: `해당 날짜(${productionDate})에 모든 제품이 이미 등록되어 있습니다.`,
-      already_registered: existingSet.size
+      error: `해당 날짜(${productionDate})와 채널에 모든 제품이 이미 등록되어 있습니다.`,
+      already_registered: items.length
     }, 400);
   }
   
@@ -689,6 +695,8 @@ productionRoutes.post('/batch', async (c) => {
     const itemChannel = item.channel || defaultChannel || 'unknown';
     const boxQuantity = item.box_quantity || boxQuantityMap.get(item.product_code) || 1;
     const actualItemCount = item.quantity * boxQuantity;
+    
+    console.log(`[production/batch] ${item.product_code}: channel=${itemChannel}, item.channel=${item.channel}, defaultChannel=${defaultChannel}, expiry_date=${itemExpiryDate}`);
     
     preparedItems.push({
       item, product, productLot, itemExpiryDate, itemChannel, expiryDays, actualItemCount

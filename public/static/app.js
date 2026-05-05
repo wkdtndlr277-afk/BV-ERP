@@ -7135,6 +7135,13 @@ function renderMonthlySummaryView(result) {
   const summary = result.summary || {};
   const period = result.period || {};
   const contentEl = document.getElementById('monthly-content');
+  
+  // contentEl이 null인 경우 방어 처리
+  if (!contentEl) {
+    console.error('renderMonthlySummaryView: monthly-content element not found');
+    return;
+  }
+  
   const terms = getCurrentLedgerTerms();
   const isProduct = window.monthlyCategory === '제품';
   
@@ -7456,6 +7463,13 @@ function renderMonthlyLotView(result) {
   const summary = result.summary || {};
   const period = result.period || {};
   const contentEl = document.getElementById('monthly-content');
+  
+  // contentEl이 null인 경우 방어 처리
+  if (!contentEl) {
+    console.error('renderMonthlyLotView: monthly-content element not found');
+    return;
+  }
+  
   const terms = getCurrentLedgerTerms();
   const isProduct = window.monthlyCategory === '제품';
   
@@ -7579,6 +7593,12 @@ function renderMonthlyDailyView(result) {
   const data = result.data || [];
   const period = result.period || {};
   const contentEl = document.getElementById('monthly-content');
+  
+  // contentEl이 null인 경우 방어 처리
+  if (!contentEl) {
+    console.error('renderMonthlyDailyView: monthly-content element not found');
+    return;
+  }
   
   const periodLabel = `${period.year}년 ${parseInt(period.month)}월`;
   const days = period.daysInMonth || 31;
@@ -36284,6 +36304,83 @@ async function deleteCategory(id) {
   }
 }
 
+// 카테고리 수정 모달
+async function showEditCategoryModal(id) {
+  const categories = erpConfigData?.categories || [];
+  const cat = categories.find(c => c.id === id);
+  if (!cat) {
+    showToast('카테고리를 찾을 수 없습니다', 'error');
+    return;
+  }
+  
+  showModal('카테고리 수정', `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">유형</label>
+        <select id="ecat-type" class="w-full border rounded-lg px-4 py-2" disabled>
+          <option value="item" ${cat.category_type === 'item' ? 'selected' : ''}>품목(item)</option>
+          <option value="supplier" ${cat.category_type === 'supplier' ? 'selected' : ''}>공급사(supplier)</option>
+          <option value="quality" ${cat.category_type === 'quality' ? 'selected' : ''}>품질(quality)</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">카테고리명 <span class="text-red-500">*</span></label>
+        <input type="text" id="ecat-name" class="w-full border rounded-lg px-4 py-2" value="${cat.category_name || ''}">
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">색상</label>
+          <select id="ecat-color" class="w-full border rounded-lg px-4 py-2">
+            <option value="gray" ${cat.color === 'gray' ? 'selected' : ''}>회색</option>
+            <option value="blue" ${cat.color === 'blue' ? 'selected' : ''}>파랑</option>
+            <option value="green" ${cat.color === 'green' ? 'selected' : ''}>초록</option>
+            <option value="yellow" ${cat.color === 'yellow' ? 'selected' : ''}>노랑</option>
+            <option value="red" ${cat.color === 'red' ? 'selected' : ''}>빨강</option>
+            <option value="purple" ${cat.color === 'purple' ? 'selected' : ''}>보라</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">순서</label>
+          <input type="number" id="ecat-order" class="w-full border rounded-lg px-4 py-2" value="${cat.display_order || 0}">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">아이콘 (FontAwesome)</label>
+        <input type="text" id="ecat-icon" class="w-full border rounded-lg px-4 py-2" placeholder="fa-tag" value="${cat.icon || ''}">
+      </div>
+      <div class="flex justify-end gap-2 mt-4">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button onclick="updateCategory(${id})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">수정</button>
+      </div>
+    </div>
+  `);
+}
+
+// 카테고리 업데이트
+async function updateCategory(id) {
+  const data = {
+    category_name: document.getElementById('ecat-name').value.trim(),
+    color: document.getElementById('ecat-color').value,
+    display_order: parseInt(document.getElementById('ecat-order').value) || 0,
+    icon: document.getElementById('ecat-icon').value.trim()
+  };
+  
+  if (!data.category_name) {
+    showToast('카테고리명을 입력하세요', 'warning');
+    return;
+  }
+  
+  try {
+    await api(`/system-config/categories/${id}`, 'PUT', data);
+    showToast('카테고리가 수정되었습니다', 'success');
+    closeModal();
+    await loadErpConfigData();
+    switchErpConfigTab('categories');
+  } catch (e) {
+    showToast('수정 실패', 'error');
+  }
+}
+
 // ===== 양식 관리 =====
 function renderFormSettings(container) {
   container.innerHTML = `
@@ -36369,7 +36466,8 @@ window.filterCategories = filterCategories;
 window.showAddCategoryModal = showAddCategoryModal;
 window.saveCategory = saveCategory;
 window.deleteCategory = deleteCategory;
-window.showEditCategoryModal = showEditCategoryModal || function() {};
+window.showEditCategoryModal = showEditCategoryModal;
+window.updateCategory = updateCategory;
 
 // ========== 감사 로그 탭 ==========
 

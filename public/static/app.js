@@ -13715,8 +13715,16 @@ async function recalculateAllStock() {
 
 async function confirmRecalculate() {
   const reason = document.getElementById('recalc-reason').value;
+  const btn = document.querySelector('button[onclick="confirmRecalculate()"]');
   
   try {
+    // 버튼 비활성화 및 로딩 표시
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>재계산 중...';
+    }
+    showToast('재고 재계산 중... (잠시 기다려주세요)', 'info');
+    
     const result = await api('/admin/recalculate-stock', 'POST', { reason });
     showToast(result.message, 'success');
     closeModal();
@@ -13734,12 +13742,17 @@ async function confirmRecalculate() {
       showModal('재계산 결과', `
         <div class="space-y-4">
           <p class="font-medium">${result.adjusted.length}개 품목이 조정되었습니다:</p>
-          <div class="bg-gray-100 p-4 rounded-lg text-sm font-mono">${adjustList}</div>
+          <div class="bg-gray-100 p-4 rounded-lg text-sm font-mono max-h-96 overflow-y-auto">${adjustList}</div>
         </div>
       `, `<button onclick="closeModal()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">확인</button>`);
     }
   } catch (e) {
-    // Error handled
+    showToast('재계산 실패: ' + (e.message || '알 수 없는 오류'), 'error');
+    // 버튼 복구
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '재계산';
+    }
   }
 }
 

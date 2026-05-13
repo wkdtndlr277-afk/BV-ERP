@@ -448,8 +448,8 @@ productionRoutes.post('/batch', async (c) => {
     
     // 배치 크기 제한 (D1 batch() 사용으로 최적화됨)
     // batch()는 여러 쿼리를 단일 네트워크 요청으로 처리
-    // D1의 batch() 성능 개선으로 150개까지 처리 가능
-    const MAX_BATCH_SIZE = 150;
+    // D1의 batch() 성능 개선으로 170개까지 처리 가능
+    const MAX_BATCH_SIZE = 170;
     if (items.length > MAX_BATCH_SIZE) {
       return c.json({ 
         success: false, 

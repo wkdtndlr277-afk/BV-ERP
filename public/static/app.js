@@ -1005,6 +1005,7 @@ function renderPage(page) {
     case 'product-catalog': renderProductCatalog(); break;
     case 'microbial-test': renderMicrobialTest(); break;
     case 'system-management': renderSystemManagement(); break;
+    case 'barcode-inventory': renderBarcodeInventory(); break;
     default: renderDashboard();
   }
 }
@@ -36836,6 +36837,446 @@ function formatDateTime(dateStr) {
   const mi = String(date.getMinutes()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
+
+// ========== 바코드 재고관리 ==========
+
+// 바코드 재고관리 페이지 렌더링
+async function renderBarcodeInventory() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-qrcode mr-2 text-blue-600"></i>
+          바코드 재고관리
+        </h2>
+        <a href="/barcode.html" target="_blank" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
+          <i class="fas fa-external-link-alt mr-1"></i> 모바일 전용 페이지
+        </a>
+      </div>
+      
+      <!-- 바코드 스캔 섹션 -->
+      <div class="bg-white rounded-xl shadow-lg p-6">
+        <div class="flex items-center gap-2 mb-4">
+          <i class="fas fa-barcode text-2xl text-blue-600"></i>
+          <h3 class="text-lg font-semibold">바코드 스캔/입력</h3>
+        </div>
+        <div class="flex gap-4">
+          <input type="text" id="barcode-scan-input" 
+                 class="flex-1 p-4 text-xl border-2 border-blue-300 rounded-xl text-center font-mono tracking-wider"
+                 placeholder="바코드를 스캔하거나 품목코드 입력"
+                 onkeypress="if(event.key==='Enter') scanBarcode()">
+          <button onclick="scanBarcode()" class="px-8 py-4 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold text-lg">
+            <i class="fas fa-search mr-2"></i> 조회
+          </button>
+        </div>
+        <p class="text-sm text-gray-500 mt-2 text-center">
+          <i class="fas fa-info-circle mr-1"></i>
+          바코드 스캐너로 스캔하거나 품목코드(예: RM001)를 직접 입력하세요
+        </p>
+      </div>
+      
+      <!-- 스캔 결과 -->
+      <div id="barcode-scan-result" class="hidden">
+        <div class="bg-white rounded-xl shadow-lg p-6">
+          <div class="flex justify-between items-start mb-4">
+            <div>
+              <span id="barcode-item-category" class="inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium mb-2">원료</span>
+              <h3 id="barcode-item-name" class="text-2xl font-bold text-gray-800">품목명</h3>
+              <p id="barcode-item-code" class="text-gray-500">코드: -</p>
+            </div>
+            <div class="text-right">
+              <p class="text-sm text-gray-500">현재고</p>
+              <p id="barcode-current-stock" class="text-4xl font-bold text-blue-600">0</p>
+              <p id="barcode-stock-unit" class="text-gray-500">kg</p>
+            </div>
+          </div>
+          
+          <!-- 탭 버튼 -->
+          <div class="flex border-b mb-4">
+            <button onclick="switchBarcodeTab('usage')" id="barcode-tab-usage" class="flex-1 py-3 text-center font-medium border-b-2 border-blue-600 text-blue-600">
+              <i class="fas fa-minus-circle mr-1"></i> 사용등록
+            </button>
+            <button onclick="switchBarcodeTab('inbound')" id="barcode-tab-inbound" class="flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+              <i class="fas fa-plus-circle mr-1"></i> 입고등록
+            </button>
+            <button onclick="switchBarcodeTab('history')" id="barcode-tab-history" class="flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+              <i class="fas fa-history mr-1"></i> 이력조회
+            </button>
+          </div>
+          
+          <!-- 사용등록 탭 -->
+          <div id="barcode-content-usage" class="barcode-tab-content">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">LOT 선택 (선입선출)</label>
+                <select id="barcode-lot-select" class="w-full p-3 border rounded-lg">
+                  <option value="">자동 선택 (FIFO)</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">수량</label>
+                <div class="flex items-center gap-2">
+                  <button onclick="adjustBarcodeQty(-1)" class="w-12 h-12 bg-red-100 text-red-600 rounded-full text-2xl font-bold hover:bg-red-200">-</button>
+                  <input type="number" id="barcode-qty-input" class="flex-1 p-3 border rounded-lg text-center text-xl font-bold" value="1" step="0.1" min="0">
+                  <button onclick="adjustBarcodeQty(1)" class="w-12 h-12 bg-green-100 text-green-600 rounded-full text-2xl font-bold hover:bg-green-200">+</button>
+                </div>
+              </div>
+            </div>
+            <div class="flex gap-2 mt-3 flex-wrap">
+              <button onclick="setBarcodeQty(0.5)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">0.5</button>
+              <button onclick="setBarcodeQty(1)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">1</button>
+              <button onclick="setBarcodeQty(5)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">5</button>
+              <button onclick="setBarcodeQty(10)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">10</button>
+              <button onclick="setBarcodeQty(25)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">25</button>
+            </div>
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 mb-2">메모 (선택)</label>
+              <input type="text" id="barcode-memo-input" class="w-full p-3 border rounded-lg" placeholder="사용 용도 입력">
+            </div>
+            <button onclick="submitBarcodeUsage()" class="w-full mt-4 py-4 bg-red-500 text-white rounded-xl font-bold text-lg hover:bg-red-600">
+              <i class="fas fa-minus-circle mr-2"></i> 사용 등록 (재고 차감)
+            </button>
+          </div>
+          
+          <!-- 입고등록 탭 -->
+          <div id="barcode-content-inbound" class="barcode-tab-content hidden">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">입고 수량</label>
+                <div class="flex items-center gap-2">
+                  <button onclick="adjustBarcodeQty(-1)" class="w-12 h-12 bg-red-100 text-red-600 rounded-full text-2xl font-bold hover:bg-red-200">-</button>
+                  <input type="number" id="barcode-inbound-qty" class="flex-1 p-3 border rounded-lg text-center text-xl font-bold" value="1" step="0.1" min="0">
+                  <button onclick="adjustBarcodeQty(1)" class="w-12 h-12 bg-green-100 text-green-600 rounded-full text-2xl font-bold hover:bg-green-200">+</button>
+                </div>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">유통기한 (선택)</label>
+                <input type="date" id="barcode-expiry-date" class="w-full p-3 border rounded-lg">
+              </div>
+            </div>
+            <div class="mt-4">
+              <label class="block text-sm font-medium text-gray-700 mb-2">메모 (선택)</label>
+              <input type="text" id="barcode-inbound-memo" class="w-full p-3 border rounded-lg" placeholder="입고 메모 입력">
+            </div>
+            <button onclick="submitBarcodeInbound()" class="w-full mt-4 py-4 bg-green-500 text-white rounded-xl font-bold text-lg hover:bg-green-600">
+              <i class="fas fa-plus-circle mr-2"></i> 입고 등록 (재고 증가)
+            </button>
+          </div>
+          
+          <!-- 이력조회 탭 -->
+          <div id="barcode-content-history" class="barcode-tab-content hidden">
+            <div id="barcode-history-list" class="space-y-2 max-h-96 overflow-y-auto">
+              <p class="text-center text-gray-500 py-4">이력을 조회하려면 품목을 먼저 스캔하세요</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- LOT 목록 -->
+      <div id="barcode-lot-list" class="hidden">
+        <div class="bg-white rounded-xl shadow-lg p-6">
+          <h3 class="text-lg font-semibold mb-4">
+            <i class="fas fa-layer-group mr-2 text-blue-600"></i>
+            LOT 목록 (FIFO 순서)
+          </h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-4 py-3 text-left">순서</th>
+                  <th class="px-4 py-3 text-left">LOT 번호</th>
+                  <th class="px-4 py-3 text-left">입고일</th>
+                  <th class="px-4 py-3 text-left">유통기한</th>
+                  <th class="px-4 py-3 text-right">잔량</th>
+                </tr>
+              </thead>
+              <tbody id="barcode-lot-tbody">
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 바코드 입력창 자동 포커스
+  setTimeout(() => {
+    document.getElementById('barcode-scan-input')?.focus();
+  }, 100);
+}
+
+// 바코드 관련 상태
+let barcodeCurrentItem = null;
+let barcodeCurrentTab = 'usage';
+
+// 바코드 스캔 처리
+async function scanBarcode() {
+  const input = document.getElementById('barcode-scan-input');
+  const barcode = input?.value?.trim();
+  
+  if (!barcode) {
+    showToast('바코드 또는 품목코드를 입력하세요', 'warning');
+    return;
+  }
+  
+  showLoading(true, '품목 조회 중...');
+  
+  try {
+    const response = await axios.get(\`\${API_BASE}/barcode/scan?barcode=\${encodeURIComponent(barcode)}\`);
+    const result = response.data;
+    
+    if (result.success && result.data) {
+      barcodeCurrentItem = result.data;
+      displayBarcodeItem(result.data);
+      showToast(\`\${result.data.item_name} 조회 완료\`, 'success');
+    } else {
+      document.getElementById('barcode-scan-result').classList.add('hidden');
+      document.getElementById('barcode-lot-list').classList.add('hidden');
+      showToast('등록되지 않은 바코드입니다', 'warning');
+    }
+  } catch (error) {
+    console.error('Barcode scan error:', error);
+    showToast('조회 실패: ' + (error.response?.data?.error || error.message), 'error');
+  } finally {
+    showLoading(false);
+    input.value = '';
+    input.focus();
+  }
+}
+
+// 스캔된 품목 표시
+function displayBarcodeItem(item) {
+  document.getElementById('barcode-scan-result').classList.remove('hidden');
+  
+  document.getElementById('barcode-item-name').textContent = item.item_name;
+  document.getElementById('barcode-item-code').textContent = \`코드: \${item.item_code}\`;
+  document.getElementById('barcode-current-stock').textContent = formatNumber(item.current_stock || 0);
+  document.getElementById('barcode-stock-unit').textContent = item.unit || 'ea';
+  
+  const categoryEl = document.getElementById('barcode-item-category');
+  categoryEl.textContent = item.category || '원료';
+  if (item.category === '제품') {
+    categoryEl.className = 'inline-block px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium mb-2';
+  } else if (item.category === '부자재') {
+    categoryEl.className = 'inline-block px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium mb-2';
+  } else {
+    categoryEl.className = 'inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium mb-2';
+  }
+  
+  // LOT 목록 표시
+  const lotSelect = document.getElementById('barcode-lot-select');
+  lotSelect.innerHTML = '<option value="">자동 선택 (FIFO)</option>';
+  
+  if (item.lots && item.lots.length > 0) {
+    item.lots.forEach((lot, idx) => {
+      lotSelect.innerHTML += \`<option value="\${lot.lot_number}">\${lot.lot_number} | 잔량: \${formatNumber(lot.remain_qty)} | 유효: \${lot.expiry_date || '-'}</option>\`;
+    });
+    
+    // LOT 테이블 표시
+    document.getElementById('barcode-lot-list').classList.remove('hidden');
+    const tbody = document.getElementById('barcode-lot-tbody');
+    tbody.innerHTML = item.lots.map((lot, idx) => \`
+      <tr class="border-b hover:bg-gray-50">
+        <td class="px-4 py-3 font-bold text-blue-600">\${idx + 1}</td>
+        <td class="px-4 py-3 font-mono">\${lot.lot_number}</td>
+        <td class="px-4 py-3">\${lot.inbound_date || '-'}</td>
+        <td class="px-4 py-3">\${lot.expiry_date || '-'}</td>
+        <td class="px-4 py-3 text-right font-bold">\${formatNumber(lot.remain_qty)}</td>
+      </tr>
+    \`).join('');
+  } else {
+    document.getElementById('barcode-lot-list').classList.add('hidden');
+  }
+  
+  // 수량 초기화
+  document.getElementById('barcode-qty-input').value = '1';
+  document.getElementById('barcode-memo-input').value = '';
+  
+  // 이력 조회
+  loadBarcodeHistory(item.item_code);
+}
+
+// 탭 전환
+function switchBarcodeTab(tab) {
+  barcodeCurrentTab = tab;
+  
+  ['usage', 'inbound', 'history'].forEach(t => {
+    document.getElementById(\`barcode-tab-\${t}\`).classList.remove('border-blue-600', 'text-blue-600');
+    document.getElementById(\`barcode-tab-\${t}\`).classList.add('border-transparent', 'text-gray-500');
+    document.getElementById(\`barcode-content-\${t}\`).classList.add('hidden');
+  });
+  
+  document.getElementById(\`barcode-tab-\${tab}\`).classList.add('border-blue-600', 'text-blue-600');
+  document.getElementById(\`barcode-tab-\${tab}\`).classList.remove('border-transparent', 'text-gray-500');
+  document.getElementById(\`barcode-content-\${tab}\`).classList.remove('hidden');
+}
+
+// 수량 조절
+function adjustBarcodeQty(delta) {
+  const input = barcodeCurrentTab === 'inbound' 
+    ? document.getElementById('barcode-inbound-qty')
+    : document.getElementById('barcode-qty-input');
+  let value = parseFloat(input.value) || 0;
+  value = Math.max(0, value + delta);
+  input.value = value;
+}
+
+function setBarcodeQty(value) {
+  document.getElementById('barcode-qty-input').value = value;
+}
+
+// 사용 등록
+async function submitBarcodeUsage() {
+  if (!barcodeCurrentItem) {
+    showToast('품목을 먼저 스캔하세요', 'warning');
+    return;
+  }
+  
+  const qty = parseFloat(document.getElementById('barcode-qty-input').value) || 0;
+  if (qty <= 0) {
+    showToast('수량을 입력하세요', 'warning');
+    return;
+  }
+  
+  const lotNumber = document.getElementById('barcode-lot-select').value || null;
+  const memo = document.getElementById('barcode-memo-input').value.trim();
+  
+  showLoading(true, '사용 등록 중...');
+  
+  try {
+    const response = await axios.post(\`\${API_BASE}/barcode/usage\`, {
+      item_code: barcodeCurrentItem.item_code,
+      quantity: qty,
+      lot_number: lotNumber,
+      memo: memo || '바코드 스캔 사용등록'
+    });
+    
+    if (response.data.success) {
+      showToast(response.data.message || '사용 등록 완료!', 'success');
+      
+      // 재고 업데이트
+      barcodeCurrentItem.current_stock = (barcodeCurrentItem.current_stock || 0) - qty;
+      document.getElementById('barcode-current-stock').textContent = formatNumber(barcodeCurrentItem.current_stock);
+      
+      // 입력 초기화
+      document.getElementById('barcode-qty-input').value = '1';
+      document.getElementById('barcode-memo-input').value = '';
+      
+      // 이력 새로고침
+      loadBarcodeHistory(barcodeCurrentItem.item_code);
+    } else {
+      showToast(response.data.error || '등록 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Usage error:', error);
+    showToast('등록 실패: ' + (error.response?.data?.error || error.message), 'error');
+  } finally {
+    showLoading(false);
+    document.getElementById('barcode-scan-input').focus();
+  }
+}
+
+// 입고 등록
+async function submitBarcodeInbound() {
+  if (!barcodeCurrentItem) {
+    showToast('품목을 먼저 스캔하세요', 'warning');
+    return;
+  }
+  
+  const qty = parseFloat(document.getElementById('barcode-inbound-qty').value) || 0;
+  if (qty <= 0) {
+    showToast('수량을 입력하세요', 'warning');
+    return;
+  }
+  
+  const expiryDate = document.getElementById('barcode-expiry-date').value || null;
+  const memo = document.getElementById('barcode-inbound-memo').value.trim();
+  
+  showLoading(true, '입고 등록 중...');
+  
+  try {
+    const response = await axios.post(\`\${API_BASE}/barcode/inbound\`, {
+      item_code: barcodeCurrentItem.item_code,
+      quantity: qty,
+      expiry_date: expiryDate,
+      memo: memo || '바코드 스캔 입고등록'
+    });
+    
+    if (response.data.success) {
+      showToast(response.data.message || '입고 등록 완료!', 'success');
+      
+      // 재고 업데이트
+      barcodeCurrentItem.current_stock = (barcodeCurrentItem.current_stock || 0) + qty;
+      document.getElementById('barcode-current-stock').textContent = formatNumber(barcodeCurrentItem.current_stock);
+      
+      // 입력 초기화
+      document.getElementById('barcode-inbound-qty').value = '1';
+      document.getElementById('barcode-inbound-memo').value = '';
+      document.getElementById('barcode-expiry-date').value = '';
+      
+      // 이력 새로고침
+      loadBarcodeHistory(barcodeCurrentItem.item_code);
+    } else {
+      showToast(response.data.error || '등록 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Inbound error:', error);
+    showToast('등록 실패: ' + (error.response?.data?.error || error.message), 'error');
+  } finally {
+    showLoading(false);
+    document.getElementById('barcode-scan-input').focus();
+  }
+}
+
+// 거래 이력 조회
+async function loadBarcodeHistory(itemCode) {
+  try {
+    const response = await axios.get(\`\${API_BASE}/barcode/history?item_code=\${encodeURIComponent(itemCode)}&limit=20\`);
+    const result = response.data;
+    
+    const container = document.getElementById('barcode-history-list');
+    
+    if (result.success && result.data.transactions && result.data.transactions.length > 0) {
+      container.innerHTML = result.data.transactions.map(t => {
+        const isInbound = t.trans_type === '입고' || t.trans_type === '생산입고';
+        const color = isInbound ? 'green' : (t.trans_type === '사용' ? 'red' : 'blue');
+        const icon = isInbound ? 'plus-circle' : (t.trans_type === '사용' ? 'minus-circle' : 'exchange-alt');
+        
+        return \`
+          <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-\${color}-100 rounded-full flex items-center justify-center">
+                <i class="fas fa-\${icon} text-\${color}-600"></i>
+              </div>
+              <div>
+                <p class="font-medium">\${t.trans_type}</p>
+                <p class="text-sm text-gray-500">\${t.trans_date} · \${t.lot_number || '-'}</p>
+              </div>
+            </div>
+            <div class="text-right">
+              <p class="font-bold text-\${color}-600">\${isInbound ? '+' : ''}\${formatNumber(t.quantity)}</p>
+              <p class="text-xs text-gray-400">\${t.memo || ''}</p>
+            </div>
+          </div>
+        \`;
+      }).join('');
+    } else {
+      container.innerHTML = '<p class="text-center text-gray-500 py-4">거래 이력이 없습니다</p>';
+    }
+  } catch (error) {
+    console.error('History error:', error);
+  }
+}
+
+// 전역 함수 노출
+window.scanBarcode = scanBarcode;
+window.switchBarcodeTab = switchBarcodeTab;
+window.adjustBarcodeQty = adjustBarcodeQty;
+window.setBarcodeQty = setBarcodeQty;
+window.submitBarcodeUsage = submitBarcodeUsage;
+window.submitBarcodeInbound = submitBarcodeInbound;
 
 // 전역 함수 노출
 window.loadAuditLogTab = loadAuditLogTab;

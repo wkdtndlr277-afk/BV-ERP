@@ -27,6 +27,7 @@ import costRoutes from './routes/cost';
 import dailyReportRoutes from './routes/daily-report';
 import systemConfigRoutes from './routes/system-config';
 import semiFinishedRoutes from './routes/semi-finished';
+import barcodeRoutes from './routes/barcode';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -58,6 +59,7 @@ app.route('/api/cost', costRoutes);
 app.route('/api/daily-report', dailyReportRoutes);
 app.route('/api/system-config', systemConfigRoutes);
 app.route('/api/semi-finished', semiFinishedRoutes);
+app.route('/api/barcode', barcodeRoutes);
 
 // 시스템 버전
 const SYSTEM_VERSION = '2.0.81';

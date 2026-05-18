@@ -651,14 +651,20 @@ function downloadCSV(data, columns, filename) {
 }
 
 // 출력 기능
-function printData(title, tableHtml, additionalInfo = '') {
+function printData(title, tableHtml, additionalInfo = '', options = {}) {
   // 디버깅: 데이터 확인
-  console.log('printData called:', { title, tableHtmlLength: tableHtml?.length, additionalInfo });
+  console.log('printData called:', { title, tableHtmlLength: tableHtml?.length, additionalInfo, options });
   
   if (!tableHtml || tableHtml.length === 0) {
     showToast('출력할 데이터가 없습니다.', 'warning');
     return;
   }
+  
+  // 옵션: landscape (가로 방향), compactHeader (작은 헤더)
+  const isLandscape = options.landscape || false;
+  const isCompactHeader = options.compactHeader || false;
+  const pageSize = isLandscape ? 'A4 landscape' : 'A4';
+  const pageMargin = isLandscape ? '5mm' : '12mm';
   
   const htmlContent = `
     <!DOCTYPE html>
@@ -667,15 +673,15 @@ function printData(title, tableHtml, additionalInfo = '') {
       <meta charset="UTF-8">
       <title>${title}</title>
       <style>
-        @page { margin: 12mm; size: A4; }
+        @page { margin: ${pageMargin}; size: ${pageSize}; }
         * { box-sizing: border-box; }
         body {
           font-family: 'Malgun Gothic', '맑은 고딕', -apple-system, sans-serif;
-          font-size: 10px;
+          font-size: ${isLandscape ? '8px' : '10px'};
           line-height: 1.4;
           color: #333;
           margin: 0;
-          padding: 15px;
+          padding: ${isLandscape ? '5px' : '15px'};
         }
         .doc-header {
           display: flex;
@@ -730,12 +736,21 @@ function printData(title, tableHtml, additionalInfo = '') {
       </style>
     </head>
     <body>
+      ${isCompactHeader ? `
+      <!-- 컴팩트 헤더 (가로 인쇄용) -->
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px; padding-bottom:3px; border-bottom:1px solid #333;">
+        <div style="font-size:8px; color:#666;">(주)본비반트</div>
+        <h1 style="font-size:12px; margin:0; font-weight:bold;">${title}</h1>
+        <div style="font-size:7px; color:#666;">${formatDate(new Date())}</div>
+      </div>
+      ${additionalInfo ? `<div style="font-size:7px; margin-bottom:3px; padding:2px 5px; background:#f5f5f5;">${additionalInfo}</div>` : ''}
+      ` : `
+      <!-- 일반 헤더 -->
       <div class="doc-header">
         <div style="width:90px;"></div>
         <div class="doc-title">
           <div class="company">(주)본비반트</div>
           <h1>${title}</h1>
-          
         </div>
         <div class="approval-box">
           <table>
@@ -745,9 +760,10 @@ function printData(title, tableHtml, additionalInfo = '') {
         </div>
       </div>
       ${additionalInfo ? `<div class="info">${additionalInfo}</div>` : ''}
+      `}
       ${tableHtml}
-      <div class="footer">
-        본 문서는 HACCP 통합관리시스템에서 출력되었습니다. | 문서번호: DOC-${formatDate(new Date()).replace(/-/g, '')}-${Math.random().toString(36).substr(2,4).toUpperCase()}
+      <div class="footer" style="${isCompactHeader ? 'margin-top:5px; font-size:6px; padding-top:3px;' : ''}">
+        HACCP 통합관리시스템 | DOC-${formatDate(new Date()).replace(/-/g, '')}-${Math.random().toString(36).substr(2,4).toUpperCase()}
       </div>
     </body>
     </html>
@@ -6729,15 +6745,15 @@ function printMonthlyLedger() {
     <table>
       <thead>
         <tr style="background:#e0e0e0;">
-          <th>품목코드</th>
+          <th style="width:60px;">순서</th>
           <th>품목명/LOT</th>
-          <th>입고일</th>
-          <th>소비기한</th>
-          <th style="text-align:right;">월초</th>
-          <th style="text-align:right;">입고</th>
-          <th style="text-align:right;">사용</th>
-          <th style="text-align:right;">월말</th>
-          <th style="text-align:center;">거래처</th>
+          <th style="width:80px;">입고일</th>
+          <th style="width:80px;">소비기한</th>
+          <th style="text-align:right; width:70px; color:#7c3aed;">월초(이월)</th>
+          <th style="text-align:right; width:60px; color:#2563eb;">입고</th>
+          <th style="text-align:right; width:60px; color:#ea580c;">사용</th>
+          <th style="text-align:right; width:70px; font-weight:bold;">월말</th>
+          <th style="text-align:center; width:80px;">거래처</th>
         </tr>
       </thead>
       <tbody>
@@ -6748,40 +6764,70 @@ function printMonthlyLedger() {
     // 조정을 월초재고에 포함
     const itemAdjustedCarryOver = (item.summary?.carry_over || 0) + (item.summary?.period_adjustment || 0);
     
-    // 품목 행 (입고일/소비기한 열에 구분/단위 표시)
+    // 품목 행 (품목 합계)
+    // 총 사용량 = 사용 + 출고
+    const totalUsage = (item.summary?.period_usage || 0) + (item.summary?.period_outbound || 0);
     tableHtml += `
-      <tr style="background:#f9f9f9; font-weight:bold;">
-        <td>${item.item_code}</td>
-        <td>${item.item_name}${isJeongjesu ? ' <span style="color:#888;">(사용량만)</span>' : ''}</td>
-        <td style="text-align:center;">${item.category || '-'}</td>
-        <td style="text-align:center;">${item.unit || '-'}</td>
-        <td style="text-align:right;">${isJeongjesu ? '-' : formatNumber(itemAdjustedCarryOver)}</td>
-        <td style="text-align:right;">${isJeongjesu ? '-' : (item.summary?.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-')}</td>
-        <td style="text-align:right;">${item.summary?.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
-        <td style="text-align:right;">${isJeongjesu ? '-' : formatNumber(item.summary?.closing_qty || 0)}</td>
-        <td style="text-align:center;">${isJeongjesu ? '-' : (item.lot_count || 0) + '건'}</td>
+      <tr style="background:#f3f4f6; font-weight:bold; border-bottom:2px solid #d1d5db;">
+        <td style="text-align:center;">${item.item_code}</td>
+        <td><span style="font-size:12px;">${item.item_name}</span>${isJeongjesu ? ' <span style="color:#888; font-size:10px;">(사용량만)</span>' : ''} <span style="color:#666; font-size:9px; margin-left:5px;">[${item.category}/${item.unit}]</span></td>
+        <td colspan="2" style="text-align:center; color:#666; font-size:10px;">LOT ${item.lot_count || 0}건</td>
+        <td style="text-align:right; color:#7c3aed;">${isJeongjesu ? '-' : formatNumber(itemAdjustedCarryOver)}</td>
+        <td style="text-align:right; color:#2563eb;">${isJeongjesu ? '-' : (item.summary?.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-')}</td>
+        <td style="text-align:right; color:#ea580c;">${totalUsage > 0 ? '-' + formatNumber(totalUsage) : '-'}</td>
+        <td style="text-align:right; font-weight:bold;">${isJeongjesu ? '-' : formatNumber(item.summary?.closing_qty || 0)}</td>
+        <td style="text-align:center; color:#666; font-size:10px;">합계</td>
       </tr>
     `;
     
     // LOT 상세 행들 (FIFO 순서) - 정제수는 LOT 출력 안함
-    // 당월 입고 LOT(isNewLot: true)만 표시, 이월 LOT는 월초재고에 합산됨
+    // 전체 펼치기 상태 확인: 화면에서 LOT 행들이 펼쳐져 있으면 모든 LOT 출력
+    const isAllExpanded = !document.querySelector('[id^="monthly-lot-"]')?.classList.contains('hidden');
+    
     if (!isJeongjesu && item.lots && item.lots.length > 0) {
-      // 당월 입고 LOT만 필터링 (isNewLot: true)
-      const newLots = item.lots.filter(lot => lot.isNewLot === true);
-      const sortedLots = newLots.slice().sort((a, b) => (a.inbound_date || '').localeCompare(b.inbound_date || ''));
+      // 전체 펼치기 상태면 모든 LOT 출력, 아니면 당월 입고 LOT만 출력
+      const lotsToShow = isAllExpanded 
+        ? item.lots 
+        : item.lots.filter(lot => lot.isNewLot === true);
+      // FIFO 순서로 정렬 (fifo_order → 유효기한 → 입고일)
+      const sortedLots = lotsToShow.slice().sort((a, b) => {
+        if (a.fifo_order !== undefined && b.fifo_order !== undefined) {
+          return a.fifo_order - b.fifo_order;
+        }
+        // 유효기한 먼저 (빠른 날짜가 우선)
+        if (a.expiry_date && b.expiry_date && a.expiry_date !== b.expiry_date) {
+          return a.expiry_date.localeCompare(b.expiry_date);
+        }
+        return (a.inbound_date || '').localeCompare(b.inbound_date || '');
+      });
       sortedLots.forEach((lot, idx) => {
-        const usage = lot.fifo_usage || lot.period_usage || 0;
+        // FIFO 사용량 + 출고량
+        const fifoUsage = lot.fifo_usage !== undefined ? lot.fifo_usage : 0;
+        const fifoOutbound = lot.fifo_outbound !== undefined ? lot.fifo_outbound : 0;
+        const usage = fifoUsage + fifoOutbound;
         const closing = lot.fifo_closing !== undefined ? lot.fifo_closing : (lot.closing_qty || 0);
+        // 이월 LOT 구분
+        const isCarryOver = !lot.isNewLot;
+        // 조정을 이월에 포함
+        const adjustedCarryOver = (lot.carry_over || 0) + (lot.period_adjustment || 0);
+        const rowStyle = isCarryOver 
+          ? 'font-size:10px; color:#555; background:#f9fafb;' 
+          : 'font-size:10px; color:#333;';
+        const lotLabel = isCarryOver 
+          ? `${lot.lot_number || '-'} <span style="color:#6366f1; font-size:9px;">(이월)</span>` 
+          : (lot.lot_number || '-');
+        // FIFO 순서 표시
+        const fifoOrder = lot.fifo_order || lot.order || (idx + 1);
         tableHtml += `
-          <tr style="font-size:10px; color:#555;">
-            <td style="padding-left:20px;">${idx + 1}</td>
-            <td>${lot.lot_number || '-'}</td>
+          <tr style="${rowStyle} border-bottom:1px solid #e5e7eb;">
+            <td style="padding-left:20px; text-align:center;"><span style="display:inline-block; width:18px; height:18px; line-height:18px; border-radius:50%; background:${closing > 0 ? '#6366f1' : '#9ca3af'}; color:white; font-size:9px; font-weight:bold;">${fifoOrder}</span></td>
+            <td>${lotLabel}</td>
             <td style="text-align:center;">${lot.inbound_date || '-'}</td>
             <td style="text-align:center;">${lot.expiry_date || '-'}</td>
-            <td style="text-align:right;">-</td>
-            <td style="text-align:right;">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
-            <td style="text-align:right;">${usage > 0 ? '-' + formatNumber(usage) : '-'}</td>
-            <td style="text-align:right;">${formatNumber(closing)}</td>
+            <td style="text-align:right; color:#7c3aed;">${isCarryOver && adjustedCarryOver > 0 ? formatNumber(adjustedCarryOver) : '-'}</td>
+            <td style="text-align:right; color:#2563eb;">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
+            <td style="text-align:right; color:#ea580c;">${usage > 0 ? '-' + formatNumber(usage) : '-'}</td>
+            <td style="text-align:right; font-weight:bold;">${formatNumber(closing)}</td>
             <td style="text-align:center;">${lot.supplier || '-'}</td>
           </tr>
         `;
@@ -6810,51 +6856,83 @@ function printMonthlyDailyLedger(data, period, periodLabel) {
     };
   });
   
-  // 일별 추이 테이블 HTML 생성
+  // 일별 추이 테이블 HTML 생성 - 가로 스크롤 없이 축소하여 맞춤
   let tableHtml = `
     <style>
       @media print {
-        @page { size: landscape; margin: 5mm; }
-        table { font-size: 8px !important; }
-        th, td { padding: 2px 3px !important; }
+        @page { 
+          size: A4 landscape; 
+          margin: 3mm; 
+        }
+        body { 
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        .daily-table { 
+          font-size: 6px !important; 
+          width: 100% !important;
+          table-layout: fixed !important;
+        }
+        .daily-table th, .daily-table td { 
+          padding: 1px 2px !important; 
+          overflow: hidden !important;
+          white-space: nowrap !important;
+        }
+        .daily-table .item-name { 
+          width: 70px !important; 
+          max-width: 70px !important;
+          font-size: 6px !important;
+        }
+        .daily-table .day-col { 
+          width: 22px !important; 
+          min-width: 22px !important;
+          max-width: 22px !important;
+        }
+        .daily-table .month-col { 
+          width: 30px !important; 
+        }
       }
     </style>
-    <table style="font-size:9px; border-collapse:collapse;">
+    <table class="daily-table" style="font-size:7px; border-collapse:collapse; width:100%; table-layout:fixed;">
       <thead>
         <tr style="background:#e0e0e0;">
-          <th style="min-width:100px; text-align:left;">품목명</th>
-          <th style="text-align:center; background:#d8b4fe;">월초</th>
+          <th class="item-name" style="width:70px; text-align:left; position:sticky; left:0; background:#e0e0e0;">품목명</th>
+          <th class="month-col" style="width:30px; text-align:center; background:#d8b4fe;">월초</th>
           ${Array.from({length: days}, (_, i) => 
-            `<th style="text-align:center; min-width:45px;">${i+1}일</th>`
+            `<th class="day-col" style="width:22px; text-align:center; font-size:6px;">${i+1}</th>`
           ).join('')}
-          <th style="text-align:center; background:#fef08a; font-weight:bold;">월말</th>
+          <th class="month-col" style="width:35px; text-align:center; background:#fef08a; font-weight:bold;">월말</th>
         </tr>
       </thead>
       <tbody>
   `;
   
   processedData.forEach(item => {
+    // 품목명 축약 (8자 초과 시 줄임)
+    const shortName = item.item_name.length > 8 ? item.item_name.substring(0, 7) + '..' : item.item_name;
     tableHtml += `
       <tr style="border-bottom:1px solid #ddd;">
-        <td style="text-align:left;">
-          <div style="font-weight:bold;">${item.item_name}</div>
-          <div style="font-size:7px; color:#888;">${item.item_code} (${item.category})</div>
+        <td class="item-name" style="text-align:left; overflow:hidden; white-space:nowrap;" title="${item.item_name}">
+          <div style="font-weight:bold; font-size:6px;">${shortName}</div>
+          <div style="font-size:5px; color:#888;">${item.item_code}</div>
         </td>
-        <td style="text-align:center; background:#f3e8ff;">${formatNumber(item.opening_stock)}</td>
+        <td class="month-col" style="text-align:center; background:#f3e8ff; font-size:7px;">${formatNumber(item.opening_stock)}</td>
         ${item.daily_data.map(d => {
           const hasActivity = d.inbound > 0 || d.usage > 0 || d.outbound > 0;
           let cellContent = '';
           if (hasActivity) {
-            if (d.inbound > 0) cellContent += `<div style="color:#2563eb;">+${formatNumber(d.inbound)}</div>`;
-            if (d.usage > 0) cellContent += `<div style="color:#ea580c;">-${formatNumber(d.usage)}</div>`;
-            if (d.outbound > 0) cellContent += `<div style="color:#dc2626;">-${formatNumber(d.outbound)}</div>`;
-            cellContent += `<div style="font-weight:bold; border-top:1px solid #ccc; padding-top:1px;">${formatNumber(d.closing)}</div>`;
+            // 간략하게 표시: 입고/사용만 한 줄로
+            const parts = [];
+            if (d.inbound > 0) parts.push(`<span style="color:#2563eb;">+${formatNumber(d.inbound)}</span>`);
+            if (d.usage > 0) parts.push(`<span style="color:#ea580c;">-${formatNumber(d.usage)}</span>`);
+            if (d.outbound > 0) parts.push(`<span style="color:#dc2626;">-${formatNumber(d.outbound)}</span>`);
+            cellContent = `<div style="font-size:5px;">${parts.join('<br>')}</div><div style="font-weight:bold; font-size:6px;">${formatNumber(d.closing)}</div>`;
           } else {
-            cellContent = `<span style="color:#9ca3af;">${formatNumber(d.closing)}</span>`;
+            cellContent = `<span style="color:#9ca3af; font-size:6px;">${formatNumber(d.closing)}</span>`;
           }
-          return `<td style="text-align:center; ${hasActivity ? 'background:#eff6ff;' : ''}">${cellContent}</td>`;
+          return `<td class="day-col" style="text-align:center; vertical-align:top; ${hasActivity ? 'background:#eff6ff;' : ''}">${cellContent}</td>`;
         }).join('')}
-        <td style="text-align:center; background:#fef9c3; font-weight:bold;">${formatNumber(item.closing_stock)}</td>
+        <td class="month-col" style="text-align:center; background:#fef9c3; font-weight:bold; font-size:7px;">${formatNumber(item.closing_stock)}</td>
       </tr>
     `;
   });
@@ -6864,7 +6942,8 @@ function printMonthlyDailyLedger(data, period, periodLabel) {
   const title = `${periodLabel} 일별 수불 추이`;
   const info = `<strong>품목:</strong> ${processedData.length}건 | <strong>기간:</strong> ${period.year}-${String(period.month).padStart(2,'0')}-01 ~ ${period.year}-${String(period.month).padStart(2,'0')}-${days}`;
   
-  printData(title, tableHtml, info);
+  // 일별 추이는 가로(landscape) 방향으로 인쇄
+  printData(title, tableHtml, info, { landscape: true, compactHeader: true });
 }
 
 // 기존 함수 호환성 유지 (호출 시 새 함수로 리다이렉트)
@@ -27660,17 +27739,43 @@ async function deleteFrozenStockLot(id) {
 
 // ===== 제품 추적 시스템 (Product Tracker) =====
 // 바코드/생산코드/생산명으로 검색하여 연관된 모든 데이터 조회
+// 원료품목으로 검색하여 해당 원료를 사용하는 제품 조회
+
+let productTrackerSearchMode = 'product'; // 'product' or 'material'
 
 function showProductTrackerModal() {
+  productTrackerSearchMode = 'product';
   showModal('🔍 제품 추적 시스템', `
     <div class="space-y-4">
-      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+      <!-- 검색 모드 선택 탭 -->
+      <div class="flex border-b">
+        <button onclick="switchProductTrackerSearchMode('product')" id="pt-search-mode-product"
+                class="flex-1 py-3 text-center font-medium border-b-2 border-indigo-500 text-indigo-600 bg-indigo-50">
+          <i class="fas fa-box mr-2"></i>제품 검색
+        </button>
+        <button onclick="switchProductTrackerSearchMode('material')" id="pt-search-mode-material"
+                class="flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50">
+          <i class="fas fa-cube mr-2"></i>원료품목 검색
+        </button>
+      </div>
+      
+      <!-- 검색 모드별 안내 -->
+      <div id="pt-search-info-product" class="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <p class="text-sm text-blue-700">
           <i class="fas fa-info-circle mr-1"></i>
           <strong>바코드, 생산코드, 생산명</strong>으로 검색하면 관련된 모든 정보를 조회합니다.
         </p>
         <p class="text-xs text-blue-600 mt-1">
           BOM 데이터, 바코드 목록, 생산이력, 입고이력, 생산일보 등 전체 히스토리 확인
+        </p>
+      </div>
+      <div id="pt-search-info-material" class="hidden bg-green-50 border border-green-200 rounded-lg p-4">
+        <p class="text-sm text-green-700">
+          <i class="fas fa-info-circle mr-1"></i>
+          <strong>원료코드, 원료명</strong>으로 검색하면 해당 원료를 사용하는 모든 제품을 조회합니다.
+        </p>
+        <p class="text-xs text-green-600 mt-1">
+          사용 제품 목록, 현재 재고 LOT, 입고이력, 사용이력, 생산자재 이력 등 확인
         </p>
       </div>
       
@@ -27706,6 +27811,38 @@ function showProductTrackerModal() {
   setTimeout(() => document.getElementById('product-tracker-search')?.focus(), 100);
 }
 
+// 검색 모드 전환 (제품/원료)
+function switchProductTrackerSearchMode(mode) {
+  productTrackerSearchMode = mode;
+  
+  // 탭 스타일 업데이트
+  const productTab = document.getElementById('pt-search-mode-product');
+  const materialTab = document.getElementById('pt-search-mode-material');
+  const productInfo = document.getElementById('pt-search-info-product');
+  const materialInfo = document.getElementById('pt-search-info-material');
+  const searchInput = document.getElementById('product-tracker-search');
+  
+  if (mode === 'product') {
+    productTab.className = 'flex-1 py-3 text-center font-medium border-b-2 border-indigo-500 text-indigo-600 bg-indigo-50';
+    materialTab.className = 'flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50';
+    productInfo.classList.remove('hidden');
+    materialInfo.classList.add('hidden');
+    searchInput.placeholder = '바코드, 생산코드, 생산명 입력...';
+  } else {
+    productTab.className = 'flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50';
+    materialTab.className = 'flex-1 py-3 text-center font-medium border-b-2 border-green-500 text-green-600 bg-green-50';
+    productInfo.classList.add('hidden');
+    materialInfo.classList.remove('hidden');
+    searchInput.placeholder = '원료코드, 원료명 입력...';
+  }
+  
+  // 검색 결과 초기화
+  document.getElementById('product-tracker-autocomplete')?.classList.add('hidden');
+  document.getElementById('product-tracker-result')?.classList.add('hidden');
+  searchInput.value = '';
+  searchInput.focus();
+}
+
 // 검색 엔터키 처리
 function handleProductTrackerKeyup(event) {
   if (event.key === 'Enter') {
@@ -27727,23 +27864,51 @@ async function handleProductTrackerAutocomplete(event) {
   clearTimeout(productTrackerDebounce);
   productTrackerDebounce = setTimeout(async () => {
     try {
-      const result = await api(`/admin/product-tracker/search?q=${encodeURIComponent(query)}`);
+      // 검색 모드에 따라 다른 API 호출
+      const apiUrl = productTrackerSearchMode === 'material'
+        ? `/admin/product-tracker/material-search?q=${encodeURIComponent(query)}`
+        : `/admin/product-tracker/search?q=${encodeURIComponent(query)}`;
+      
+      const result = await api(apiUrl);
       if (result.success && result.data.length > 0) {
-        autocompleteEl.innerHTML = result.data.map(item => `
-          <div class="px-4 py-2 hover:bg-indigo-50 cursor-pointer border-b last:border-b-0"
-               onclick="selectProductTrackerItem('${item.production_code}')">
-            <div class="flex items-center justify-between">
-              <div>
-                <span class="font-medium text-indigo-600">${item.production_code}</span>
-                <span class="text-gray-700 ml-2">${item.production_name}</span>
-              </div>
-              <div class="text-xs text-gray-500">
-                ${item.barcode_count > 0 ? `<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded">${item.barcode_count}개 바코드</span>` : ''}
-                ${item.channels ? `<span class="ml-1">${item.channels}</span>` : ''}
+        if (productTrackerSearchMode === 'material') {
+          // 원료품목 자동완성
+          autocompleteEl.innerHTML = result.data.map(item => `
+            <div class="px-4 py-2 hover:bg-green-50 cursor-pointer border-b last:border-b-0"
+                 onclick="selectMaterialTrackerItem('${item.item_code}')">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="font-medium text-green-600">${item.item_code}</span>
+                  <span class="text-gray-700 ml-2">${item.item_name}</span>
+                  <span class="text-xs text-gray-400 ml-2">(${item.category})</span>
+                </div>
+                <div class="text-xs text-gray-500">
+                  ${(item.product_count + item.legacy_product_count) > 0 
+                    ? `<span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded">${item.product_count + item.legacy_product_count}개 제품 사용</span>` 
+                    : ''}
+                  <span class="ml-1">재고: ${formatNumber(item.current_stock)} ${item.unit || ''}</span>
+                </div>
               </div>
             </div>
-          </div>
-        `).join('');
+          `).join('');
+        } else {
+          // 제품 자동완성 (기존 로직)
+          autocompleteEl.innerHTML = result.data.map(item => `
+            <div class="px-4 py-2 hover:bg-indigo-50 cursor-pointer border-b last:border-b-0"
+                 onclick="selectProductTrackerItem('${item.production_code}')">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="font-medium text-indigo-600">${item.production_code}</span>
+                  <span class="text-gray-700 ml-2">${item.production_name}</span>
+                </div>
+                <div class="text-xs text-gray-500">
+                  ${item.barcode_count > 0 ? `<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded">${item.barcode_count}개 바코드</span>` : ''}
+                  ${item.channels ? `<span class="ml-1">${item.channels}</span>` : ''}
+                </div>
+              </div>
+            </div>
+          `).join('');
+        }
         autocompleteEl.classList.remove('hidden');
       } else {
         autocompleteEl.classList.add('hidden');
@@ -27752,6 +27917,13 @@ async function handleProductTrackerAutocomplete(event) {
       autocompleteEl.classList.add('hidden');
     }
   }, 300);
+}
+
+// 원료품목 자동완성 선택
+function selectMaterialTrackerItem(itemCode) {
+  document.getElementById('product-tracker-search').value = itemCode;
+  document.getElementById('product-tracker-autocomplete')?.classList.add('hidden');
+  executeProductTracker();
 }
 
 // 자동완성 선택
@@ -27772,14 +27944,24 @@ async function executeProductTracker() {
   document.getElementById('product-tracker-autocomplete')?.classList.add('hidden');
   
   const resultEl = document.getElementById('product-tracker-result');
-  resultEl.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-4xl text-indigo-600"></i><p class="mt-2 text-gray-500">검색 중...</p></div>';
+  const spinnerColor = productTrackerSearchMode === 'material' ? 'text-green-600' : 'text-indigo-600';
+  resultEl.innerHTML = `<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-4xl ${spinnerColor}"></i><p class="mt-2 text-gray-500">검색 중...</p></div>`;
   resultEl.classList.remove('hidden');
   
   try {
-    const result = await api(`/admin/product-tracker?q=${encodeURIComponent(query)}`);
+    // 검색 모드에 따라 다른 API 호출
+    const apiUrl = productTrackerSearchMode === 'material'
+      ? `/admin/product-tracker/by-material?q=${encodeURIComponent(query)}`
+      : `/admin/product-tracker?q=${encodeURIComponent(query)}`;
+    
+    const result = await api(apiUrl);
     
     if (result.success) {
-      renderProductTrackerResult(result.data, result.searched);
+      if (productTrackerSearchMode === 'material') {
+        renderMaterialTrackerResult(result.data, result.searched);
+      } else {
+        renderProductTrackerResult(result.data, result.searched);
+      }
     } else {
       resultEl.innerHTML = `
         <div class="text-center py-8 text-red-500">
@@ -28117,8 +28299,359 @@ function renderProductTrackerReports(reports) {
   `;
 }
 
+// ===== 원료품목 추적 결과 렌더링 =====
+function renderMaterialTrackerResult(data, searched) {
+  const resultEl = document.getElementById('product-tracker-result');
+  const { material, products, current_lots, history, stats } = data;
+  
+  resultEl.innerHTML = `
+    <div class="space-y-4">
+      <!-- 검색 결과 요약 (원료 정보) -->
+      <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-bold text-green-800">
+              <i class="fas fa-cube mr-2"></i>${material?.item_name || '알 수 없음'}
+            </h3>
+            <p class="text-sm text-green-600">
+              <span class="font-mono">${material?.item_code || '-'}</span>
+              <span class="ml-2 px-2 py-0.5 bg-green-100 rounded text-xs">${material?.category || '-'}</span>
+              <span class="ml-2">단위: ${material?.unit || '-'}</span>
+            </p>
+          </div>
+          <div class="text-right text-sm">
+            <p class="text-gray-500">검색어: <span class="font-mono">${searched.query}</span></p>
+            <p class="text-gray-400 text-xs">매칭: ${searched.matched_material_code}</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 통계 요약 -->
+      <div class="grid grid-cols-6 gap-3">
+        <div class="bg-blue-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-blue-600">${stats.total_products_using_material}</div>
+          <div class="text-xs text-gray-500">사용 제품</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-green-600">${formatNumber(stats.current_stock)}</div>
+          <div class="text-xs text-gray-500">현재고</div>
+        </div>
+        <div class="bg-teal-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-teal-600">${formatNumber(stats.current_lots_total_qty)}</div>
+          <div class="text-xs text-gray-500">LOT 합계 (${stats.current_lots_count}건)</div>
+        </div>
+        <div class="bg-orange-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-orange-600">${stats.total_inbound_records}</div>
+          <div class="text-xs text-gray-500">입고이력</div>
+        </div>
+        <div class="bg-purple-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-purple-600">${stats.total_usage_records}</div>
+          <div class="text-xs text-gray-500">출고이력</div>
+        </div>
+        <div class="bg-pink-50 rounded-lg p-3 text-center">
+          <div class="text-xl font-bold text-pink-600">${stats.total_production_materials_records}</div>
+          <div class="text-xs text-gray-500">생산사용</div>
+        </div>
+      </div>
+      
+      <!-- 탭 메뉴 -->
+      <div class="border-b">
+        <button onclick="switchMaterialTrackerTab('products')" id="mt-tab-products" 
+                class="mt-tab px-4 py-2 border-b-2 border-green-500 text-green-600 font-medium">
+          사용 제품 (${stats.total_products_using_material})
+        </button>
+        <button onclick="switchMaterialTrackerTab('lots')" id="mt-tab-lots" 
+                class="mt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          현재 LOT (${stats.current_lots_count})
+        </button>
+        <button onclick="switchMaterialTrackerTab('inbound')" id="mt-tab-inbound" 
+                class="mt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          입고이력 (${stats.total_inbound_records})
+        </button>
+        <button onclick="switchMaterialTrackerTab('usage')" id="mt-tab-usage" 
+                class="mt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          출고이력 (${stats.total_usage_records})
+        </button>
+        <button onclick="switchMaterialTrackerTab('production')" id="mt-tab-production" 
+                class="mt-tab px-4 py-2 border-b-2 border-transparent text-gray-500 hover:text-gray-700">
+          생산자재 (${stats.total_production_materials_records})
+        </button>
+      </div>
+      
+      <!-- 탭 컨텐츠 -->
+      <div id="mt-tab-content" class="max-h-80 overflow-y-auto">
+        ${renderMaterialTrackerProducts(products)}
+      </div>
+    </div>
+  `;
+  
+  // 데이터 저장 (탭 전환용)
+  window.materialTrackerData = data;
+}
+
+// 원료 추적 탭 전환
+function switchMaterialTrackerTab(tab) {
+  document.querySelectorAll('.mt-tab').forEach(el => {
+    el.classList.remove('border-green-500', 'text-green-600');
+    el.classList.add('border-transparent', 'text-gray-500');
+  });
+  
+  const activeTab = document.getElementById(`mt-tab-${tab}`);
+  if (activeTab) {
+    activeTab.classList.remove('border-transparent', 'text-gray-500');
+    activeTab.classList.add('border-green-500', 'text-green-600');
+  }
+  
+  const content = document.getElementById('mt-tab-content');
+  const data = window.materialTrackerData;
+  if (!content || !data) return;
+  
+  switch(tab) {
+    case 'products':
+      content.innerHTML = renderMaterialTrackerProducts(data.products);
+      break;
+    case 'lots':
+      content.innerHTML = renderMaterialTrackerLots(data.current_lots);
+      break;
+    case 'inbound':
+      content.innerHTML = renderMaterialTrackerInbound(data.history.inbound);
+      break;
+    case 'usage':
+      content.innerHTML = renderMaterialTrackerUsage(data.history.usage);
+      break;
+    case 'production':
+      content.innerHTML = renderMaterialTrackerProductionMaterials(data.history.production_materials);
+      break;
+  }
+}
+
+// 사용 제품 목록 렌더링
+function renderMaterialTrackerProducts(products) {
+  const allProducts = [...(products.production_bom || []), ...(products.legacy_bom || [])];
+  
+  if (allProducts.length === 0) {
+    return '<div class="text-center py-6 text-gray-400"><i class="fas fa-info-circle mr-2"></i>이 원료를 사용하는 제품이 없습니다</div>';
+  }
+  
+  // 중복 제거 (production_code 우선)
+  const productMap = new Map();
+  products.production_bom?.forEach(p => {
+    productMap.set(p.production_code, { ...p, source: 'production_bom' });
+  });
+  products.legacy_bom?.forEach(p => {
+    if (!productMap.has(p.product_code)) {
+      productMap.set(p.product_code, { ...p, source: 'legacy_bom' });
+    }
+  });
+  
+  const uniqueProducts = Array.from(productMap.values());
+  
+  return `
+    <div class="mb-3 text-sm text-gray-500">
+      <i class="fas fa-info-circle mr-1"></i>
+      총 ${uniqueProducts.length}개 제품에서 이 원료를 사용합니다
+    </div>
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">제품코드</th>
+          <th class="px-3 py-2 text-left">제품명</th>
+          <th class="px-3 py-2 text-right">사용량</th>
+          <th class="px-3 py-2 text-center">단위</th>
+          <th class="px-3 py-2 text-center">바코드</th>
+          <th class="px-3 py-2 text-center">소스</th>
+          <th class="px-3 py-2 text-center">조회</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${uniqueProducts.map(p => `
+          <tr class="hover:bg-gray-50">
+            <td class="px-3 py-2 font-mono text-sm text-indigo-600">${p.production_code || p.product_code}</td>
+            <td class="px-3 py-2 font-medium">${p.production_name || p.product_name || '-'}</td>
+            <td class="px-3 py-2 text-right">${formatNumber(p.usage_quantity, 2)}</td>
+            <td class="px-3 py-2 text-center">${p.usage_unit || p.unit || 'g'}</td>
+            <td class="px-3 py-2 text-center">
+              ${p.barcode_count > 0 ? `<span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">${p.barcode_count}개</span>` : '<span class="text-gray-400">-</span>'}
+            </td>
+            <td class="px-3 py-2 text-center">
+              <span class="px-2 py-0.5 rounded text-xs ${p.source === 'production_bom' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}">
+                ${p.source === 'production_bom' ? 'BOM' : 'Legacy'}
+              </span>
+            </td>
+            <td class="px-3 py-2 text-center">
+              <button onclick="searchProductFromMaterial('${p.production_code || p.product_code}')" 
+                      class="text-indigo-600 hover:text-indigo-800">
+                <i class="fas fa-search"></i>
+              </button>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 현재 LOT 렌더링
+function renderMaterialTrackerLots(lots) {
+  if (!lots || lots.length === 0) {
+    return '<div class="text-center py-6 text-gray-400"><i class="fas fa-box-open mr-2"></i>현재 재고 LOT이 없습니다</div>';
+  }
+  
+  const totalRemain = lots.reduce((sum, lot) => sum + (lot.remain_qty || 0), 0);
+  
+  return `
+    <div class="mb-3 text-sm text-gray-500">
+      <i class="fas fa-info-circle mr-1"></i>
+      총 ${lots.length}개 LOT, 합계: <strong class="text-green-600">${formatNumber(totalRemain)}</strong>
+    </div>
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">LOT번호</th>
+          <th class="px-3 py-2 text-left">입고일</th>
+          <th class="px-3 py-2 text-right">입고량</th>
+          <th class="px-3 py-2 text-right">잔량</th>
+          <th class="px-3 py-2 text-right">단가</th>
+          <th class="px-3 py-2 text-left">공급처</th>
+          <th class="px-3 py-2 text-center">상태</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${lots.map((lot, idx) => `
+          <tr class="hover:bg-gray-50 ${idx === 0 ? 'bg-green-50' : ''}">
+            <td class="px-3 py-2 font-mono text-xs">
+              ${idx === 0 ? '<span class="text-green-600 text-xs mr-1">▶FIFO</span>' : ''}
+              ${lot.lot_number}
+            </td>
+            <td class="px-3 py-2">${lot.inbound_date}</td>
+            <td class="px-3 py-2 text-right">${formatNumber(lot.quantity)}</td>
+            <td class="px-3 py-2 text-right font-medium text-green-600">${formatNumber(lot.remain_qty)}</td>
+            <td class="px-3 py-2 text-right">${lot.unit_price ? formatNumber(lot.unit_price) + '원' : '-'}</td>
+            <td class="px-3 py-2 text-sm">${lot.supplier || '-'}</td>
+            <td class="px-3 py-2 text-center">
+              <span class="px-2 py-0.5 rounded text-xs ${lot.quality_status === '합격' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">
+                ${lot.quality_status || '-'}
+              </span>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 입고이력 렌더링
+function renderMaterialTrackerInbound(inbounds) {
+  if (!inbounds || inbounds.length === 0) {
+    return '<div class="text-center py-6 text-gray-400">입고 이력이 없습니다</div>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">입고일</th>
+          <th class="px-3 py-2 text-left">LOT번호</th>
+          <th class="px-3 py-2 text-right">입고량</th>
+          <th class="px-3 py-2 text-right">잔량</th>
+          <th class="px-3 py-2 text-right">단가</th>
+          <th class="px-3 py-2 text-center">상태</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${inbounds.map(i => `
+          <tr class="hover:bg-gray-50 ${i.remain_qty <= 0 ? 'bg-gray-100 text-gray-400' : ''}">
+            <td class="px-3 py-2">${i.inbound_date}</td>
+            <td class="px-3 py-2 font-mono text-xs">${i.lot_number || '-'}</td>
+            <td class="px-3 py-2 text-right">${formatNumber(i.quantity)}</td>
+            <td class="px-3 py-2 text-right font-medium ${i.remain_qty > 0 ? 'text-green-600' : ''}">${formatNumber(i.remain_qty)}</td>
+            <td class="px-3 py-2 text-right">${i.unit_price ? formatNumber(i.unit_price) + '원' : '-'}</td>
+            <td class="px-3 py-2 text-center">
+              <span class="px-2 py-0.5 rounded text-xs ${i.quality_status === '합격' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}">${i.quality_status || '-'}</span>
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 출고(사용) 이력 렌더링
+function renderMaterialTrackerUsage(usages) {
+  if (!usages || usages.length === 0) {
+    return '<div class="text-center py-6 text-gray-400">출고(사용) 이력이 없습니다</div>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">날짜</th>
+          <th class="px-3 py-2 text-left">LOT번호</th>
+          <th class="px-3 py-2 text-right">수량</th>
+          <th class="px-3 py-2 text-left">비고</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${usages.map(u => `
+          <tr class="hover:bg-gray-50">
+            <td class="px-3 py-2">${u.date}</td>
+            <td class="px-3 py-2 font-mono text-xs">${u.lot_number || '-'}</td>
+            <td class="px-3 py-2 text-right font-medium text-red-600">-${formatNumber(u.quantity)}</td>
+            <td class="px-3 py-2 text-sm text-gray-500">${u.memo || '-'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 생산자재 사용 이력 렌더링
+function renderMaterialTrackerProductionMaterials(materials) {
+  if (!materials || materials.length === 0) {
+    return '<div class="text-center py-6 text-gray-400">생산자재 사용 이력이 없습니다</div>';
+  }
+  
+  return `
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-3 py-2 text-left">생산일</th>
+          <th class="px-3 py-2 text-left">생산품목</th>
+          <th class="px-3 py-2 text-left">LOT번호</th>
+          <th class="px-3 py-2 text-right">사용량</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${materials.map(m => `
+          <tr class="hover:bg-gray-50">
+            <td class="px-3 py-2">${m.prod_date || '-'}</td>
+            <td class="px-3 py-2">
+              <span class="text-indigo-600">${m.production_name || m.production_product_code || '-'}</span>
+            </td>
+            <td class="px-3 py-2 font-mono text-xs">${m.lot_number || '-'}</td>
+            <td class="px-3 py-2 text-right font-medium text-orange-600">-${formatNumber(m.quantity)}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+// 원료 추적에서 제품 검색으로 전환
+function searchProductFromMaterial(productCode) {
+  // 검색 모드를 제품으로 전환하고 검색 실행
+  switchProductTrackerSearchMode('product');
+  document.getElementById('product-tracker-search').value = productCode;
+  executeProductTracker();
+}
+
 // 전역 함수 등록
 window.showProductTrackerModal = showProductTrackerModal;
+window.switchProductTrackerSearchMode = switchProductTrackerSearchMode;
+window.selectMaterialTrackerItem = selectMaterialTrackerItem;
+window.switchMaterialTrackerTab = switchMaterialTrackerTab;
+window.searchProductFromMaterial = searchProductFromMaterial;
 
 // ===== 바코드 기반 생산계획표 생성 =====
 
@@ -36858,11 +37391,31 @@ async function renderBarcodeInventory() {
       
       <!-- 바코드 스캔 섹션 -->
       <div class="bg-white rounded-xl shadow-lg p-6">
-        <div class="flex items-center gap-2 mb-4">
-          <i class="fas fa-barcode text-2xl text-blue-600"></i>
-          <h3 class="text-lg font-semibold">바코드 스캔/입력</h3>
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-2">
+            <i class="fas fa-barcode text-2xl text-blue-600"></i>
+            <h3 class="text-lg font-semibold">바코드 스캔/입력</h3>
+          </div>
+          <button onclick="openBarcodeRegisterModal()" class="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm">
+            <i class="fas fa-plus mr-1"></i> 바코드 등록
+          </button>
         </div>
-        <div class="flex gap-4">
+        
+        <!-- 카메라 스캔 영역 -->
+        <div id="barcode-camera-container" class="hidden mb-4">
+          <div id="barcode-camera-reader" class="w-full max-w-md mx-auto rounded-lg overflow-hidden"></div>
+          <button onclick="closeBarcodeCamera()" class="w-full mt-2 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+            <i class="fas fa-times mr-1"></i> 카메라 닫기
+          </button>
+        </div>
+        
+        <div class="flex gap-2 mb-3">
+          <button onclick="openBarcodeCamera()" class="flex-1 py-4 bg-green-600 text-white rounded-xl hover:bg-green-700 font-bold text-lg">
+            <i class="fas fa-camera mr-2"></i> 카메라 스캔
+          </button>
+        </div>
+        
+        <div class="flex gap-2">
           <input type="text" id="barcode-scan-input" 
                  class="flex-1 p-4 text-xl border-2 border-blue-300 rounded-xl text-center font-mono tracking-wider"
                  placeholder="바코드를 스캔하거나 품목코드 입력"
@@ -36873,7 +37426,7 @@ async function renderBarcodeInventory() {
         </div>
         <p class="text-sm text-gray-500 mt-2 text-center">
           <i class="fas fa-info-circle mr-1"></i>
-          바코드 스캐너로 스캔하거나 품목코드(예: RM001)를 직접 입력하세요
+          카메라로 바코드를 스캔하거나 품목코드(예: RM001)를 직접 입력하세요
         </p>
       </div>
       
@@ -37021,16 +37574,16 @@ async function scanBarcode() {
     return;
   }
   
-  showLoading(true, '품목 조회 중...');
+  showLoading('품목 조회 중...');
   
   try {
-    const response = await axios.get(\`\${API_BASE}/barcode/scan?barcode=\${encodeURIComponent(barcode)}\`);
+    const response = await axios.get(`${API_BASE}/barcode/scan?barcode=${encodeURIComponent(barcode)}`);
     const result = response.data;
     
     if (result.success && result.data) {
       barcodeCurrentItem = result.data;
       displayBarcodeItem(result.data);
-      showToast(\`\${result.data.item_name} 조회 완료\`, 'success');
+      showToast(`${result.data.item_name} 조회 완료`, 'success');
     } else {
       document.getElementById('barcode-scan-result').classList.add('hidden');
       document.getElementById('barcode-lot-list').classList.add('hidden');
@@ -37040,7 +37593,7 @@ async function scanBarcode() {
     console.error('Barcode scan error:', error);
     showToast('조회 실패: ' + (error.response?.data?.error || error.message), 'error');
   } finally {
-    showLoading(false);
+    hideLoading();
     input.value = '';
     input.focus();
   }
@@ -37051,7 +37604,7 @@ function displayBarcodeItem(item) {
   document.getElementById('barcode-scan-result').classList.remove('hidden');
   
   document.getElementById('barcode-item-name').textContent = item.item_name;
-  document.getElementById('barcode-item-code').textContent = \`코드: \${item.item_code}\`;
+  document.getElementById('barcode-item-code').textContent = `코드: ${item.item_code}`;
   document.getElementById('barcode-current-stock').textContent = formatNumber(item.current_stock || 0);
   document.getElementById('barcode-stock-unit').textContent = item.unit || 'ea';
   
@@ -37071,21 +37624,21 @@ function displayBarcodeItem(item) {
   
   if (item.lots && item.lots.length > 0) {
     item.lots.forEach((lot, idx) => {
-      lotSelect.innerHTML += \`<option value="\${lot.lot_number}">\${lot.lot_number} | 잔량: \${formatNumber(lot.remain_qty)} | 유효: \${lot.expiry_date || '-'}</option>\`;
+      lotSelect.innerHTML += `<option value="${lot.lot_number}">${lot.lot_number} | 잔량: ${formatNumber(lot.remain_qty)} | 유효: ${lot.expiry_date || '-'}</option>`;
     });
     
     // LOT 테이블 표시
     document.getElementById('barcode-lot-list').classList.remove('hidden');
     const tbody = document.getElementById('barcode-lot-tbody');
-    tbody.innerHTML = item.lots.map((lot, idx) => \`
+    tbody.innerHTML = item.lots.map((lot, idx) => `
       <tr class="border-b hover:bg-gray-50">
-        <td class="px-4 py-3 font-bold text-blue-600">\${idx + 1}</td>
-        <td class="px-4 py-3 font-mono">\${lot.lot_number}</td>
-        <td class="px-4 py-3">\${lot.inbound_date || '-'}</td>
-        <td class="px-4 py-3">\${lot.expiry_date || '-'}</td>
-        <td class="px-4 py-3 text-right font-bold">\${formatNumber(lot.remain_qty)}</td>
+        <td class="px-4 py-3 font-bold text-blue-600">${idx + 1}</td>
+        <td class="px-4 py-3 font-mono">${lot.lot_number}</td>
+        <td class="px-4 py-3">${lot.inbound_date || '-'}</td>
+        <td class="px-4 py-3">${lot.expiry_date || '-'}</td>
+        <td class="px-4 py-3 text-right font-bold">${formatNumber(lot.remain_qty)}</td>
       </tr>
-    \`).join('');
+    `).join('');
   } else {
     document.getElementById('barcode-lot-list').classList.add('hidden');
   }
@@ -37103,14 +37656,14 @@ function switchBarcodeTab(tab) {
   barcodeCurrentTab = tab;
   
   ['usage', 'inbound', 'history'].forEach(t => {
-    document.getElementById(\`barcode-tab-\${t}\`).classList.remove('border-blue-600', 'text-blue-600');
-    document.getElementById(\`barcode-tab-\${t}\`).classList.add('border-transparent', 'text-gray-500');
-    document.getElementById(\`barcode-content-\${t}\`).classList.add('hidden');
+    document.getElementById(`barcode-tab-${t}`).classList.remove('border-blue-600', 'text-blue-600');
+    document.getElementById(`barcode-tab-${t}`).classList.add('border-transparent', 'text-gray-500');
+    document.getElementById(`barcode-content-${t}`).classList.add('hidden');
   });
   
-  document.getElementById(\`barcode-tab-\${tab}\`).classList.add('border-blue-600', 'text-blue-600');
-  document.getElementById(\`barcode-tab-\${tab}\`).classList.remove('border-transparent', 'text-gray-500');
-  document.getElementById(\`barcode-content-\${tab}\`).classList.remove('hidden');
+  document.getElementById(`barcode-tab-${tab}`).classList.add('border-blue-600', 'text-blue-600');
+  document.getElementById(`barcode-tab-${tab}`).classList.remove('border-transparent', 'text-gray-500');
+  document.getElementById(`barcode-content-${tab}`).classList.remove('hidden');
 }
 
 // 수량 조절
@@ -37143,10 +37696,10 @@ async function submitBarcodeUsage() {
   const lotNumber = document.getElementById('barcode-lot-select').value || null;
   const memo = document.getElementById('barcode-memo-input').value.trim();
   
-  showLoading(true, '사용 등록 중...');
+  showLoading('사용 등록 중...');
   
   try {
-    const response = await axios.post(\`\${API_BASE}/barcode/usage\`, {
+    const response = await axios.post(`${API_BASE}/barcode/usage`, {
       item_code: barcodeCurrentItem.item_code,
       quantity: qty,
       lot_number: lotNumber,
@@ -37173,7 +37726,7 @@ async function submitBarcodeUsage() {
     console.error('Usage error:', error);
     showToast('등록 실패: ' + (error.response?.data?.error || error.message), 'error');
   } finally {
-    showLoading(false);
+    hideLoading();
     document.getElementById('barcode-scan-input').focus();
   }
 }
@@ -37194,10 +37747,10 @@ async function submitBarcodeInbound() {
   const expiryDate = document.getElementById('barcode-expiry-date').value || null;
   const memo = document.getElementById('barcode-inbound-memo').value.trim();
   
-  showLoading(true, '입고 등록 중...');
+  showLoading('입고 등록 중...');
   
   try {
-    const response = await axios.post(\`\${API_BASE}/barcode/inbound\`, {
+    const response = await axios.post(`${API_BASE}/barcode/inbound`, {
       item_code: barcodeCurrentItem.item_code,
       quantity: qty,
       expiry_date: expiryDate,
@@ -37225,7 +37778,7 @@ async function submitBarcodeInbound() {
     console.error('Inbound error:', error);
     showToast('등록 실패: ' + (error.response?.data?.error || error.message), 'error');
   } finally {
-    showLoading(false);
+    hideLoading();
     document.getElementById('barcode-scan-input').focus();
   }
 }
@@ -37233,7 +37786,7 @@ async function submitBarcodeInbound() {
 // 거래 이력 조회
 async function loadBarcodeHistory(itemCode) {
   try {
-    const response = await axios.get(\`\${API_BASE}/barcode/history?item_code=\${encodeURIComponent(itemCode)}&limit=20\`);
+    const response = await axios.get(`${API_BASE}/barcode/history?item_code=${encodeURIComponent(itemCode)}&limit=20`);
     const result = response.data;
     
     const container = document.getElementById('barcode-history-list');
@@ -37244,29 +37797,347 @@ async function loadBarcodeHistory(itemCode) {
         const color = isInbound ? 'green' : (t.trans_type === '사용' ? 'red' : 'blue');
         const icon = isInbound ? 'plus-circle' : (t.trans_type === '사용' ? 'minus-circle' : 'exchange-alt');
         
-        return \`
+        return `
           <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 bg-\${color}-100 rounded-full flex items-center justify-center">
-                <i class="fas fa-\${icon} text-\${color}-600"></i>
+              <div class="w-10 h-10 bg-${color}-100 rounded-full flex items-center justify-center">
+                <i class="fas fa-${icon} text-${color}-600"></i>
               </div>
               <div>
-                <p class="font-medium">\${t.trans_type}</p>
-                <p class="text-sm text-gray-500">\${t.trans_date} · \${t.lot_number || '-'}</p>
+                <p class="font-medium">${t.trans_type}</p>
+                <p class="text-sm text-gray-500">${t.trans_date} · ${t.lot_number || '-'}</p>
               </div>
             </div>
             <div class="text-right">
-              <p class="font-bold text-\${color}-600">\${isInbound ? '+' : ''}\${formatNumber(t.quantity)}</p>
-              <p class="text-xs text-gray-400">\${t.memo || ''}</p>
+              <p class="font-bold text-${color}-600">${isInbound ? '+' : ''}${formatNumber(t.quantity)}</p>
+              <p class="text-xs text-gray-400">${t.memo || ''}</p>
             </div>
           </div>
-        \`;
+        `;
       }).join('');
     } else {
       container.innerHTML = '<p class="text-center text-gray-500 py-4">거래 이력이 없습니다</p>';
     }
   } catch (error) {
     console.error('History error:', error);
+  }
+}
+
+// ========== 카메라 바코드 스캔 기능 ==========
+var html5QrcodeScanner = null;
+
+function loadBarcodeScript() {
+  return new Promise(function(resolve, reject) {
+    if (typeof Html5Qrcode !== 'undefined') {
+      resolve();
+      return;
+    }
+    var script = document.createElement('script');
+    script.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    script.onload = resolve;
+    script.onerror = function() {
+      // fallback CDN
+      var script2 = document.createElement('script');
+      script2.src = 'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js';
+      script2.onload = resolve;
+      script2.onerror = reject;
+      document.head.appendChild(script2);
+    };
+    document.head.appendChild(script);
+  });
+}
+
+async function openBarcodeCamera() {
+  try {
+    await loadBarcodeScript();
+    
+    var container = document.getElementById('barcode-camera-container');
+    var reader = document.getElementById('barcode-camera-reader');
+    container.classList.remove('hidden');
+    
+    if (html5QrcodeScanner) {
+      try { await html5QrcodeScanner.stop(); } catch(e) {}
+    }
+    
+    html5QrcodeScanner = new Html5Qrcode('barcode-camera-reader');
+    
+    await html5QrcodeScanner.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: { width: 250, height: 150 } },
+      function(decodedText) {
+        document.getElementById('barcode-scan-input').value = decodedText;
+        closeBarcodeCamera();
+        scanBarcode();
+        showToast('바코드 스캔 완료: ' + decodedText, 'success');
+      },
+      function(errorMessage) {
+        // 스캔 중 에러는 무시 (계속 스캔)
+      }
+    );
+  } catch (error) {
+    console.error('Camera error:', error);
+    showToast('카메라를 열 수 없습니다: ' + error.message, 'error');
+  }
+}
+
+async function closeBarcodeCamera() {
+  var container = document.getElementById('barcode-camera-container');
+  container.classList.add('hidden');
+  
+  if (html5QrcodeScanner) {
+    try {
+      await html5QrcodeScanner.stop();
+      html5QrcodeScanner = null;
+    } catch(e) {
+      console.error('Stop camera error:', e);
+    }
+  }
+}
+
+// ========== 바코드 등록 관리 ==========
+var barcodeRegisterMode = 'material';
+var selectedItemForBarcode = null;
+
+async function openBarcodeRegisterModal() {
+  var modalHtml = '<div class="space-y-4">' +
+    '<div class="flex border-b">' +
+      '<button onclick="switchBarcodeRegisterTab(\'register\')" id="barcode-reg-tab-register" class="flex-1 py-3 text-center font-medium border-b-2 border-blue-600 text-blue-600">' +
+        '<i class="fas fa-plus mr-1"></i> 바코드 등록' +
+      '</button>' +
+      '<button onclick="switchBarcodeRegisterTab(\'list\')" id="barcode-reg-tab-list" class="flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">' +
+        '<i class="fas fa-list mr-1"></i> 등록현황' +
+      '</button>' +
+    '</div>' +
+    
+    // 등록 탭
+    '<div id="barcode-reg-content-register">' +
+      '<div class="mb-4">' +
+        '<label class="block text-sm font-medium text-gray-700 mb-2">원료/부자재 검색</label>' +
+        '<div class="flex gap-2">' +
+          '<input type="text" id="barcode-reg-search" class="flex-1 p-3 border rounded-lg" placeholder="품목코드 또는 품목명 검색" onkeypress="if(event.key===\'Enter\') searchUnregisteredItems()">' +
+          '<button onclick="searchUnregisteredItems()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">' +
+            '<i class="fas fa-search"></i>' +
+          '</button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="barcode-unregistered-list" class="max-h-48 overflow-y-auto border rounded-lg">' +
+        '<p class="text-center text-gray-500 py-4">품목을 검색하세요</p>' +
+      '</div>' +
+      '<div id="barcode-reg-input-section" class="hidden mt-4 p-4 bg-blue-50 rounded-lg">' +
+        '<div class="flex items-center gap-2 mb-3">' +
+          '<span class="font-medium text-blue-800" id="barcode-reg-selected-item">선택된 품목</span>' +
+        '</div>' +
+        '<div class="flex gap-2">' +
+          '<input type="text" id="barcode-reg-barcode-input" class="flex-1 p-3 border-2 border-blue-300 rounded-lg font-mono text-lg text-center" placeholder="바코드 스캔 또는 입력">' +
+          '<button onclick="registerBarcodeFromCamera()" class="px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700">' +
+            '<i class="fas fa-camera"></i>' +
+          '</button>' +
+        '</div>' +
+        '<button onclick="submitBarcodeRegister()" class="w-full mt-3 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700">' +
+          '<i class="fas fa-check mr-2"></i> 바코드 등록' +
+        '</button>' +
+      '</div>' +
+    '</div>' +
+    
+    // 등록 현황 탭
+    '<div id="barcode-reg-content-list" class="hidden">' +
+      '<div class="mb-4">' +
+        '<input type="text" id="barcode-list-search" class="w-full p-3 border rounded-lg" placeholder="등록된 바코드 검색..." onkeyup="searchRegisteredItems()">' +
+      '</div>' +
+      '<div id="barcode-registered-list" class="max-h-64 overflow-y-auto border rounded-lg">' +
+        '<p class="text-center text-gray-500 py-4">로딩 중...</p>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+  
+  showModal('바코드 등록 관리', modalHtml, '', 'max-w-2xl');
+  
+  searchUnregisteredItems();
+}
+
+function switchBarcodeRegisterTab(tab) {
+  barcodeRegisterMode = tab;
+  
+  var tabs = ['register', 'list'];
+  tabs.forEach(function(t) {
+    var tabEl = document.getElementById('barcode-reg-tab-' + t);
+    var contentEl = document.getElementById('barcode-reg-content-' + t);
+    if (tabEl && contentEl) {
+      tabEl.classList.remove('border-blue-600', 'text-blue-600');
+      tabEl.classList.add('border-transparent', 'text-gray-500');
+      contentEl.classList.add('hidden');
+    }
+  });
+  
+  var activeTab = document.getElementById('barcode-reg-tab-' + tab);
+  var activeContent = document.getElementById('barcode-reg-content-' + tab);
+  if (activeTab && activeContent) {
+    activeTab.classList.add('border-blue-600', 'text-blue-600');
+    activeTab.classList.remove('border-transparent', 'text-gray-500');
+    activeContent.classList.remove('hidden');
+  }
+  
+  if (tab === 'list') {
+    loadRegisteredBarcodes();
+  }
+}
+
+async function searchUnregisteredItems() {
+  var search = document.getElementById('barcode-reg-search').value.trim();
+  var container = document.getElementById('barcode-unregistered-list');
+  
+  container.innerHTML = '<p class="text-center text-gray-500 py-4"><i class="fas fa-spinner fa-spin mr-2"></i>검색 중...</p>';
+  
+  try {
+    var url = API_BASE + '/barcode/unregistered';
+    if (search) {
+      url += '?search=' + encodeURIComponent(search);
+    }
+    var response = await axios.get(url);
+    var result = response.data;
+    
+    if (result.success && result.data && result.data.length > 0) {
+      var html = '';
+      for (var i = 0; i < result.data.length; i++) {
+        var item = result.data[i];
+        html += '<div class="flex items-center justify-between p-3 border-b hover:bg-gray-50 cursor-pointer" onclick="selectItemForBarcode(\'' + item.item_code + '\', \'' + (item.item_name || '').replace(/'/g, "\\'") + '\', \'' + item.table_type + '\')">' +
+          '<div>' +
+            '<p class="font-medium">' + item.item_name + '</p>' +
+            '<p class="text-sm text-gray-500">' + item.item_code + ' · ' + (item.category || '원료') + '</p>' +
+          '</div>' +
+          '<i class="fas fa-chevron-right text-gray-400"></i>' +
+        '</div>';
+      }
+      container.innerHTML = html;
+    } else {
+      container.innerHTML = '<p class="text-center text-gray-500 py-4">바코드 미등록 품목이 없습니다</p>';
+    }
+  } catch (error) {
+    console.error('Search error:', error);
+    container.innerHTML = '<p class="text-center text-red-500 py-4">검색 오류</p>';
+  }
+}
+
+function selectItemForBarcode(itemCode, itemName, tableType) {
+  selectedItemForBarcode = { item_code: itemCode, item_name: itemName, table_type: tableType };
+  
+  document.getElementById('barcode-reg-input-section').classList.remove('hidden');
+  document.getElementById('barcode-reg-selected-item').textContent = itemName + ' (' + itemCode + ')';
+  document.getElementById('barcode-reg-barcode-input').value = '';
+  document.getElementById('barcode-reg-barcode-input').focus();
+}
+
+async function submitBarcodeRegister() {
+  if (!selectedItemForBarcode) {
+    showToast('품목을 선택하세요', 'warning');
+    return;
+  }
+  
+  var barcode = document.getElementById('barcode-reg-barcode-input').value.trim();
+  if (!barcode) {
+    showToast('바코드를 입력하세요', 'warning');
+    return;
+  }
+  
+  showLoading('바코드 등록 중...');
+  
+  try {
+    var response = await axios.post(API_BASE + '/barcode/register', {
+      item_code: selectedItemForBarcode.item_code,
+      barcode: barcode,
+      table_type: selectedItemForBarcode.table_type
+    });
+    
+    if (response.data.success) {
+      showToast(response.data.message || '바코드 등록 완료!', 'success');
+      
+      selectedItemForBarcode = null;
+      document.getElementById('barcode-reg-input-section').classList.add('hidden');
+      document.getElementById('barcode-reg-barcode-input').value = '';
+      
+      searchUnregisteredItems();
+    } else {
+      showToast(response.data.error || '등록 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Register error:', error);
+    var errMsg = error.response && error.response.data && error.response.data.error ? error.response.data.error : error.message;
+    showToast('등록 실패: ' + errMsg, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+async function loadRegisteredBarcodes() {
+  var container = document.getElementById('barcode-registered-list');
+  var search = document.getElementById('barcode-list-search').value.trim();
+  
+  container.innerHTML = '<p class="text-center text-gray-500 py-4"><i class="fas fa-spinner fa-spin mr-2"></i>로딩 중...</p>';
+  
+  try {
+    var url = API_BASE + '/barcode/registered';
+    if (search) {
+      url += '?search=' + encodeURIComponent(search);
+    }
+    var response = await axios.get(url);
+    var result = response.data;
+    
+    if (result.success && result.data && result.data.length > 0) {
+      var html = '';
+      for (var i = 0; i < result.data.length; i++) {
+        var item = result.data[i];
+        html += '<div class="flex items-center justify-between p-3 border-b hover:bg-gray-50">' +
+          '<div>' +
+            '<p class="font-medium">' + item.item_name + '</p>' +
+            '<p class="text-sm text-gray-500">' + item.item_code + ' · ' + (item.category || '원료') + '</p>' +
+          '</div>' +
+          '<div class="flex items-center gap-2">' +
+            '<span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-mono">' + item.barcode + '</span>' +
+            '<button onclick="deleteBarcodeRegistration(\'' + item.item_code + '\', \'' + (item.item_name || '').replace(/'/g, "\\'") + '\')" class="p-2 text-red-500 hover:bg-red-50 rounded">' +
+              '<i class="fas fa-trash"></i>' +
+            '</button>' +
+          '</div>' +
+        '</div>';
+      }
+      container.innerHTML = html;
+    } else {
+      container.innerHTML = '<p class="text-center text-gray-500 py-4">등록된 바코드가 없습니다</p>';
+    }
+  } catch (error) {
+    console.error('Load error:', error);
+    container.innerHTML = '<p class="text-center text-red-500 py-4">로딩 오류</p>';
+  }
+}
+
+function searchRegisteredItems() {
+  clearTimeout(window.barcodeSearchTimeout);
+  window.barcodeSearchTimeout = setTimeout(loadRegisteredBarcodes, 300);
+}
+
+async function deleteBarcodeRegistration(itemCode, itemName) {
+  if (!confirm(itemName + '의 바코드를 삭제하시겠습니까?')) {
+    return;
+  }
+  
+  try {
+    var response = await axios.delete(API_BASE + '/barcode/register?item_code=' + encodeURIComponent(itemCode));
+    
+    if (response.data.success) {
+      showToast('바코드 삭제 완료', 'success');
+      loadRegisteredBarcodes();
+    } else {
+      showToast(response.data.error || '삭제 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Delete error:', error);
+    showToast('삭제 실패', 'error');
+  }
+}
+
+function registerBarcodeFromCamera() {
+  var scannedCode = prompt('바코드를 스캔하거나 직접 입력하세요:');
+  if (scannedCode) {
+    document.getElementById('barcode-reg-barcode-input').value = scannedCode.trim();
   }
 }
 
@@ -37277,6 +38148,17 @@ window.adjustBarcodeQty = adjustBarcodeQty;
 window.setBarcodeQty = setBarcodeQty;
 window.submitBarcodeUsage = submitBarcodeUsage;
 window.submitBarcodeInbound = submitBarcodeInbound;
+window.openBarcodeCamera = openBarcodeCamera;
+window.closeBarcodeCamera = closeBarcodeCamera;
+window.openBarcodeRegisterModal = openBarcodeRegisterModal;
+window.switchBarcodeRegisterTab = switchBarcodeRegisterTab;
+window.searchUnregisteredItems = searchUnregisteredItems;
+window.selectItemForBarcode = selectItemForBarcode;
+window.submitBarcodeRegister = submitBarcodeRegister;
+window.loadRegisteredBarcodes = loadRegisteredBarcodes;
+window.searchRegisteredItems = searchRegisteredItems;
+window.deleteBarcodeRegistration = deleteBarcodeRegistration;
+window.registerBarcodeFromCamera = registerBarcodeFromCamera;
 
 // 전역 함수 노출
 window.loadAuditLogTab = loadAuditLogTab;

@@ -4667,4 +4667,766 @@ admin.get('/product-tracker/search', async (c) => {
   }
 })
 
+// ===== 원료품목 기준 제품 추적 (Material-based Product Tracker) =====
+// 원료코드/원료명으로 검색하여 해당 원료를 사용하는 모든 제품과 이력 조회
+admin.get('/product-tracker/by-material', async (c) => {
+  const { env } = c
+  const query = c.req.query('q')?.trim()
+  
+  if (!query) {
+    return c.json({ success: false, error: '원료코드 또는 원료명을 입력해주세요' }, 400)
+  }
+  
+  try {
+    // 1. 원료품목 정보 조회 (코드 또는 품명으로 검색)
+    let material = await env.DB.prepare(`
+      SELECT * FROM master 
+      WHERE item_code = ? AND category IN ('원료', '부자재', '포장재', '소모품')
+    `).bind(query).first()
+    
+    if (!material) {
+      // 품명으로 검색
+      material = await env.DB.prepare(`
+        SELECT * FROM master 
+        WHERE item_name LIKE ? AND category IN ('원료', '부자재', '포장재', '소모품')
+        LIMIT 1
+      `).bind(`%${query}%`).first()
+    }
+    
+    if (!material) {
+      return c.json({ 
+        success: false, 
+        error: '원료품목을 찾을 수 없습니다',
+        searched: { query, type: 'material' }
+      }, 404)
+    }
+    
+    const materialCode = (material as any).item_code
+    
+    // 2. production_bom에서 해당 원료를 사용하는 생산품목 조회
+    const productionBomProducts = await env.DB.prepare(`
+      SELECT DISTINCT 
+        pb.production_code,
+        pi.production_name,
+        pb.quantity as usage_quantity,
+        pb.unit as usage_unit,
+        (SELECT COUNT(*) FROM production_barcodes WHERE production_code = pb.production_code) as barcode_count
+      FROM production_bom pb
+      LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+      WHERE pb.material_code = ?
+      ORDER BY pi.production_name
+    `).bind(materialCode).all()
+    
+    // 3. bom 테이블에서 해당 원료를 사용하는 제품 조회 (레거시)
+    const legacyBomProducts = await env.DB.prepare(`
+      SELECT DISTINCT 
+        b.product_code,
+        m.item_name as product_name,
+        m.unit as product_unit,
+        b.quantity as usage_quantity,
+        b.unit as usage_unit,
+        m.category
+      FROM bom b
+      LEFT JOIN master m ON b.product_code = m.item_code
+      WHERE b.item_code = ?
+      ORDER BY m.item_name
+    `).bind(materialCode).all()
+    
+    // 4. 원료 입고 이력 조회 (최근 50건)
+    const inboundHistory = await env.DB.prepare(`
+      SELECT i.*, m.item_name
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.item_code = ?
+      ORDER BY i.inbound_date DESC, i.created_at DESC
+      LIMIT 50
+    `).bind(materialCode).all()
+    
+    // 5. 원료 사용(출고) 이력 조회 - transactions 테이블 (최근 50건)
+    const usageHistory = await env.DB.prepare(`
+      SELECT t.*, m.item_name
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE t.item_code = ? AND t.trans_type = '출고'
+      ORDER BY t.trans_date DESC, t.created_at DESC
+      LIMIT 50
+    `).bind(materialCode).all()
+    
+    // 6. 생산자재 사용 이력 조회 - production_materials 테이블 (최근 50건)
+    const productionMaterialsHistory = await env.DB.prepare(`
+      SELECT pm.*, p.prod_date, p.product_code as production_product_code,
+             pi.production_name
+      FROM production_materials pm
+      LEFT JOIN production p ON pm.production_id = p.id
+      LEFT JOIN production_items pi ON p.product_code = pi.production_code
+      WHERE pm.item_code = ?
+      ORDER BY p.prod_date DESC, pm.created_at DESC
+      LIMIT 50
+    `).bind(materialCode).all()
+    
+    // 7. 현재 재고 LOT 정보 조회
+    const currentLots = await env.DB.prepare(`
+      SELECT lot_number, inbound_date, origin_qty as quantity, remain_qty, quality_status, supplier
+      FROM inbound
+      WHERE item_code = ? AND quality_status = '합격' AND remain_qty > 0
+      ORDER BY inbound_date ASC
+    `).bind(materialCode).all()
+    
+    // 8. 통계 계산
+    const productionProducts = productionBomProducts.results || []
+    const legacyProducts = legacyBomProducts.results || []
+    
+    // 중복 제거된 제품 목록 (production_code 또는 product_code 기준)
+    const allProductCodes = new Set([
+      ...productionProducts.map((p: any) => p.production_code),
+      ...legacyProducts.map((p: any) => p.product_code)
+    ])
+    
+    const stats = {
+      total_products_using_material: allProductCodes.size,
+      production_bom_count: productionProducts.length,
+      legacy_bom_count: legacyProducts.length,
+      total_inbound_records: inboundHistory.results?.length || 0,
+      total_usage_records: usageHistory.results?.length || 0,
+      total_production_materials_records: productionMaterialsHistory.results?.length || 0,
+      current_stock: (material as any).current_stock || 0,
+      current_lots_count: currentLots.results?.length || 0,
+      current_lots_total_qty: currentLots.results?.reduce((sum: number, lot: any) => sum + (lot.remain_qty || 0), 0) || 0
+    }
+    
+    return c.json({
+      success: true,
+      searched: { query, type: 'material', matched_material_code: materialCode },
+      data: {
+        // 원료 기본 정보
+        material: material,
+        
+        // 해당 원료를 사용하는 제품 목록
+        products: {
+          production_bom: productionProducts,
+          legacy_bom: legacyProducts,
+          total_count: allProductCodes.size
+        },
+        
+        // 현재 재고 LOT
+        current_lots: currentLots.results || [],
+        
+        // 이력 데이터
+        history: {
+          inbound: inboundHistory.results || [],
+          usage: usageHistory.results || [],
+          production_materials: productionMaterialsHistory.results || []
+        },
+        
+        // 통계
+        stats
+      }
+    })
+  } catch (error: any) {
+    console.error('Material product tracker error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 원료품목 검색 - 빠른 검색 (자동완성용)
+admin.get('/product-tracker/material-search', async (c) => {
+  const { env } = c
+  const query = c.req.query('q')?.trim()
+  
+  if (!query || query.length < 2) {
+    return c.json({ success: true, data: [] })
+  }
+  
+  try {
+    // 원료/부자재/포장재/소모품 카테고리에서 검색
+    const results = await env.DB.prepare(`
+      SELECT DISTINCT 
+        m.item_code,
+        m.item_name,
+        m.category,
+        m.unit,
+        m.current_stock,
+        (SELECT COUNT(DISTINCT production_code) FROM production_bom WHERE material_code = m.item_code) as product_count,
+        (SELECT COUNT(DISTINCT product_code) FROM bom WHERE item_code = m.item_code) as legacy_product_count
+      FROM master m
+      WHERE (m.item_code LIKE ? OR m.item_name LIKE ?)
+        AND m.category IN ('원료', '부자재', '포장재', '소모품')
+      ORDER BY m.item_name
+      LIMIT 20
+    `).bind(`%${query}%`, `%${query}%`).all()
+    
+    return c.json({ success: true, data: results.results || [] })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 샘플 재고 기능 활성화 - inbound/transactions 테이블에 is_sample, storage_location 컬럼 추가
+admin.post('/migrate/enable-sample-inventory', async (c) => {
+  const env = c.env as Env
+  const results: string[] = []
+  
+  try {
+    // 1. inbound 테이블에 is_sample 컬럼 추가
+    try {
+      await env.DB.prepare(`ALTER TABLE inbound ADD COLUMN is_sample INTEGER DEFAULT 0`).run()
+      results.push('inbound.is_sample 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message.includes('duplicate column')) {
+        results.push('inbound.is_sample 컬럼 이미 존재')
+      } else {
+        results.push(`inbound.is_sample 추가 실패: ${e.message}`)
+      }
+    }
+    
+    // 2. inbound 테이블에 storage_location 컬럼 추가
+    try {
+      await env.DB.prepare(`ALTER TABLE inbound ADD COLUMN storage_location TEXT`).run()
+      results.push('inbound.storage_location 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message.includes('duplicate column')) {
+        results.push('inbound.storage_location 컬럼 이미 존재')
+      } else {
+        results.push(`inbound.storage_location 추가 실패: ${e.message}`)
+      }
+    }
+    
+    // 3. transactions 테이블에 is_sample 컬럼 추가
+    try {
+      await env.DB.prepare(`ALTER TABLE transactions ADD COLUMN is_sample INTEGER DEFAULT 0`).run()
+      results.push('transactions.is_sample 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message.includes('duplicate column')) {
+        results.push('transactions.is_sample 컬럼 이미 존재')
+      } else {
+        results.push(`transactions.is_sample 추가 실패: ${e.message}`)
+      }
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: '샘플 재고 기능이 활성화되었습니다.',
+      results 
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message, results }, 500)
+  }
+})
+
+// =============================================
+// 재고 정합성 검증 API
+// =============================================
+
+// 재고 검증 - master.current_stock vs inbound.remain_qty 합계 비교
+admin.get('/verify-inventory', async (c) => {
+  const env = c.env as Env
+  const category = c.req.query('category') // 원료, 부자재, 제품
+  const threshold = parseFloat(c.req.query('threshold') || '0.01') // 차이 임계값
+  
+  try {
+    // 1. 원료/부자재 검증 (master + supplies 테이블)
+    const rawMaterialsQuery = `
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.category,
+        m.unit,
+        m.current_stock,
+        COALESCE(lot_sum.lot_remain_total, 0) as lot_remain_total,
+        COALESCE(lot_sum.lot_count, 0) as lot_count,
+        COALESCE(trans_sum.total_inbound, 0) as total_inbound,
+        COALESCE(trans_sum.total_usage, 0) as total_usage,
+        COALESCE(trans_sum.total_outbound, 0) as total_outbound,
+        COALESCE(trans_sum.total_adjustment, 0) as total_adjustment,
+        m.current_stock - COALESCE(lot_sum.lot_remain_total, 0) as difference,
+        ABS(m.current_stock - COALESCE(lot_sum.lot_remain_total, 0)) as abs_difference
+      FROM master m
+      LEFT JOIN (
+        SELECT 
+          item_code, 
+          SUM(remain_qty) as lot_remain_total,
+          COUNT(*) as lot_count
+        FROM inbound 
+        WHERE quality_status = '합격'
+        GROUP BY item_code
+      ) lot_sum ON m.item_code = lot_sum.item_code
+      LEFT JOIN (
+        SELECT 
+          item_code,
+          SUM(CASE WHEN trans_type = '입고' THEN quantity ELSE 0 END) as total_inbound,
+          SUM(CASE WHEN trans_type = '사용' THEN ABS(quantity) ELSE 0 END) as total_usage,
+          SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END) as total_outbound,
+          SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END) as total_adjustment
+        FROM transactions
+        GROUP BY item_code
+      ) trans_sum ON m.item_code = trans_sum.item_code
+      WHERE m.current_stock > 0 OR COALESCE(lot_sum.lot_remain_total, 0) > 0
+      ${category && category !== '전체' ? `AND m.category = '${category}'` : ''}
+      ORDER BY abs_difference DESC
+    `
+    
+    // 2. 부자재 검증
+    const suppliesQuery = `
+      SELECT 
+        s.item_code,
+        s.item_name,
+        s.category,
+        s.unit,
+        s.current_stock,
+        COALESCE(lot_sum.lot_remain_total, 0) as lot_remain_total,
+        COALESCE(lot_sum.lot_count, 0) as lot_count,
+        COALESCE(trans_sum.total_inbound, 0) as total_inbound,
+        COALESCE(trans_sum.total_usage, 0) as total_usage,
+        COALESCE(trans_sum.total_outbound, 0) as total_outbound,
+        COALESCE(trans_sum.total_adjustment, 0) as total_adjustment,
+        s.current_stock - COALESCE(lot_sum.lot_remain_total, 0) as difference,
+        ABS(s.current_stock - COALESCE(lot_sum.lot_remain_total, 0)) as abs_difference
+      FROM supplies s
+      LEFT JOIN (
+        SELECT 
+          item_code, 
+          SUM(remain_qty) as lot_remain_total,
+          COUNT(*) as lot_count
+        FROM inbound 
+        WHERE quality_status = '합격'
+        GROUP BY item_code
+      ) lot_sum ON s.item_code = lot_sum.item_code
+      LEFT JOIN (
+        SELECT 
+          item_code,
+          SUM(CASE WHEN trans_type = '입고' THEN quantity ELSE 0 END) as total_inbound,
+          SUM(CASE WHEN trans_type = '사용' THEN ABS(quantity) ELSE 0 END) as total_usage,
+          SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END) as total_outbound,
+          SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END) as total_adjustment
+        FROM transactions
+        GROUP BY item_code
+      ) trans_sum ON s.item_code = trans_sum.item_code
+      WHERE s.current_stock > 0 OR COALESCE(lot_sum.lot_remain_total, 0) > 0
+      ORDER BY abs_difference DESC
+    `
+    
+    // 3. 제품 검증
+    const productsQuery = `
+      SELECT 
+        p.production_code as item_code,
+        COALESCE(p.alias1, p.production_name) as item_name,
+        '제품' as category,
+        COALESCE(p.unit, 'EA') as unit,
+        p.current_stock,
+        COALESCE(lot_sum.lot_remain_total, 0) as lot_remain_total,
+        COALESCE(lot_sum.lot_count, 0) as lot_count,
+        COALESCE(trans_sum.total_inbound, 0) as total_inbound,
+        0 as total_usage,
+        COALESCE(trans_sum.total_outbound, 0) as total_outbound,
+        COALESCE(trans_sum.total_adjustment, 0) as total_adjustment,
+        p.current_stock - COALESCE(lot_sum.lot_remain_total, 0) as difference,
+        ABS(p.current_stock - COALESCE(lot_sum.lot_remain_total, 0)) as abs_difference
+      FROM production_items p
+      LEFT JOIN (
+        SELECT 
+          production_code, 
+          SUM(remain_qty) as lot_remain_total,
+          COUNT(*) as lot_count
+        FROM production_inbound 
+        WHERE quality_status = '합격'
+        GROUP BY production_code
+      ) lot_sum ON p.production_code = lot_sum.production_code
+      LEFT JOIN (
+        SELECT 
+          production_code,
+          SUM(CASE WHEN trans_type = '생산입고' THEN quantity ELSE 0 END) as total_inbound,
+          SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END) as total_outbound,
+          SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END) as total_adjustment
+        FROM production_transactions
+        GROUP BY production_code
+      ) trans_sum ON p.production_code = trans_sum.production_code
+      WHERE p.current_stock > 0 OR COALESCE(lot_sum.lot_remain_total, 0) > 0
+      ORDER BY abs_difference DESC
+    `
+    
+    // 병렬 실행
+    const [rawResult, suppliesResult, productsResult] = await Promise.all([
+      (!category || category === '전체' || category === '원료') 
+        ? env.DB.prepare(rawMaterialsQuery).all() 
+        : Promise.resolve({ results: [] }),
+      (!category || category === '전체' || category === '부자재') 
+        ? env.DB.prepare(suppliesQuery).all() 
+        : Promise.resolve({ results: [] }),
+      (!category || category === '전체' || category === '제품') 
+        ? env.DB.prepare(productsQuery).all() 
+        : Promise.resolve({ results: [] })
+    ])
+    
+    // 결과 합치기
+    const allItems = [
+      ...(rawResult.results || []),
+      ...(suppliesResult.results || []),
+      ...(productsResult.results || [])
+    ]
+    
+    // 불일치 항목 필터링
+    const discrepancies = allItems.filter((item: any) => Math.abs(item.difference) > threshold)
+    const matched = allItems.filter((item: any) => Math.abs(item.difference) <= threshold)
+    
+    // 통계
+    const stats = {
+      total_items: allItems.length,
+      matched_count: matched.length,
+      discrepancy_count: discrepancies.length,
+      total_current_stock: allItems.reduce((sum: number, item: any) => sum + (item.current_stock || 0), 0),
+      total_lot_remain: allItems.reduce((sum: number, item: any) => sum + (item.lot_remain_total || 0), 0),
+      total_difference: allItems.reduce((sum: number, item: any) => sum + (item.difference || 0), 0),
+      by_category: {
+        원료: {
+          count: allItems.filter((i: any) => i.category === '원료').length,
+          discrepancies: discrepancies.filter((i: any) => i.category === '원료').length
+        },
+        부자재: {
+          count: allItems.filter((i: any) => i.category === '부자재').length,
+          discrepancies: discrepancies.filter((i: any) => i.category === '부자재').length
+        },
+        제품: {
+          count: allItems.filter((i: any) => i.category === '제품').length,
+          discrepancies: discrepancies.filter((i: any) => i.category === '제품').length
+        }
+      }
+    }
+    
+    return c.json({
+      success: true,
+      stats,
+      discrepancies: discrepancies.slice(0, 100), // 상위 100건
+      matched_sample: matched.slice(0, 10), // 일치 샘플 10건
+      threshold
+    })
+  } catch (error: any) {
+    console.error('Verify inventory error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 개별 품목 상세 검증
+admin.get('/verify-inventory/:itemCode', async (c) => {
+  const env = c.env as Env
+  const itemCode = c.req.param('itemCode')
+  
+  try {
+    // 1. 품목 정보 조회 (master 또는 supplies)
+    let itemInfo = await env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, current_stock, 'master' as source_table
+      FROM master WHERE item_code = ?
+    `).bind(itemCode).first()
+    
+    if (!itemInfo) {
+      itemInfo = await env.DB.prepare(`
+        SELECT item_code, item_name, category, unit, current_stock, 'supplies' as source_table
+        FROM supplies WHERE item_code = ?
+      `).bind(itemCode).first()
+    }
+    
+    if (!itemInfo) {
+      // 제품 확인
+      itemInfo = await env.DB.prepare(`
+        SELECT production_code as item_code, COALESCE(alias1, production_name) as item_name, 
+               '제품' as category, COALESCE(unit, 'EA') as unit, current_stock, 'production_items' as source_table
+        FROM production_items WHERE production_code = ?
+      `).bind(itemCode).first()
+    }
+    
+    if (!itemInfo) {
+      return c.json({ success: false, error: '품목을 찾을 수 없습니다' }, 404)
+    }
+    
+    // 2. LOT 정보 조회
+    const isProduct = itemInfo.source_table === 'production_items'
+    
+    const lotsQuery = isProduct
+      ? `SELECT lot_number, inbound_date, expiry_date, origin_qty, remain_qty, quality_status
+         FROM production_inbound WHERE production_code = ? ORDER BY inbound_date`
+      : `SELECT lot_number, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier
+         FROM inbound WHERE item_code = ? ORDER BY inbound_date`
+    
+    const lots = await env.DB.prepare(lotsQuery).bind(itemCode).all()
+    
+    // 3. 트랜잭션 내역 조회 (최근 100건)
+    const transQuery = isProduct
+      ? `SELECT id, trans_date, trans_type, quantity, lot_number, memo, created_at
+         FROM production_transactions WHERE production_code = ? 
+         ORDER BY trans_date DESC, id DESC LIMIT 100`
+      : `SELECT id, trans_date, trans_type, quantity, lot_number, memo, created_at
+         FROM transactions WHERE item_code = ? 
+         ORDER BY trans_date DESC, id DESC LIMIT 100`
+    
+    const transactions = await env.DB.prepare(transQuery).bind(itemCode).all()
+    
+    // 4. 계산 검증
+    const activeLots = (lots.results || []).filter((lot: any) => lot.quality_status === '합격')
+    const lotRemainTotal = activeLots.reduce((sum: number, lot: any) => sum + (lot.remain_qty || 0), 0)
+    const lotOriginTotal = activeLots.reduce((sum: number, lot: any) => sum + (lot.origin_qty || 0), 0)
+    
+    // 트랜잭션 기반 계산
+    const trans = transactions.results || []
+    const transInbound = trans.filter((t: any) => t.trans_type === '입고' || t.trans_type === '생산입고')
+      .reduce((sum: number, t: any) => sum + Math.abs(t.quantity || 0), 0)
+    const transUsage = trans.filter((t: any) => t.trans_type === '사용')
+      .reduce((sum: number, t: any) => sum + Math.abs(t.quantity || 0), 0)
+    const transOutbound = trans.filter((t: any) => t.trans_type === '출고')
+      .reduce((sum: number, t: any) => sum + Math.abs(t.quantity || 0), 0)
+    const transAdjustment = trans.filter((t: any) => t.trans_type === '재고조정')
+      .reduce((sum: number, t: any) => sum + (t.quantity || 0), 0)
+    
+    // 계산된 재고 (트랜잭션 기반)
+    const calculatedStock = transInbound - transUsage - transOutbound + transAdjustment
+    
+    // 불일치 분석
+    const analysis = {
+      current_stock: itemInfo.current_stock,
+      lot_remain_total: lotRemainTotal,
+      lot_origin_total: lotOriginTotal,
+      lot_used_total: lotOriginTotal - lotRemainTotal,
+      calculated_from_transactions: calculatedStock,
+      difference_stock_vs_lot: (itemInfo.current_stock as number) - lotRemainTotal,
+      difference_stock_vs_calc: (itemInfo.current_stock as number) - calculatedStock,
+      difference_lot_vs_calc: lotRemainTotal - calculatedStock,
+      transaction_summary: {
+        inbound: transInbound,
+        usage: transUsage,
+        outbound: transOutbound,
+        adjustment: transAdjustment
+      }
+    }
+    
+    return c.json({
+      success: true,
+      item: itemInfo,
+      analysis,
+      lots: lots.results,
+      active_lots: activeLots,
+      transactions: transactions.results
+    })
+  } catch (error: any) {
+    console.error('Verify inventory detail error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 재고 불일치 자동 수정 (LOT 잔량 합계로 current_stock 동기화)
+admin.post('/sync-inventory', async (c) => {
+  const env = c.env as Env
+  const { item_codes, dry_run = true } = await c.req.json()
+  
+  try {
+    const results: any[] = []
+    
+    // item_codes가 없으면 모든 불일치 항목 대상
+    let targetItems: string[] = item_codes || []
+    
+    if (targetItems.length === 0) {
+      // 불일치 항목 자동 검색
+      const discrepancyQuery = `
+        SELECT m.item_code, m.current_stock, COALESCE(SUM(i.remain_qty), 0) as lot_total
+        FROM master m
+        LEFT JOIN inbound i ON m.item_code = i.item_code AND i.quality_status = '합격'
+        GROUP BY m.item_code
+        HAVING ABS(m.current_stock - COALESCE(SUM(i.remain_qty), 0)) > 0.01
+        
+        UNION ALL
+        
+        SELECT s.item_code, s.current_stock, COALESCE(SUM(i.remain_qty), 0) as lot_total
+        FROM supplies s
+        LEFT JOIN inbound i ON s.item_code = i.item_code AND i.quality_status = '합격'
+        GROUP BY s.item_code
+        HAVING ABS(s.current_stock - COALESCE(SUM(i.remain_qty), 0)) > 0.01
+      `
+      const discResult = await env.DB.prepare(discrepancyQuery).all()
+      targetItems = (discResult.results || []).map((r: any) => r.item_code)
+    }
+    
+    for (const itemCode of targetItems) {
+      // LOT 잔량 합계 계산
+      const lotSum = await env.DB.prepare(`
+        SELECT COALESCE(SUM(remain_qty), 0) as total
+        FROM inbound WHERE item_code = ? AND quality_status = '합격'
+      `).bind(itemCode).first()
+      
+      const lotTotal = (lotSum as any)?.total || 0
+      
+      // 현재 재고 조회
+      let currentItem = await env.DB.prepare(`
+        SELECT item_code, item_name, current_stock, 'master' as tbl FROM master WHERE item_code = ?
+      `).bind(itemCode).first()
+      
+      if (!currentItem) {
+        currentItem = await env.DB.prepare(`
+          SELECT item_code, item_name, current_stock, 'supplies' as tbl FROM supplies WHERE item_code = ?
+        `).bind(itemCode).first()
+      }
+      
+      if (currentItem) {
+        const oldStock = (currentItem as any).current_stock
+        const diff = lotTotal - oldStock
+        
+        if (!dry_run && Math.abs(diff) > 0.001) {
+          // 실제 업데이트
+          const table = (currentItem as any).tbl
+          await env.DB.prepare(`UPDATE ${table} SET current_stock = ?, updated_at = datetime('now') WHERE item_code = ?`)
+            .bind(lotTotal, itemCode).run()
+        }
+        
+        results.push({
+          item_code: itemCode,
+          item_name: (currentItem as any).item_name,
+          old_stock: oldStock,
+          lot_total: lotTotal,
+          difference: diff,
+          updated: !dry_run && Math.abs(diff) > 0.001
+        })
+      }
+    }
+    
+    return c.json({
+      success: true,
+      dry_run,
+      message: dry_run ? '시뮬레이션 결과입니다. 실제 적용하려면 dry_run: false로 요청하세요.' : '재고 동기화가 완료되었습니다.',
+      total_items: results.length,
+      updated_count: results.filter(r => r.updated).length,
+      results
+    })
+  } catch (error: any) {
+    console.error('Sync inventory error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// LOT remain_qty 재계산 (current_stock 기준으로 FIFO 역산)
+// current_stock이 정확하다고 가정하고 LOT remain_qty를 맞춤
+admin.post('/fix-lot-remain', async (c) => {
+  const env = c.env as Env
+  const { item_codes, dry_run = true } = await c.req.json()
+  
+  try {
+    const results: any[] = []
+    
+    // item_codes가 없으면 모든 불일치 항목 대상
+    let targetItems: string[] = item_codes || []
+    
+    if (targetItems.length === 0) {
+      // 불일치 항목 자동 검색 (LOT 합계 > current_stock인 경우만)
+      const discrepancyQuery = `
+        SELECT m.item_code, m.current_stock, COALESCE(SUM(i.remain_qty), 0) as lot_total
+        FROM master m
+        LEFT JOIN inbound i ON m.item_code = i.item_code AND i.quality_status = '합격'
+        GROUP BY m.item_code
+        HAVING COALESCE(SUM(i.remain_qty), 0) > m.current_stock + 0.01
+        
+        UNION ALL
+        
+        SELECT s.item_code, s.current_stock, COALESCE(SUM(i.remain_qty), 0) as lot_total
+        FROM supplies s
+        LEFT JOIN inbound i ON s.item_code = i.item_code AND i.quality_status = '합격'
+        GROUP BY s.item_code
+        HAVING COALESCE(SUM(i.remain_qty), 0) > s.current_stock + 0.01
+      `
+      const discResult = await env.DB.prepare(discrepancyQuery).all()
+      targetItems = (discResult.results || []).map((r: any) => r.item_code)
+    }
+    
+    for (const itemCode of targetItems) {
+      // 현재 재고 조회
+      let currentItem = await env.DB.prepare(`
+        SELECT item_code, item_name, current_stock FROM master WHERE item_code = ?
+      `).bind(itemCode).first()
+      
+      if (!currentItem) {
+        currentItem = await env.DB.prepare(`
+          SELECT item_code, item_name, current_stock FROM supplies WHERE item_code = ?
+        `).bind(itemCode).first()
+      }
+      
+      if (!currentItem) continue
+      
+      const targetStock = (currentItem as any).current_stock
+      
+      // LOT 목록 조회 (FIFO 순서: 유효기한 → 입고일)
+      const lots = await env.DB.prepare(`
+        SELECT id, lot_number, inbound_date, expiry_date, origin_qty, remain_qty
+        FROM inbound 
+        WHERE item_code = ? AND quality_status = '합격'
+        ORDER BY 
+          CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END,
+          expiry_date ASC, 
+          inbound_date ASC
+      `).bind(itemCode).all()
+      
+      const lotList = lots.results || []
+      const oldLotTotal = lotList.reduce((sum: number, lot: any) => sum + lot.remain_qty, 0)
+      const excessQty = oldLotTotal - targetStock // 초과 차감해야 할 양
+      
+      if (excessQty <= 0) {
+        results.push({
+          item_code: itemCode,
+          item_name: (currentItem as any).item_name,
+          status: 'skip',
+          reason: 'LOT 합계가 current_stock보다 작거나 같음'
+        })
+        continue
+      }
+      
+      // FIFO 방식으로 LOT remain_qty 조정
+      let remainingToDeduct = excessQty
+      const lotChanges: any[] = []
+      
+      for (const lot of lotList as any[]) {
+        if (remainingToDeduct <= 0) break
+        
+        const deductQty = Math.min(remainingToDeduct, lot.remain_qty)
+        const newRemainQty = lot.remain_qty - deductQty
+        
+        lotChanges.push({
+          lot_number: lot.lot_number,
+          old_remain: lot.remain_qty,
+          deduct: deductQty,
+          new_remain: newRemainQty
+        })
+        
+        if (!dry_run) {
+          await env.DB.prepare(`
+            UPDATE inbound SET remain_qty = ?, updated_at = datetime('now') WHERE id = ?
+          `).bind(newRemainQty, lot.id).run()
+        }
+        
+        remainingToDeduct -= deductQty
+      }
+      
+      const newLotTotal = oldLotTotal - excessQty + remainingToDeduct
+      
+      results.push({
+        item_code: itemCode,
+        item_name: (currentItem as any).item_name,
+        current_stock: targetStock,
+        old_lot_total: oldLotTotal,
+        excess_qty: excessQty,
+        deducted: excessQty - remainingToDeduct,
+        new_lot_total: newLotTotal,
+        lot_changes: lotChanges,
+        updated: !dry_run
+      })
+    }
+    
+    return c.json({
+      success: true,
+      dry_run,
+      message: dry_run 
+        ? 'LOT 재계산 시뮬레이션입니다. 실제 적용하려면 dry_run: false로 요청하세요.' 
+        : 'LOT remain_qty 재계산이 완료되었습니다.',
+      total_items: results.length,
+      updated_count: results.filter(r => r.updated).length,
+      results
+    })
+  } catch (error: any) {
+    console.error('Fix LOT remain error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

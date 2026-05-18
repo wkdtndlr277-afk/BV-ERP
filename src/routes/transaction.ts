@@ -1208,9 +1208,15 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
         lot.fifo_closing = Math.max(0, lot.carry_over + lot.period_inbound - lot.fifo_usage - lot.fifo_outbound + lot.period_adjustment);
       }
       
-      // 월말재고 = 월초재고 + 기간입고 - 기간사용 - 기간출고 + 기간조정
-      let closingQty = carryOver + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
-      closingQty = Math.max(0, closingQty); // 마이너스 방지
+      // 월말재고: LOT remain_qty 합계 사용 (가장 정확한 실제 재고)
+      // 트랜잭션 기반 계산은 참고용으로만 유지
+      const lotRemainTotal = lots.reduce((sum: number, lot: any) => sum + (lot.remain_qty || 0), 0);
+      const calculatedClosing = carryOver + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
+      
+      // LOT 잔량이 있으면 LOT 기준, 없으면 계산값 또는 current_stock 사용
+      let closingQty = lotRemainTotal > 0 ? lotRemainTotal : 
+                       item.current_stock > 0 ? item.current_stock :
+                       Math.max(0, calculatedClosing);
       
       return {
         item_code: item.item_code,
@@ -1226,7 +1232,8 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
           period_usage: item.period_usage,
           period_outbound: item.period_outbound,
           period_adjustment: item.period_adjustment,
-          closing_qty: closingQty
+          closing_qty: closingQty,
+          calculated_closing: calculatedClosing // 트랜잭션 기반 계산값 (참고용)
         },
         lot_count: lots.length,
         lots

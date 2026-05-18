@@ -554,9 +554,9 @@ app.get('/*', (c) => {
                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">바코드 관리</p>
                 </div>
                 
-                <a href="#barcode-inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200" data-page="barcode-inventory">
-                    <i class="fas fa-qrcode w-5 text-blue-600"></i>
-                    <span class="text-blue-700">바코드 재고관리</span>
+                <a href="#barcode-inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="barcode-inventory">
+                    <i class="fas fa-qrcode w-5"></i>
+                    <span>바코드 재고관리</span>
                 </a>
                 
                 <div class="pt-4 pb-2">

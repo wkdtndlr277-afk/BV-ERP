@@ -703,6 +703,21 @@ app.get('/*', (c) => {
                 </a>
                 
                 <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">업무 관리</p>
+                </div>
+                
+                <a href="#task-calendar" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-calendar">
+                    <i class="fas fa-calendar-alt w-5"></i>
+                    <span>업무 캘린더</span>
+                    <span id="task-badge" class="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full hidden">0</span>
+                </a>
+                
+                <a href="#task-board" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-board">
+                    <i class="fas fa-chart-line w-5"></i>
+                    <span>업무 현황판</span>
+                </a>
+                
+                <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">시스템 관리</p>
                 </div>
                 
@@ -733,6 +748,11 @@ app.get('/*', (c) => {
                         <span class="text-gray-600 font-medium" id="current-date"></span>
                         <button onclick="location.reload()" class="text-gray-500 hover:text-gray-700">
                             <i class="fas fa-sync-alt"></i>
+                        </button>
+                        <!-- 알림 버튼 -->
+                        <button onclick="showNotificationPanel()" class="relative text-gray-500 hover:text-blue-600" title="업무 알림">
+                            <i class="fas fa-bell text-lg"></i>
+                            <span id="notification-count" class="absolute -top-1 -right-1 bg-red-500 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center hidden">0</span>
                         </button>
                         <div class="border-l pl-4 flex items-center gap-3">
                             <div class="text-right">
@@ -769,6 +789,215 @@ app.get('/*', (c) => {
     
     <!-- Modal Container -->
     <div id="modal-container"></div>
+    
+    <!-- 업무 알림 팝업 -->
+    <div id="task-notification-popup" class="fixed inset-0 bg-black/50 flex items-center justify-center z-[9998] hidden">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg mx-4 max-h-[80vh] overflow-hidden animate-bounce-in">
+        <div id="popup-header" class="p-5 text-white">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <i id="popup-icon" class="fas fa-bullhorn text-2xl"></i>
+              <div>
+                <span id="popup-type-badge" class="px-2 py-0.5 rounded text-xs bg-white/20">공지</span>
+                <h3 id="popup-title" class="text-lg font-bold mt-1">제목</h3>
+              </div>
+            </div>
+            <button onclick="closeTaskPopup()" class="w-8 h-8 rounded-full hover:bg-white/20 flex items-center justify-center">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+        </div>
+        <div class="p-5 max-h-[400px] overflow-y-auto">
+          <div class="text-sm text-gray-500 mb-3">
+            <i class="fas fa-calendar mr-1"></i><span id="popup-date">날짜</span>
+          </div>
+          <div id="popup-content" class="text-gray-700 whitespace-pre-wrap"></div>
+        </div>
+        <div class="p-4 bg-gray-50 border-t flex justify-between items-center">
+          <label class="flex items-center gap-2 text-sm text-gray-600">
+            <input type="checkbox" id="popup-dont-show-today" class="rounded">
+            오늘 하루 보지 않기
+          </label>
+          <div class="flex gap-2">
+            <button onclick="goToTaskDetail()" class="px-4 py-2 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg">
+              <i class="fas fa-external-link-alt mr-1"></i>상세보기
+            </button>
+            <button onclick="closeTaskPopup()" class="px-4 py-2 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-900">
+              확인
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 알림 패널 -->
+    <div id="notification-panel" class="fixed right-4 top-16 w-80 bg-white rounded-xl shadow-2xl z-[9997] hidden">
+      <div class="p-4 border-b bg-gradient-to-r from-indigo-500 to-purple-500 text-white rounded-t-xl">
+        <div class="flex items-center justify-between">
+          <h3 class="font-bold"><i class="fas fa-bell mr-2"></i>업무 알림</h3>
+          <button onclick="closeNotificationPanel()" class="hover:bg-white/20 w-6 h-6 rounded">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+      <div id="notification-list" class="max-h-[400px] overflow-y-auto"></div>
+      <div class="p-3 border-t">
+        <button onclick="goToTaskCalendar()" class="w-full py-2 text-center text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg">
+          업무 캘린더 바로가기 <i class="fas fa-arrow-right ml-1"></i>
+        </button>
+      </div>
+    </div>
+    
+    <style>
+      @keyframes bounce-in {
+        0% { transform: scale(0.9); opacity: 0; }
+        50% { transform: scale(1.02); }
+        100% { transform: scale(1); opacity: 1; }
+      }
+      .animate-bounce-in { animation: bounce-in 0.3s ease-out; }
+    </style>
+    
+    <script>
+      // 업무 알림 관련 전역 변수
+      let currentPopupTask = null;
+      let notificationTasks = [];
+      
+      // 로그인 후 알림 체크
+      async function checkTaskNotifications() {
+        try {
+          const res = await axios.get('/api/task/notifications/new');
+          if (res.data.success && res.data.data.length > 0) {
+            notificationTasks = res.data.data;
+            
+            // 알림 개수 표시
+            const count = notificationTasks.length;
+            const badge = document.getElementById('notification-count');
+            const taskBadge = document.getElementById('task-badge');
+            
+            if (count > 0) {
+              badge.textContent = count;
+              badge.classList.remove('hidden');
+              if (taskBadge) {
+                taskBadge.textContent = count;
+                taskBadge.classList.remove('hidden');
+              }
+              
+              // 오늘 숨기기 체크
+              const hiddenToday = localStorage.getItem('task_popup_hidden_' + new Date().toISOString().split('T')[0]);
+              if (!hiddenToday) {
+                // 첫 번째 알림 팝업 표시
+                showTaskPopup(notificationTasks[0]);
+              }
+            }
+          }
+        } catch (e) {
+          console.log('알림 체크 실패:', e);
+        }
+      }
+      
+      function showTaskPopup(task) {
+        currentPopupTask = task;
+        const popup = document.getElementById('task-notification-popup');
+        const header = document.getElementById('popup-header');
+        const icon = document.getElementById('popup-icon');
+        const badge = document.getElementById('popup-type-badge');
+        
+        if (task.type === 'notice') {
+          header.className = 'p-5 text-white bg-gradient-to-r from-blue-500 to-blue-600';
+          icon.className = 'fas fa-bullhorn text-2xl';
+          badge.textContent = '📢 공지사항';
+        } else {
+          header.className = 'p-5 text-white bg-gradient-to-r from-red-500 to-red-600';
+          icon.className = 'fas fa-clipboard-list text-2xl';
+          badge.textContent = '📋 업무지시';
+        }
+        
+        document.getElementById('popup-title').textContent = task.title;
+        document.getElementById('popup-date').textContent = task.due_date;
+        document.getElementById('popup-content').textContent = task.content || '(내용 없음)';
+        document.getElementById('popup-dont-show-today').checked = false;
+        
+        popup.classList.remove('hidden');
+      }
+      
+      function closeTaskPopup() {
+        const popup = document.getElementById('task-notification-popup');
+        const dontShow = document.getElementById('popup-dont-show-today').checked;
+        
+        if (dontShow) {
+          localStorage.setItem('task_popup_hidden_' + new Date().toISOString().split('T')[0], 'true');
+        }
+        
+        popup.classList.add('hidden');
+        currentPopupTask = null;
+      }
+      
+      function goToTaskDetail() {
+        closeTaskPopup();
+        if (currentPopupTask) {
+          window.location.hash = 'task-calendar';
+          // 잠시 후 상세 모달 열기
+          setTimeout(() => {
+            if (typeof showTaskDetailModal === 'function') {
+              showTaskDetailModal(currentPopupTask.id);
+            }
+          }, 500);
+        }
+      }
+      
+      function showNotificationPanel() {
+        const panel = document.getElementById('notification-panel');
+        const list = document.getElementById('notification-list');
+        
+        if (notificationTasks.length === 0) {
+          list.innerHTML = '<div class="p-6 text-center text-gray-400"><i class="fas fa-check-circle text-3xl mb-2"></i><p>새로운 알림이 없습니다</p></div>';
+        } else {
+          list.innerHTML = notificationTasks.map(t => \`
+            <div class="p-3 border-b hover:bg-gray-50 cursor-pointer" onclick="showTaskPopup(notificationTasks.find(x => x.id === \${t.id}))">
+              <div class="flex items-start gap-3">
+                <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 \${t.type === 'notice' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}">
+                  <i class="fas \${t.type === 'notice' ? 'fa-bullhorn' : 'fa-clipboard-list'} text-sm"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="font-medium text-gray-800 text-sm truncate">\${t.title}</p>
+                  <p class="text-xs text-gray-500 mt-0.5">\${t.due_date}</p>
+                </div>
+              </div>
+            </div>
+          \`).join('');
+        }
+        
+        panel.classList.remove('hidden');
+      }
+      
+      function closeNotificationPanel() {
+        document.getElementById('notification-panel').classList.add('hidden');
+      }
+      
+      function goToTaskCalendar() {
+        closeNotificationPanel();
+        window.location.hash = 'task-calendar';
+      }
+      
+      // 외부 클릭 시 알림 패널 닫기
+      document.addEventListener('click', (e) => {
+        const panel = document.getElementById('notification-panel');
+        const bellBtn = e.target.closest('[title="업무 알림"]');
+        if (!panel.contains(e.target) && !bellBtn && !panel.classList.contains('hidden')) {
+          closeNotificationPanel();
+        }
+      });
+      
+      // 페이지 로드 후 알림 체크 (로그인 후)
+      const originalOnAuthSuccess = window.onAuthSuccess;
+      window.onAuthSuccess = function() {
+        if (originalOnAuthSuccess) originalOnAuthSuccess();
+        setTimeout(checkTaskNotifications, 1000);
+      };
+      
+      // 30초마다 알림 체크
+      setInterval(checkTaskNotifications, 30000);
+    </script>
     
     <script src="/static/app.js?v=1776829220?v=${SYSTEM_VERSION}&t=${Date.now()}"></script>
 </body>

@@ -1030,6 +1030,8 @@ function renderPage(page) {
     case 'microbial-test': renderMicrobialTest(); break;
     case 'system-management': renderSystemManagement(); break;
     case 'barcode-inventory': renderBarcodeInventory(); break;
+    case 'task-calendar': renderTaskCalendar(); break;
+    case 'task-board': renderTaskBoard(); break;
     default: renderDashboard();
   }
 }
@@ -38174,3 +38176,827 @@ window.loadAuditLogStats = loadAuditLogStats;
 window.loadAuditLogs = loadAuditLogs;
 window.clearAuditFilters = clearAuditFilters;
 window.exportAuditLogs = exportAuditLogs;
+
+// ========================================
+// 업무 캘린더 (Task Calendar)
+// ========================================
+let taskCalendarDate = new Date();
+let taskDepartments = [];
+let taskCalendarData = [];
+
+async function renderTaskCalendar() {
+  const content = document.getElementById('page-content');
+  
+  // 마이그레이션 실행
+  try {
+    await axios.post('/api/task/migrate');
+  } catch (e) {}
+  
+  // 부서 목록 로드
+  try {
+    const deptRes = await axios.get('/api/task/departments');
+    if (deptRes.data.success) taskDepartments = deptRes.data.data;
+  } catch (e) {}
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-calendar-alt mr-2 text-indigo-600"></i>
+          업무 캘린더
+        </h2>
+        <div class="flex items-center gap-4">
+          <div class="flex items-center gap-3 text-sm">
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-red-400"></span>업무지시</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-400"></span>공지</span>
+          </div>
+          <button onclick="showTaskCreateModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm">
+            <i class="fas fa-plus mr-1"></i>새 등록
+          </button>
+        </div>
+      </div>
+      
+      <!-- 부서별 현황 요약 -->
+      <div id="task-dept-summary" class="grid grid-cols-3 gap-4"></div>
+      
+      <!-- 캘린더 네비게이션 -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="flex items-center justify-between">
+          <button onclick="taskChangeMonth(-1)" class="p-2 hover:bg-gray-100 rounded-lg"><i class="fas fa-chevron-left"></i></button>
+          <h3 id="task-calendar-title" class="text-xl font-bold text-gray-800"></h3>
+          <button onclick="taskChangeMonth(1)" class="p-2 hover:bg-gray-100 rounded-lg"><i class="fas fa-chevron-right"></i></button>
+        </div>
+      </div>
+      
+      <!-- 캘린더 -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="grid grid-cols-7 bg-gray-50 border-b">
+          <div class="p-3 text-center font-semibold text-red-500">일</div>
+          <div class="p-3 text-center font-semibold text-gray-700">월</div>
+          <div class="p-3 text-center font-semibold text-gray-700">화</div>
+          <div class="p-3 text-center font-semibold text-gray-700">수</div>
+          <div class="p-3 text-center font-semibold text-gray-700">목</div>
+          <div class="p-3 text-center font-semibold text-gray-700">금</div>
+          <div class="p-3 text-center font-semibold text-blue-500">토</div>
+        </div>
+        <div id="task-calendar-body" class="grid grid-cols-7"></div>
+      </div>
+      
+      <!-- 업무 목록 -->
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="bg-gradient-to-r from-orange-500 to-red-500 text-white px-6 py-3">
+          <span class="font-semibold"><i class="fas fa-list-check mr-2"></i>업무지시/공지 목록</span>
+        </div>
+        <div id="task-list" class="divide-y max-h-[400px] overflow-y-auto"></div>
+      </div>
+    </div>
+  `;
+  
+  taskRenderCalendar();
+  taskLoadDeptSummary();
+  taskLoadList();
+}
+
+function taskGetMonthString(date) {
+  return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
+}
+
+function taskChangeMonth(delta) {
+  taskCalendarDate.setMonth(taskCalendarDate.getMonth() + delta);
+  taskRenderCalendar();
+  taskLoadDeptSummary();
+  taskLoadList();
+}
+
+async function taskRenderCalendar() {
+  const year = taskCalendarDate.getFullYear();
+  const month = taskCalendarDate.getMonth();
+  
+  document.getElementById('task-calendar-title').textContent = year + '년 ' + (month + 1) + '월';
+  
+  const monthStr = taskGetMonthString(taskCalendarDate);
+  try {
+    const res = await axios.get('/api/task/calendar?month=' + monthStr);
+    taskCalendarData = res.data.success ? res.data.data : [];
+  } catch (e) {
+    taskCalendarData = [];
+  }
+  
+  const firstDay = new Date(year, month, 1).getDay();
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  const todayStr = new Date().toISOString().split('T')[0];
+  
+  let html = '';
+  
+  for (let i = 0; i < firstDay; i++) {
+    html += '<div class="min-h-[90px] p-2 bg-gray-50 border-b border-r"></div>';
+  }
+  
+  for (let day = 1; day <= lastDay; day++) {
+    const dateStr = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    const isToday = dateStr === todayStr;
+    const dayTasks = taskCalendarData.filter(t => t.due_date === dateStr);
+    const dayOfWeek = (firstDay + day - 1) % 7;
+    const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+    
+    html += `
+      <div class="min-h-[90px] p-2 border-b border-r cursor-pointer hover:bg-gray-50 ${isToday ? 'bg-indigo-50' : ''}" onclick="taskShowDayTasks('${dateStr}')">
+        <div class="flex items-center justify-between mb-1">
+          <span class="${isToday ? 'bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm' : ''} ${isWeekend ? (dayOfWeek === 0 ? 'text-red-500' : 'text-blue-500') : 'text-gray-700'} font-medium">${day}</span>
+          ${dayTasks.length > 0 ? '<span class="text-xs text-gray-400">' + dayTasks.length + '</span>' : ''}
+        </div>
+        <div class="space-y-1">
+          ${dayTasks.slice(0, 2).map(t => `
+            <div class="text-xs p-1 rounded truncate flex items-center gap-1 ${t.type === 'notice' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}">
+              ${t.completed_count === t.total_count ? '<i class="fas fa-check-circle text-green-500"></i>' : '<i class="fas fa-clock"></i>'}
+              <span class="truncate">${t.title}</span>
+            </div>
+          `).join('')}
+          ${dayTasks.length > 2 ? '<div class="text-xs text-gray-400 text-center">+' + (dayTasks.length - 2) + '개</div>' : ''}
+        </div>
+      </div>
+    `;
+  }
+  
+  const remaining = (7 - ((firstDay + lastDay) % 7)) % 7;
+  for (let i = 0; i < remaining; i++) {
+    html += '<div class="min-h-[90px] p-2 bg-gray-50 border-b border-r"></div>';
+  }
+  
+  document.getElementById('task-calendar-body').innerHTML = html;
+}
+
+async function taskLoadDeptSummary() {
+  const monthStr = taskGetMonthString(taskCalendarDate);
+  try {
+    const res = await axios.get('/api/task/department-summary?month=' + monthStr);
+    if (!res.data.success) return;
+    
+    document.getElementById('task-dept-summary').innerHTML = res.data.data.map(d => `
+      <div class="bg-white rounded-xl shadow p-4 border-l-4" style="border-left-color: ${d.color}">
+        <div class="flex items-center justify-between mb-3">
+          <span class="font-bold text-gray-800">${d.name}</span>
+          <span class="text-sm text-gray-500">총 ${d.total_tasks || 0}건</span>
+        </div>
+        <div class="grid grid-cols-3 gap-2 text-center text-sm">
+          <div class="bg-gray-100 rounded p-2">
+            <div class="text-gray-500">대기</div>
+            <div class="font-bold text-gray-700">${d.pending || 0}</div>
+          </div>
+          <div class="bg-blue-50 rounded p-2">
+            <div class="text-blue-500">진행중</div>
+            <div class="font-bold text-blue-600">${d.in_progress || 0}</div>
+          </div>
+          <div class="bg-green-50 rounded p-2">
+            <div class="text-green-500">완료</div>
+            <div class="font-bold text-green-600">${d.completed || 0}</div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {}
+}
+
+async function taskLoadList() {
+  const monthStr = taskGetMonthString(taskCalendarDate);
+  try {
+    const res = await axios.get('/api/task/tasks?month=' + monthStr);
+    const container = document.getElementById('task-list');
+    
+    if (!res.data.success || res.data.data.length === 0) {
+      container.innerHTML = '<div class="p-6 text-center text-gray-400">등록된 업무지시/공지가 없습니다</div>';
+      return;
+    }
+    
+    container.innerHTML = res.data.data.map(t => `
+      <div class="p-4 hover:bg-gray-50 cursor-pointer" onclick="showTaskDetailModal(${t.id})">
+        <div class="flex items-start justify-between">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1 flex-wrap">
+              <span class="px-2 py-0.5 rounded text-xs text-white ${t.type === 'notice' ? 'bg-blue-500' : 'bg-red-500'}">
+                ${t.type === 'notice' ? '공지' : '업무'}
+              </span>
+              <span class="font-semibold text-gray-800 truncate">${t.title}</span>
+              ${t.file_count > 0 ? '<span class="text-gray-400 text-sm"><i class="fas fa-paperclip"></i></span>' : ''}
+            </div>
+            <div class="text-sm text-gray-500">${t.due_date}</div>
+          </div>
+          <div class="flex items-center gap-1 ml-2">
+            <span class="text-sm ${t.completed_count === t.total_count ? 'text-green-600' : 'text-gray-400'}">
+              ${t.completed_count}/${t.total_count}
+            </span>
+            ${t.completed_count === t.total_count ? '<i class="fas fa-check-circle text-green-500"></i>' : '<i class="fas fa-hourglass-half text-yellow-500"></i>'}
+          </div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('task-list').innerHTML = '<div class="p-6 text-center text-red-400">목록 로드 실패</div>';
+  }
+}
+
+function taskShowDayTasks(dateStr) {
+  const dayTasks = taskCalendarData.filter(t => t.due_date === dateStr);
+  if (dayTasks.length === 0) {
+    showTaskCreateModal(dateStr);
+  } else if (dayTasks.length === 1) {
+    showTaskDetailModal(dayTasks[0].id);
+  } else {
+    // 여러 개일 때 목록 모달
+    showModal('업무 목록 - ' + dateStr, `
+      <div class="divide-y">
+        ${dayTasks.map(t => `
+          <div class="p-3 hover:bg-gray-50 cursor-pointer flex items-center justify-between" onclick="closeModal(); showTaskDetailModal(${t.id})">
+            <div class="flex items-center gap-2">
+              <span class="px-2 py-0.5 rounded text-xs text-white ${t.type === 'notice' ? 'bg-blue-500' : 'bg-red-500'}">${t.type === 'notice' ? '공지' : '업무'}</span>
+              <span class="font-medium">${t.title}</span>
+            </div>
+            <span class="text-sm ${t.completed_count === t.total_count ? 'text-green-500' : 'text-gray-400'}">${t.completed_count}/${t.total_count}</span>
+          </div>
+        `).join('')}
+      </div>
+      <div class="p-3 border-t">
+        <button onclick="closeModal(); showTaskCreateModal('${dateStr}')" class="w-full py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600">
+          <i class="fas fa-plus mr-1"></i>새로 등록
+        </button>
+      </div>
+    `);
+  }
+}
+
+function showTaskCreateModal(defaultDate) {
+  const today = defaultDate || new Date().toISOString().split('T')[0];
+  
+  showModal('새 업무지시/공지 등록', `
+    <div class="space-y-4 p-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">유형</label>
+        <select id="task-type" class="w-full border rounded-lg px-4 py-2">
+          <option value="task">📋 업무지시</option>
+          <option value="notice">📢 공지사항</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제목</label>
+        <input type="text" id="task-title" class="w-full border rounded-lg px-4 py-2" placeholder="제목을 입력하세요">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">내용</label>
+        <textarea id="task-content" rows="4" class="w-full border rounded-lg px-4 py-2" placeholder="상세 내용을 입력하세요"></textarea>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">날짜</label>
+        <input type="date" id="task-date" value="${today}" class="w-full border rounded-lg px-4 py-2">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">대상 부서</label>
+        <div class="flex gap-2 flex-wrap">
+          ${taskDepartments.map(d => `
+            <label class="flex items-center gap-1 px-3 py-2 border rounded-lg cursor-pointer hover:bg-gray-50">
+              <input type="checkbox" class="task-dept-check" value="${d.id}" checked>
+              <span style="color: ${d.color}">${d.name}</span>
+            </label>
+          `).join('')}
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 pt-4 border-t">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button onclick="submitTask()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">등록</button>
+      </div>
+    </div>
+  `);
+}
+
+async function submitTask() {
+  const type = document.getElementById('task-type').value;
+  const title = document.getElementById('task-title').value.trim();
+  const content = document.getElementById('task-content').value.trim();
+  const due_date = document.getElementById('task-date').value;
+  const target_departments = [...document.querySelectorAll('.task-dept-check:checked')].map(c => parseInt(c.value));
+  
+  if (!title || !due_date) {
+    showToast('제목과 날짜를 입력해주세요', 'error');
+    return;
+  }
+  
+  try {
+    const res = await axios.post('/api/task/tasks', { type, title, content, due_date, target_departments });
+    if (res.data.success) {
+      closeModal();
+      taskRenderCalendar();
+      taskLoadList();
+      taskLoadDeptSummary();
+      showToast('등록되었습니다', 'success');
+    } else {
+      showToast(res.data.error || '등록 실패', 'error');
+    }
+  } catch (e) {
+    showToast('등록 실패', 'error');
+  }
+}
+
+async function showTaskDetailModal(id) {
+  try {
+    const res = await axios.get('/api/task/tasks/' + id);
+    if (!res.data.success) return;
+    
+    const t = res.data.data;
+    
+    showModal(t.type === 'notice' ? '📢 공지사항' : '📋 업무지시', `
+      <div class="space-y-4 p-4">
+        <div>
+          <div class="flex items-center gap-2 mb-2">
+            <span class="px-2 py-1 rounded text-sm text-white ${t.type === 'notice' ? 'bg-blue-500' : 'bg-red-500'}">
+              ${t.type === 'notice' ? '공지' : '업무지시'}
+            </span>
+            <span class="text-sm text-gray-500">${t.due_date}</span>
+          </div>
+          <h3 class="text-xl font-bold text-gray-800">${t.title}</h3>
+          <p class="text-gray-600 mt-2 whitespace-pre-wrap">${t.content || '(내용 없음)'}</p>
+        </div>
+        
+        <div class="border-t pt-4">
+          <h4 class="font-semibold text-gray-700 mb-3"><i class="fas fa-building mr-1"></i>부서별 진행현황</h4>
+          <div class="space-y-3">
+            ${(t.checks || []).map(c => {
+              const statusColors = {
+                '대기': 'bg-gray-100 text-gray-600',
+                '진행중': 'bg-blue-100 text-blue-600',
+                '완료': 'bg-green-100 text-green-600'
+              };
+              return `
+                <div class="rounded-lg border p-3" style="border-left: 3px solid ${c.department_color}">
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="font-bold" style="color: ${c.department_color}">${c.department_name}</span>
+                    <div class="flex items-center gap-2">
+                      <span class="px-2 py-0.5 rounded text-xs ${statusColors[c.status] || statusColors['대기']}">${c.status || '대기'}</span>
+                      <button onclick="showTaskDeptUpdateModal(${t.id}, ${c.department_id}, '${c.department_name}', '${c.status || '대기'}', ${c.progress || 0}, '${(c.comment || '').replace(/'/g, "\\'")}', '${c.checked_by || ''}')" 
+                              class="px-2 py-1 text-xs rounded border hover:bg-gray-50" style="border-color: ${c.department_color}; color: ${c.department_color}">
+                        <i class="fas fa-edit"></i> 수정
+                      </button>
+                    </div>
+                  </div>
+                  <div class="mb-2">
+                    <div class="flex justify-between text-sm mb-1">
+                      <span class="text-gray-600">진행률</span>
+                      <span class="font-medium" style="color: ${c.department_color}">${c.progress || 0}%</span>
+                    </div>
+                    <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <div class="h-full rounded-full" style="width: ${c.progress || 0}%; background: ${c.department_color}"></div>
+                    </div>
+                  </div>
+                  ${c.comment ? `<div class="bg-gray-50 rounded p-2 text-sm text-gray-700"><i class="fas fa-comment mr-1 text-gray-400"></i>${c.comment}</div>` : ''}
+                  ${c.checked_by || c.checked_at ? `<div class="text-xs text-gray-500 mt-2">${c.checked_by ? '<i class="fas fa-user mr-1"></i>' + c.checked_by : ''}${c.checked_at ? ' · ' + c.checked_at : ''}</div>` : ''}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+        
+        ${(t.history || []).length > 0 ? `
+          <div class="border-t pt-4">
+            <h4 class="font-semibold text-gray-700 mb-3"><i class="fas fa-history mr-1"></i>처리 이력</h4>
+            <div class="space-y-2 max-h-48 overflow-y-auto">
+              ${t.history.map(h => `
+                <div class="flex gap-3 text-sm p-2 bg-gray-50 rounded">
+                  <div class="w-2 h-2 rounded-full mt-1.5" style="background: ${h.department_color}"></div>
+                  <div class="flex-1">
+                    <span class="font-medium" style="color: ${h.department_color}">${h.department_name}</span>
+                    <span class="text-gray-500"> - ${h.action === 'status_change' ? h.old_status + ' → ' + h.new_status : h.old_progress + '% → ' + h.new_progress + '%'}</span>
+                    ${h.action_by ? `<span class="text-gray-400 ml-2">(${h.action_by})</span>` : ''}
+                    <div class="text-xs text-gray-400">${h.created_at}</div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+        
+        <div class="flex justify-end gap-2 pt-4 border-t">
+          <button onclick="deleteTask(${t.id})" class="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg">삭제</button>
+          <button onclick="closeModal()" class="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900">닫기</button>
+        </div>
+      </div>
+    `);
+  } catch (e) {
+    showToast('상세 정보 로드 실패', 'error');
+  }
+}
+
+function showTaskDeptUpdateModal(taskId, deptId, deptName, currentStatus, currentProgress, currentComment, currentBy) {
+  closeModal();
+  showModal(deptName + ' 진행현황 수정', `
+    <div class="space-y-4 p-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">상태</label>
+        <div class="flex gap-2">
+          <label class="flex-1 cursor-pointer">
+            <input type="radio" name="dept-status" value="대기" ${currentStatus === '대기' ? 'checked' : ''} class="hidden peer">
+            <div class="peer-checked:bg-gray-200 peer-checked:border-gray-400 border-2 rounded-lg p-3 text-center hover:bg-gray-50">
+              <i class="fas fa-clock text-gray-500"></i>
+              <div class="text-sm mt-1">대기</div>
+            </div>
+          </label>
+          <label class="flex-1 cursor-pointer">
+            <input type="radio" name="dept-status" value="진행중" ${currentStatus === '진행중' ? 'checked' : ''} class="hidden peer">
+            <div class="peer-checked:bg-blue-100 peer-checked:border-blue-400 border-2 rounded-lg p-3 text-center hover:bg-blue-50">
+              <i class="fas fa-spinner text-blue-500"></i>
+              <div class="text-sm mt-1">진행중</div>
+            </div>
+          </label>
+          <label class="flex-1 cursor-pointer">
+            <input type="radio" name="dept-status" value="완료" ${currentStatus === '완료' ? 'checked' : ''} class="hidden peer">
+            <div class="peer-checked:bg-green-100 peer-checked:border-green-400 border-2 rounded-lg p-3 text-center hover:bg-green-50">
+              <i class="fas fa-check-circle text-green-500"></i>
+              <div class="text-sm mt-1">완료</div>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">진행률: <span id="progress-value">${currentProgress}</span>%</label>
+        <input type="range" id="dept-progress" min="0" max="100" value="${currentProgress}" class="w-full" oninput="document.getElementById('progress-value').textContent = this.value">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">코멘트</label>
+        <textarea id="dept-comment" rows="3" class="w-full border rounded-lg px-3 py-2">${currentComment}</textarea>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">담당자</label>
+        <input type="text" id="dept-checked-by" value="${currentBy}" class="w-full border rounded-lg px-3 py-2">
+      </div>
+      <div class="flex justify-end gap-2 pt-4 border-t">
+        <button onclick="closeModal(); showTaskDetailModal(${taskId})" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button onclick="submitTaskDeptUpdate(${taskId}, ${deptId})" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">저장</button>
+      </div>
+    </div>
+  `);
+}
+
+async function submitTaskDeptUpdate(taskId, deptId) {
+  const status = document.querySelector('input[name="dept-status"]:checked')?.value || '대기';
+  const progress = parseInt(document.getElementById('dept-progress').value);
+  const comment = document.getElementById('dept-comment').value;
+  const checked_by = document.getElementById('dept-checked-by').value;
+  
+  try {
+    const res = await axios.post('/api/task/tasks/' + taskId + '/check', { department_id: deptId, status, progress, comment, checked_by });
+    if (res.data.success) {
+      closeModal();
+      showTaskDetailModal(taskId);
+      taskRenderCalendar();
+      taskLoadList();
+      taskLoadDeptSummary();
+      showToast('업데이트되었습니다', 'success');
+    }
+  } catch (e) {
+    showToast('업데이트 실패', 'error');
+  }
+}
+
+async function deleteTask(id) {
+  if (!confirm('정말 삭제하시겠습니까?')) return;
+  try {
+    const res = await axios.delete('/api/task/tasks/' + id);
+    if (res.data.success) {
+      closeModal();
+      taskRenderCalendar();
+      taskLoadList();
+      taskLoadDeptSummary();
+      showToast('삭제되었습니다', 'success');
+    }
+  } catch (e) {
+    showToast('삭제 실패', 'error');
+  }
+}
+
+// ========================================
+// 업무 현황판 (Task Board) - CEO용
+// ========================================
+let taskBoardDate = new Date();
+let taskBoardData = null;
+let taskHistoryData = [];
+
+async function renderTaskBoard() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-chart-line mr-2 text-purple-600"></i>
+          업무 현황판
+        </h2>
+        <div class="flex items-center gap-4">
+          <button onclick="taskBoardChangeMonth(-1)" class="p-2 hover:bg-gray-100 rounded-lg border"><i class="fas fa-chevron-left"></i></button>
+          <span id="task-board-month" class="text-lg font-semibold min-w-[120px] text-center"></span>
+          <button onclick="taskBoardChangeMonth(1)" class="p-2 hover:bg-gray-100 rounded-lg border"><i class="fas fa-chevron-right"></i></button>
+          <button onclick="printTaskBoard()" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm">
+            <i class="fas fa-print mr-1"></i>인쇄
+          </button>
+          <a href="#task-calendar" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm" onclick="renderPage('task-calendar')">
+            <i class="fas fa-calendar mr-1"></i>캘린더
+          </a>
+        </div>
+      </div>
+      
+      <!-- 통계 -->
+      <div id="task-board-stats" class="grid grid-cols-4 gap-4"></div>
+      
+      <!-- 탭 -->
+      <div class="bg-white rounded-t-xl border-b flex">
+        <button onclick="showTaskBoardTab('table')" id="tb-tab-table" class="px-6 py-4 font-semibold text-gray-600 hover:text-indigo-600 border-b-2 border-indigo-600 text-indigo-600">
+          <i class="fas fa-table mr-2"></i>업무현황표
+        </button>
+        <button onclick="showTaskBoardTab('dept')" id="tb-tab-dept" class="px-6 py-4 font-semibold text-gray-600 hover:text-indigo-600 border-b-2 border-transparent">
+          <i class="fas fa-building mr-2"></i>부서별 처리내역
+        </button>
+        <button onclick="showTaskBoardTab('history')" id="tb-tab-history" class="px-6 py-4 font-semibold text-gray-600 hover:text-indigo-600 border-b-2 border-transparent">
+          <i class="fas fa-history mr-2"></i>업무 이력
+        </button>
+      </div>
+      
+      <!-- 탭 컨텐츠 -->
+      <div class="bg-white rounded-b-xl shadow">
+        <div id="tb-content-table" class="overflow-x-auto"></div>
+        <div id="tb-content-dept" class="p-6 hidden"></div>
+        <div id="tb-content-history" class="p-6 hidden"></div>
+      </div>
+    </div>
+  `;
+  
+  taskBoardLoadData();
+}
+
+function taskBoardChangeMonth(delta) {
+  taskBoardDate.setMonth(taskBoardDate.getMonth() + delta);
+  taskBoardLoadData();
+}
+
+async function taskBoardLoadData() {
+  const monthStr = taskGetMonthString(taskBoardDate);
+  document.getElementById('task-board-month').textContent = taskBoardDate.getFullYear() + '년 ' + (taskBoardDate.getMonth() + 1) + '월';
+  
+  try {
+    const [dashRes, histRes] = await Promise.all([
+      axios.get('/api/task/ceo-dashboard?month=' + monthStr),
+      axios.get('/api/task/history?month=' + monthStr)
+    ]);
+    
+    if (dashRes.data.success) {
+      taskBoardData = dashRes.data.data;
+      taskBoardRenderStats();
+      taskBoardRenderTable();
+      taskBoardRenderDept();
+    }
+    
+    if (histRes.data.success) {
+      taskHistoryData = histRes.data.data;
+      taskBoardRenderHistory();
+    }
+  } catch (e) {
+    console.error('현황판 로드 실패:', e);
+  }
+}
+
+function showTaskBoardTab(tab) {
+  ['table', 'dept', 'history'].forEach(t => {
+    document.getElementById('tb-tab-' + t).classList.toggle('border-indigo-600', t === tab);
+    document.getElementById('tb-tab-' + t).classList.toggle('text-indigo-600', t === tab);
+    document.getElementById('tb-tab-' + t).classList.toggle('border-transparent', t !== tab);
+    document.getElementById('tb-content-' + t).classList.toggle('hidden', t !== tab);
+  });
+}
+
+function taskBoardRenderStats() {
+  const stats = taskBoardData.stats;
+  const totalChecks = (stats.total_completed || 0) + (stats.total_in_progress || 0) + (stats.total_pending || 0);
+  const completionRate = totalChecks > 0 ? Math.round((stats.total_completed || 0) / totalChecks * 100) : 0;
+  
+  document.getElementById('task-board-stats').innerHTML = `
+    <div class="bg-white rounded-xl shadow p-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-gray-500 text-sm">전체 업무</p>
+          <p class="text-3xl font-bold text-gray-800">${stats.total_tasks || 0}<span class="text-sm font-normal text-gray-400 ml-1">건</span></p>
+        </div>
+        <div class="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center">
+          <i class="fas fa-tasks text-indigo-600 text-xl"></i>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl shadow p-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-gray-500 text-sm">완료</p>
+          <p class="text-3xl font-bold text-green-600">${stats.total_completed || 0}<span class="text-sm font-normal text-gray-400 ml-1">건</span></p>
+        </div>
+        <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+          <i class="fas fa-check-circle text-green-600 text-xl"></i>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl shadow p-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-gray-500 text-sm">진행중</p>
+          <p class="text-3xl font-bold text-blue-600">${stats.total_in_progress || 0}<span class="text-sm font-normal text-gray-400 ml-1">건</span></p>
+        </div>
+        <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+          <i class="fas fa-spinner text-blue-600 text-xl"></i>
+        </div>
+      </div>
+    </div>
+    <div class="bg-white rounded-xl shadow p-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-gray-500 text-sm">완료율</p>
+          <p class="text-3xl font-bold ${completionRate >= 80 ? 'text-green-600' : completionRate >= 50 ? 'text-yellow-600' : 'text-red-600'}">${completionRate}<span class="text-sm font-normal text-gray-400 ml-1">%</span></p>
+        </div>
+        <div class="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
+          <i class="fas fa-chart-pie text-purple-600 text-xl"></i>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function taskBoardRenderTable() {
+  const { tasks, departments } = taskBoardData;
+  const container = document.getElementById('tb-content-table');
+  
+  if (!tasks || tasks.length === 0) {
+    container.innerHTML = '<div class="p-12 text-center text-gray-400"><i class="fas fa-inbox text-4xl mb-3"></i><p>등록된 업무가 없습니다</p></div>';
+    return;
+  }
+  
+  container.innerHTML = `
+    <table class="w-full">
+      <thead class="bg-gray-50 sticky top-0">
+        <tr>
+          <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700 min-w-[200px]">업무/공지</th>
+          <th class="px-3 py-3 text-center text-sm font-semibold text-gray-700 w-20">날짜</th>
+          <th class="px-3 py-3 text-center text-sm font-semibold text-gray-700 w-16">유형</th>
+          ${departments.map(d => `
+            <th class="px-3 py-3 text-center text-sm font-semibold min-w-[140px]" style="color: ${d.color}">${d.name}</th>
+          `).join('')}
+          <th class="px-3 py-3 text-center text-sm font-semibold text-gray-700 w-20">현황</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y">
+        ${tasks.map(t => {
+          const checksMap = {};
+          (t.checks || []).forEach(c => checksMap[c.department_id] = c);
+          
+          return `
+            <tr class="hover:bg-indigo-50 cursor-pointer" onclick="showTaskDetailModal(${t.id})">
+              <td class="px-4 py-3">
+                <div class="font-medium text-gray-800 truncate max-w-[260px]">${t.title}</div>
+              </td>
+              <td class="px-3 py-3 text-center text-sm text-gray-600">${t.due_date ? t.due_date.substring(5) : ''}</td>
+              <td class="px-3 py-3 text-center">
+                <span class="px-2 py-0.5 rounded text-xs text-white ${t.type === 'notice' ? 'bg-blue-500' : 'bg-red-500'}">
+                  ${t.type === 'notice' ? '공지' : '업무'}
+                </span>
+              </td>
+              ${departments.map(d => {
+                const c = checksMap[d.id];
+                if (!c) return '<td class="px-3 py-3 text-center text-gray-300 text-sm">-</td>';
+                const statusBadge = c.status === '완료' ? 'bg-green-100 text-green-700' : c.status === '진행중' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600';
+                return `
+                  <td class="px-3 py-3">
+                    <div class="space-y-1">
+                      <div class="flex justify-center"><span class="px-2 py-0.5 rounded text-xs ${statusBadge}">${c.status || '대기'}</span></div>
+                      <div class="flex items-center gap-1">
+                        <div class="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div class="h-full rounded-full" style="width: ${c.progress || 0}%; background: ${d.color}"></div>
+                        </div>
+                        <span class="text-xs text-gray-500 w-8">${c.progress || 0}%</span>
+                      </div>
+                      ${c.comment ? `<div class="text-xs text-gray-500 truncate" title="${c.comment}">"${c.comment.substring(0, 15)}${c.comment.length > 15 ? '...' : ''}"</div>` : ''}
+                    </div>
+                  </td>
+                `;
+              }).join('')}
+              <td class="px-3 py-3 text-center">
+                <span class="font-bold ${t.completed_count === t.total_count ? 'text-green-600' : 'text-gray-600'}">
+                  ${t.completed_count}/${t.total_count}
+                </span>
+              </td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function taskBoardRenderDept() {
+  const { tasks, departments } = taskBoardData;
+  const container = document.getElementById('tb-content-dept');
+  
+  container.innerHTML = departments.map(dept => {
+    const deptTasks = tasks.map(t => {
+      const check = (t.checks || []).find(c => c.department_id === dept.id);
+      return check ? { ...t, check } : null;
+    }).filter(Boolean);
+    
+    const completed = deptTasks.filter(t => t.check.status === '완료');
+    const inProgress = deptTasks.filter(t => t.check.status === '진행중');
+    const pending = deptTasks.filter(t => t.check.status === '대기' || !t.check.status);
+    
+    return `
+      <div class="mb-8 last:mb-0">
+        <div class="flex items-center gap-3 mb-4 pb-3 border-b-2" style="border-color: ${dept.color}">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold" style="background: ${dept.color}">
+            ${dept.name.charAt(0)}
+          </div>
+          <div>
+            <h3 class="text-lg font-bold" style="color: ${dept.color}">${dept.name}</h3>
+            <p class="text-sm text-gray-500">총 ${deptTasks.length}건 (완료 ${completed.length} / 진행중 ${inProgress.length} / 대기 ${pending.length})</p>
+          </div>
+        </div>
+        
+        ${deptTasks.length === 0 ? '<p class="text-gray-400 text-center py-6">할당된 업무가 없습니다</p>' : `
+          <div class="space-y-3">
+            ${deptTasks.map(t => `
+              <div class="border rounded-lg p-4 hover:shadow cursor-pointer" style="border-left: 4px solid ${dept.color}" onclick="showTaskDetailModal(${t.id})">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="px-2 py-0.5 rounded text-xs text-white ${t.type === 'notice' ? 'bg-blue-500' : 'bg-red-500'}">${t.type === 'notice' ? '공지' : '업무'}</span>
+                      <span class="text-sm text-gray-500">${t.due_date}</span>
+                    </div>
+                    <h4 class="font-semibold text-gray-800 mb-2">${t.title}</h4>
+                    ${t.check.comment ? `<div class="bg-gray-50 rounded p-2 text-sm text-gray-700"><i class="fas fa-comment text-gray-400 mr-1"></i>${t.check.comment}</div>` : ''}
+                  </div>
+                  <div class="text-right">
+                    <span class="px-2 py-1 rounded text-xs ${t.check.status === '완료' ? 'bg-green-100 text-green-700' : t.check.status === '진행중' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}">${t.check.status || '대기'}</span>
+                    <div class="mt-2 text-sm font-bold" style="color: ${dept.color}">${t.check.progress || 0}%</div>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      </div>
+    `;
+  }).join('');
+}
+
+function taskBoardRenderHistory() {
+  const container = document.getElementById('tb-content-history');
+  
+  if (taskHistoryData.length === 0) {
+    container.innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-history text-4xl mb-3"></i><p>이번 달 업무 이력이 없습니다</p></div>';
+    return;
+  }
+  
+  container.innerHTML = `
+    <div class="space-y-4">
+      ${taskHistoryData.map(h => `
+        <div class="flex gap-4 p-4 border rounded-lg hover:bg-gray-50">
+          <div class="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold" style="background: ${h.department_color || '#6b7280'}">
+            ${(h.department_name || '?').charAt(0)}
+          </div>
+          <div class="flex-1">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-semibold" style="color: ${h.department_color || '#6b7280'}">${h.department_name || '알 수 없음'}</span>
+              <span class="text-gray-400">·</span>
+              <span class="text-sm text-gray-600">${h.task_title || '삭제된 업무'}</span>
+            </div>
+            <div class="text-sm mb-2">
+              ${h.action === 'status_change' 
+                ? `<span class="text-gray-500">상태:</span> ${h.old_status} → <span class="font-medium">${h.new_status}</span>` 
+                : `<span class="text-gray-500">진행률:</span> ${h.old_progress}% → <span class="font-medium">${h.new_progress}%</span>`}
+            </div>
+            ${h.comment ? `<div class="text-sm text-gray-600 bg-gray-100 rounded p-2 mb-2"><i class="fas fa-comment mr-1 text-gray-400"></i>${h.comment}</div>` : ''}
+            <div class="text-xs text-gray-400">
+              ${h.action_by ? `<span><i class="fas fa-user mr-1"></i>${h.action_by}</span> · ` : ''}
+              <span><i class="fas fa-clock mr-1"></i>${h.created_at}</span>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+function printTaskBoard() {
+  window.print();
+}
+
+// 전역 함수 노출
+window.renderTaskCalendar = renderTaskCalendar;
+window.renderTaskBoard = renderTaskBoard;
+window.taskChangeMonth = taskChangeMonth;
+window.taskShowDayTasks = taskShowDayTasks;
+window.showTaskCreateModal = showTaskCreateModal;
+window.submitTask = submitTask;
+window.showTaskDetailModal = showTaskDetailModal;
+window.showTaskDeptUpdateModal = showTaskDeptUpdateModal;
+window.submitTaskDeptUpdate = submitTaskDeptUpdate;
+window.deleteTask = deleteTask;
+window.taskBoardChangeMonth = taskBoardChangeMonth;
+window.showTaskBoardTab = showTaskBoardTab;
+window.printTaskBoard = printTaskBoard;

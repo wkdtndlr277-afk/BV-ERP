@@ -28,6 +28,7 @@ import dailyReportRoutes from './routes/daily-report';
 import systemConfigRoutes from './routes/system-config';
 import semiFinishedRoutes from './routes/semi-finished';
 import barcodeRoutes from './routes/barcode';
+import taskRoutes from './routes/task';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -60,10 +61,11 @@ app.route('/api/daily-report', dailyReportRoutes);
 app.route('/api/system-config', systemConfigRoutes);
 app.route('/api/semi-finished', semiFinishedRoutes);
 app.route('/api/barcode', barcodeRoutes);
+app.route('/api/task', taskRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '2.0.81';
-const SYSTEM_BUILD_DATE = '2026-04-16';
+const SYSTEM_VERSION = '2.1.0';
+const SYSTEM_BUILD_DATE = '2026-05-22';
 
 // Health check
 app.get('/api/health', (c) => {

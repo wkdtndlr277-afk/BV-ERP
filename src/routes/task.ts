@@ -1,0 +1,593 @@
+import { Hono } from 'hono';
+import type { Bindings } from '../types';
+
+const app = new Hono<{ Bindings: Bindings }>();
+
+// ===== 부서 목록 =====
+app.get('/departments', async (c) => {
+  try {
+    const results = await c.env.DB.prepare(`
+      SELECT * FROM task_departments WHERE is_active = 1 ORDER BY sort_order
+    `).all();
+    return c.json({ success: true, data: results.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 업무/공지 목록 =====
+app.get('/tasks', async (c) => {
+  const month = c.req.query('month');
+  
+  try {
+    let query = `
+      SELECT t.*, 
+        (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id AND status = '완료') as completed_count,
+        (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id) as total_count,
+        (SELECT COUNT(*) FROM task_files WHERE task_id = t.id AND department_id IS NULL) as file_count
+      FROM tasks t
+    `;
+    
+    if (month) {
+      query += ` WHERE strftime('%Y-%m', t.due_date) = '${month}'`;
+    }
+    
+    query += ' ORDER BY t.due_date DESC, t.created_at DESC';
+    
+    const results = await c.env.DB.prepare(query).all();
+    return c.json({ success: true, data: results.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 업무 상세 =====
+app.get('/tasks/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  try {
+    const task = await c.env.DB.prepare('SELECT * FROM tasks WHERE id = ?').bind(id).first();
+    
+    const checks = await c.env.DB.prepare(`
+      SELECT tc.*, d.name as department_name, d.color as department_color
+      FROM task_checks tc
+      LEFT JOIN task_departments d ON tc.department_id = d.id
+      WHERE tc.task_id = ?
+      ORDER BY d.sort_order
+    `).bind(id).all();
+    
+    const mainFiles = await c.env.DB.prepare(`
+      SELECT * FROM task_files WHERE task_id = ? AND department_id IS NULL ORDER BY created_at DESC
+    `).bind(id).all();
+    
+    const deptFiles = await c.env.DB.prepare(`
+      SELECT tf.*, d.name as department_name 
+      FROM task_files tf
+      LEFT JOIN task_departments d ON tf.department_id = d.id
+      WHERE tf.task_id = ? AND tf.department_id IS NOT NULL
+      ORDER BY tf.department_id, tf.created_at DESC
+    `).bind(id).all();
+    
+    const history = await c.env.DB.prepare(`
+      SELECT h.*, d.name as department_name, d.color as department_color
+      FROM task_history h
+      LEFT JOIN task_departments d ON h.department_id = d.id
+      WHERE h.task_id = ?
+      ORDER BY h.created_at DESC
+    `).bind(id).all();
+    
+    return c.json({ 
+      success: true, 
+      data: { 
+        ...task, 
+        checks: checks.results || [],
+        files: mainFiles.results || [],
+        dept_files: deptFiles.results || [],
+        history: history.results || []
+      }
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 업무 등록 =====
+app.post('/tasks', async (c) => {
+  const body = await c.req.json();
+  const { title, content, type, priority, due_date, target_departments } = body;
+  
+  if (!title || !due_date) {
+    return c.json({ success: false, error: '제목과 날짜를 입력해주세요' }, 400);
+  }
+  
+  try {
+    const result = await c.env.DB.prepare(`
+      INSERT INTO tasks (title, content, type, priority, due_date)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(title, content || '', type || 'task', priority || 'normal', due_date).run();
+    
+    const taskId = result.meta.last_row_id;
+    
+    // 대상 부서 체크 항목 생성
+    const depts = target_departments?.length > 0 
+      ? target_departments 
+      : (await c.env.DB.prepare('SELECT id FROM task_departments WHERE is_active = 1').all()).results?.map((d: any) => d.id) || [];
+    
+    for (const deptId of depts) {
+      await c.env.DB.prepare(`
+        INSERT INTO task_checks (task_id, department_id, status, progress)
+        VALUES (?, ?, '대기', 0)
+      `).bind(taskId, deptId).run();
+    }
+    
+    return c.json({ success: true, message: '등록되었습니다', id: taskId });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 업무 수정 =====
+app.put('/tasks/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json();
+  const { title, content, type, priority, due_date } = body;
+  
+  try {
+    await c.env.DB.prepare(`
+      UPDATE tasks SET title = ?, content = ?, type = ?, priority = ?, due_date = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(title, content, type, priority || 'normal', due_date, id).run();
+    return c.json({ success: true, message: '수정되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 업무 삭제 =====
+app.delete('/tasks/:id', async (c) => {
+  const id = c.req.param('id');
+  try {
+    await c.env.DB.prepare('DELETE FROM task_history WHERE task_id = ?').bind(id).run();
+    await c.env.DB.prepare('DELETE FROM task_checks WHERE task_id = ?').bind(id).run();
+    await c.env.DB.prepare('DELETE FROM task_files WHERE task_id = ?').bind(id).run();
+    await c.env.DB.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run();
+    return c.json({ success: true, message: '삭제되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 부서별 진행상황 업데이트 =====
+app.post('/tasks/:id/check', async (c) => {
+  const taskId = c.req.param('id');
+  const { department_id, status, progress, comment, checked_by } = await c.req.json();
+  
+  try {
+    // 기존 상태 조회
+    const existing = await c.env.DB.prepare(`
+      SELECT status, progress, comment FROM task_checks WHERE task_id = ? AND department_id = ?
+    `).bind(taskId, department_id).first() as any;
+    
+    const oldStatus = existing?.status || '대기';
+    const oldProgress = existing?.progress || 0;
+    
+    // 상태 업데이트
+    await c.env.DB.prepare(`
+      UPDATE task_checks 
+      SET status = ?, progress = ?, comment = ?, checked_by = ?, checked_at = CURRENT_TIMESTAMP
+      WHERE task_id = ? AND department_id = ?
+    `).bind(status || '대기', progress || 0, comment || '', checked_by || '', taskId, department_id).run();
+    
+    // 이력 기록
+    if (oldStatus !== status || oldProgress !== progress) {
+      await c.env.DB.prepare(`
+        INSERT INTO task_history (task_id, department_id, action, old_status, new_status, old_progress, new_progress, comment, action_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        taskId, department_id,
+        oldStatus !== status ? 'status_change' : 'progress_update',
+        oldStatus, status || '대기',
+        oldProgress, progress || 0,
+        comment || '', checked_by || ''
+      ).run();
+    }
+    
+    return c.json({ success: true, message: '업데이트되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 파일 업로드 =====
+app.post('/tasks/:id/files', async (c) => {
+  const taskId = c.req.param('id');
+  
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get('file') as File;
+    const departmentId = formData.get('department_id') as string | null;
+    
+    if (!file) {
+      return c.json({ success: false, error: '파일이 없습니다' }, 400);
+    }
+    
+    const fileName = `${Date.now()}_${file.name}`;
+    const deptPath = departmentId ? `dept${departmentId}/` : '';
+    const fileKey = `tasks/${taskId}/${deptPath}${fileName}`;
+    
+    await c.env.DB.prepare(`
+      INSERT INTO task_files (task_id, department_id, file_name, file_key, file_size, file_type)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(taskId, departmentId ? parseInt(departmentId) : null, file.name, fileKey, file.size, file.type).run();
+    
+    return c.json({ success: true, message: '파일이 업로드되었습니다', file_key: fileKey });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 파일 삭제 =====
+app.delete('/files/:id', async (c) => {
+  const id = c.req.param('id');
+  try {
+    await c.env.DB.prepare('DELETE FROM task_files WHERE id = ?').bind(id).run();
+    return c.json({ success: true });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 캘린더 데이터 =====
+app.get('/calendar', async (c) => {
+  const month = c.req.query('month');
+  
+  if (!month) {
+    return c.json({ success: false, error: '월을 지정해주세요' }, 400);
+  }
+  
+  try {
+    const tasks = await c.env.DB.prepare(`
+      SELECT t.id, t.title, t.type, t.priority, t.due_date,
+        (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id AND status = '완료') as completed_count,
+        (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id) as total_count
+      FROM tasks t
+      WHERE strftime('%Y-%m', t.due_date) = ?
+      ORDER BY t.due_date, t.created_at
+    `).bind(month).all();
+    
+    return c.json({ success: true, data: tasks.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 부서별 현황 요약 =====
+app.get('/department-summary', async (c) => {
+  const month = c.req.query('month');
+  const now = new Date();
+  const currentMonth = month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  
+  try {
+    const summary = await c.env.DB.prepare(`
+      SELECT 
+        d.id, d.name, d.color,
+        COUNT(tc.id) as total_tasks,
+        SUM(CASE WHEN tc.status = '완료' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN tc.status = '진행중' THEN 1 ELSE 0 END) as in_progress,
+        SUM(CASE WHEN tc.status = '대기' THEN 1 ELSE 0 END) as pending
+      FROM task_departments d
+      LEFT JOIN task_checks tc ON d.id = tc.department_id
+      LEFT JOIN tasks t ON tc.task_id = t.id AND strftime('%Y-%m', t.due_date) = ?
+      WHERE d.is_active = 1
+      GROUP BY d.id
+      ORDER BY d.sort_order
+    `).bind(currentMonth).all();
+    
+    return c.json({ success: true, data: summary.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 대표용 대시보드 =====
+app.get('/ceo-dashboard', async (c) => {
+  const month = c.req.query('month');
+  const now = new Date();
+  const currentMonth = month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  
+  try {
+    const tasks = await c.env.DB.prepare(`
+      SELECT 
+        t.id, t.title, t.type, t.priority, t.due_date, t.created_at,
+        (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id AND status = '완료') as completed_count,
+        (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id) as total_count
+      FROM tasks t
+      WHERE strftime('%Y-%m', t.due_date) = ?
+      ORDER BY t.due_date DESC, t.created_at DESC
+    `).bind(currentMonth).all();
+    
+    const taskIds = (tasks.results || []).map((t: any) => t.id);
+    let checksMap: Record<number, any[]> = {};
+    
+    if (taskIds.length > 0) {
+      const checks = await c.env.DB.prepare(`
+        SELECT tc.task_id, tc.department_id, tc.status, tc.progress, tc.comment, tc.checked_by, tc.checked_at,
+               d.name as department_name, d.color as department_color
+        FROM task_checks tc
+        LEFT JOIN task_departments d ON tc.department_id = d.id
+        WHERE tc.task_id IN (${taskIds.join(',')})
+        ORDER BY d.sort_order
+      `).all();
+      
+      for (const c of (checks.results || []) as any[]) {
+        if (!checksMap[c.task_id]) checksMap[c.task_id] = [];
+        checksMap[c.task_id].push(c);
+      }
+    }
+    
+    const departments = await c.env.DB.prepare(`
+      SELECT id, name, color FROM task_departments WHERE is_active = 1 ORDER BY sort_order
+    `).all();
+    
+    const stats = await c.env.DB.prepare(`
+      SELECT 
+        COUNT(DISTINCT t.id) as total_tasks,
+        SUM(CASE WHEN tc.status = '완료' THEN 1 ELSE 0 END) as total_completed,
+        SUM(CASE WHEN tc.status = '진행중' THEN 1 ELSE 0 END) as total_in_progress,
+        SUM(CASE WHEN tc.status = '대기' THEN 1 ELSE 0 END) as total_pending
+      FROM tasks t
+      LEFT JOIN task_checks tc ON t.id = tc.task_id
+      WHERE strftime('%Y-%m', t.due_date) = ?
+    `).bind(currentMonth).first();
+    
+    const taskList = (tasks.results || []).map((t: any) => ({
+      ...t,
+      checks: checksMap[t.id] || []
+    }));
+    
+    return c.json({ 
+      success: true, 
+      data: {
+        tasks: taskList,
+        departments: departments.results || [],
+        stats: stats || { total_tasks: 0, total_completed: 0, total_in_progress: 0, total_pending: 0 },
+        month: currentMonth
+      }
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 업무 이력 =====
+app.get('/history', async (c) => {
+  const month = c.req.query('month');
+  const deptId = c.req.query('department_id');
+  const now = new Date();
+  const currentMonth = month || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  
+  try {
+    let query = `
+      SELECT h.*, t.title as task_title, t.type as task_type, t.due_date,
+             d.name as department_name, d.color as department_color
+      FROM task_history h
+      LEFT JOIN tasks t ON h.task_id = t.id
+      LEFT JOIN task_departments d ON h.department_id = d.id
+      WHERE strftime('%Y-%m', h.created_at) = ?
+    `;
+    const params: any[] = [currentMonth];
+    
+    if (deptId) {
+      query += ` AND h.department_id = ?`;
+      params.push(deptId);
+    }
+    
+    query += ` ORDER BY h.created_at DESC LIMIT 100`;
+    
+    const history = await c.env.DB.prepare(query).bind(...params).all();
+    
+    return c.json({ success: true, data: history.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 새 공지/업무 알림 조회 (팝업용) =====
+app.get('/notifications', async (c) => {
+  const since = c.req.query('since'); // ISO timestamp
+  const deptId = c.req.query('department_id');
+  
+  try {
+    let query = `
+      SELECT t.*, 
+        (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id) as total_count
+      FROM tasks t
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+    
+    if (since) {
+      query += ` AND t.created_at > ?`;
+      params.push(since);
+    } else {
+      // 기본: 오늘 등록된 것만
+      query += ` AND date(t.created_at) = date('now')`;
+    }
+    
+    query += ` ORDER BY t.created_at DESC LIMIT 10`;
+    
+    const tasks = params.length > 0 
+      ? await c.env.DB.prepare(query).bind(...params).all()
+      : await c.env.DB.prepare(query).all();
+    
+    return c.json({ success: true, data: tasks.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 읽음 처리 =====
+app.post('/notifications/:id/read', async (c) => {
+  const taskId = c.req.param('id');
+  const { department_id, user_name } = await c.req.json();
+  
+  try {
+    // 읽음 기록 테이블에 저장
+    await c.env.DB.prepare(`
+      INSERT OR REPLACE INTO task_reads (task_id, department_id, user_name, read_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    `).bind(taskId, department_id, user_name || '').run();
+    
+    return c.json({ success: true });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 안읽은 알림 개수 =====
+app.get('/notifications/unread-count', async (c) => {
+  const deptId = c.req.query('department_id');
+  
+  try {
+    let query = `
+      SELECT COUNT(*) as count FROM tasks t
+      WHERE date(t.created_at) >= date('now', '-7 days')
+    `;
+    
+    if (deptId) {
+      query += ` AND NOT EXISTS (
+        SELECT 1 FROM task_reads r WHERE r.task_id = t.id AND r.department_id = ?
+      )`;
+      const result = await c.env.DB.prepare(query).bind(deptId).first() as any;
+      return c.json({ success: true, count: result?.count || 0 });
+    } else {
+      const result = await c.env.DB.prepare(query).first() as any;
+      return c.json({ success: true, count: result?.count || 0 });
+    }
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== DB 마이그레이션 =====
+app.post('/migrate', async (c) => {
+  try {
+    // 부서 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS task_departments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        description TEXT,
+        color TEXT DEFAULT '#3B82F6',
+        sort_order INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    
+    // 업무 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        content TEXT,
+        type TEXT DEFAULT 'task' CHECK (type IN ('task', 'notice')),
+        priority TEXT DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+        due_date DATE NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    
+    // 부서별 체크 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS task_checks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        department_id INTEGER NOT NULL,
+        status TEXT DEFAULT '대기' CHECK (status IN ('대기', '진행중', '완료')),
+        progress INTEGER DEFAULT 0,
+        comment TEXT,
+        checked_by TEXT,
+        checked_at DATETIME,
+        FOREIGN KEY (task_id) REFERENCES tasks(id),
+        FOREIGN KEY (department_id) REFERENCES task_departments(id),
+        UNIQUE(task_id, department_id)
+      )
+    `).run();
+    
+    // 파일 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS task_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        department_id INTEGER,
+        file_name TEXT NOT NULL,
+        file_key TEXT NOT NULL,
+        file_size INTEGER,
+        file_type TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (task_id) REFERENCES tasks(id),
+        FOREIGN KEY (department_id) REFERENCES task_departments(id)
+      )
+    `).run();
+    
+    // 이력 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS task_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        department_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        old_status TEXT,
+        new_status TEXT,
+        old_progress INTEGER,
+        new_progress INTEGER,
+        comment TEXT,
+        action_by TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (task_id) REFERENCES tasks(id),
+        FOREIGN KEY (department_id) REFERENCES task_departments(id)
+      )
+    `).run();
+    
+    // 읽음 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS task_reads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        department_id INTEGER NOT NULL,
+        user_name TEXT,
+        read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(task_id, department_id)
+      )
+    `).run();
+    
+    // 인덱스
+    try { await c.env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date)').run(); } catch {}
+    try { await c.env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at)').run(); } catch {}
+    try { await c.env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_task_checks_task ON task_checks(task_id)').run(); } catch {}
+    try { await c.env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id)').run(); } catch {}
+    
+    // 기본 부서
+    const depts = [
+      { name: '생산팀', desc: '생산 및 제조 업무', color: '#10B981', order: 1 },
+      { name: '품질팀', desc: '품질관리 및 검사', color: '#3B82F6', order: 2 },
+      { name: '구매팀', desc: '원자재 구매 및 재고관리', color: '#F59E0B', order: 3 }
+    ];
+    
+    for (const d of depts) {
+      try {
+        await c.env.DB.prepare(`
+          INSERT OR IGNORE INTO task_departments (name, description, color, sort_order) VALUES (?, ?, ?, ?)
+        `).bind(d.name, d.desc, d.color, d.order).run();
+      } catch {}
+    }
+    
+    return c.json({ success: true, message: '업무관리 테이블 마이그레이션 완료' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+export default app;

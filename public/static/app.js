@@ -1,10 +1,18 @@
 // HACCP ERP Frontend Application
-// Version: 2.0.77 Build: 20260416
-const APP_VERSION = '2.0.77';
-const APP_BUILD = '20260416';
+// Version: 2.1.0 Build: 20260522
+const APP_VERSION = '2.1.0';
+const APP_BUILD = '20260522';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
+
+// 업무/공지 알림 시스템 로드
+(function loadTaskNotification() {
+  const script = document.createElement('script');
+  script.src = '/static/task-notification.js?v=' + APP_VERSION;
+  script.async = true;
+  document.head.appendChild(script);
+})();
 
 // 버전 체크 및 업데이트 알림
 (function checkVersion() {

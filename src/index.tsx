@@ -553,6 +553,21 @@ app.get('/*', (c) => {
                 </a>
                 
                 <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">업무 관리</p>
+                </div>
+                
+                <a href="#task-calendar" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-calendar">
+                    <i class="fas fa-calendar-alt w-5"></i>
+                    <span>업무 캘린더</span>
+                    <span id="task-badge" class="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full hidden">0</span>
+                </a>
+                
+                <a href="#task-board" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-board">
+                    <i class="fas fa-chart-line w-5"></i>
+                    <span>업무 현황판</span>
+                </a>
+                
+                <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">바코드 관리</p>
                 </div>
                 
@@ -700,21 +715,6 @@ app.get('/*', (c) => {
                 <a href="#product-catalog" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="product-catalog">
                     <i class="fas fa-box-open w-5"></i>
                     <span>제품 현황 관리</span>
-                </a>
-                
-                <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">업무 관리</p>
-                </div>
-                
-                <a href="#task-calendar" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-calendar">
-                    <i class="fas fa-calendar-alt w-5"></i>
-                    <span>업무 캘린더</span>
-                    <span id="task-badge" class="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full hidden">0</span>
-                </a>
-                
-                <a href="#task-board" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-board">
-                    <i class="fas fa-chart-line w-5"></i>
-                    <span>업무 현황판</span>
                 </a>
                 
                 <div class="pt-4 pb-2">

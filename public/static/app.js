@@ -1110,6 +1110,9 @@ async function renderDashboard() {
           </div>
         </div>
         
+        <!-- Task Summary Section -->
+        <div id="dashboard-task-section"></div>
+        
         <!-- Today Summary -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div class="bg-white rounded-xl shadow">
@@ -1235,8 +1238,141 @@ async function renderDashboard() {
         ` : ''}
       </div>
     `;
+    
+    // 업무 현황 로드
+    loadDashboardTaskSummary();
   } catch (e) {
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// 대시보드 업무 현황 로드
+async function loadDashboardTaskSummary() {
+  const container = document.getElementById('dashboard-task-section');
+  if (!container) return;
+  
+  try {
+    const [deptRes, calendarRes] = await Promise.all([
+      api('/task/department-summary'),
+      api('/task/calendar?month=' + new Date().toISOString().slice(0, 7))
+    ]);
+    
+    const departments = deptRes.data || [];
+    const tasks = calendarRes.data || [];
+    
+    // 이번 주 마감 업무 필터링
+    const today = new Date();
+    const weekEnd = new Date(today);
+    weekEnd.setDate(today.getDate() + 7);
+    
+    const upcomingTasks = tasks.filter(t => {
+      const dueDate = new Date(t.due_date);
+      return dueDate >= today && dueDate <= weekEnd;
+    });
+    
+    // 통계 계산
+    const totalTasks = tasks.length;
+    const completedTasks = tasks.filter(t => t.completed_count === t.total_count).length;
+    const inProgressTasks = tasks.filter(t => t.completed_count > 0 && t.completed_count < t.total_count).length;
+    const pendingTasks = totalTasks - completedTasks - inProgressTasks;
+    
+    container.innerHTML = `
+      <div class="bg-white rounded-xl shadow">
+        <div class="p-4 border-b bg-purple-50 flex justify-between items-center">
+          <h3 class="font-bold text-purple-800"><i class="fas fa-tasks mr-2"></i>업무 현황</h3>
+          <a href="#task-calendar" class="text-purple-600 hover:text-purple-800 text-sm">
+            <i class="fas fa-arrow-right mr-1"></i>상세보기
+          </a>
+        </div>
+        <div class="p-4">
+          <!-- 업무 통계 카드 -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-50 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-gray-800">${totalTasks}</p>
+              <p class="text-xs text-gray-500">전체 업무</p>
+            </div>
+            <div class="bg-green-50 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-green-600">${completedTasks}</p>
+              <p class="text-xs text-gray-500">완료</p>
+            </div>
+            <div class="bg-blue-50 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-blue-600">${inProgressTasks}</p>
+              <p class="text-xs text-gray-500">진행중</p>
+            </div>
+            <div class="bg-orange-50 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-orange-600">${pendingTasks}</p>
+              <p class="text-xs text-gray-500">대기</p>
+            </div>
+          </div>
+          
+          <!-- 부서별 현황 -->
+          <div class="mb-6">
+            <h4 class="text-sm font-semibold text-gray-600 mb-3">부서별 완료율</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              ${departments.map(dept => {
+                const rate = dept.total_tasks > 0 ? Math.round((dept.completed_tasks / dept.total_tasks) * 100) : 0;
+                return `
+                <div class="border rounded-lg p-3">
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="font-medium" style="color: ${dept.color}">${dept.name}</span>
+                    <span class="text-sm font-bold">${rate}%</span>
+                  </div>
+                  <div class="w-full bg-gray-200 rounded-full h-2">
+                    <div class="h-2 rounded-full" style="width: ${rate}%; background-color: ${dept.color}"></div>
+                  </div>
+                  <div class="flex justify-between text-xs text-gray-500 mt-1">
+                    <span>완료 ${dept.completed_tasks || 0}</span>
+                    <span>진행 ${dept.in_progress_tasks || 0}</span>
+                    <span>대기 ${dept.pending_tasks || 0}</span>
+                  </div>
+                </div>
+              `}).join('')}
+            </div>
+          </div>
+          
+          <!-- 이번 주 마감 업무 -->
+          ${upcomingTasks.length > 0 ? `
+          <div>
+            <h4 class="text-sm font-semibold text-gray-600 mb-3">
+              <i class="fas fa-calendar-day text-red-500 mr-1"></i>이번 주 마감 (${upcomingTasks.length}건)
+            </h4>
+            <div class="space-y-2 max-h-40 overflow-y-auto">
+              ${upcomingTasks.slice(0, 5).map(task => `
+                <div class="flex items-center justify-between p-2 bg-gray-50 rounded-lg text-sm">
+                  <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-xs ${task.type === 'notice' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}">
+                      ${task.type === 'notice' ? '공지' : '업무'}
+                    </span>
+                    <span class="font-medium">${task.title}</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="text-gray-500">${task.due_date}</span>
+                    <span class="text-xs ${task.completed_count === task.total_count ? 'text-green-600' : 'text-orange-600'}">
+                      ${task.completed_count}/${task.total_count}
+                    </span>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          ` : `
+          <div class="text-center py-4 text-gray-400">
+            <i class="fas fa-check-circle text-2xl mb-2"></i>
+            <p class="text-sm">이번 주 마감 업무가 없습니다</p>
+          </div>
+          `}
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = `
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="text-center text-gray-400">
+          <i class="fas fa-tasks text-2xl mb-2"></i>
+          <p class="text-sm">업무 현황을 불러올 수 없습니다</p>
+        </div>
+      </div>
+    `;
   }
 }
 

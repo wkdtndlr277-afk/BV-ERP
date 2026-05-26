@@ -43,6 +43,42 @@ app.put('/departments/:id', async (c) => {
   }
 });
 
+// ===== 부서 삭제 (비활성화) =====
+app.delete('/departments/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  try {
+    // 비활성화 처리 (실제 삭제하지 않음)
+    await c.env.DB.prepare(`UPDATE task_departments SET is_active = 0 WHERE id = ?`).bind(id).run();
+    return c.json({ success: true, message: '부서가 삭제되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 일일보고서 항목 조회 =====
+app.get('/daily-report-items', async (c) => {
+  const reportId = c.req.query('report_id');
+  
+  if (!reportId) {
+    return c.json({ success: false, error: 'report_id가 필요합니다' }, 400);
+  }
+  
+  try {
+    const items = await c.env.DB.prepare(`
+      SELECT i.*, t.title as task_title, t.type as task_type
+      FROM daily_work_items i
+      LEFT JOIN tasks t ON i.task_id = t.id
+      WHERE i.report_id = ?
+      ORDER BY i.id
+    `).bind(reportId).all();
+    
+    return c.json({ success: true, data: items.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
 // ===== 업무/공지 목록 =====
 app.get('/tasks', async (c) => {
   const month = c.req.query('month');
@@ -600,8 +636,7 @@ app.post('/migrate', async (c) => {
     // 기본 부서
     const depts = [
       { name: '생산팀', desc: '생산 및 제조 업무', color: '#10B981', order: 1 },
-      { name: '품질팀', desc: '품질관리 및 검사', color: '#3B82F6', order: 2 },
-      { name: '구매팀', desc: '원자재 구매 및 재고관리', color: '#F59E0B', order: 3 }
+      { name: '품질팀', desc: '품질관리 및 검사', color: '#3B82F6', order: 2 }
     ];
     
     for (const d of depts) {

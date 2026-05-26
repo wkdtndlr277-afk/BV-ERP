@@ -39616,27 +39616,98 @@ async function deleteTask(id) {
 let taskBoardDate = new Date();
 let taskBoardData = null;
 let taskHistoryData = [];
+let taskBoardFilters = {
+  search: '',
+  status: 'all',  // all, pending, in_progress, completed
+  department: 'all',
+  type: 'all'  // all, notice, task
+};
 
 async function renderTaskBoard() {
   const content = document.getElementById('page-content');
   
   content.innerHTML = `
-    <div class="space-y-6">
-      <div class="flex items-center justify-between">
-        <h2 class="text-2xl font-bold text-gray-800">
+    <div class="space-y-4 lg:space-y-6">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <h2 class="text-xl lg:text-2xl font-bold text-gray-800">
           <i class="fas fa-chart-line mr-2 text-purple-600"></i>
           업무 현황판
         </h2>
-        <div class="flex items-center gap-4">
-          <button onclick="taskBoardChangeMonth(-1)" class="p-2 hover:bg-gray-100 rounded-lg border"><i class="fas fa-chevron-left"></i></button>
-          <span id="task-board-month" class="text-lg font-semibold min-w-[120px] text-center"></span>
-          <button onclick="taskBoardChangeMonth(1)" class="p-2 hover:bg-gray-100 rounded-lg border"><i class="fas fa-chevron-right"></i></button>
-          <button onclick="printTaskBoard()" class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm">
-            <i class="fas fa-print mr-1"></i>인쇄
+        <div class="flex items-center gap-2 lg:gap-4 flex-wrap">
+          <div class="flex items-center gap-1">
+            <button onclick="taskBoardChangeMonth(-1)" class="p-2 hover:bg-gray-100 rounded-lg border"><i class="fas fa-chevron-left"></i></button>
+            <span id="task-board-month" class="text-sm lg:text-lg font-semibold min-w-[100px] lg:min-w-[120px] text-center"></span>
+            <button onclick="taskBoardChangeMonth(1)" class="p-2 hover:bg-gray-100 rounded-lg border"><i class="fas fa-chevron-right"></i></button>
+          </div>
+          <button onclick="printTaskBoard()" class="px-3 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm">
+            <i class="fas fa-print"></i><span class="hidden sm:inline ml-1">인쇄</span>
           </button>
-          <a href="#task-calendar" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm" onclick="renderPage('task-calendar')">
-            <i class="fas fa-calendar mr-1"></i>캘린더
+          <a href="#task-calendar" class="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm" onclick="renderPage('task-calendar')">
+            <i class="fas fa-calendar"></i><span class="hidden sm:inline ml-1">캘린더</span>
           </a>
+        </div>
+      </div>
+      
+      <!-- 검색 및 필터 -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <!-- 검색어 -->
+          <div class="lg:col-span-2">
+            <div class="relative">
+              <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+              <input type="text" id="tb-search" placeholder="업무명, 내용 검색..." 
+                class="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                onkeyup="taskBoardApplyFilters()" value="${taskBoardFilters.search}">
+            </div>
+          </div>
+          
+          <!-- 상태 필터 -->
+          <div>
+            <select id="tb-filter-status" onchange="taskBoardApplyFilters()" 
+              class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500">
+              <option value="all">전체 상태</option>
+              <option value="pending" ${taskBoardFilters.status === 'pending' ? 'selected' : ''}>⏳ 대기</option>
+              <option value="in_progress" ${taskBoardFilters.status === 'in_progress' ? 'selected' : ''}>🔄 진행중</option>
+              <option value="completed" ${taskBoardFilters.status === 'completed' ? 'selected' : ''}>✅ 완료</option>
+            </select>
+          </div>
+          
+          <!-- 부서 필터 -->
+          <div>
+            <select id="tb-filter-dept" onchange="taskBoardApplyFilters()" 
+              class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500">
+              <option value="all">전체 부서</option>
+            </select>
+          </div>
+          
+          <!-- 유형 필터 -->
+          <div>
+            <select id="tb-filter-type" onchange="taskBoardApplyFilters()" 
+              class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500">
+              <option value="all">전체 유형</option>
+              <option value="notice" ${taskBoardFilters.type === 'notice' ? 'selected' : ''}>📢 공지사항</option>
+              <option value="task" ${taskBoardFilters.type === 'task' ? 'selected' : ''}>📋 업무지시</option>
+            </select>
+          </div>
+        </div>
+        
+        <!-- 빠른 필터 버튼 -->
+        <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t">
+          <button onclick="taskBoardQuickFilter('all')" class="px-3 py-1.5 rounded-full text-sm font-medium transition-colors tb-quick-filter active" data-filter="all">
+            전체
+          </button>
+          <button onclick="taskBoardQuickFilter('pending')" class="px-3 py-1.5 rounded-full text-sm font-medium transition-colors tb-quick-filter bg-gray-100 text-gray-600 hover:bg-yellow-100 hover:text-yellow-700" data-filter="pending">
+            ⏳ 대기중
+          </button>
+          <button onclick="taskBoardQuickFilter('in_progress')" class="px-3 py-1.5 rounded-full text-sm font-medium transition-colors tb-quick-filter bg-gray-100 text-gray-600 hover:bg-blue-100 hover:text-blue-700" data-filter="in_progress">
+            🔄 진행중
+          </button>
+          <button onclick="taskBoardQuickFilter('completed')" class="px-3 py-1.5 rounded-full text-sm font-medium transition-colors tb-quick-filter bg-gray-100 text-gray-600 hover:bg-green-100 hover:text-green-700" data-filter="completed">
+            ✅ 완료
+          </button>
+          <button onclick="taskBoardClearFilters()" class="px-3 py-1.5 rounded-full text-sm font-medium bg-gray-100 text-gray-500 hover:bg-red-100 hover:text-red-600 ml-auto">
+            <i class="fas fa-times mr-1"></i>필터 초기화
+          </button>
         </div>
       </div>
       
@@ -39644,28 +39715,71 @@ async function renderTaskBoard() {
       <div id="task-board-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
       
       <!-- 탭 -->
-      <div class="bg-white rounded-t-xl border-b flex">
-        <button onclick="showTaskBoardTab('table')" id="tb-tab-table" class="px-6 py-4 font-semibold text-gray-600 hover:text-indigo-600 border-b-2 border-indigo-600 text-indigo-600">
-          <i class="fas fa-table mr-2"></i>업무현황표
+      <div class="bg-white rounded-t-xl border-b flex overflow-x-auto">
+        <button onclick="showTaskBoardTab('table')" id="tb-tab-table" class="px-4 lg:px-6 py-3 lg:py-4 font-semibold text-gray-600 hover:text-indigo-600 border-b-2 border-indigo-600 text-indigo-600 whitespace-nowrap text-sm lg:text-base">
+          <i class="fas fa-table mr-1 lg:mr-2"></i>업무현황표
         </button>
-        <button onclick="showTaskBoardTab('dept')" id="tb-tab-dept" class="px-6 py-4 font-semibold text-gray-600 hover:text-indigo-600 border-b-2 border-transparent">
-          <i class="fas fa-building mr-2"></i>부서별 처리내역
+        <button onclick="showTaskBoardTab('dept')" id="tb-tab-dept" class="px-4 lg:px-6 py-3 lg:py-4 font-semibold text-gray-600 hover:text-indigo-600 border-b-2 border-transparent whitespace-nowrap text-sm lg:text-base">
+          <i class="fas fa-building mr-1 lg:mr-2"></i>부서별 처리
         </button>
-        <button onclick="showTaskBoardTab('history')" id="tb-tab-history" class="px-6 py-4 font-semibold text-gray-600 hover:text-indigo-600 border-b-2 border-transparent">
-          <i class="fas fa-history mr-2"></i>업무 이력
+        <button onclick="showTaskBoardTab('history')" id="tb-tab-history" class="px-4 lg:px-6 py-3 lg:py-4 font-semibold text-gray-600 hover:text-indigo-600 border-b-2 border-transparent whitespace-nowrap text-sm lg:text-base">
+          <i class="fas fa-history mr-1 lg:mr-2"></i>업무 이력
         </button>
+      </div>
+      
+      <!-- 검색 결과 카운트 -->
+      <div id="tb-filter-result" class="text-sm text-gray-500 hidden">
+        <i class="fas fa-filter mr-1"></i>필터 적용됨: <span id="tb-filter-count">0</span>건
       </div>
       
       <!-- 탭 컨텐츠 -->
       <div class="bg-white rounded-b-xl shadow">
         <div id="tb-content-table" class="overflow-x-auto"></div>
-        <div id="tb-content-dept" class="p-6 hidden"></div>
-        <div id="tb-content-history" class="p-6 hidden"></div>
+        <div id="tb-content-dept" class="p-4 lg:p-6 hidden"></div>
+        <div id="tb-content-history" class="p-4 lg:p-6 hidden"></div>
       </div>
     </div>
   `;
   
   taskBoardLoadData();
+}
+
+// 빠른 필터
+function taskBoardQuickFilter(status) {
+  taskBoardFilters.status = status;
+  document.getElementById('tb-filter-status').value = status;
+  
+  // 버튼 스타일 업데이트
+  document.querySelectorAll('.tb-quick-filter').forEach(btn => {
+    const isActive = btn.dataset.filter === status;
+    btn.classList.toggle('bg-indigo-600', isActive);
+    btn.classList.toggle('text-white', isActive);
+    btn.classList.toggle('bg-gray-100', !isActive);
+    btn.classList.toggle('text-gray-600', !isActive && btn.dataset.filter !== status);
+  });
+  
+  taskBoardApplyFilters();
+}
+
+// 필터 초기화
+function taskBoardClearFilters() {
+  taskBoardFilters = { search: '', status: 'all', department: 'all', type: 'all' };
+  document.getElementById('tb-search').value = '';
+  document.getElementById('tb-filter-status').value = 'all';
+  document.getElementById('tb-filter-dept').value = 'all';
+  document.getElementById('tb-filter-type').value = 'all';
+  taskBoardQuickFilter('all');
+}
+
+// 필터 적용
+function taskBoardApplyFilters() {
+  taskBoardFilters.search = document.getElementById('tb-search')?.value.toLowerCase() || '';
+  taskBoardFilters.status = document.getElementById('tb-filter-status')?.value || 'all';
+  taskBoardFilters.department = document.getElementById('tb-filter-dept')?.value || 'all';
+  taskBoardFilters.type = document.getElementById('tb-filter-type')?.value || 'all';
+  
+  taskBoardRenderTable();
+  taskBoardRenderHistory();
 }
 
 function taskBoardChangeMonth(delta) {
@@ -39678,9 +39792,10 @@ async function taskBoardLoadData() {
   document.getElementById('task-board-month').textContent = taskBoardDate.getFullYear() + '년 ' + (taskBoardDate.getMonth() + 1) + '월';
   
   try {
-    const [dashRes, histRes] = await Promise.all([
+    const [dashRes, histRes, deptRes] = await Promise.all([
       axios.get('/api/task/ceo-dashboard?month=' + monthStr),
-      axios.get('/api/task/history?month=' + monthStr)
+      axios.get('/api/task/history?month=' + monthStr),
+      axios.get('/api/task/departments')
     ]);
     
     if (dashRes.data.success) {
@@ -39693,6 +39808,17 @@ async function taskBoardLoadData() {
     if (histRes.data.success) {
       taskHistoryData = histRes.data.data;
       taskBoardRenderHistory();
+    }
+    
+    // 부서 필터 옵션 채우기
+    if (deptRes.data.success) {
+      const deptSelect = document.getElementById('tb-filter-dept');
+      if (deptSelect) {
+        deptSelect.innerHTML = '<option value="all">전체 부서</option>' + 
+          deptRes.data.departments.map(d => 
+            `<option value="${d.id}" ${taskBoardFilters.department == d.id ? 'selected' : ''}>${d.name}</option>`
+          ).join('');
+      }
     }
   } catch (e) {
     console.error('현황판 로드 실패:', e);
@@ -39767,59 +39893,121 @@ function taskBoardRenderTable() {
   
   if (!tasks || tasks.length === 0) {
     container.innerHTML = '<div class="p-12 text-center text-gray-400"><i class="fas fa-inbox text-4xl mb-3"></i><p>등록된 업무가 없습니다</p></div>';
+    document.getElementById('tb-filter-result')?.classList.add('hidden');
+    return;
+  }
+  
+  // 필터 적용
+  let filteredTasks = tasks.filter(t => {
+    // 검색어 필터
+    if (taskBoardFilters.search) {
+      const searchText = (t.title + ' ' + (t.content || '')).toLowerCase();
+      if (!searchText.includes(taskBoardFilters.search)) return false;
+    }
+    
+    // 유형 필터
+    if (taskBoardFilters.type !== 'all' && t.type !== taskBoardFilters.type) return false;
+    
+    // 상태 필터 및 부서 필터
+    if (taskBoardFilters.status !== 'all' || taskBoardFilters.department !== 'all') {
+      const checks = t.checks || [];
+      
+      // 부서 필터
+      if (taskBoardFilters.department !== 'all') {
+        const deptCheck = checks.find(c => c.department_id == taskBoardFilters.department);
+        if (!deptCheck) return false;
+        
+        // 부서별 상태 필터
+        if (taskBoardFilters.status !== 'all') {
+          const status = deptCheck.status || '대기';
+          if (taskBoardFilters.status === 'pending' && status !== '대기') return false;
+          if (taskBoardFilters.status === 'in_progress' && status !== '진행중') return false;
+          if (taskBoardFilters.status === 'completed' && status !== '완료') return false;
+        }
+      } else if (taskBoardFilters.status !== 'all') {
+        // 전체 부서 중 해당 상태가 있는지 확인
+        const hasStatus = checks.some(c => {
+          const status = c.status || '대기';
+          if (taskBoardFilters.status === 'pending') return status === '대기';
+          if (taskBoardFilters.status === 'in_progress') return status === '진행중';
+          if (taskBoardFilters.status === 'completed') return status === '완료';
+          return false;
+        });
+        if (!hasStatus) return false;
+      }
+    }
+    
+    return true;
+  });
+  
+  // 필터 결과 표시
+  const filterResultEl = document.getElementById('tb-filter-result');
+  const isFiltered = taskBoardFilters.search || taskBoardFilters.status !== 'all' || 
+                     taskBoardFilters.department !== 'all' || taskBoardFilters.type !== 'all';
+  
+  if (filterResultEl) {
+    if (isFiltered) {
+      filterResultEl.classList.remove('hidden');
+      document.getElementById('tb-filter-count').textContent = filteredTasks.length;
+    } else {
+      filterResultEl.classList.add('hidden');
+    }
+  }
+  
+  if (filteredTasks.length === 0) {
+    container.innerHTML = '<div class="p-12 text-center text-gray-400"><i class="fas fa-search text-4xl mb-3"></i><p>검색 결과가 없습니다</p><p class="text-sm mt-2">필터 조건을 변경해 보세요</p></div>';
     return;
   }
   
   container.innerHTML = `
-    <table class="w-full">
+    <table class="w-full text-sm">
       <thead class="bg-gray-50 sticky top-0">
         <tr>
-          <th class="px-4 py-3 text-left text-sm font-semibold text-gray-700 min-w-[200px]">업무/공지</th>
-          <th class="px-3 py-3 text-center text-sm font-semibold text-gray-700 w-20">날짜</th>
-          <th class="px-3 py-3 text-center text-sm font-semibold text-gray-700 w-16">유형</th>
+          <th class="px-3 py-2 lg:px-4 lg:py-3 text-left font-semibold text-gray-700 min-w-[160px] lg:min-w-[200px]">업무/공지</th>
+          <th class="px-2 py-2 lg:px-3 lg:py-3 text-center font-semibold text-gray-700 w-16 lg:w-20">날짜</th>
+          <th class="px-2 py-2 lg:px-3 lg:py-3 text-center font-semibold text-gray-700 w-12 lg:w-16">유형</th>
           ${departments.map(d => `
-            <th class="px-3 py-3 text-center text-sm font-semibold min-w-[140px]" style="color: ${d.color}">${d.name}</th>
+            <th class="px-2 py-2 lg:px-3 lg:py-3 text-center font-semibold min-w-[100px] lg:min-w-[140px]" style="color: ${d.color}">${d.name}</th>
           `).join('')}
-          <th class="px-3 py-3 text-center text-sm font-semibold text-gray-700 w-20">현황</th>
+          <th class="px-2 py-2 lg:px-3 lg:py-3 text-center font-semibold text-gray-700 w-16 lg:w-20">현황</th>
         </tr>
       </thead>
       <tbody class="divide-y">
-        ${tasks.map(t => {
+        ${filteredTasks.map(t => {
           const checksMap = {};
           (t.checks || []).forEach(c => checksMap[c.department_id] = c);
           
           return `
             <tr class="hover:bg-indigo-50 cursor-pointer" onclick="showTaskDetailModal(${t.id})">
-              <td class="px-4 py-3">
-                <div class="font-medium text-gray-800 truncate max-w-[260px]">${t.title}</div>
+              <td class="px-3 py-2 lg:px-4 lg:py-3">
+                <div class="font-medium text-gray-800 truncate max-w-[160px] lg:max-w-[260px]">${t.title}</div>
               </td>
-              <td class="px-3 py-3 text-center text-sm text-gray-600">${t.due_date ? t.due_date.substring(5) : ''}</td>
-              <td class="px-3 py-3 text-center">
-                <span class="px-2 py-0.5 rounded text-xs text-white ${t.type === 'notice' ? 'bg-blue-500' : 'bg-red-500'}">
+              <td class="px-2 py-2 lg:px-3 lg:py-3 text-center text-xs lg:text-sm text-gray-600">${t.due_date ? t.due_date.substring(5) : ''}</td>
+              <td class="px-2 py-2 lg:px-3 lg:py-3 text-center">
+                <span class="px-1.5 py-0.5 rounded text-xs text-white ${t.type === 'notice' ? 'bg-blue-500' : 'bg-red-500'}">
                   ${t.type === 'notice' ? '공지' : '업무'}
                 </span>
               </td>
               ${departments.map(d => {
                 const c = checksMap[d.id];
-                if (!c) return '<td class="px-3 py-3 text-center text-gray-300 text-sm">-</td>';
+                if (!c) return '<td class="px-2 py-2 lg:px-3 lg:py-3 text-center text-gray-300 text-xs lg:text-sm">-</td>';
                 const statusBadge = c.status === '완료' ? 'bg-green-100 text-green-700' : c.status === '진행중' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600';
                 return `
-                  <td class="px-3 py-3">
+                  <td class="px-2 py-2 lg:px-3 lg:py-3">
                     <div class="space-y-1">
-                      <div class="flex justify-center"><span class="px-2 py-0.5 rounded text-xs ${statusBadge}">${c.status || '대기'}</span></div>
+                      <div class="flex justify-center"><span class="px-1.5 py-0.5 rounded text-xs ${statusBadge}">${c.status || '대기'}</span></div>
                       <div class="flex items-center gap-1">
-                        <div class="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                        <div class="flex-1 h-1 lg:h-1.5 bg-gray-200 rounded-full overflow-hidden">
                           <div class="h-full rounded-full" style="width: ${c.progress || 0}%; background: ${d.color}"></div>
                         </div>
-                        <span class="text-xs text-gray-500 w-8">${c.progress || 0}%</span>
+                        <span class="text-xs text-gray-500 w-6 lg:w-8">${c.progress || 0}%</span>
                       </div>
-                      ${c.comment ? `<div class="text-xs text-gray-500 truncate" title="${c.comment}">"${c.comment.substring(0, 15)}${c.comment.length > 15 ? '...' : ''}"</div>` : ''}
                     </div>
                   </td>
                 `;
               }).join('')}
-              <td class="px-3 py-3 text-center">
-                <span class="font-bold ${t.completed_count === t.total_count ? 'text-green-600' : 'text-gray-600'}">
+              <td class="px-2 py-2 lg:px-3 lg:py-3 text-center">
+                <span class="font-bold text-xs lg:text-sm ${t.completed_count === t.total_count ? 'text-green-600' : 'text-gray-600'}">
                   ${t.completed_count}/${t.total_count}
                 </span>
               </td>
@@ -39903,24 +40091,58 @@ async function taskBoardRenderHistory() {
   try {
     // 일일업무 보고 이력 조회
     const res = await axios.get('/api/task/work-history?start_date=' + startDate + '&end_date=' + endDate + '&limit=50');
-    const dailyReports = res.data.success ? (res.data.data.reports || []) : [];
+    let dailyReports = res.data.success ? (res.data.data.reports || []) : [];
     
     // 업무지시 처리 이력
-    const taskHistory = taskHistoryData || [];
+    let taskHistory = taskHistoryData || [];
+    
+    // 필터 적용
+    // 부서 필터
+    if (taskBoardFilters.department !== 'all') {
+      dailyReports = dailyReports.filter(r => r.department_id == taskBoardFilters.department);
+      taskHistory = taskHistory.filter(h => h.department_id == taskBoardFilters.department);
+    }
+    
+    // 검색어 필터
+    if (taskBoardFilters.search) {
+      const searchLower = taskBoardFilters.search.toLowerCase();
+      dailyReports = dailyReports.filter(r => 
+        (r.reporter_name || '').toLowerCase().includes(searchLower) ||
+        (r.department_name || '').toLowerCase().includes(searchLower) ||
+        (r.summary || '').toLowerCase().includes(searchLower)
+      );
+      taskHistory = taskHistory.filter(h => 
+        (h.task_title || '').toLowerCase().includes(searchLower) ||
+        (h.department_name || '').toLowerCase().includes(searchLower) ||
+        (h.comment || '').toLowerCase().includes(searchLower) ||
+        (h.action_by || '').toLowerCase().includes(searchLower)
+      );
+    }
+    
+    // 상태 필터 (업무지시 이력에만 적용)
+    if (taskBoardFilters.status !== 'all') {
+      taskHistory = taskHistory.filter(h => {
+        if (h.action !== 'status_change') return true;
+        if (taskBoardFilters.status === 'completed') return h.new_status === '완료';
+        if (taskBoardFilters.status === 'in_progress') return h.new_status === '진행중';
+        if (taskBoardFilters.status === 'pending') return h.new_status === '대기';
+        return true;
+      });
+    }
     
     if (dailyReports.length === 0 && taskHistory.length === 0) {
-      container.innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-history text-4xl mb-3"></i><p>이번 달 업무 이력이 없습니다</p></div>';
+      container.innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-history text-4xl mb-3"></i><p>검색 결과가 없습니다</p><p class="text-sm mt-2">필터 조건을 변경해 보세요</p></div>';
       return;
     }
     
     container.innerHTML = `
       <div class="space-y-6">
         <!-- 상단 버튼 -->
-        <div class="flex justify-between items-center">
-          <h3 class="text-lg font-semibold text-gray-700">
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <h3 class="text-base lg:text-lg font-semibold text-gray-700">
             <i class="fas fa-calendar-alt mr-2"></i>${year}년 ${month + 1}월 업무 이력
           </h3>
-          <button onclick="showWorkHistoryModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm">
+          <button onclick="showWorkHistoryModal()" class="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm">
             <i class="fas fa-search mr-1"></i>상세 이력 조회
           </button>
         </div>
@@ -40028,6 +40250,9 @@ window.deleteTask = deleteTask;
 window.taskBoardChangeMonth = taskBoardChangeMonth;
 window.showTaskBoardTab = showTaskBoardTab;
 window.printTaskBoard = printTaskBoard;
+window.taskBoardQuickFilter = taskBoardQuickFilter;
+window.taskBoardClearFilters = taskBoardClearFilters;
+window.taskBoardApplyFilters = taskBoardApplyFilters;
 window.showTaskDailyReportModal = showTaskDailyReportModal;
 window.showTaskDeptDailyReportModal = showTaskDeptDailyReportModal;
 window.addDailyReportItem = addDailyReportItem;

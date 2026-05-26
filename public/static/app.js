@@ -38398,6 +38398,9 @@ let taskSelectedDate = new Date().toISOString().split('T')[0];
 let taskFilters = { notice: true, task: true, dailyReport: true, cooperation: true };
 let taskCooperations = [];
 
+// 탭 상태
+let taskViewTab = 'dashboard'; // 'dashboard' | 'calendar'
+
 async function renderTaskCalendar() {
   const content = document.getElementById('page-content');
   
@@ -38416,28 +38419,20 @@ async function renderTaskCalendar() {
     <div class="space-y-6">
       <div class="flex items-center justify-between flex-wrap gap-4">
         <h2 class="text-2xl font-bold text-gray-800">
-          <i class="fas fa-calendar-alt mr-2 text-indigo-600"></i>
-          업무 캘린더
+          <i class="fas fa-tasks mr-2 text-indigo-600"></i>
+          업무관리
         </h2>
         <div class="flex items-center gap-3 flex-wrap">
-          <!-- 필터 체크박스 -->
-          <div class="flex items-center gap-3 bg-gray-100 rounded-lg px-4 py-2 text-sm">
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" id="filter-notice" checked onchange="toggleTaskFilter('notice')" class="rounded text-blue-600">
-              <span class="text-blue-600 font-medium">📢 공지</span>
-            </label>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" id="filter-task" checked onchange="toggleTaskFilter('task')" class="rounded text-red-600">
-              <span class="text-red-600 font-medium">📋 업무지시</span>
-            </label>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" id="filter-dailyReport" checked onchange="toggleTaskFilter('dailyReport')" class="rounded text-green-600">
-              <span class="text-green-600 font-medium">📝 일일업무</span>
-            </label>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" id="filter-cooperation" checked onchange="toggleTaskFilter('cooperation')" class="rounded text-purple-600">
-              <span class="text-purple-600 font-medium">🤝 협조</span>
-            </label>
+          <!-- 탭 선택 -->
+          <div class="flex bg-gray-100 rounded-lg p-1">
+            <button onclick="switchTaskViewTab('dashboard')" id="tab-dashboard" 
+              class="px-4 py-2 rounded-lg text-sm font-medium transition-all ${taskViewTab === 'dashboard' ? 'bg-white shadow text-indigo-600' : 'text-gray-600 hover:text-gray-800'}">
+              <i class="fas fa-tachometer-alt mr-1"></i>대시보드
+            </button>
+            <button onclick="switchTaskViewTab('calendar')" id="tab-calendar"
+              class="px-4 py-2 rounded-lg text-sm font-medium transition-all ${taskViewTab === 'calendar' ? 'bg-white shadow text-indigo-600' : 'text-gray-600 hover:text-gray-800'}">
+              <i class="fas fa-calendar-alt mr-1"></i>캘린더
+            </button>
           </div>
           <button onclick="showCooperationModal()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm">
             <i class="fas fa-handshake mr-1"></i>업무협조
@@ -38451,23 +38446,425 @@ async function renderTaskCalendar() {
         </div>
       </div>
       
-      <!-- 부서별 색상 범례 -->
-      <div id="task-dept-legend" class="flex items-center gap-4 text-sm bg-white rounded-lg shadow px-4 py-2"></div>
-      
-      <!-- 당일 업무현황 대시보드 -->
-      <div id="task-daily-dashboard" class="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl shadow p-6 text-white">
-        <div class="flex items-center justify-between mb-4">
-          <div>
-            <h3 class="text-lg font-bold">오늘의 업무 현황</h3>
-            <p id="task-today-date" class="text-indigo-200 text-sm"></p>
-          </div>
-          <div class="flex gap-2">
-            <button onclick="showTaskDailyReportModal()" class="px-4 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-50 text-sm font-medium">
-              <i class="fas fa-file-alt mr-1"></i>일일보고 작성
+      <!-- 탭 컨텐츠 -->
+      <div id="task-tab-content"></div>
+    </div>
+  `;
+  
+  switchTaskViewTab(taskViewTab);
+}
+
+// 탭 전환
+function switchTaskViewTab(tab) {
+  taskViewTab = tab;
+  
+  // 탭 버튼 스타일 업데이트
+  document.getElementById('tab-dashboard')?.classList.toggle('bg-white', tab === 'dashboard');
+  document.getElementById('tab-dashboard')?.classList.toggle('shadow', tab === 'dashboard');
+  document.getElementById('tab-dashboard')?.classList.toggle('text-indigo-600', tab === 'dashboard');
+  document.getElementById('tab-dashboard')?.classList.toggle('text-gray-600', tab !== 'dashboard');
+  
+  document.getElementById('tab-calendar')?.classList.toggle('bg-white', tab === 'calendar');
+  document.getElementById('tab-calendar')?.classList.toggle('shadow', tab === 'calendar');
+  document.getElementById('tab-calendar')?.classList.toggle('text-indigo-600', tab === 'calendar');
+  document.getElementById('tab-calendar')?.classList.toggle('text-gray-600', tab !== 'calendar');
+  
+  if (tab === 'dashboard') {
+    renderAdminDashboard();
+  } else {
+    renderCalendarView();
+  }
+}
+
+// ========== 관리자 대시보드 뷰 ==========
+async function renderAdminDashboard() {
+  const container = document.getElementById('task-tab-content');
+  const today = new Date().toISOString().split('T')[0];
+  
+  container.innerHTML = `
+    <div class="grid grid-cols-12 gap-6">
+      <!-- 좌측: 오늘 현황 요약 + 부서별 일일보고 -->
+      <div class="col-span-8 space-y-6">
+        <!-- 오늘 현황 카드 -->
+        <div class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-lg p-6 text-white">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-xl font-bold">📊 오늘의 업무 현황</h3>
+              <p class="text-indigo-200">${today.replace(/-/g, '.')}</p>
+            </div>
+            <button onclick="showTaskDailyReportModal()" class="px-4 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-50 text-sm font-medium shadow">
+              <i class="fas fa-edit mr-1"></i>일일보고 작성
             </button>
           </div>
+          <div id="admin-summary-cards" class="grid grid-cols-5 gap-3">
+            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
+              <div class="text-3xl font-bold">-</div>
+              <div class="text-sm text-indigo-200">업무지시</div>
+            </div>
+            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
+              <div class="text-3xl font-bold">-</div>
+              <div class="text-sm text-indigo-200">완료</div>
+            </div>
+            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
+              <div class="text-3xl font-bold">-</div>
+              <div class="text-sm text-indigo-200">일일보고</div>
+            </div>
+            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center cursor-pointer hover:bg-white/30" onclick="showCooperationModal()">
+              <div class="text-3xl font-bold">-</div>
+              <div class="text-sm text-indigo-200">협조요청</div>
+            </div>
+            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
+              <div class="text-3xl font-bold">-</div>
+              <div class="text-sm text-indigo-200">완료율</div>
+            </div>
+          </div>
         </div>
-        <div id="task-daily-summary" class="grid grid-cols-5 gap-4"></div>
+        
+        <!-- 부서별 일일보고 상세 -->
+        <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+          <div class="bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-6 py-4 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i class="fas fa-clipboard-list text-xl"></i>
+              <span class="font-bold text-lg">부서별 일일보고</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="date" id="admin-report-date" value="${today}" onchange="loadAdminDailyReports()"
+                class="px-3 py-1 rounded text-gray-700 text-sm">
+            </div>
+          </div>
+          <div id="admin-daily-reports" class="p-4 max-h-[500px] overflow-y-auto">
+            <div class="text-center py-8 text-gray-400">
+              <i class="fas fa-spinner fa-spin text-2xl"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 우측: 업무지시/공지 목록 -->
+      <div class="col-span-4 space-y-6">
+        <!-- 공지사항 -->
+        <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+          <div class="bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-5 py-3 flex items-center justify-between">
+            <span class="font-bold"><i class="fas fa-bullhorn mr-2"></i>공지사항</span>
+            <span id="admin-notice-count" class="bg-white/30 px-2 py-0.5 rounded text-sm">0건</span>
+          </div>
+          <div id="admin-notices" class="divide-y max-h-[200px] overflow-y-auto"></div>
+        </div>
+        
+        <!-- 업무지시 -->
+        <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+          <div class="bg-gradient-to-r from-rose-500 to-pink-500 text-white px-5 py-3 flex items-center justify-between">
+            <span class="font-bold"><i class="fas fa-tasks mr-2"></i>업무지시</span>
+            <span id="admin-task-count" class="bg-white/30 px-2 py-0.5 rounded text-sm">0건</span>
+          </div>
+          <div id="admin-tasks" class="divide-y max-h-[280px] overflow-y-auto"></div>
+        </div>
+        
+        <!-- 대기중 협조 요청 -->
+        <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+          <div class="bg-gradient-to-r from-purple-500 to-violet-500 text-white px-5 py-3 flex items-center justify-between">
+            <span class="font-bold"><i class="fas fa-handshake mr-2"></i>협조요청 대기</span>
+            <span id="admin-coop-count" class="bg-white/30 px-2 py-0.5 rounded text-sm">0건</span>
+          </div>
+          <div id="admin-coops" class="divide-y max-h-[180px] overflow-y-auto"></div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 데이터 로드
+  loadAdminSummary();
+  loadAdminDailyReports();
+  loadAdminTasksAndNotices();
+  loadAdminCooperations();
+}
+
+// 관리자 요약 카드 로드
+async function loadAdminSummary() {
+  const today = new Date().toISOString().split('T')[0];
+  try {
+    const res = await axios.get('/api/task/daily-dashboard?date=' + today);
+    if (!res.data.success) return;
+    
+    const data = res.data.data;
+    const totalTasks = data.tasks.length;
+    const completedTasks = data.tasks.filter(t => t.completed_count === t.total_count && t.total_count > 0).length;
+    const totalReports = data.reports.length;
+    const totalDepts = data.departments.length;
+    
+    let pendingCoops = 0;
+    try {
+      const coopRes = await axios.get('/api/task/cooperations?status=요청&limit=100');
+      pendingCoops = coopRes.data.success ? coopRes.data.data.items.length : 0;
+    } catch {}
+    
+    document.getElementById('admin-summary-cards').innerHTML = `
+      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
+        <div class="text-3xl font-bold">${totalTasks}</div>
+        <div class="text-sm text-indigo-200">업무지시</div>
+      </div>
+      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
+        <div class="text-3xl font-bold">${completedTasks}</div>
+        <div class="text-sm text-indigo-200">완료</div>
+      </div>
+      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
+        <div class="text-3xl font-bold">${totalReports}/${totalDepts}</div>
+        <div class="text-sm text-indigo-200">일일보고</div>
+      </div>
+      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center cursor-pointer hover:bg-white/30" onclick="showCooperationModal()">
+        <div class="text-3xl font-bold">${pendingCoops}</div>
+        <div class="text-sm text-indigo-200">협조요청</div>
+      </div>
+      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
+        <div class="text-3xl font-bold">${totalTasks > 0 ? Math.round(completedTasks/totalTasks*100) : 0}%</div>
+        <div class="text-sm text-indigo-200">완료율</div>
+      </div>
+    `;
+  } catch (e) {
+    console.error('요약 로드 오류:', e);
+  }
+}
+
+// 부서별 일일보고 상세 로드
+async function loadAdminDailyReports() {
+  const date = document.getElementById('admin-report-date')?.value || new Date().toISOString().split('T')[0];
+  const container = document.getElementById('admin-daily-reports');
+  if (!container) return;
+  
+  try {
+    const res = await axios.get('/api/task/daily-dashboard?date=' + date);
+    if (!res.data.success) throw new Error('로드 실패');
+    
+    const { departments, reports } = res.data.data;
+    
+    // 일일보고 상세 항목도 같이 로드
+    const reportDetails = await Promise.all(reports.map(async r => {
+      try {
+        const detailRes = await axios.get('/api/task/daily-report-items?report_id=' + r.id);
+        return { ...r, items: detailRes.data.success ? detailRes.data.data : [] };
+      } catch {
+        return { ...r, items: [] };
+      }
+    }));
+    
+    if (departments.length === 0) {
+      container.innerHTML = '<div class="text-center py-8 text-gray-400">등록된 부서가 없습니다</div>';
+      return;
+    }
+    
+    container.innerHTML = departments.map(dept => {
+      const report = reportDetails.find(r => r.department_id === dept.id);
+      
+      return `
+        <div class="mb-4 border rounded-xl overflow-hidden" style="border-color: ${dept.color}40">
+          <!-- 부서 헤더 -->
+          <div class="p-4 flex items-center justify-between cursor-pointer hover:bg-gray-50" 
+               style="background: linear-gradient(135deg, ${dept.color}15, ${dept.color}05)"
+               onclick="toggleDeptReport(${dept.id})">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold shadow" style="background: ${dept.color}">
+                ${dept.name.charAt(0)}
+              </div>
+              <div>
+                <div class="font-bold text-gray-800">${dept.name}</div>
+                ${report ? `
+                  <div class="text-sm text-gray-500">
+                    <i class="fas fa-user mr-1"></i>${report.reporter_name || '미입력'}
+                    <span class="mx-2">·</span>
+                    <i class="fas fa-list mr-1"></i>${report.item_count || 0}건 보고
+                  </div>
+                ` : `
+                  <div class="text-sm text-gray-400">보고서 미제출</div>
+                `}
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              ${report ? `
+                <span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium">
+                  <i class="fas fa-check mr-1"></i>제출완료
+                </span>
+              ` : `
+                <span class="px-3 py-1 bg-gray-100 text-gray-500 rounded-full text-sm">미제출</span>
+              `}
+              <i class="fas fa-chevron-down text-gray-400 transition-transform" id="dept-arrow-${dept.id}"></i>
+            </div>
+          </div>
+          
+          <!-- 보고 내용 (접이식) -->
+          <div id="dept-report-${dept.id}" class="hidden border-t" style="border-color: ${dept.color}30">
+            ${report && report.items && report.items.length > 0 ? `
+              <div class="divide-y" style="border-color: ${dept.color}20">
+                ${report.items.map((item, idx) => `
+                  <div class="p-4 hover:bg-gray-50">
+                    <div class="flex items-start gap-3">
+                      <div class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0" 
+                           style="background: ${dept.color}">${idx + 1}</div>
+                      <div class="flex-1 min-w-0">
+                        <div class="font-medium text-gray-800">${item.title || '제목 없음'}</div>
+                        ${item.content ? `<div class="text-sm text-gray-600 mt-1 whitespace-pre-wrap">${item.content}</div>` : ''}
+                        <div class="flex items-center gap-3 mt-2 text-xs text-gray-400">
+                          <span><i class="fas fa-tag mr-1"></i>${item.category || '일반'}</span>
+                          <span class="px-2 py-0.5 rounded ${
+                            item.status === '완료' ? 'bg-green-100 text-green-700' : 
+                            item.status === '진행중' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                          }">${item.status || '대기'}</span>
+                          ${item.progress ? `<span><i class="fas fa-chart-line mr-1"></i>${item.progress}%</span>` : ''}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+              ${report.remarks ? `
+                <div class="p-4 bg-amber-50 border-t" style="border-color: ${dept.color}20">
+                  <div class="text-sm"><i class="fas fa-comment-alt mr-1 text-amber-500"></i><span class="font-medium">특이사항:</span> ${report.remarks}</div>
+                </div>
+              ` : ''}
+            ` : `
+              <div class="p-6 text-center text-gray-400">
+                ${report ? '등록된 업무 항목이 없습니다' : '보고서가 제출되지 않았습니다'}
+                <button onclick="showTaskDeptDailyReportModal(${dept.id}, '${dept.name}', '${dept.color}')" 
+                  class="block mx-auto mt-3 px-4 py-2 text-sm rounded-lg text-white hover:opacity-90" style="background: ${dept.color}">
+                  <i class="fas fa-edit mr-1"></i>보고서 작성
+                </button>
+              </div>
+            `}
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    // 첫 번째 부서 자동 펼치기
+    if (departments.length > 0 && reports.length > 0) {
+      const firstReport = reports[0];
+      if (firstReport) {
+        toggleDeptReport(firstReport.department_id);
+      }
+    }
+  } catch (e) {
+    container.innerHTML = '<div class="text-center py-8 text-red-400">로드 실패</div>';
+  }
+}
+
+// 부서 보고 토글
+function toggleDeptReport(deptId) {
+  const content = document.getElementById('dept-report-' + deptId);
+  const arrow = document.getElementById('dept-arrow-' + deptId);
+  if (content) {
+    content.classList.toggle('hidden');
+    arrow?.classList.toggle('rotate-180');
+  }
+}
+
+// 업무지시/공지 로드
+async function loadAdminTasksAndNotices() {
+  const today = new Date().toISOString().split('T')[0];
+  const monthStr = today.substring(0, 7);
+  
+  try {
+    const res = await axios.get('/api/task/tasks?month=' + monthStr);
+    if (!res.data.success) return;
+    
+    const tasks = res.data.data.filter(t => t.type === 'task');
+    const notices = res.data.data.filter(t => t.type === 'notice');
+    
+    // 공지
+    document.getElementById('admin-notice-count').textContent = notices.length + '건';
+    const noticeContainer = document.getElementById('admin-notices');
+    if (notices.length === 0) {
+      noticeContainer.innerHTML = '<div class="p-4 text-center text-gray-400 text-sm">등록된 공지가 없습니다</div>';
+    } else {
+      noticeContainer.innerHTML = notices.slice(0, 5).map(n => `
+        <div class="p-3 hover:bg-blue-50 cursor-pointer" onclick="showTaskDetailModal(${n.id})">
+          <div class="font-medium text-gray-800 text-sm truncate">${n.title}</div>
+          <div class="text-xs text-gray-400 mt-1">${n.due_date}</div>
+        </div>
+      `).join('');
+    }
+    
+    // 업무
+    document.getElementById('admin-task-count').textContent = tasks.length + '건';
+    const taskContainer = document.getElementById('admin-tasks');
+    if (tasks.length === 0) {
+      taskContainer.innerHTML = '<div class="p-4 text-center text-gray-400 text-sm">등록된 업무가 없습니다</div>';
+    } else {
+      taskContainer.innerHTML = tasks.slice(0, 8).map(t => `
+        <div class="p-3 hover:bg-rose-50 cursor-pointer" onclick="showTaskDetailModal(${t.id})">
+          <div class="flex items-center justify-between">
+            <div class="font-medium text-gray-800 text-sm truncate flex-1 mr-2">${t.title}</div>
+            <span class="px-2 py-0.5 rounded text-xs flex-shrink-0 ${
+              t.total_count > 0 && t.completed_count === t.total_count 
+                ? 'bg-green-100 text-green-700' 
+                : 'bg-amber-100 text-amber-700'
+            }">
+              ${t.completed_count || 0}/${t.total_count || 0}
+            </span>
+          </div>
+          <div class="text-xs text-gray-400 mt-1">${t.due_date}</div>
+        </div>
+      `).join('');
+    }
+  } catch (e) {
+    console.error('업무 로드 오류:', e);
+  }
+}
+
+// 협조 요청 로드
+async function loadAdminCooperations() {
+  try {
+    const res = await axios.get('/api/task/cooperations?status=요청&limit=10');
+    if (!res.data.success) return;
+    
+    const coops = res.data.data.items;
+    document.getElementById('admin-coop-count').textContent = coops.length + '건';
+    
+    const container = document.getElementById('admin-coops');
+    if (coops.length === 0) {
+      container.innerHTML = '<div class="p-4 text-center text-gray-400 text-sm">대기중인 요청이 없습니다</div>';
+    } else {
+      container.innerHTML = coops.map(c => `
+        <div class="p-3 hover:bg-purple-50 cursor-pointer" onclick="showCooperationDetailModal(${c.id})">
+          <div class="font-medium text-gray-800 text-sm truncate">${c.title}</div>
+          <div class="flex items-center gap-2 text-xs text-gray-400 mt-1">
+            <span>${c.from_department_name}</span>
+            <i class="fas fa-arrow-right"></i>
+            <span>${c.to_department_name}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+  } catch (e) {
+    console.error('협조 로드 오류:', e);
+  }
+}
+
+// ========== 캘린더 뷰 ==========
+function renderCalendarView() {
+  const container = document.getElementById('task-tab-content');
+  
+  container.innerHTML = `
+    <div class="space-y-6">
+      <!-- 필터 체크박스 -->
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <div class="flex items-center gap-3 bg-white rounded-lg shadow px-4 py-2 text-sm">
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" id="filter-notice" checked onchange="toggleTaskFilter('notice')" class="rounded text-blue-600">
+            <span class="text-blue-600 font-medium">📢 공지</span>
+          </label>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" id="filter-task" checked onchange="toggleTaskFilter('task')" class="rounded text-red-600">
+            <span class="text-red-600 font-medium">📋 업무지시</span>
+          </label>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" id="filter-dailyReport" checked onchange="toggleTaskFilter('dailyReport')" class="rounded text-green-600">
+            <span class="text-green-600 font-medium">📝 일일업무</span>
+          </label>
+          <label class="flex items-center gap-1 cursor-pointer">
+            <input type="checkbox" id="filter-cooperation" checked onchange="toggleTaskFilter('cooperation')" class="rounded text-purple-600">
+            <span class="text-purple-600 font-medium">🤝 협조</span>
+          </label>
+        </div>
+        <div id="task-dept-legend" class="flex items-center gap-4 text-sm"></div>
       </div>
       
       <!-- 부서별 현황 요약 -->
@@ -38523,9 +38920,11 @@ async function renderTaskCalendar() {
   taskRenderCalendar();
   taskLoadDeptSummary();
   taskLoadList();
-  taskLoadDailyDashboard();
-  loadCooperations();
 }
+
+window.switchTaskViewTab = switchTaskViewTab;
+window.toggleDeptReport = toggleDeptReport;
+window.loadAdminDailyReports = loadAdminDailyReports;
 
 // 필터 토글
 function toggleTaskFilter(type) {
@@ -39603,6 +40002,14 @@ function printTaskBoard() {
 // 전역 함수 노출
 window.renderTaskCalendar = renderTaskCalendar;
 window.renderTaskBoard = renderTaskBoard;
+window.renderAdminDashboard = renderAdminDashboard;
+window.renderCalendarView = renderCalendarView;
+window.loadAdminSummary = loadAdminSummary;
+window.loadAdminDailyReports = loadAdminDailyReports;
+window.loadAdminTasksAndNotices = loadAdminTasksAndNotices;
+window.loadAdminCooperations = loadAdminCooperations;
+window.switchTaskViewTab = switchTaskViewTab;
+window.toggleDeptReport = toggleDeptReport;
 window.taskChangeMonth = taskChangeMonth;
 window.taskShowDayTasks = taskShowDayTasks;
 window.showTaskCreateModal = showTaskCreateModal;

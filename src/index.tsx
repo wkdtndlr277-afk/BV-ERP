@@ -452,6 +452,37 @@ app.post('/api/import-db', async (c) => {
   }
 });
 
+// Static HTML files - serve from ASSETS
+app.get('/scanner-setup.html', async (c) => {
+  try {
+    const response = await c.env.ASSETS.fetch(new Request('https://dummy/scanner-setup.html'));
+    const html = await response.text();
+    return c.html(html);
+  } catch (e) {
+    return c.redirect('/');
+  }
+});
+
+app.get('/scanner-setup', async (c) => {
+  try {
+    const response = await c.env.ASSETS.fetch(new Request('https://dummy/scanner-setup.html'));
+    const html = await response.text();
+    return c.html(html);
+  } catch (e) {
+    return c.redirect('/');
+  }
+});
+
+app.get('/barcode.html', async (c) => {
+  try {
+    const response = await c.env.ASSETS.fetch(new Request('https://dummy/barcode.html'));
+    const html = await response.text();
+    return c.html(html);
+  } catch (e) {
+    return c.redirect('/');
+  }
+});
+
 // Main HTML page
 app.get('/*', (c) => {
   return c.html(`

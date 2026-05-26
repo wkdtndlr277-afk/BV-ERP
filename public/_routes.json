@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "include": ["/*"],
+  "exclude": [
+    "/_headers",
+    "/static/*",
+    "/barcode.html",
+    "/scanner-setup.html",
+    "/debug_print.html",
+    "/test_print.html",
+    "/erp_database_export.xlsx"
+  ]
+}

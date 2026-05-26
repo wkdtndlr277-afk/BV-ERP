@@ -38470,14 +38470,14 @@ function switchTaskViewTab(tab) {
   document.getElementById('tab-calendar')?.classList.toggle('text-gray-600', tab !== 'calendar');
   
   if (tab === 'dashboard') {
-    renderAdminDashboard();
+    renderTaskAdminView();
   } else {
     renderCalendarView();
   }
 }
 
 // ========== 관리자 대시보드 뷰 ==========
-async function renderAdminDashboard() {
+async function renderTaskAdminView() {
   const container = document.getElementById('task-tab-content');
   const today = new Date().toISOString().split('T')[0];
   
@@ -40015,7 +40015,7 @@ function printTaskBoard() {
 // 전역 함수 노출
 window.renderTaskCalendar = renderTaskCalendar;
 window.renderTaskBoard = renderTaskBoard;
-window.renderAdminDashboard = renderAdminDashboard;
+window.renderTaskAdminView = renderTaskAdminView;
 window.renderCalendarView = renderCalendarView;
 window.loadAdminSummary = loadAdminSummary;
 window.loadAdminDailyReports = loadAdminDailyReports;

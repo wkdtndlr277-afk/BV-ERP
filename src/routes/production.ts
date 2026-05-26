@@ -1344,7 +1344,7 @@ productionRoutes.post('/migrate-materials', async (c) => {
   const dryRun = c.req.query('dry_run') === 'true';
   
   try {
-    // 1. 모든 BOM 조회 (product_code → 원료 목록)
+    // 1-1. 기존 bom 테이블에서 BOM 조회 (PD 코드)
     const allBom = await c.env.DB.prepare(`
       SELECT b.*, m.item_name, 
              COALESCE(
@@ -1357,8 +1357,23 @@ productionRoutes.post('/migrate-materials', async (c) => {
       LEFT JOIN master m ON b.item_code = m.item_code OR m.item_code = 'RM' || SUBSTR(b.item_code, 2) OR m.item_code = 'R' || SUBSTR(b.item_code, 3)
     `).all<any>();
     
+    // 1-2. production_bom 테이블에서 BOM 조회 (PR 코드)
+    const productionBom = await c.env.DB.prepare(`
+      SELECT pb.production_code as product_code, pb.material_code as item_code, 
+             pb.material_name as item_name, pb.quantity, pb.unit,
+             COALESCE(
+               (SELECT item_code FROM master WHERE item_code = pb.material_code LIMIT 1),
+               (SELECT item_code FROM master WHERE item_code = 'RM' || SUBSTR(pb.material_code, 2) LIMIT 1),
+               (SELECT item_code FROM master WHERE item_code = 'R' || SUBSTR(pb.material_code, 3) LIMIT 1),
+               pb.material_code
+             ) as matched_item_code
+      FROM production_bom pb
+    `).all<any>();
+    
     // BOM을 product_code별로 그룹화
     const bomMap = new Map<string, any[]>();
+    
+    // 기존 bom 테이블 데이터
     for (const bom of allBom.results || []) {
       if (!bomMap.has(bom.product_code)) {
         bomMap.set(bom.product_code, []);
@@ -1366,7 +1381,15 @@ productionRoutes.post('/migrate-materials', async (c) => {
       bomMap.get(bom.product_code)!.push(bom);
     }
     
-    console.log(`[migrate-materials] BOM 로드 완료: ${bomMap.size}개 제품`);
+    // production_bom 테이블 데이터 (PR 코드)
+    for (const bom of productionBom.results || []) {
+      if (!bomMap.has(bom.product_code)) {
+        bomMap.set(bom.product_code, []);
+      }
+      bomMap.get(bom.product_code)!.push(bom);
+    }
+    
+    console.log(`[migrate-materials] BOM 로드 완료: ${bomMap.size}개 제품 (bom: ${allBom.results?.length || 0}, production_bom: ${productionBom.results?.length || 0})`);
     
     // 2. production_materials가 없는 생산 기록 조회
     const productions = await c.env.DB.prepare(`
@@ -1398,10 +1421,10 @@ productionRoutes.post('/migrate-materials', async (c) => {
       });
     }
     
-    // 3. 각 생산 기록에 대해 원료 정보 추가
+    // 3. 각 생산 기록에 대해 원료 정보 추가 (LOT 조회 생략으로 성능 최적화)
     let insertedCount = 0;
     let skippedCount = 0;
-    const batchSize = 50; // 배치 크기
+    const batchSize = 20; // 배치 크기 축소 (API 한도 방지)
     const productionList = productions.results || [];
     
     for (let i = 0; i < productionList.length; i += batchSize) {
@@ -1422,23 +1445,12 @@ productionRoutes.post('/migrate-materials', async (c) => {
           const actualItemCode = bom.matched_item_code || bom.item_code;
           const requiredQty = bom.quantity * actualCount;
           
-          // FEFO로 원료 LOT 조회
-          let materialLot = null;
-          try {
-            const lotResult = await c.env.DB.prepare(`
-              SELECT lot_number FROM inbound 
-              WHERE item_code = ? AND remain_qty > 0 
-              ORDER BY expiry_date ASC, inbound_date ASC, id ASC 
-              LIMIT 1
-            `).bind(actualItemCode).first<{lot_number: string}>();
-            materialLot = lotResult?.lot_number || null;
-          } catch (e) {}
-          
+          // LOT는 null로 설정 (성능 최적화, 나중에 별도 업데이트 가능)
           inserts.push(
             c.env.DB.prepare(`
               INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
-              VALUES (?, ?, ?, ?, ?, ?)
-            `).bind(prod.id, actualItemCode, materialLot, requiredQty, requiredQty, bom.unit || 'g')
+              VALUES (?, ?, NULL, ?, ?, ?)
+            `).bind(prod.id, actualItemCode, requiredQty, requiredQty, bom.unit || 'g')
           );
         }
       }
@@ -1446,7 +1458,6 @@ productionRoutes.post('/migrate-materials', async (c) => {
       if (inserts.length > 0) {
         await c.env.DB.batch(inserts);
         insertedCount += inserts.length;
-        console.log(`[migrate-materials] 배치 ${Math.floor(i/batchSize)+1} 완료: ${inserts.length}건 INSERT`);
       }
     }
     

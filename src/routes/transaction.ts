@@ -185,7 +185,7 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
             item_name: mat.item_name || mat.item_code,
             lot_number: mat.lot_number || '-',
             actual_qty: mat.actual_qty || mat.planned_qty,
-            unit: mat.item_unit || mat.unit || 'g',
+            unit: mat.unit || 'g',  // production_materials의 단위 사용
             supplier: isSelfMade ? '자체제작' : (inboundInfo?.supplier || '-'),
             inbound_date: inboundInfo?.inbound_date || '-',
             expiry_date: inboundInfo?.expiry_date || '-'
@@ -257,7 +257,7 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
             item_name: mat.item_name || mat.item_code,
             lot_number: mat.lot_number || '-',
             actual_qty: mat.actual_qty || mat.planned_qty,
-            unit: mat.item_unit || mat.unit || 'g',
+            unit: mat.unit || 'g',  // production_materials의 단위 사용
             supplier: isSelfMade ? '자체제작' : (inboundInfo?.supplier || '-'),
             inbound_date: inboundInfo?.inbound_date || '-',
             expiry_date: inboundInfo?.expiry_date || '-'

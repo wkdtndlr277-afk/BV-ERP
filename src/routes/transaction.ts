@@ -132,12 +132,16 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
     `).bind(lot_number).first<any>();
     
     if (productInbound) {
+      // 제품 단위는 항상 'EA' 또는 '개'로 표시 (g, kg 등 원료 단위 무시)
+      const productUnit = (productInbound.unit && !['g', 'kg', 'ml', 'L'].includes(productInbound.unit)) 
+        ? productInbound.unit : 'EA';
+      
       lot = {
         lot_number: productInbound.lot_number,
         item_code: productInbound.production_code,
         item_name: productInbound.item_name,
         category: '제품',
-        unit: productInbound.unit || 'EA',
+        unit: productUnit,
         inbound_date: productInbound.inbound_date,
         expiry_date: productInbound.expiry_date || '-',
         origin_qty: productInbound.origin_qty,

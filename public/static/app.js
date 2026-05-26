@@ -37736,6 +37736,49 @@ async function renderBarcodeInventory() {
   setTimeout(() => {
     document.getElementById('barcode-scan-input')?.focus();
   }, 100);
+  
+  // 전역 키보드 이벤트 리스너 (스캐너 입력 캡처)
+  // 페이지 어디서든 바코드 스캐너 입력을 받을 수 있도록 함
+  if (!window.barcodeScannerListenerAdded) {
+    window.barcodeScannerListenerAdded = true;
+    let scanBuffer = '';
+    let scanTimeout = null;
+    
+    document.addEventListener('keypress', (e) => {
+      const barcodeInput = document.getElementById('barcode-scan-input');
+      if (!barcodeInput) return; // 바코드 페이지가 아니면 무시
+      
+      // 이미 입력창에 포커스가 있으면 기본 동작
+      if (document.activeElement === barcodeInput) return;
+      
+      // 다른 입력창에 포커스가 있으면 무시 (수량 입력 등)
+      if (document.activeElement.tagName === 'INPUT' || 
+          document.activeElement.tagName === 'TEXTAREA') return;
+      
+      // Enter 키: 버퍼에 있는 내용을 처리
+      if (e.key === 'Enter') {
+        if (scanBuffer.length > 0) {
+          barcodeInput.value = scanBuffer;
+          scanBuffer = '';
+          scanBarcode();
+        }
+        return;
+      }
+      
+      // 일반 문자: 버퍼에 추가
+      if (e.key.length === 1) {
+        scanBuffer += e.key;
+        
+        // 타임아웃 리셋 (스캐너는 빠르게 연속 입력됨)
+        clearTimeout(scanTimeout);
+        scanTimeout = setTimeout(() => {
+          scanBuffer = ''; // 300ms 동안 입력 없으면 버퍼 클리어
+        }, 300);
+      }
+    });
+    
+    console.log('[바코드] 전역 스캐너 리스너 활성화');
+  }
 }
 
 // 바코드 관련 상태

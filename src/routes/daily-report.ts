@@ -526,7 +526,7 @@ dailyReport.get('/reports/:id', async (c) => {
         const materialLots: any[] = []
         const batchSize = 50
         
-        // 일반 원료 LOT 조회
+        // 일반 원료 LOT 조회 - 생산일 기준 유통기한 유효한 것만
         if (regularCodes.length > 0) {
           for (let i = 0; i < regularCodes.length; i += batchSize) {
             const batch = regularCodes.slice(i, i + batchSize)
@@ -536,8 +536,10 @@ dailyReport.get('/reports/:id', async (c) => {
                 FROM inbound
                 WHERE item_code IN (${batch.map(() => '?').join(',')})
                   AND remain_qty > 0
+                  AND inbound_date <= ?
+                  AND expiry_date >= ?
                 ORDER BY item_code, expiry_date ASC
-              `).bind(...batch).all()
+              `).bind(...batch, reportDate, reportDate).all()
               materialLots.push(...(lotData.results || []))
             } catch (e) {
               console.error('원료 LOT 조회 오류:', e)
@@ -545,20 +547,22 @@ dailyReport.get('/reports/:id', async (c) => {
           }
         }
         
-        // 반제품 LOT 조회 (최신 LOT 표시, 생산일보는 사용 예정량이므로 잔량 무관)
+        // 반제품 LOT 조회 - 생산일 기준 유효한 LOT (FEFO)
         if (sfCodes.length > 0) {
           for (let i = 0; i < sfCodes.length; i += batchSize) {
             const batch = sfCodes.slice(i, i + batchSize)
             try {
-              // semi_finished_lots 테이블에서 각 item_code별 최신 LOT 조회 (잔량 상관없이)
+              // semi_finished_lots 테이블에서 생산일 기준 유효한 LOT 조회 (FEFO)
               const sfLotData = await c.env.DB.prepare(`
                 SELECT item_code, lot_number, expiry_date, remain_qty
                 FROM semi_finished_lots
                 WHERE item_code IN (${batch.map(() => '?').join(',')})
-                ORDER BY item_code, prod_date DESC, id DESC
-              `).bind(...batch).all()
+                  AND prod_date <= ?
+                  AND expiry_date >= ?
+                ORDER BY item_code, expiry_date ASC, prod_date ASC
+              `).bind(...batch, reportDate, reportDate).all()
               
-              // 각 item_code별 최신 1개만 추가
+              // 각 item_code별 FEFO 기준 1개만 추가
               const addedCodes = new Set<string>()
               for (const row of (sfLotData.results || []) as any[]) {
                 if (!addedCodes.has(row.item_code)) {

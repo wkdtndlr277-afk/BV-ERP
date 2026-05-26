@@ -633,7 +633,8 @@ dailyReport.post('/reports/from-order', async (c) => {
   // 1. 모든 필요한 데이터를 한 번에 로드 (최적화)
   const [barcodeData, productionData, bomData, legacyBomData] = await Promise.all([
     c.env.DB.prepare(`
-      SELECT pb.barcode, pb.production_code, pb.box_quantity, pi.production_name, pi.shelf_life_days
+      SELECT pb.barcode, pb.production_code, pb.box_quantity, pb.expiry_days as barcode_expiry_days, pb.channel as barcode_channel,
+             pi.production_name, pi.shelf_life_days
       FROM production_barcodes pb
       JOIN production_items pi ON pb.production_code = pi.production_code
     `).all(),
@@ -737,17 +738,23 @@ dailyReport.post('/reports/from-order', async (c) => {
     // BOM 등록 여부: bomMap에 있거나, production_items 테이블의 bom_count > 0
     const productionItemInfo = productionMap.get(productionCode)
     const hasBom = (bomItems.length > 0 || (productionItemInfo?.bom_count || 0) > 0) ? 1 : 0
-    const shelfLifeDays = productionInfo?.shelf_life_days || null
     
-    // 소비기한 계산 우선순위: 1) PDF에서 추출한 소비기한 → 2) 제품 기본 설정(shelf_life_days)
+    // ★ 소비기한 계산 우선순위:
+    // 1) PDF에서 추출한 소비기한
+    // 2) 바코드별 소비기한 설정 (production_barcodes.expiry_days) - 채널별 다를 수 있음
+    // 3) 제품 기본 설정 (production_items.shelf_life_days)
+    const barcodeExpiryDays = productionInfo?.barcode_expiry_days || null
+    const shelfLifeDays = productionInfo?.shelf_life_days || null
+    const effectiveExpiryDays = barcodeExpiryDays || shelfLifeDays  // 바코드 우선
+    
     let expiryDate: string | null = null
     if (item.expiry_date) {
       // PDF에서 추출한 소비기한이 있으면 우선 사용
       expiryDate = item.expiry_date
-    } else if (shelfLifeDays) {
-      // 기본값: 생산일 기준 + shelf_life_days
+    } else if (effectiveExpiryDays) {
+      // 바코드 또는 기본 소비기한 일수로 계산
       const prodDate = new Date(report_date + 'T00:00:00')
-      prodDate.setDate(prodDate.getDate() + shelfLifeDays)
+      prodDate.setDate(prodDate.getDate() + effectiveExpiryDays)
       expiryDate = prodDate.toISOString().split('T')[0]
     }
     

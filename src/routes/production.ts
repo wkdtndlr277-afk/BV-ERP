@@ -125,7 +125,7 @@ productionRoutes.get('/:id', async (c) => {
 // LOT 수량 수정 (관련 테이블 모두 업데이트)
 productionRoutes.put('/lot/:lotNumber', async (c) => {
   const lotNumber = decodeURIComponent(c.req.param('lotNumber'));
-  const { quantity } = await c.req.json();
+  const { quantity, remain_qty } = await c.req.json();
   
   if (!quantity || quantity <= 0) {
     return c.json({ success: false, error: '유효한 수량을 입력하세요' }, 400);
@@ -141,7 +141,6 @@ productionRoutes.put('/lot/:lotNumber', async (c) => {
   }
   
   const oldQuantity = production.quantity;
-  const quantityDiff = quantity - oldQuantity;
   
   try {
     // 1. production 테이블 수량 수정
@@ -149,13 +148,21 @@ productionRoutes.put('/lot/:lotNumber', async (c) => {
       UPDATE production SET quantity = ? WHERE lot_number = ?
     `).bind(quantity, lotNumber).run();
     
-    // 2. production_inbound 원래수량만 수정 (origin_qty만, remain_qty는 유지)
+    // 2. production_inbound 수정 (origin_qty, remain_qty 별도 지정 가능)
     try {
-      await c.env.DB.prepare(`
-        UPDATE production_inbound 
-        SET origin_qty = ?
-        WHERE lot_number = ? AND production_code = ?
-      `).bind(quantity, lotNumber, production.product_code).run();
+      if (remain_qty !== undefined) {
+        await c.env.DB.prepare(`
+          UPDATE production_inbound 
+          SET origin_qty = ?, remain_qty = ?
+          WHERE lot_number = ? AND production_code = ?
+        `).bind(quantity, remain_qty, lotNumber, production.product_code).run();
+      } else {
+        await c.env.DB.prepare(`
+          UPDATE production_inbound 
+          SET origin_qty = ?
+          WHERE lot_number = ? AND production_code = ?
+        `).bind(quantity, lotNumber, production.product_code).run();
+      }
     } catch (e) {
       console.log('production_inbound 업데이트 스킵:', e);
     }

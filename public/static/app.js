@@ -40056,10 +40056,6 @@ function taskBoardRenderTable() {
                     </div>
                   </td>
                 `;
-                      </div>
-                    </div>
-                  </td>
-                `;
               }).join('')}
               <td class="px-2 py-2 lg:px-3 lg:py-3 text-center">
                 <span class="font-bold text-xs lg:text-sm ${t.completed_count === t.total_count ? 'text-green-600' : t.completed_count > 0 ? 'text-blue-600' : 'text-gray-500'}">

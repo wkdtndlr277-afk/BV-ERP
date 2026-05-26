@@ -37,13 +37,13 @@ barcodeRoutes.get('/scan', async (c) => {
       console.log('production_barcodes table not found or error:', e);
     }
     
-    // 2. master 테이블에서 item_code로 검색
+    // 2. master 테이블에서 바코드 또는 item_code로 검색
     if (!item) {
       const masterResult = await c.env.DB.prepare(`
-        SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days
+        SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode
         FROM master
-        WHERE item_code = ? OR item_name LIKE ?
-      `).bind(barcode, `%${barcode}%`).first();
+        WHERE barcode = ? OR item_code = ? OR item_name LIKE ?
+      `).bind(barcode, barcode, `%${barcode}%`).first();
       
       if (masterResult) {
         item = masterResult;
@@ -54,10 +54,10 @@ barcodeRoutes.get('/scan', async (c) => {
     // 3. supplies 테이블에서 검색 (부자재)
     if (!item) {
       const suppliesResult = await c.env.DB.prepare(`
-        SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days
+        SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode
         FROM supplies
-        WHERE item_code = ? OR item_name LIKE ?
-      `).bind(barcode, `%${barcode}%`).first();
+        WHERE barcode = ? OR item_code = ? OR item_name LIKE ?
+      `).bind(barcode, barcode, `%${barcode}%`).first();
       
       if (suppliesResult) {
         item = suppliesResult;

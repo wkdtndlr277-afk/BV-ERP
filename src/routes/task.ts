@@ -979,6 +979,7 @@ app.get('/work-history', async (c) => {
   const deptId = c.req.query('department_id');
   const startDate = c.req.query('start_date');
   const endDate = c.req.query('end_date');
+  const search = c.req.query('search');
   const page = parseInt(c.req.query('page') || '1');
   const limit = parseInt(c.req.query('limit') || '20');
   const offset = (page - 1) * limit;
@@ -998,6 +999,18 @@ app.get('/work-history', async (c) => {
     if (endDate) {
       whereClause += ' AND r.report_date <= ?';
       params.push(endDate);
+    }
+    
+    // 검색어가 있으면 보고자, 요약, 특이사항, 업무내용에서 검색
+    if (search) {
+      const searchPattern = `%${search}%`;
+      whereClause += ` AND (
+        r.reporter_name LIKE ? OR 
+        r.summary LIKE ? OR 
+        r.issues LIKE ? OR
+        EXISTS (SELECT 1 FROM daily_work_items i WHERE i.report_id = r.id AND (i.work_content LIKE ? OR i.notes LIKE ?))
+      )`;
+      params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
     }
     
     // 총 건수

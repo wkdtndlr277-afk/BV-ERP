@@ -40687,7 +40687,8 @@ async function loadWorkHistory() {
       reports = reports.filter(r => 
         (r.reporter_name || '').toLowerCase().includes(searchLower) ||
         (r.department_name || '').toLowerCase().includes(searchLower) ||
-        (r.summary || '').toLowerCase().includes(searchLower)
+        (r.summary || '').toLowerCase().includes(searchLower) ||
+        (r.issues || '').toLowerCase().includes(searchLower)
       );
     }
     

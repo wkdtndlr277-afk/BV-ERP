@@ -37525,14 +37525,46 @@ async function renderBarcodeInventory() {
   
   content.innerHTML = `
     <div class="space-y-6">
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between flex-wrap gap-3">
         <h2 class="text-2xl font-bold text-gray-800">
           <i class="fas fa-qrcode mr-2 text-blue-600"></i>
           바코드 재고관리
         </h2>
-        <a href="/barcode.html" target="_blank" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
-          <i class="fas fa-external-link-alt mr-1"></i> 모바일 전용 페이지
-        </a>
+        <div class="flex items-center gap-2">
+          <a href="/scanner-setup.html" target="_blank" class="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm">
+            <i class="fas fa-book mr-1"></i> 스캐너 설정 가이드
+          </a>
+          <a href="/barcode.html" target="_blank" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
+            <i class="fas fa-mobile-alt mr-1"></i> 모바일 전용
+          </a>
+        </div>
+      </div>
+      
+      <!-- 스캐너 연결 안내 -->
+      <div id="scanner-guide-banner" class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
+        <div class="flex items-start gap-4">
+          <div class="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center flex-shrink-0">
+            <i class="fas fa-bluetooth-b text-white text-xl"></i>
+          </div>
+          <div class="flex-1">
+            <h4 class="font-bold text-blue-800 mb-1">COMAS 바코드 스캐너 사용하기</h4>
+            <p class="text-sm text-gray-600 mb-2">블루투스 또는 2.4GHz 무선 스캐너를 연결하여 빠르게 재고를 관리하세요.</p>
+            <div class="flex flex-wrap gap-2 text-xs">
+              <span class="px-2 py-1 bg-green-100 text-green-700 rounded">
+                <i class="fas fa-wifi mr-1"></i>2.4GHz: PC 연결 권장
+              </span>
+              <span class="px-2 py-1 bg-purple-100 text-purple-700 rounded">
+                <i class="fas fa-bluetooth mr-1"></i>블루투스: 모바일 연결
+              </span>
+              <a href="/scanner-setup.html" target="_blank" class="px-2 py-1 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">
+                <i class="fas fa-external-link-alt mr-1"></i>설정 방법 보기
+              </a>
+            </div>
+          </div>
+          <button onclick="document.getElementById('scanner-guide-banner').style.display='none'" class="text-gray-400 hover:text-gray-600">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
       </div>
       
       <!-- 바코드 스캔 섹션 -->

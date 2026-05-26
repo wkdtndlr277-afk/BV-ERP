@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COMAS 바코드 스캐너 설정 가이드 - 본비반트 ERP</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .barcode-setup {
+            font-family: 'Libre Barcode 128', monospace;
+            font-size: 48px;
+            letter-spacing: 2px;
+        }
+        .step-card {
+            transition: all 0.3s ease;
+        }
+        .step-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        .print-only {
+            display: none;
+        }
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            .print-only {
+                display: block !important;
+            }
+            .page-break {
+                page-break-before: always;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-blue-600 to-blue-800 text-white py-6 no-print">
+        <div class="max-w-6xl mx-auto px-4">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-2xl font-bold flex items-center gap-3">
+                        <i class="fas fa-barcode"></i>
+                        COMAS 바코드 스캐너 설정 가이드
+                    </h1>
+                    <p class="text-blue-200 mt-1">블루투스 & 2.4GHz 무선 바코드 스캐너 ERP 연동 매뉴얼</p>
+                </div>
+                <div class="flex gap-3">
+                    <button onclick="window.print()" class="px-4 py-2 bg-white/20 rounded-lg hover:bg-white/30">
+                        <i class="fas fa-print mr-2"></i>인쇄
+                    </button>
+                    <a href="/" class="px-4 py-2 bg-white text-blue-600 rounded-lg hover:bg-blue-50">
+                        <i class="fas fa-home mr-2"></i>ERP 홈
+                    </a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 py-8">
+        <!-- 목차 -->
+        <div class="bg-white rounded-xl shadow-lg p-6 mb-8 no-print">
+            <h2 class="text-xl font-bold mb-4 flex items-center gap-2">
+                <i class="fas fa-list-ol text-blue-600"></i>
+                목차
+            </h2>
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <a href="#step1" class="p-4 bg-blue-50 rounded-lg hover:bg-blue-100 transition">
+                    <span class="text-2xl font-bold text-blue-600">01</span>
+                    <p class="font-medium mt-1">스캐너 기본 정보</p>
+                </a>
+                <a href="#step2" class="p-4 bg-green-50 rounded-lg hover:bg-green-100 transition">
+                    <span class="text-2xl font-bold text-green-600">02</span>
+                    <p class="font-medium mt-1">PC 연결 (2.4GHz)</p>
+                </a>
+                <a href="#step3" class="p-4 bg-purple-50 rounded-lg hover:bg-purple-100 transition">
+                    <span class="text-2xl font-bold text-purple-600">03</span>
+                    <p class="font-medium mt-1">모바일 연결 (블루투스)</p>
+                </a>
+                <a href="#step4" class="p-4 bg-orange-50 rounded-lg hover:bg-orange-100 transition">
+                    <span class="text-2xl font-bold text-orange-600">04</span>
+                    <p class="font-medium mt-1">ERP 사용 방법</p>
+                </a>
+            </div>
+        </div>
+
+        <!-- Step 1: 기본 정보 -->
+        <section id="step1" class="bg-white rounded-xl shadow-lg p-6 mb-8 step-card">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-16 h-16 bg-blue-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">01</div>
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">스캐너 기본 정보</h2>
+                    <p class="text-gray-500">COMAS 블루투스/2.4GHz 무선 바코드 스캐너 개요</p>
+                </div>
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-6">
+                <div class="border rounded-lg p-5">
+                    <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                        <i class="fas fa-box text-blue-600"></i>
+                        구성품
+                    </h3>
+                    <ul class="space-y-2">
+                        <li class="flex items-center gap-2">
+                            <i class="fas fa-check text-green-500"></i>
+                            바코드 스캐너 본체 1개
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <i class="fas fa-check text-green-500"></i>
+                            2.4GHz 무선 동글 (USB) 1개
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <i class="fas fa-check text-green-500"></i>
+                            USB 충전 케이블 1개
+                        </li>
+                        <li class="flex items-center gap-2">
+                            <i class="fas fa-check text-green-500"></i>
+                            사용자 매뉴얼 1부
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="border rounded-lg p-5">
+                    <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                        <i class="fas fa-cogs text-blue-600"></i>
+                        주요 사양
+                    </h3>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">연결 방식</span>
+                            <span class="font-medium">2.4GHz / 블루투스 4.1 / USB</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">전송 거리 (2.4G)</span>
+                            <span class="font-medium">실외 200m / 실내 50m</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">전송 거리 (BT)</span>
+                            <span class="font-medium">실외 30m</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">저장 용량</span>
+                            <span class="font-medium">50,000개 이상</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">지원 바코드</span>
+                            <span class="font-medium">1D/2D (QR, Code128 등)</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <h4 class="font-bold text-yellow-800 flex items-center gap-2">
+                    <i class="fas fa-lightbulb"></i>
+                    연결 방식 선택 가이드
+                </h4>
+                <div class="mt-3 grid md:grid-cols-3 gap-4 text-sm">
+                    <div class="bg-white p-3 rounded-lg">
+                        <p class="font-bold text-blue-600">2.4GHz (권장)</p>
+                        <p class="text-gray-600 mt-1">PC 전용. 동글 사용. 빠르고 안정적</p>
+                    </div>
+                    <div class="bg-white p-3 rounded-lg">
+                        <p class="font-bold text-purple-600">블루투스 HID</p>
+                        <p class="text-gray-600 mt-1">모바일/태블릿. 키보드처럼 동작</p>
+                    </div>
+                    <div class="bg-white p-3 rounded-lg">
+                        <p class="font-bold text-green-600">USB 유선</p>
+                        <p class="text-gray-600 mt-1">충전 중에도 사용 가능</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Step 2: PC 연결 (2.4GHz) -->
+        <section id="step2" class="bg-white rounded-xl shadow-lg p-6 mb-8 step-card">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-16 h-16 bg-green-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">02</div>
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">PC 연결 설정 (2.4GHz 모드)</h2>
+                    <p class="text-gray-500">Windows PC에서 2.4GHz 동글로 연결하기</p>
+                </div>
+            </div>
+
+            <div class="bg-green-50 border border-green-200 rounded-lg p-4 mb-6">
+                <p class="text-green-800">
+                    <i class="fas fa-info-circle mr-2"></i>
+                    <strong>권장:</strong> PC에서는 2.4GHz 연결이 가장 안정적입니다. 드라이버 설치 없이 플러그앤플레이로 사용 가능합니다.
+                </p>
+            </div>
+
+            <div class="space-y-6">
+                <!-- 설정 바코드 섹션 -->
+                <div class="border-2 border-dashed border-green-300 rounded-xl p-6 bg-green-50/50">
+                    <h3 class="font-bold text-lg mb-4 text-center text-green-800">
+                        <i class="fas fa-qrcode mr-2"></i>
+                        2.4GHz 페어링 설정 바코드
+                    </h3>
+                    <p class="text-center text-gray-600 mb-6">아래 바코드를 순서대로 스캔하세요</p>
+                    
+                    <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="bg-white p-4 rounded-lg text-center border-2 border-green-400">
+                            <div class="text-xs text-gray-500 mb-2">1단계</div>
+                            <div class="bg-gray-100 p-3 rounded mb-2">
+                                <svg class="mx-auto" width="120" height="50">
+                                    <rect x="0" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="6" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="10" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="15" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="19" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="25" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="29" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="34" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="38" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="44" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="48" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="53" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="57" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="63" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="68" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="72" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="78" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="82" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="87" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="91" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="97" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="101" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="106" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="110" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="116" y="0" width="3" height="50" fill="black"/>
+                                </svg>
+                            </div>
+                            <p class="font-bold text-green-700">설정 모드 진입</p>
+                            <p class="text-xs text-gray-500">Enter Setting Mode</p>
+                        </div>
+
+                        <div class="bg-white p-4 rounded-lg text-center border-2 border-green-400">
+                            <div class="text-xs text-gray-500 mb-2">2단계</div>
+                            <div class="bg-gray-100 p-3 rounded mb-2">
+                                <svg class="mx-auto" width="120" height="50">
+                                    <rect x="0" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="5" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="9" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="15" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="19" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="24" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="30" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="34" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="39" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="43" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="49" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="54" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="58" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="64" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="68" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="73" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="79" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="83" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="88" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="92" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="98" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="103" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="107" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="113" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="118" y="0" width="2" height="50" fill="black"/>
+                                </svg>
+                            </div>
+                            <p class="font-bold text-green-700">2.4G 무선 모드</p>
+                            <p class="text-xs text-gray-500">2.4G Wireless Mode</p>
+                        </div>
+
+                        <div class="bg-white p-4 rounded-lg text-center border-2 border-green-400">
+                            <div class="text-xs text-gray-500 mb-2">3단계</div>
+                            <div class="bg-gray-100 p-3 rounded mb-2">
+                                <svg class="mx-auto" width="120" height="50">
+                                    <rect x="0" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="6" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="11" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="15" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="21" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="25" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="30" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="34" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="40" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="45" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="49" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="55" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="59" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="64" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="70" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="74" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="79" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="83" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="89" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="94" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="98" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="104" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="108" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="113" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="119" y="0" width="1" height="50" fill="black"/>
+                                </svg>
+                            </div>
+                            <p class="font-bold text-green-700">동글 페어링</p>
+                            <p class="text-xs text-gray-500">Pair with Dongle</p>
+                        </div>
+
+                        <div class="bg-white p-4 rounded-lg text-center border-2 border-green-400">
+                            <div class="text-xs text-gray-500 mb-2">4단계</div>
+                            <div class="bg-gray-100 p-3 rounded mb-2">
+                                <svg class="mx-auto" width="120" height="50">
+                                    <rect x="0" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="4" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="10" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="15" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="19" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="25" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="29" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="34" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="40" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="44" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="49" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="53" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="59" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="64" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="68" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="74" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="78" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="83" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="89" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="93" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="98" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="102" y="0" width="3" height="50" fill="black"/>
+                                    <rect x="108" y="0" width="2" height="50" fill="black"/>
+                                    <rect x="113" y="0" width="1" height="50" fill="black"/>
+                                    <rect x="117" y="0" width="3" height="50" fill="black"/>
+                                </svg>
+                            </div>
+                            <p class="font-bold text-green-700">설정 모드 종료</p>
+                            <p class="text-xs text-gray-500">Exit Setting Mode</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 상세 절차 -->
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div class="border rounded-lg p-5">
+                        <h4 class="font-bold mb-4 flex items-center gap-2 text-green-700">
+                            <span class="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center text-sm">A</span>
+                            설정 순서
+                        </h4>
+                        <ol class="space-y-3 text-sm">
+                            <li class="flex gap-3">
+                                <span class="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs flex-shrink-0">1</span>
+                                <span>스캐너 전원을 켭니다 (버튼 길게 누름)</span>
+                            </li>
+                            <li class="flex gap-3">
+                                <span class="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs flex-shrink-0">2</span>
+                                <span>"설정 모드 진입" 바코드를 스캔합니다</span>
+                            </li>
+                            <li class="flex gap-3">
+                                <span class="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs flex-shrink-0">3</span>
+                                <span>"2.4G 무선 모드" 바코드를 스캔합니다</span>
+                            </li>
+                            <li class="flex gap-3">
+                                <span class="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs flex-shrink-0">4</span>
+                                <span>"동글 페어링" 바코드를 스캔합니다<br><small class="text-gray-500">(왼쪽 파란 LED가 깜빡임)</small></span>
+                            </li>
+                            <li class="flex gap-3">
+                                <span class="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs flex-shrink-0">5</span>
+                                <span>USB 동글을 PC에 연결합니다<br><small class="text-gray-500">("삐" 소리가 나면 페어링 성공)</small></span>
+                            </li>
+                            <li class="flex gap-3">
+                                <span class="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs flex-shrink-0">6</span>
+                                <span>"설정 모드 종료" 바코드를 스캔합니다</span>
+                            </li>
+                        </ol>
+                    </div>
+
+                    <div class="border rounded-lg p-5">
+                        <h4 class="font-bold mb-4 flex items-center gap-2 text-red-700">
+                            <span class="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center text-sm">!</span>
+                            주의사항
+                        </h4>
+                        <ul class="space-y-3 text-sm">
+                            <li class="flex gap-2">
+                                <i class="fas fa-exclamation-triangle text-yellow-500 mt-1"></i>
+                                <span>페어링 모드에서 1분 내 동글을 연결하지 않으면 자동으로 취소됩니다</span>
+                            </li>
+                            <li class="flex gap-2">
+                                <i class="fas fa-exclamation-triangle text-yellow-500 mt-1"></i>
+                                <span>USB 케이블이 연결된 상태에서는 유선 모드로 동작합니다</span>
+                            </li>
+                            <li class="flex gap-2">
+                                <i class="fas fa-check-circle text-green-500 mt-1"></i>
+                                <span>페어링 성공 시 오른쪽 파란 LED가 계속 켜져 있습니다</span>
+                            </li>
+                            <li class="flex gap-2">
+                                <i class="fas fa-info-circle text-blue-500 mt-1"></i>
+                                <span>한 번 페어링하면 재시작 후에도 자동 연결됩니다</span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Step 3: 모바일 연결 (블루투스) -->
+        <section id="step3" class="bg-white rounded-xl shadow-lg p-6 mb-8 step-card page-break">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-16 h-16 bg-purple-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">03</div>
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">모바일/태블릿 연결 (블루투스 HID 모드)</h2>
+                    <p class="text-gray-500">Android/iOS 기기에서 블루투스로 연결하기</p>
+                </div>
+            </div>
+
+            <div class="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
+                <p class="text-purple-800">
+                    <i class="fas fa-mobile-alt mr-2"></i>
+                    <strong>블루투스 HID 모드:</strong> 스캐너가 블루투스 키보드처럼 동작하여 스캔한 바코드가 텍스트로 입력됩니다.
+                </p>
+            </div>
+
+            <div class="space-y-6">
+                <!-- 방법 1: 간편 연결 -->
+                <div class="border-2 border-purple-300 rounded-xl p-6 bg-purple-50/50">
+                    <h3 class="font-bold text-lg mb-4 text-purple-800">
+                        <i class="fas fa-magic mr-2"></i>
+                        방법 1: 간편 연결 (버튼 방식)
+                    </h3>
+                    <ol class="space-y-3">
+                        <li class="flex gap-3 items-start">
+                            <span class="w-7 h-7 bg-purple-600 text-white rounded-full flex items-center justify-center text-sm flex-shrink-0">1</span>
+                            <div>
+                                <p class="font-medium">스캐너 전원 버튼을 8초간 길게 누릅니다</p>
+                                <p class="text-sm text-gray-500">→ 블루투스 HID 페어링 모드로 진입</p>
+                            </div>
+                        </li>
+                        <li class="flex gap-3 items-start">
+                            <span class="w-7 h-7 bg-purple-600 text-white rounded-full flex items-center justify-center text-sm flex-shrink-0">2</span>
+                            <div>
+                                <p class="font-medium">모바일 기기에서 블루투스 설정을 열고 "Barcode Scanner HID"를 찾습니다</p>
+                            </div>
+                        </li>
+                        <li class="flex gap-3 items-start">
+                            <span class="w-7 h-7 bg-purple-600 text-white rounded-full flex items-center justify-center text-sm flex-shrink-0">3</span>
+                            <div>
+                                <p class="font-medium">"Barcode Scanner HID"를 선택하여 연결합니다</p>
+                                <p class="text-sm text-gray-500">→ "삐" 소리가 나면 연결 성공</p>
+                            </div>
+                        </li>
+                    </ol>
+                </div>
+
+                <!-- 방법 2: 바코드 스캔 연결 -->
+                <div class="border-2 border-dashed border-purple-300 rounded-xl p-6 bg-purple-50/50">
+                    <h3 class="font-bold text-lg mb-4 text-purple-800">
+                        <i class="fas fa-qrcode mr-2"></i>
+                        방법 2: 바코드 스캔 연결
+                    </h3>
+                    
+                    <div class="grid md:grid-cols-3 gap-4 mb-6">
+                        <div class="bg-white p-4 rounded-lg text-center border-2 border-purple-400">
+                            <div class="text-xs text-gray-500 mb-2">1단계</div>
+                            <div class="bg-gray-100 p-3 rounded mb-2 h-16 flex items-center justify-center">
+                                <span class="text-xs text-gray-400">[설정 모드 진입]</span>
+                            </div>
+                            <p class="font-bold text-purple-700 text-sm">Enter Setting Mode</p>
+                        </div>
+                        <div class="bg-white p-4 rounded-lg text-center border-2 border-purple-400">
+                            <div class="text-xs text-gray-500 mb-2">2단계</div>
+                            <div class="bg-gray-100 p-3 rounded mb-2 h-16 flex items-center justify-center">
+                                <span class="text-xs text-gray-400">[블루투스 HID 모드]</span>
+                            </div>
+                            <p class="font-bold text-purple-700 text-sm">Bluetooth HID Mode</p>
+                        </div>
+                        <div class="bg-white p-4 rounded-lg text-center border-2 border-purple-400">
+                            <div class="text-xs text-gray-500 mb-2">3단계</div>
+                            <div class="bg-gray-100 p-3 rounded mb-2 h-16 flex items-center justify-center">
+                                <span class="text-xs text-gray-400">[설정 모드 종료]</span>
+                            </div>
+                            <p class="font-bold text-purple-700 text-sm">Exit Setting Mode</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-lg p-4">
+                        <p class="text-sm text-gray-600">
+                            <i class="fas fa-info-circle text-blue-500 mr-1"></i>
+                            위 바코드 스캔 후 모바일 기기의 블루투스 설정에서 "Barcode Scanner HID"를 검색하여 연결합니다.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- iOS/Android 팁 -->
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div class="border rounded-lg p-5 bg-gray-50">
+                        <h4 class="font-bold mb-3 flex items-center gap-2">
+                            <i class="fab fa-apple text-gray-800 text-xl"></i>
+                            iOS (iPhone/iPad)
+                        </h4>
+                        <ul class="space-y-2 text-sm">
+                            <li class="flex gap-2">
+                                <i class="fas fa-check text-green-500"></i>
+                                설정 → 블루투스 → "Barcode Scanner HID" 연결
+                            </li>
+                            <li class="flex gap-2">
+                                <i class="fas fa-check text-green-500"></i>
+                                연결 후 키보드가 자동으로 숨겨질 수 있음
+                            </li>
+                            <li class="flex gap-2">
+                                <i class="fas fa-info-circle text-blue-500"></i>
+                                ERP 웹에서 입력 필드 터치 후 스캔
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="border rounded-lg p-5 bg-gray-50">
+                        <h4 class="font-bold mb-3 flex items-center gap-2">
+                            <i class="fab fa-android text-green-600 text-xl"></i>
+                            Android
+                        </h4>
+                        <ul class="space-y-2 text-sm">
+                            <li class="flex gap-2">
+                                <i class="fas fa-check text-green-500"></i>
+                                설정 → 연결된 기기 → 새 기기 페어링
+                            </li>
+                            <li class="flex gap-2">
+                                <i class="fas fa-check text-green-500"></i>
+                                Android 3.0 이상 필요
+                            </li>
+                            <li class="flex gap-2">
+                                <i class="fas fa-info-circle text-blue-500"></i>
+                                일부 기기는 "입력 기기"로 표시됨
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Step 4: ERP 사용 방법 -->
+        <section id="step4" class="bg-white rounded-xl shadow-lg p-6 mb-8 step-card">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-16 h-16 bg-orange-600 rounded-full flex items-center justify-center text-white text-2xl font-bold">04</div>
+                <div>
+                    <h2 class="text-2xl font-bold text-gray-800">ERP 바코드 재고관리 사용법</h2>
+                    <p class="text-gray-500">본비반트 ERP에서 바코드 스캐너 활용하기</p>
+                </div>
+            </div>
+
+            <div class="space-y-6">
+                <!-- ERP 접속 방법 -->
+                <div class="border rounded-xl p-6 bg-orange-50">
+                    <h3 class="font-bold text-lg mb-4 flex items-center gap-2 text-orange-800">
+                        <i class="fas fa-globe"></i>
+                        ERP 접속 방법
+                    </h3>
+                    <div class="grid md:grid-cols-2 gap-6">
+                        <div class="bg-white rounded-lg p-4">
+                            <h4 class="font-bold mb-2 flex items-center gap-2">
+                                <i class="fas fa-desktop text-blue-600"></i>
+                                PC 브라우저
+                            </h4>
+                            <p class="text-sm text-gray-600 mb-2">Chrome, Edge, Firefox 등에서 접속</p>
+                            <code class="block bg-gray-100 p-2 rounded text-sm">https://bv-erp.pages.dev</code>
+                        </div>
+                        <div class="bg-white rounded-lg p-4">
+                            <h4 class="font-bold mb-2 flex items-center gap-2">
+                                <i class="fas fa-mobile-alt text-green-600"></i>
+                                모바일 전용 페이지
+                            </h4>
+                            <p class="text-sm text-gray-600 mb-2">바코드 스캔에 최적화된 모바일 UI</p>
+                            <code class="block bg-gray-100 p-2 rounded text-sm">https://bv-erp.pages.dev/barcode.html</code>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 사용 절차 -->
+                <div class="border rounded-xl p-6">
+                    <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                        <i class="fas fa-tasks text-orange-600"></i>
+                        바코드 스캔 사용 절차
+                    </h3>
+                    
+                    <div class="grid md:grid-cols-4 gap-4">
+                        <div class="text-center p-4 bg-gray-50 rounded-lg">
+                            <div class="w-12 h-12 bg-orange-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-xl font-bold">1</div>
+                            <p class="font-medium">ERP 로그인</p>
+                            <p class="text-xs text-gray-500 mt-1">ID/PW 입력 후 로그인</p>
+                        </div>
+                        <div class="text-center p-4 bg-gray-50 rounded-lg">
+                            <div class="w-12 h-12 bg-orange-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-xl font-bold">2</div>
+                            <p class="font-medium">바코드 재고관리</p>
+                            <p class="text-xs text-gray-500 mt-1">메뉴에서 선택</p>
+                        </div>
+                        <div class="text-center p-4 bg-gray-50 rounded-lg">
+                            <div class="w-12 h-12 bg-orange-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-xl font-bold">3</div>
+                            <p class="font-medium">입력창 포커스</p>
+                            <p class="text-xs text-gray-500 mt-1">바코드 입력란 클릭</p>
+                        </div>
+                        <div class="text-center p-4 bg-gray-50 rounded-lg">
+                            <div class="w-12 h-12 bg-orange-600 text-white rounded-full flex items-center justify-center mx-auto mb-3 text-xl font-bold">4</div>
+                            <p class="font-medium">바코드 스캔</p>
+                            <p class="text-xs text-gray-500 mt-1">스캐너로 바코드 스캔</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 주요 기능 -->
+                <div class="grid md:grid-cols-3 gap-6">
+                    <div class="border rounded-lg p-5 hover:shadow-lg transition">
+                        <div class="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center mb-4">
+                            <i class="fas fa-minus-circle text-red-600 text-xl"></i>
+                        </div>
+                        <h4 class="font-bold mb-2">사용 등록</h4>
+                        <p class="text-sm text-gray-600">바코드 스캔 후 사용량을 입력하여 재고 차감</p>
+                        <ul class="mt-3 text-xs text-gray-500 space-y-1">
+                            <li>• LOT 자동 선택 (FIFO)</li>
+                            <li>• 수량 조절 버튼</li>
+                            <li>• 메모 입력 가능</li>
+                        </ul>
+                    </div>
+                    <div class="border rounded-lg p-5 hover:shadow-lg transition">
+                        <div class="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mb-4">
+                            <i class="fas fa-plus-circle text-green-600 text-xl"></i>
+                        </div>
+                        <h4 class="font-bold mb-2">입고 등록</h4>
+                        <p class="text-sm text-gray-600">바코드 스캔 후 입고 수량 및 유통기한 입력</p>
+                        <ul class="mt-3 text-xs text-gray-500 space-y-1">
+                            <li>• LOT 자동 생성</li>
+                            <li>• 유통기한 설정</li>
+                            <li>• 입고 메모 입력</li>
+                        </ul>
+                    </div>
+                    <div class="border rounded-lg p-5 hover:shadow-lg transition">
+                        <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
+                            <i class="fas fa-history text-blue-600 text-xl"></i>
+                        </div>
+                        <h4 class="font-bold mb-2">이력 조회</h4>
+                        <p class="text-sm text-gray-600">품목별 입출고 이력 및 LOT 현황 조회</p>
+                        <ul class="mt-3 text-xs text-gray-500 space-y-1">
+                            <li>• 입출고 내역</li>
+                            <li>• LOT별 잔량</li>
+                            <li>• 유통기한 확인</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- 팁 -->
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-5">
+                    <h4 class="font-bold text-blue-800 flex items-center gap-2 mb-3">
+                        <i class="fas fa-lightbulb"></i>
+                        활용 팁
+                    </h4>
+                    <div class="grid md:grid-cols-2 gap-4 text-sm">
+                        <div class="flex gap-2">
+                            <i class="fas fa-check-circle text-blue-600 mt-0.5"></i>
+                            <span>스캔 후 자동으로 Enter가 입력되어 바로 조회됩니다</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <i class="fas fa-check-circle text-blue-600 mt-0.5"></i>
+                            <span>품목코드(RM001)나 바코드 모두 인식됩니다</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <i class="fas fa-check-circle text-blue-600 mt-0.5"></i>
+                            <span>연속 스캔 시 자동으로 다음 품목이 조회됩니다</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <i class="fas fa-check-circle text-blue-600 mt-0.5"></i>
+                            <span>모바일에서는 카메라 스캔도 함께 사용 가능합니다</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 추가 설정 (접이식) -->
+        <section class="bg-white rounded-xl shadow-lg p-6 mb-8">
+            <details class="group">
+                <summary class="flex items-center justify-between cursor-pointer">
+                    <div class="flex items-center gap-4">
+                        <div class="w-12 h-12 bg-gray-600 rounded-full flex items-center justify-center text-white text-xl">
+                            <i class="fas fa-cog"></i>
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-bold text-gray-800">추가 설정 옵션</h2>
+                            <p class="text-gray-500 text-sm">소리, 진동, 절전 모드 등 상세 설정</p>
+                        </div>
+                    </div>
+                    <i class="fas fa-chevron-down text-gray-400 group-open:rotate-180 transition-transform"></i>
+                </summary>
+                
+                <div class="mt-6 space-y-6">
+                    <!-- 소리/진동 설정 -->
+                    <div class="border rounded-lg p-5">
+                        <h4 class="font-bold mb-4 flex items-center gap-2">
+                            <i class="fas fa-volume-up text-blue-600"></i>
+                            소리/진동 설정
+                        </h4>
+                        <div class="grid md:grid-cols-2 gap-4 text-sm">
+                            <div class="p-3 bg-gray-50 rounded">
+                                <p class="font-medium">소리 켜기/끄기</p>
+                                <p class="text-gray-500 text-xs">Switch on/off the Sound 바코드 스캔</p>
+                            </div>
+                            <div class="p-3 bg-gray-50 rounded">
+                                <p class="font-medium">진동 켜기/끄기</p>
+                                <p class="text-gray-500 text-xs">Switch on/off the Vibration 바코드 스캔</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 절전 모드 설정 -->
+                    <div class="border rounded-lg p-5">
+                        <h4 class="font-bold mb-4 flex items-center gap-2">
+                            <i class="fas fa-battery-half text-green-600"></i>
+                            절전 모드 설정
+                        </h4>
+                        <div class="grid md:grid-cols-4 gap-3 text-sm">
+                            <div class="p-2 bg-gray-50 rounded text-center">30초</div>
+                            <div class="p-2 bg-gray-50 rounded text-center">1분</div>
+                            <div class="p-2 bg-gray-50 rounded text-center">5분</div>
+                            <div class="p-2 bg-gray-50 rounded text-center">10분</div>
+                            <div class="p-2 bg-gray-50 rounded text-center">30분</div>
+                            <div class="p-2 bg-blue-100 rounded text-center font-medium">절전 안함</div>
+                            <div class="p-2 bg-gray-50 rounded text-center col-span-2">즉시 절전</div>
+                        </div>
+                    </div>
+
+                    <!-- 공장 초기화 -->
+                    <div class="border border-red-200 rounded-lg p-5 bg-red-50">
+                        <h4 class="font-bold mb-4 flex items-center gap-2 text-red-700">
+                            <i class="fas fa-undo"></i>
+                            공장 초기화
+                        </h4>
+                        <p class="text-sm text-gray-600 mb-3">
+                            설정이 꼬였거나 문제가 발생한 경우 공장 초기화를 수행하세요.
+                        </p>
+                        <ol class="text-sm space-y-2">
+                            <li>1. "설정 모드 진입" 바코드 스캔</li>
+                            <li>2. "Restore Factory Defaults" 바코드 스캔</li>
+                            <li>3. "설정 모드 종료" 바코드 스캔</li>
+                        </ol>
+                    </div>
+                </div>
+            </details>
+        </section>
+
+        <!-- FAQ -->
+        <section class="bg-white rounded-xl shadow-lg p-6 mb-8">
+            <h2 class="text-xl font-bold mb-6 flex items-center gap-2">
+                <i class="fas fa-question-circle text-blue-600"></i>
+                자주 묻는 질문 (FAQ)
+            </h2>
+            
+            <div class="space-y-4">
+                <details class="border rounded-lg">
+                    <summary class="p-4 cursor-pointer font-medium hover:bg-gray-50">
+                        스캐너가 연결되었는데 ERP에 입력이 안 됩니다
+                    </summary>
+                    <div class="p-4 pt-0 text-sm text-gray-600">
+                        <ul class="space-y-2">
+                            <li>• 바코드 입력창에 커서가 있는지 확인하세요 (클릭하여 포커스)</li>
+                            <li>• 스캐너가 "저장 모드"가 아닌 "일반 모드"인지 확인하세요</li>
+                            <li>• USB 케이블이 연결된 상태라면 분리 후 무선으로 테스트하세요</li>
+                        </ul>
+                    </div>
+                </details>
+                
+                <details class="border rounded-lg">
+                    <summary class="p-4 cursor-pointer font-medium hover:bg-gray-50">
+                        블루투스 연결이 자주 끊깁니다
+                    </summary>
+                    <div class="p-4 pt-0 text-sm text-gray-600">
+                        <ul class="space-y-2">
+                            <li>• 스캐너와 기기 사이 거리가 30m 이내인지 확인하세요</li>
+                            <li>• 절전 모드 시간을 "절전 안함"으로 설정하세요</li>
+                            <li>• 다른 블루투스 기기와의 간섭이 있을 수 있습니다</li>
+                            <li>• PC에서는 2.4GHz 동글 연결을 권장합니다</li>
+                        </ul>
+                    </div>
+                </details>
+                
+                <details class="border rounded-lg">
+                    <summary class="p-4 cursor-pointer font-medium hover:bg-gray-50">
+                        스캔 후 엔터(Enter)가 입력되지 않습니다
+                    </summary>
+                    <div class="p-4 pt-0 text-sm text-gray-600">
+                        <ul class="space-y-2">
+                            <li>• "설정 모드 진입" → "Add CR" 바코드 스캔 → "설정 모드 종료"</li>
+                            <li>• CR = Carriage Return = Enter 키</li>
+                            <li>• 기본값은 CR+LF가 추가되어 있습니다</li>
+                        </ul>
+                    </div>
+                </details>
+                
+                <details class="border rounded-lg">
+                    <summary class="p-4 cursor-pointer font-medium hover:bg-gray-50">
+                        이전에 페어링한 기기에서 재연결이 안 됩니다
+                    </summary>
+                    <div class="p-4 pt-0 text-sm text-gray-600">
+                        <ul class="space-y-2">
+                            <li>• 기기의 블루투스 설정에서 "Barcode Scanner HID"를 먼저 삭제(해제)하세요</li>
+                            <li>• 스캐너를 재시작하고 다시 페어링 과정을 진행하세요</li>
+                            <li>• 다른 기기와 먼저 페어링된 경우 해당 기기에서도 삭제 필요</li>
+                        </ul>
+                    </div>
+                </details>
+            </div>
+        </section>
+
+        <!-- 문의처 -->
+        <section class="bg-gradient-to-r from-blue-600 to-blue-800 text-white rounded-xl shadow-lg p-6 no-print">
+            <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+                <div>
+                    <h3 class="text-xl font-bold mb-1">추가 지원이 필요하신가요?</h3>
+                    <p class="text-blue-200">바코드 스캐너 설정 관련 문의</p>
+                </div>
+                <div class="flex gap-3">
+                    <a href="/" class="px-6 py-3 bg-white text-blue-600 rounded-lg font-medium hover:bg-blue-50">
+                        <i class="fas fa-home mr-2"></i>ERP 홈으로
+                    </a>
+                    <a href="/#barcode-inventory" class="px-6 py-3 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-400">
+                        <i class="fas fa-barcode mr-2"></i>바코드 재고관리
+                    </a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-gray-400 py-6 mt-8 no-print">
+        <div class="max-w-6xl mx-auto px-4 text-center text-sm">
+            <p>© 2024 (주)본비반트 통합관리시스템. All rights reserved.</p>
+            <p class="mt-1">바코드 스캐너 설정 가이드 v1.0</p>
+        </div>
+    </footer>
+</body>
+</html>

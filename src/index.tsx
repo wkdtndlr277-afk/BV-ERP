@@ -576,6 +576,12 @@ app.get('/*', (c) => {
                     <span>바코드 재고관리</span>
                 </a>
                 
+                <a href="/scanner-setup.html" target="_blank" class="flex items-center gap-3 px-4 py-2 rounded-lg text-gray-500 text-sm hover:bg-blue-50 hover:text-blue-600">
+                    <i class="fas fa-book w-5"></i>
+                    <span>스캐너 설정 가이드</span>
+                    <i class="fas fa-external-link-alt text-xs ml-auto"></i>
+                </a>
+                
                 <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">입출고 관리</p>
                 </div>

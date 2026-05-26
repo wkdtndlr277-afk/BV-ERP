@@ -38394,6 +38394,7 @@ window.exportAuditLogs = exportAuditLogs;
 let taskCalendarDate = new Date();
 let taskDepartments = [];
 let taskCalendarData = [];
+let taskSelectedDate = new Date().toISOString().split('T')[0];
 
 async function renderTaskCalendar() {
   const content = document.getElementById('page-content');
@@ -38417,17 +38418,29 @@ async function renderTaskCalendar() {
           업무 캘린더
         </h2>
         <div class="flex items-center gap-4">
-          <div class="flex items-center gap-3 text-sm">
-            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-red-400"></span>업무지시</span>
-            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-400"></span>공지</span>
-          </div>
+          <!-- 부서별 색상 범례 -->
+          <div id="task-dept-legend" class="flex items-center gap-2 text-xs"></div>
           <button onclick="showTaskCreateModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm">
             <i class="fas fa-plus mr-1"></i>새 등록
           </button>
         </div>
       </div>
       
-      <!-- 부서별 현황 요약 -->
+      <!-- 당일 업무현황 대시보드 -->
+      <div id="task-daily-dashboard" class="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl shadow p-6 text-white">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h3 class="text-lg font-bold">오늘의 업무 현황</h3>
+            <p id="task-today-date" class="text-indigo-200 text-sm"></p>
+          </div>
+          <button onclick="showDailyReportModal()" class="px-4 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-50 text-sm font-medium">
+            <i class="fas fa-file-alt mr-1"></i>일일보고 작성
+          </button>
+        </div>
+        <div id="task-daily-summary" class="grid grid-cols-4 gap-4"></div>
+      </div>
+      
+      <!-- 부서별 현황 요약 (클릭하면 일일보고로 이동) -->
       <div id="task-dept-summary" class="grid grid-cols-3 gap-4"></div>
       
       <!-- 캘린더 네비게이션 -->
@@ -38455,17 +38468,74 @@ async function renderTaskCalendar() {
       
       <!-- 업무 목록 -->
       <div class="bg-white rounded-xl shadow overflow-hidden">
-        <div class="bg-gradient-to-r from-orange-500 to-red-500 text-white px-6 py-3">
+        <div class="bg-gradient-to-r from-orange-500 to-red-500 text-white px-6 py-3 flex items-center justify-between">
           <span class="font-semibold"><i class="fas fa-list-check mr-2"></i>업무지시/공지 목록</span>
+          <div class="flex items-center gap-2 text-sm">
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-white/30"></span>공지</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-white/70"></span>업무지시</span>
+          </div>
         </div>
         <div id="task-list" class="divide-y max-h-[400px] overflow-y-auto"></div>
       </div>
     </div>
   `;
   
+  taskRenderDeptLegend();
   taskRenderCalendar();
   taskLoadDeptSummary();
   taskLoadList();
+  taskLoadDailyDashboard();
+}
+
+// 부서별 색상 범례 렌더링
+function taskRenderDeptLegend() {
+  const container = document.getElementById('task-dept-legend');
+  if (!container || taskDepartments.length === 0) return;
+  
+  container.innerHTML = taskDepartments.map(d => `
+    <span class="flex items-center gap-1">
+      <span class="w-3 h-3 rounded" style="background-color: ${d.color}"></span>
+      ${d.name}
+    </span>
+  `).join('');
+}
+
+// 당일 업무현황 대시보드 로드
+async function taskLoadDailyDashboard() {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('task-today-date').textContent = today.replace(/-/g, '.');
+  
+  try {
+    const res = await axios.get('/api/task/daily-dashboard?date=' + today);
+    if (!res.data.success) return;
+    
+    const data = res.data.data;
+    const totalTasks = data.tasks.length;
+    const completedTasks = data.tasks.filter(t => t.completed_count === t.total_count).length;
+    const totalReports = data.reports.length;
+    const totalDepts = data.departments.length;
+    
+    document.getElementById('task-daily-summary').innerHTML = `
+      <div class="bg-white/20 rounded-lg p-4 text-center">
+        <div class="text-3xl font-bold">${totalTasks}</div>
+        <div class="text-sm text-indigo-200">오늘 업무지시</div>
+      </div>
+      <div class="bg-white/20 rounded-lg p-4 text-center">
+        <div class="text-3xl font-bold">${completedTasks}</div>
+        <div class="text-sm text-indigo-200">완료</div>
+      </div>
+      <div class="bg-white/20 rounded-lg p-4 text-center">
+        <div class="text-3xl font-bold">${totalReports}/${totalDepts}</div>
+        <div class="text-sm text-indigo-200">일일보고 제출</div>
+      </div>
+      <div class="bg-white/20 rounded-lg p-4 text-center">
+        <div class="text-3xl font-bold">${totalTasks > 0 ? Math.round(completedTasks/totalTasks*100) : 0}%</div>
+        <div class="text-sm text-indigo-200">완료율</div>
+      </div>
+    `;
+  } catch (e) {
+    console.error('일일현황 로드 오류:', e);
+  }
 }
 
 function taskGetMonthString(date) {
@@ -38510,19 +38580,48 @@ async function taskRenderCalendar() {
     const dayOfWeek = (firstDay + day - 1) % 7;
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
     
+    // 부서별 색상 바 생성
+    const deptColors = [...new Set(dayTasks.flatMap(t => {
+      if (t.target_departments) {
+        try {
+          const depts = JSON.parse(t.target_departments);
+          return depts.map(dId => {
+            const dept = taskDepartments.find(d => d.id == dId);
+            return dept ? dept.color : null;
+          }).filter(Boolean);
+        } catch { return []; }
+      }
+      return [];
+    }))];
+    
     html += `
       <div class="min-h-[90px] p-2 border-b border-r cursor-pointer hover:bg-gray-50 ${isToday ? 'bg-indigo-50' : ''}" onclick="taskShowDayTasks('${dateStr}')">
         <div class="flex items-center justify-between mb-1">
           <span class="${isToday ? 'bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm' : ''} ${isWeekend ? (dayOfWeek === 0 ? 'text-red-500' : 'text-blue-500') : 'text-gray-700'} font-medium">${day}</span>
-          ${dayTasks.length > 0 ? '<span class="text-xs text-gray-400">' + dayTasks.length + '</span>' : ''}
+          <div class="flex gap-0.5">
+            ${deptColors.slice(0, 3).map(c => `<span class="w-2 h-2 rounded-full" style="background:${c}"></span>`).join('')}
+          </div>
         </div>
         <div class="space-y-1">
-          ${dayTasks.slice(0, 2).map(t => `
-            <div class="text-xs p-1 rounded truncate flex items-center gap-1 ${t.type === 'notice' ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}">
-              ${t.completed_count === t.total_count ? '<i class="fas fa-check-circle text-green-500"></i>' : '<i class="fas fa-clock"></i>'}
-              <span class="truncate">${t.title}</span>
-            </div>
-          `).join('')}
+          ${dayTasks.slice(0, 2).map(t => {
+            // 첫 번째 대상 부서의 색상 사용
+            let borderColor = t.type === 'notice' ? '#3B82F6' : '#EF4444';
+            if (t.target_departments) {
+              try {
+                const depts = JSON.parse(t.target_departments);
+                if (depts.length > 0) {
+                  const dept = taskDepartments.find(d => d.id == depts[0]);
+                  if (dept) borderColor = dept.color;
+                }
+              } catch {}
+            }
+            return `
+              <div class="text-xs p-1 rounded truncate flex items-center gap-1 bg-gray-50" style="border-left: 3px solid ${borderColor}">
+                ${t.completed_count === t.total_count ? '<i class="fas fa-check-circle text-green-500"></i>' : '<i class="fas fa-clock text-gray-400"></i>'}
+                <span class="truncate text-gray-700">${t.title}</span>
+              </div>
+            `;
+          }).join('')}
           ${dayTasks.length > 2 ? '<div class="text-xs text-gray-400 text-center">+' + (dayTasks.length - 2) + '개</div>' : ''}
         </div>
       </div>
@@ -38544,10 +38643,16 @@ async function taskLoadDeptSummary() {
     if (!res.data.success) return;
     
     document.getElementById('task-dept-summary').innerHTML = res.data.data.map(d => `
-      <div class="bg-white rounded-xl shadow p-4 border-l-4" style="border-left-color: ${d.color}">
+      <div class="bg-white rounded-xl shadow p-4 border-l-4 hover:shadow-lg transition-shadow" style="border-left-color: ${d.color}">
         <div class="flex items-center justify-between mb-3">
-          <span class="font-bold text-gray-800">${d.name}</span>
-          <span class="text-sm text-gray-500">총 ${d.total_tasks || 0}건</span>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full" style="background-color: ${d.color}"></span>
+            <span class="font-bold text-gray-800">${d.name}</span>
+          </div>
+          <button onclick="showDeptDailyReportModal(${d.id}, '${d.name}', '${d.color}')" 
+            class="text-xs px-2 py-1 rounded text-white hover:opacity-80" style="background-color: ${d.color}">
+            <i class="fas fa-file-alt mr-1"></i>일일보고
+          </button>
         </div>
         <div class="grid grid-cols-3 gap-2 text-center text-sm">
           <div class="bg-gray-100 rounded p-2">
@@ -39211,3 +39316,310 @@ window.deleteTask = deleteTask;
 window.taskBoardChangeMonth = taskBoardChangeMonth;
 window.showTaskBoardTab = showTaskBoardTab;
 window.printTaskBoard = printTaskBoard;
+window.showDailyReportModal = showDailyReportModal;
+window.showDeptDailyReportModal = showDeptDailyReportModal;
+window.addDailyReportItem = addDailyReportItem;
+window.removeDailyReportItem = removeDailyReportItem;
+window.submitDailyReport = submitDailyReport;
+window.viewDailyReports = viewDailyReports;
+
+// ========================================
+// 일일업무 보고 기능
+// ========================================
+let dailyReportItems = [];
+let dailyReportDeptId = null;
+let dailyReportDate = new Date().toISOString().split('T')[0];
+let dailyReportTasks = [];
+
+// 일일보고 작성 모달 (전체)
+async function showDailyReportModal() {
+  dailyReportDate = new Date().toISOString().split('T')[0];
+  
+  // 부서 선택 모달
+  showModal('일일업무 보고', `
+    <div class="space-y-4 p-4">
+      <p class="text-gray-600">보고할 부서를 선택해주세요.</p>
+      <div class="grid grid-cols-1 gap-3">
+        ${taskDepartments.map(d => `
+          <button onclick="showDeptDailyReportModal(${d.id}, '${d.name}', '${d.color}')" 
+            class="p-4 rounded-xl border-2 hover:border-gray-400 text-left flex items-center gap-3 transition-all">
+            <span class="w-4 h-4 rounded-full" style="background-color: ${d.color}"></span>
+            <span class="font-medium">${d.name}</span>
+            <i class="fas fa-chevron-right ml-auto text-gray-400"></i>
+          </button>
+        `).join('')}
+      </div>
+      <div class="pt-4 border-t">
+        <button onclick="viewDailyReports()" class="w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+          <i class="fas fa-list mr-2"></i>오늘 일일보고 현황 보기
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+// 부서별 일일보고 작성 모달
+async function showDeptDailyReportModal(deptId, deptName, deptColor) {
+  dailyReportDeptId = deptId;
+  dailyReportItems = [];
+  dailyReportTasks = [];
+  
+  showModal(deptName + ' 일일업무 보고', `
+    <div class="p-4 text-center">
+      <i class="fas fa-spinner fa-spin text-2xl text-indigo-500"></i>
+      <p class="mt-2 text-gray-500">데이터 로딩 중...</p>
+    </div>
+  `);
+  
+  try {
+    // 해당 부서의 오늘 업무지시 및 기존 보고서 로드
+    const res = await axios.get('/api/task/daily-reports/dept/' + deptId + '/date/' + dailyReportDate);
+    if (!res.data.success) throw new Error('데이터 로드 실패');
+    
+    const data = res.data.data;
+    dailyReportTasks = data.tasks || [];
+    
+    // 기존 보고서가 있으면 항목 로드
+    if (data.report && data.items) {
+      dailyReportItems = data.items.map((item, idx) => ({
+        id: idx + 1,
+        task_id: item.task_id,
+        work_type: item.work_type,
+        title: item.title,
+        content: item.content,
+        status: item.status,
+        work_hours: item.work_hours
+      }));
+    }
+    
+    renderDailyReportModal(deptName, deptColor, data.report);
+  } catch (e) {
+    showToast('데이터 로드 실패', 'error');
+    closeModal();
+  }
+}
+
+function renderDailyReportModal(deptName, deptColor, existingReport) {
+  const reporterName = existingReport?.reporter_name || '';
+  const summary = existingReport?.summary || '';
+  
+  showModal(deptName + ' 일일업무 보고', `
+    <div class="space-y-4 max-h-[70vh] overflow-y-auto p-1">
+      <!-- 헤더 -->
+      <div class="flex items-center gap-3 p-3 rounded-lg" style="background-color: ${deptColor}20; border-left: 4px solid ${deptColor}">
+        <span class="w-4 h-4 rounded-full" style="background-color: ${deptColor}"></span>
+        <span class="font-bold">${deptName}</span>
+        <span class="ml-auto text-sm text-gray-500">${dailyReportDate}</span>
+      </div>
+      
+      <!-- 보고자 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">보고자</label>
+        <input type="text" id="daily-reporter" value="${reporterName}" placeholder="이름 입력" 
+          class="w-full border rounded-lg px-3 py-2">
+      </div>
+      
+      <!-- 오늘의 업무지시 현황 -->
+      ${dailyReportTasks.length > 0 ? `
+        <div class="bg-orange-50 rounded-lg p-3">
+          <h4 class="font-medium text-orange-700 mb-2"><i class="fas fa-tasks mr-1"></i>오늘 업무지시 (${dailyReportTasks.length}건)</h4>
+          <div class="space-y-2">
+            ${dailyReportTasks.map(t => `
+              <div class="flex items-center justify-between bg-white rounded p-2 text-sm">
+                <span class="truncate flex-1">${t.title}</span>
+                <span class="px-2 py-0.5 rounded text-xs ${t.check_status === '완료' ? 'bg-green-100 text-green-700' : t.check_status === '진행중' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-700'}">
+                  ${t.check_status || '대기'}
+                </span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+      
+      <!-- 업무 항목 -->
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <label class="block text-sm font-medium text-gray-700">업무 내역</label>
+          <button onclick="addDailyReportItem()" class="text-sm text-indigo-600 hover:text-indigo-800">
+            <i class="fas fa-plus mr-1"></i>항목 추가
+          </button>
+        </div>
+        <div id="daily-report-items" class="space-y-3">
+          ${dailyReportItems.length > 0 ? dailyReportItems.map(item => renderDailyReportItemHtml(item)).join('') : `
+            <div class="text-center text-gray-400 py-4 border-2 border-dashed rounded-lg">
+              아직 등록된 업무가 없습니다.<br>
+              <button onclick="addDailyReportItem()" class="mt-2 text-indigo-600 hover:underline">+ 업무 추가하기</button>
+            </div>
+          `}
+        </div>
+      </div>
+      
+      <!-- 종합 의견 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">종합 의견/특이사항</label>
+        <textarea id="daily-summary" rows="3" placeholder="오늘 업무에 대한 종합 의견이나 특이사항을 기록하세요"
+          class="w-full border rounded-lg px-3 py-2">${summary}</textarea>
+      </div>
+      
+      <!-- 버튼 -->
+      <div class="flex justify-end gap-2 pt-4 border-t sticky bottom-0 bg-white">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button onclick="submitDailyReport()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+          <i class="fas fa-save mr-1"></i>저장
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+function renderDailyReportItemHtml(item) {
+  return `
+    <div class="border rounded-lg p-3 bg-gray-50" data-item-id="${item.id}">
+      <div class="flex items-start justify-between gap-2 mb-2">
+        <select onchange="updateDailyReportItem(${item.id}, 'work_type', this.value)" class="text-sm border rounded px-2 py-1">
+          <option value="general" ${item.work_type === 'general' ? 'selected' : ''}>일반업무</option>
+          <option value="task" ${item.work_type === 'task' ? 'selected' : ''}>업무지시</option>
+          <option value="meeting" ${item.work_type === 'meeting' ? 'selected' : ''}>회의</option>
+          <option value="other" ${item.work_type === 'other' ? 'selected' : ''}>기타</option>
+        </select>
+        <select onchange="updateDailyReportItem(${item.id}, 'status', this.value)" class="text-sm border rounded px-2 py-1">
+          <option value="완료" ${item.status === '완료' ? 'selected' : ''}>완료</option>
+          <option value="진행중" ${item.status === '진행중' ? 'selected' : ''}>진행중</option>
+          <option value="보류" ${item.status === '보류' ? 'selected' : ''}>보류</option>
+        </select>
+        <button onclick="removeDailyReportItem(${item.id})" class="text-red-500 hover:text-red-700">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <input type="text" value="${item.title || ''}" placeholder="업무 제목" 
+        onchange="updateDailyReportItem(${item.id}, 'title', this.value)"
+        class="w-full border rounded px-2 py-1 text-sm mb-2">
+      <textarea placeholder="상세 내용 (선택사항)" rows="2"
+        onchange="updateDailyReportItem(${item.id}, 'content', this.value)"
+        class="w-full border rounded px-2 py-1 text-sm">${item.content || ''}</textarea>
+    </div>
+  `;
+}
+
+let dailyReportItemId = 100;
+function addDailyReportItem() {
+  dailyReportItemId++;
+  const newItem = { id: dailyReportItemId, work_type: 'general', title: '', content: '', status: '완료', work_hours: 0 };
+  dailyReportItems.push(newItem);
+  
+  const container = document.getElementById('daily-report-items');
+  // 빈 상태 메시지 제거
+  const emptyMsg = container.querySelector('.text-center');
+  if (emptyMsg) emptyMsg.remove();
+  
+  container.insertAdjacentHTML('beforeend', renderDailyReportItemHtml(newItem));
+}
+
+function removeDailyReportItem(itemId) {
+  dailyReportItems = dailyReportItems.filter(i => i.id !== itemId);
+  const el = document.querySelector('[data-item-id="' + itemId + '"]');
+  if (el) el.remove();
+  
+  // 항목이 없으면 빈 상태 표시
+  if (dailyReportItems.length === 0) {
+    document.getElementById('daily-report-items').innerHTML = `
+      <div class="text-center text-gray-400 py-4 border-2 border-dashed rounded-lg">
+        아직 등록된 업무가 없습니다.<br>
+        <button onclick="addDailyReportItem()" class="mt-2 text-indigo-600 hover:underline">+ 업무 추가하기</button>
+      </div>
+    `;
+  }
+}
+
+function updateDailyReportItem(itemId, field, value) {
+  const item = dailyReportItems.find(i => i.id === itemId);
+  if (item) item[field] = value;
+}
+window.updateDailyReportItem = updateDailyReportItem;
+
+async function submitDailyReport() {
+  const reporter = document.getElementById('daily-reporter').value.trim();
+  const summary = document.getElementById('daily-summary').value.trim();
+  
+  // 빈 제목 항목 필터링
+  const validItems = dailyReportItems.filter(i => i.title && i.title.trim());
+  
+  try {
+    const res = await axios.post('/api/task/daily-reports', {
+      department_id: dailyReportDeptId,
+      report_date: dailyReportDate,
+      reporter_name: reporter,
+      summary: summary,
+      items: validItems.map(i => ({
+        task_id: i.task_id || null,
+        work_type: i.work_type,
+        title: i.title,
+        content: i.content,
+        status: i.status,
+        work_hours: i.work_hours || 0
+      }))
+    });
+    
+    if (res.data.success) {
+      showToast('일일업무 보고가 저장되었습니다', 'success');
+      closeModal();
+      taskLoadDailyDashboard();
+    } else {
+      throw new Error(res.data.error);
+    }
+  } catch (e) {
+    showToast('저장 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+
+// 오늘 일일보고 현황 보기
+async function viewDailyReports() {
+  const today = new Date().toISOString().split('T')[0];
+  
+  try {
+    const res = await axios.get('/api/task/daily-dashboard?date=' + today);
+    if (!res.data.success) throw new Error('로드 실패');
+    
+    const data = res.data.data;
+    
+    showModal('오늘 일일보고 현황 (' + today + ')', `
+      <div class="space-y-4 max-h-[60vh] overflow-y-auto p-1">
+        ${data.departments.map(d => {
+          const report = data.reports.find(r => r.department_id === d.id);
+          return `
+            <div class="border rounded-lg overflow-hidden">
+              <div class="p-3 flex items-center justify-between" style="background-color: ${d.color}20; border-left: 4px solid ${d.color}">
+                <div class="flex items-center gap-2">
+                  <span class="w-3 h-3 rounded-full" style="background-color: ${d.color}"></span>
+                  <span class="font-medium">${d.name}</span>
+                </div>
+                ${report ? `
+                  <span class="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">
+                    <i class="fas fa-check mr-1"></i>제출완료
+                  </span>
+                ` : `
+                  <span class="px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">미제출</span>
+                `}
+              </div>
+              ${report ? `
+                <div class="p-3 text-sm">
+                  <div class="text-gray-500">보고자: ${report.reporter_name || '-'}</div>
+                  <div class="text-gray-500">업무항목: ${report.item_count || 0}건</div>
+                </div>
+              ` : `
+                <div class="p-3 text-center">
+                  <button onclick="showDeptDailyReportModal(${d.id}, '${d.name}', '${d.color}')" 
+                    class="text-sm text-indigo-600 hover:underline">
+                    <i class="fas fa-edit mr-1"></i>보고서 작성하기
+                  </button>
+                </div>
+              `}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `);
+  } catch (e) {
+    showToast('로드 실패', 'error');
+  }
+}

@@ -584,7 +584,270 @@ app.post('/migrate', async (c) => {
       } catch {}
     }
     
+    // 일일업무 보고 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS daily_work_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        department_id INTEGER NOT NULL,
+        report_date DATE NOT NULL,
+        reporter_name TEXT,
+        summary TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(department_id, report_date),
+        FOREIGN KEY (department_id) REFERENCES task_departments(id)
+      )
+    `).run();
+    
+    // 일일업무 보고 상세 항목
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS daily_work_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_id INTEGER NOT NULL,
+        task_id INTEGER,
+        work_type TEXT DEFAULT 'general',
+        title TEXT NOT NULL,
+        content TEXT,
+        status TEXT DEFAULT '완료',
+        work_hours REAL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (report_id) REFERENCES daily_work_reports(id) ON DELETE CASCADE,
+        FOREIGN KEY (task_id) REFERENCES tasks(id)
+      )
+    `).run();
+    
     return c.json({ success: true, message: '업무관리 테이블 마이그레이션 완료' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 일일업무 보고 API =====
+
+// 일일업무 보고 목록 조회
+app.get('/daily-reports', async (c) => {
+  const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+  const department_id = c.req.query('department_id');
+  
+  try {
+    let query = `
+      SELECT r.*, d.name as department_name, d.color as department_color,
+        (SELECT COUNT(*) FROM daily_work_items WHERE report_id = r.id) as item_count
+      FROM daily_work_reports r
+      LEFT JOIN task_departments d ON r.department_id = d.id
+      WHERE r.report_date = ?
+    `;
+    const params: any[] = [date];
+    
+    if (department_id) {
+      query += ' AND r.department_id = ?';
+      params.push(department_id);
+    }
+    
+    query += ' ORDER BY d.sort_order';
+    
+    const results = await c.env.DB.prepare(query).bind(...params).all();
+    return c.json({ success: true, data: results.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 일일업무 보고 상세 조회
+app.get('/daily-reports/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  try {
+    const report = await c.env.DB.prepare(`
+      SELECT r.*, d.name as department_name, d.color as department_color
+      FROM daily_work_reports r
+      LEFT JOIN task_departments d ON r.department_id = d.id
+      WHERE r.id = ?
+    `).bind(id).first();
+    
+    if (!report) {
+      return c.json({ success: false, error: '보고서를 찾을 수 없습니다' }, 404);
+    }
+    
+    const items = await c.env.DB.prepare(`
+      SELECT i.*, t.title as task_title, t.type as task_type
+      FROM daily_work_items i
+      LEFT JOIN tasks t ON i.task_id = t.id
+      WHERE i.report_id = ?
+      ORDER BY i.id
+    `).bind(id).all();
+    
+    return c.json({ 
+      success: true, 
+      data: { ...report, items: items.results || [] }
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 부서별 날짜별 보고서 조회/생성
+app.get('/daily-reports/dept/:deptId/date/:date', async (c) => {
+  const deptId = c.req.param('deptId');
+  const date = c.req.param('date');
+  
+  try {
+    let report = await c.env.DB.prepare(`
+      SELECT r.*, d.name as department_name, d.color as department_color
+      FROM daily_work_reports r
+      LEFT JOIN task_departments d ON r.department_id = d.id
+      WHERE r.department_id = ? AND r.report_date = ?
+    `).bind(deptId, date).first();
+    
+    // 해당 날짜 업무지시 목록 (해당 부서 대상)
+    const tasks = await c.env.DB.prepare(`
+      SELECT t.*, tc.status as check_status, tc.comment as check_memo, tc.checked_at as completed_at
+      FROM tasks t
+      LEFT JOIN task_checks tc ON t.id = tc.task_id AND tc.department_id = ?
+      WHERE t.due_date = ? AND tc.department_id IS NOT NULL
+      ORDER BY t.created_at
+    `).bind(deptId, date).all();
+    
+    let items: any[] = [];
+    if (report) {
+      const itemsRes = await c.env.DB.prepare(`
+        SELECT i.*, t.title as task_title, t.type as task_type
+        FROM daily_work_items i
+        LEFT JOIN tasks t ON i.task_id = t.id
+        WHERE i.report_id = ?
+        ORDER BY i.id
+      `).bind((report as any).id).all();
+      items = itemsRes.results || [];
+    }
+    
+    return c.json({ 
+      success: true, 
+      data: { 
+        report, 
+        items,
+        tasks: tasks.results || []
+      }
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 일일업무 보고 등록/수정
+app.post('/daily-reports', async (c) => {
+  const body = await c.req.json();
+  const { department_id, report_date, reporter_name, summary, items } = body;
+  
+  if (!department_id || !report_date) {
+    return c.json({ success: false, error: '부서와 날짜를 선택해주세요' }, 400);
+  }
+  
+  try {
+    // 기존 보고서 확인
+    let report = await c.env.DB.prepare(`
+      SELECT id FROM daily_work_reports WHERE department_id = ? AND report_date = ?
+    `).bind(department_id, report_date).first<{id: number}>();
+    
+    let reportId: number;
+    
+    if (report) {
+      // 업데이트
+      await c.env.DB.prepare(`
+        UPDATE daily_work_reports 
+        SET reporter_name = ?, summary = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(reporter_name || '', summary || '', report.id).run();
+      reportId = report.id;
+      
+      // 기존 항목 삭제
+      await c.env.DB.prepare('DELETE FROM daily_work_items WHERE report_id = ?').bind(reportId).run();
+    } else {
+      // 신규 등록
+      const result = await c.env.DB.prepare(`
+        INSERT INTO daily_work_reports (department_id, report_date, reporter_name, summary)
+        VALUES (?, ?, ?, ?)
+      `).bind(department_id, report_date, reporter_name || '', summary || '').run();
+      reportId = result.meta.last_row_id as number;
+    }
+    
+    // 업무 항목 등록
+    if (items && items.length > 0) {
+      for (const item of items) {
+        await c.env.DB.prepare(`
+          INSERT INTO daily_work_items (report_id, task_id, work_type, title, content, status, work_hours)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          reportId,
+          item.task_id || null,
+          item.work_type || 'general',
+          item.title,
+          item.content || '',
+          item.status || '완료',
+          item.work_hours || 0
+        ).run();
+      }
+    }
+    
+    return c.json({ success: true, message: '일일업무 보고가 저장되었습니다', data: { id: reportId } });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 당일 업무 현황 대시보드
+app.get('/daily-dashboard', async (c) => {
+  const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+  
+  try {
+    // 부서별 현황
+    const deptStatus = await c.env.DB.prepare(`
+      SELECT 
+        d.id, d.name, d.color,
+        (SELECT COUNT(*) FROM task_checks tc 
+         JOIN tasks t ON tc.task_id = t.id 
+         WHERE tc.department_id = d.id AND t.due_date = ?) as total_tasks,
+        (SELECT COUNT(*) FROM task_checks tc 
+         JOIN tasks t ON tc.task_id = t.id 
+         WHERE tc.department_id = d.id AND t.due_date = ? AND tc.status = '완료') as completed_tasks,
+        (SELECT COUNT(*) FROM daily_work_reports r 
+         WHERE r.department_id = d.id AND r.report_date = ?) as has_report,
+        (SELECT COUNT(*) FROM daily_work_items i 
+         JOIN daily_work_reports r ON i.report_id = r.id 
+         WHERE r.department_id = d.id AND r.report_date = ?) as report_items
+      FROM task_departments d
+      WHERE d.is_active = 1
+      ORDER BY d.sort_order
+    `).bind(date, date, date, date).all();
+    
+    // 오늘 업무지시 목록
+    const todayTasks = await c.env.DB.prepare(`
+      SELECT t.*, 
+        (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id AND status = '완료') as completed_count,
+        (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id) as total_count
+      FROM tasks t
+      WHERE t.due_date = ?
+      ORDER BY t.priority DESC, t.created_at
+    `).bind(date).all();
+    
+    // 일일보고 현황
+    const reports = await c.env.DB.prepare(`
+      SELECT r.*, d.name as department_name, d.color as department_color,
+        (SELECT COUNT(*) FROM daily_work_items WHERE report_id = r.id) as item_count
+      FROM daily_work_reports r
+      LEFT JOIN task_departments d ON r.department_id = d.id
+      WHERE r.report_date = ?
+      ORDER BY d.sort_order
+    `).bind(date).all();
+    
+    return c.json({ 
+      success: true, 
+      data: {
+        date,
+        departments: deptStatus.results || [],
+        tasks: todayTasks.results || [],
+        reports: reports.results || []
+      }
+    });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }

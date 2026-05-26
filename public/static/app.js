@@ -38433,7 +38433,7 @@ async function renderTaskCalendar() {
             <h3 class="text-lg font-bold">오늘의 업무 현황</h3>
             <p id="task-today-date" class="text-indigo-200 text-sm"></p>
           </div>
-          <button onclick="showDailyReportModal()" class="px-4 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-50 text-sm font-medium">
+          <button onclick="showTaskDailyReportModal()" class="px-4 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-50 text-sm font-medium">
             <i class="fas fa-file-alt mr-1"></i>일일보고 작성
           </button>
         </div>
@@ -38649,7 +38649,7 @@ async function taskLoadDeptSummary() {
             <span class="w-3 h-3 rounded-full" style="background-color: ${d.color}"></span>
             <span class="font-bold text-gray-800">${d.name}</span>
           </div>
-          <button onclick="showDeptDailyReportModal(${d.id}, '${d.name}', '${d.color}')" 
+          <button onclick="showTaskDeptDailyReportModal(${d.id}, '${d.name}', '${d.color}')" 
             class="text-xs px-2 py-1 rounded text-white hover:opacity-80" style="background-color: ${d.color}">
             <i class="fas fa-file-alt mr-1"></i>일일보고
           </button>
@@ -39316,8 +39316,8 @@ window.deleteTask = deleteTask;
 window.taskBoardChangeMonth = taskBoardChangeMonth;
 window.showTaskBoardTab = showTaskBoardTab;
 window.printTaskBoard = printTaskBoard;
-window.showDailyReportModal = showDailyReportModal;
-window.showDeptDailyReportModal = showDeptDailyReportModal;
+window.showTaskDailyReportModal = showTaskDailyReportModal;
+window.showTaskDeptDailyReportModal = showTaskDeptDailyReportModal;
 window.addDailyReportItem = addDailyReportItem;
 window.removeDailyReportItem = removeDailyReportItem;
 window.submitDailyReport = submitDailyReport;
@@ -39332,7 +39332,7 @@ let dailyReportDate = new Date().toISOString().split('T')[0];
 let dailyReportTasks = [];
 
 // 일일보고 작성 모달 (전체)
-async function showDailyReportModal() {
+async function showTaskDailyReportModal() {
   dailyReportDate = new Date().toISOString().split('T')[0];
   
   // 부서 선택 모달
@@ -39341,7 +39341,7 @@ async function showDailyReportModal() {
       <p class="text-gray-600">보고할 부서를 선택해주세요.</p>
       <div class="grid grid-cols-1 gap-3">
         ${taskDepartments.map(d => `
-          <button onclick="showDeptDailyReportModal(${d.id}, '${d.name}', '${d.color}')" 
+          <button onclick="showTaskDeptDailyReportModal(${d.id}, '${d.name}', '${d.color}')" 
             class="p-4 rounded-xl border-2 hover:border-gray-400 text-left flex items-center gap-3 transition-all">
             <span class="w-4 h-4 rounded-full" style="background-color: ${d.color}"></span>
             <span class="font-medium">${d.name}</span>
@@ -39359,7 +39359,7 @@ async function showDailyReportModal() {
 }
 
 // 부서별 일일보고 작성 모달
-async function showDeptDailyReportModal(deptId, deptName, deptColor) {
+async function showTaskDeptDailyReportModal(deptId, deptName, deptColor) {
   dailyReportDeptId = deptId;
   dailyReportItems = [];
   dailyReportTasks = [];
@@ -39608,7 +39608,7 @@ async function viewDailyReports() {
                 </div>
               ` : `
                 <div class="p-3 text-center">
-                  <button onclick="showDeptDailyReportModal(${d.id}, '${d.name}', '${d.color}')" 
+                  <button onclick="showTaskDeptDailyReportModal(${d.id}, '${d.name}', '${d.color}')" 
                     class="text-sm text-indigo-600 hover:underline">
                     <i class="fas fa-edit mr-1"></i>보고서 작성하기
                   </button>

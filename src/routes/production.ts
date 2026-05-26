@@ -149,13 +149,13 @@ productionRoutes.put('/lot/:lotNumber', async (c) => {
       UPDATE production SET quantity = ? WHERE lot_number = ?
     `).bind(quantity, lotNumber).run();
     
-    // 2. production_inbound 수량 수정 (origin_qty, remain_qty)
+    // 2. production_inbound 원래수량만 수정 (origin_qty만, remain_qty는 유지)
     try {
       await c.env.DB.prepare(`
         UPDATE production_inbound 
-        SET origin_qty = ?, remain_qty = remain_qty + ?
+        SET origin_qty = ?
         WHERE lot_number = ? AND production_code = ?
-      `).bind(quantity, quantityDiff, lotNumber, production.product_code).run();
+      `).bind(quantity, lotNumber, production.product_code).run();
     } catch (e) {
       console.log('production_inbound 업데이트 스킵:', e);
     }

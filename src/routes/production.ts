@@ -589,6 +589,13 @@ productionRoutes.post('/batch', async (c) => {
     if (b.barcode_expiry_days) {
       const key = `${b.item_code}|${b.channel || ''}`;
       barcodeExpiryMap.set(key, b.barcode_expiry_days);
+      
+      // 채널 무관 기본값도 저장 (채널 매칭 실패 시 사용)
+      // 이미 설정된 값이 없을 때만 저장
+      const defaultKey = `${b.item_code}|__default__`;
+      if (!barcodeExpiryMap.has(defaultKey)) {
+        barcodeExpiryMap.set(defaultKey, b.barcode_expiry_days);
+      }
     }
   }
   
@@ -703,6 +710,7 @@ productionRoutes.post('/batch', async (c) => {
     // 바코드별 소비기한 확인 (채널 일치 우선)
     let expiryDays = barcodeExpiryMap.get(`${item.product_code}|${itemChannel}`) ||  // 채널 일치
                      barcodeExpiryMap.get(`${item.product_code}|`) ||                 // 채널 없는 바코드
+                     barcodeExpiryMap.get(`${item.product_code}|__default__`) ||      // 바코드에 설정된 기본값 (채널 무관)
                      productionExpiryMap.get(item.product_code) ||                    // production_items.shelf_life_days
                      product.expiry_days ||                                            // master.expiry_days
                      7;

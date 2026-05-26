@@ -39066,6 +39066,8 @@ async function taskRenderCalendar() {
     let dayTasks = taskCalendarData.filter(t => t.due_date === dateStr);
     if (!taskFilters.notice) dayTasks = dayTasks.filter(t => t.type !== 'notice');
     if (!taskFilters.task) dayTasks = dayTasks.filter(t => t.type !== 'task');
+    // 완료된 업무 자동 숨김 (모든 부서가 완료된 경우)
+    dayTasks = dayTasks.filter(t => t.completed_count < t.total_count);
     
     // 일일보고
     const dayReports = taskFilters.dailyReport ? calendarSummary.reports.filter(r => r.report_date === dateStr) : [];
@@ -39150,8 +39152,8 @@ async function showDateDetail(dateStr) {
     
     let html = '<div class="space-y-4">';
     
-    // 공지사항
-    const notices = taskFilters.notice ? dayTasks.filter(t => t.type === 'notice') : [];
+    // 공지사항 (완료된 것 제외)
+    const notices = taskFilters.notice ? dayTasks.filter(t => t.type === 'notice' && t.completed_count < t.total_count) : [];
     if (notices.length > 0) {
       html += `
         <div>
@@ -39168,8 +39170,8 @@ async function showDateDetail(dateStr) {
       `;
     }
     
-    // 업무지시
-    const tasks = taskFilters.task ? dayTasks.filter(t => t.type === 'task') : [];
+    // 업무지시 (완료된 것 제외)
+    const tasks = taskFilters.task ? dayTasks.filter(t => t.type === 'task' && t.completed_count < t.total_count) : [];
     if (tasks.length > 0) {
       html += `
         <div>

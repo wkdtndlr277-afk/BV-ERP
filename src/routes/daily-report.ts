@@ -661,6 +661,16 @@ dailyReport.post('/reports/from-order', async (c) => {
     barcodeMap.set(row.barcode, row)
   }
   
+  // ★ production_code별 바코드 expiry_days 맵 (바코드 매칭 실패 시 사용)
+  // expiry_days가 설정된 첫 번째 바코드의 값을 사용
+  const productionExpiryMap = new Map<string, number>()
+  for (const row of barcodeData.results as any[]) {
+    const r = row as any
+    if (r.barcode_expiry_days && !productionExpiryMap.has(r.production_code)) {
+      productionExpiryMap.set(r.production_code, r.barcode_expiry_days)
+    }
+  }
+  
   const productionMap = new Map<string, any>()
   for (const row of productionData.results as any[]) {
     productionMap.set(row.production_code, row)
@@ -742,10 +752,12 @@ dailyReport.post('/reports/from-order', async (c) => {
     // ★ 소비기한 계산 우선순위:
     // 1) PDF에서 추출한 소비기한
     // 2) 바코드별 소비기한 설정 (production_barcodes.expiry_days) - 채널별 다를 수 있음
-    // 3) 제품 기본 설정 (production_items.shelf_life_days)
+    // 3) production_code별 바코드 소비기한 (바코드 매칭 실패 시 fallback)
+    // 4) 제품 기본 설정 (production_items.shelf_life_days)
     const barcodeExpiryDays = productionInfo?.barcode_expiry_days || null
-    const shelfLifeDays = productionInfo?.shelf_life_days || null
-    const effectiveExpiryDays = barcodeExpiryDays || shelfLifeDays  // 바코드 우선
+    const productionCodeExpiryDays = productionExpiryMap.get(productionCode) || null  // ★ fallback
+    const shelfLifeDays = productionInfo?.shelf_life_days || productionItemInfo?.shelf_life_days || null
+    const effectiveExpiryDays = barcodeExpiryDays || productionCodeExpiryDays || shelfLifeDays
     
     let expiryDate: string | null = null
     if (item.expiry_date) {

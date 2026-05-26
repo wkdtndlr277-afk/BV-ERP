@@ -246,13 +246,17 @@ dailyReport.get('/reports/:id', async (c) => {
           }
         }
         
-        // 2차 시도: production_code만으로 매칭 (LOT는 같은 product_code에 대해 여러 번 사용 가능)
-        const simpleLot = simpleLotMap.get(item.production_code)
-        if (simpleLot) {
-          return { ...item, lot_number: simpleLot.lot_number, channel: item.channel || simpleLot.channel }
-        }
+        // 2차 시도 제거: 수량이 다른 LOT를 매칭하면 혼란 발생
+        // 생산 등록이 안 된 경우 LOT 없이 표시하거나 자동 생성
         
-        // 3차: 생산 등록이 없는 경우 날짜 기반 자동 LOT 생성
+        // 3차: 생산 등록이 없는 경우 - LOT 없음으로 표시 (null)
+        // 사용자가 생산등록 버튼을 눌러야 실제 LOT가 생성됨
+        return { ...item, lot_number: null }
+        
+        // (참고) 자동 LOT 생성이 필요한 경우 아래 코드 사용
+        // 현재는 비활성화 - 생산 등록 시점에 LOT 생성하도록 변경
+        /*
+        // 기존 3차: 생산 등록이 없는 경우 날짜 기반 자동 LOT 생성
         // 형식: PRD-YYYYMMDD-제품코드-순번
         const prodCode = item.production_code || 'UNKNOWN'
         const counter = (autoLotCounter.get(prodCode) || 0) + 1
@@ -260,6 +264,7 @@ dailyReport.get('/reports/:id', async (c) => {
         const autoLot = `PRD-${dateStr}-${prodCode}-${String(counter).padStart(4, '0')}`
         
         return { ...item, lot_number: autoLot }
+        */
       })
       
     } catch (itemError) {

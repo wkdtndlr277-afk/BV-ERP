@@ -498,4 +498,169 @@ barcodeRoutes.get('/history', async (c) => {
   }
 });
 
+// 바코드 미등록 품목 목록 (원료/부자재 중 바코드 미등록)
+barcodeRoutes.get('/unregistered', async (c) => {
+  const search = c.req.query('search') || '';
+  
+  try {
+    // master 테이블 (원료) - barcode 필드가 null이거나 빈 문자열인 품목
+    const masterItems = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, 'master' as table_type
+      FROM master
+      WHERE (barcode IS NULL OR barcode = '')
+      ${search ? `AND (item_code LIKE ? OR item_name LIKE ?)` : ''}
+      ORDER BY item_name
+      LIMIT 100
+    `).bind(...(search ? [`%${search}%`, `%${search}%`] : [])).all();
+    
+    // supplies 테이블 (부자재) - barcode 필드가 null이거나 빈 문자열인 품목
+    const suppliesItems = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, 'supplies' as table_type
+      FROM supplies
+      WHERE (barcode IS NULL OR barcode = '')
+      ${search ? `AND (item_code LIKE ? OR item_name LIKE ?)` : ''}
+      ORDER BY item_name
+      LIMIT 100
+    `).bind(...(search ? [`%${search}%`, `%${search}%`] : [])).all();
+    
+    // 두 결과 합치기
+    const allItems = [
+      ...(masterItems.results || []),
+      ...(suppliesItems.results || [])
+    ];
+    
+    return c.json({
+      success: true,
+      data: allItems,
+      count: allItems.length
+    });
+    
+  } catch (error: any) {
+    console.error('Unregistered items error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 바코드 등록 (원료/부자재에 바코드 할당)
+barcodeRoutes.post('/register', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { item_code, barcode, table_type } = body;
+    
+    if (!item_code || !barcode) {
+      return c.json({ success: false, error: '품목 코드와 바코드를 입력해주세요.' }, 400);
+    }
+    
+    // 바코드 중복 체크 (master, supplies 모두)
+    const existingMaster = await c.env.DB.prepare(
+      'SELECT item_code, item_name FROM master WHERE barcode = ?'
+    ).bind(barcode).first();
+    
+    const existingSupplies = await c.env.DB.prepare(
+      'SELECT item_code, item_name FROM supplies WHERE barcode = ?'
+    ).bind(barcode).first();
+    
+    if (existingMaster || existingSupplies) {
+      const existing = existingMaster || existingSupplies;
+      return c.json({ 
+        success: false, 
+        error: `이미 등록된 바코드입니다: ${(existing as any).item_name} (${(existing as any).item_code})` 
+      }, 400);
+    }
+    
+    // 해당 테이블에 바코드 업데이트
+    if (table_type === 'master') {
+      await c.env.DB.prepare(
+        'UPDATE master SET barcode = ? WHERE item_code = ?'
+      ).bind(barcode, item_code).run();
+    } else if (table_type === 'supplies') {
+      await c.env.DB.prepare(
+        'UPDATE supplies SET barcode = ? WHERE item_code = ?'
+      ).bind(barcode, item_code).run();
+    } else {
+      return c.json({ success: false, error: '잘못된 테이블 유형입니다.' }, 400);
+    }
+    
+    return c.json({
+      success: true,
+      message: '바코드가 등록되었습니다.'
+    });
+    
+  } catch (error: any) {
+    console.error('Barcode register error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 등록된 바코드 목록 조회
+barcodeRoutes.get('/registered', async (c) => {
+  const search = c.req.query('search') || '';
+  
+  try {
+    // master 테이블 - 바코드가 있는 품목
+    const masterItems = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, barcode, 'master' as table_type
+      FROM master
+      WHERE barcode IS NOT NULL AND barcode != ''
+      ${search ? `AND (item_code LIKE ? OR item_name LIKE ? OR barcode LIKE ?)` : ''}
+      ORDER BY item_name
+      LIMIT 100
+    `).bind(...(search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [])).all();
+    
+    // supplies 테이블 - 바코드가 있는 품목
+    const suppliesItems = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, barcode, 'supplies' as table_type
+      FROM supplies
+      WHERE barcode IS NOT NULL AND barcode != ''
+      ${search ? `AND (item_code LIKE ? OR item_name LIKE ? OR barcode LIKE ?)` : ''}
+      ORDER BY item_name
+      LIMIT 100
+    `).bind(...(search ? [`%${search}%`, `%${search}%`, `%${search}%`] : [])).all();
+    
+    const allItems = [
+      ...(masterItems.results || []),
+      ...(suppliesItems.results || [])
+    ];
+    
+    return c.json({
+      success: true,
+      data: allItems,
+      count: allItems.length
+    });
+    
+  } catch (error: any) {
+    console.error('Registered items error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 바코드 삭제 (등록 해제)
+barcodeRoutes.delete('/registered/:item_code', async (c) => {
+  const item_code = c.req.param('item_code');
+  const table_type = c.req.query('table_type');
+  
+  try {
+    if (table_type === 'master') {
+      await c.env.DB.prepare(
+        'UPDATE master SET barcode = NULL WHERE item_code = ?'
+      ).bind(item_code).run();
+    } else if (table_type === 'supplies') {
+      await c.env.DB.prepare(
+        'UPDATE supplies SET barcode = NULL WHERE item_code = ?'
+      ).bind(item_code).run();
+    } else {
+      return c.json({ success: false, error: '잘못된 테이블 유형입니다.' }, 400);
+    }
+    
+    return c.json({
+      success: true,
+      message: '바코드가 삭제되었습니다.'
+    });
+    
+  } catch (error: any) {
+    console.error('Barcode delete error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default barcodeRoutes;

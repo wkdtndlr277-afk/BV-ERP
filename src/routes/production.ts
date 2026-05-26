@@ -225,6 +225,59 @@ productionRoutes.put('/lot/:lotNumber/material', async (c) => {
   });
 });
 
+// 생산 원료 삭제
+productionRoutes.delete('/lot/:lotNumber/material/:itemCode', async (c) => {
+  const lotNumber = decodeURIComponent(c.req.param('lotNumber'));
+  const itemCode = decodeURIComponent(c.req.param('itemCode'));
+  
+  const production = await c.env.DB.prepare(`
+    SELECT id FROM production WHERE lot_number = ?
+  `).bind(lotNumber).first<any>();
+  
+  if (!production) {
+    return c.json({ success: false, error: '해당 LOT를 찾을 수 없습니다' }, 404);
+  }
+  
+  const result = await c.env.DB.prepare(`
+    DELETE FROM production_materials 
+    WHERE production_id = ? AND item_code = ?
+  `).bind(production.id, itemCode).run();
+  
+  return c.json({ 
+    success: true, 
+    message: `원료 ${itemCode}가 삭제되었습니다`,
+    changes: result.meta.changes
+  });
+});
+
+// 생산 원료 추가
+productionRoutes.post('/lot/:lotNumber/material', async (c) => {
+  const lotNumber = decodeURIComponent(c.req.param('lotNumber'));
+  const { item_code, quantity, unit, lot_number } = await c.req.json();
+  
+  if (!item_code || !quantity) {
+    return c.json({ success: false, error: '원료코드와 수량은 필수입니다' }, 400);
+  }
+  
+  const production = await c.env.DB.prepare(`
+    SELECT id FROM production WHERE lot_number = ?
+  `).bind(lotNumber).first<any>();
+  
+  if (!production) {
+    return c.json({ success: false, error: '해당 LOT를 찾을 수 없습니다' }, 404);
+  }
+  
+  const result = await c.env.DB.prepare(`
+    INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).bind(production.id, item_code, lot_number || null, quantity, quantity, unit || 'g').run();
+  
+  return c.json({ 
+    success: true, 
+    message: `원료 ${item_code}가 추가되었습니다`
+  });
+});
+
 // LOT 번호로 생산 조회 (이력추적용)
 productionRoutes.get('/lot/:lotNumber', async (c) => {
   const lotNumber = decodeURIComponent(c.req.param('lotNumber'));

@@ -1087,6 +1087,75 @@ productionRoutes.post('/fix-expiry-dates', async (c) => {
   }
 });
 
+// 바코드 소비기한 기준으로 기존 생산 데이터 일괄 수정
+productionRoutes.post('/recalculate-expiry', async (c) => {
+  try {
+    const { production_code } = await c.req.json<{ production_code?: string }>();
+    
+    // 바코드별 소비기한 조회
+    let barcodeQuery = `
+      SELECT production_code, expiry_days, channel 
+      FROM production_barcodes 
+      WHERE expiry_days IS NOT NULL
+    `;
+    if (production_code) {
+      barcodeQuery += ` AND production_code = ?`;
+    }
+    
+    const barcodeExpiry = production_code 
+      ? await c.env.DB.prepare(barcodeQuery).bind(production_code).all<any>()
+      : await c.env.DB.prepare(barcodeQuery).all<any>();
+    
+    // production_code별 기본 소비기한 맵 (첫 번째 값 사용)
+    const expiryMap = new Map<string, number>();
+    for (const b of barcodeExpiry.results || []) {
+      if (!expiryMap.has(b.production_code)) {
+        expiryMap.set(b.production_code, b.expiry_days);
+      }
+    }
+    
+    if (expiryMap.size === 0) {
+      return c.json({ success: false, error: '바코드 소비기한 설정이 없습니다.' }, 400);
+    }
+    
+    let totalUpdated = 0;
+    
+    // 각 production_code별로 업데이트
+    for (const [code, days] of expiryMap) {
+      // production 테이블 업데이트 (expiry_date = prod_date + days)
+      const result1 = await c.env.DB.prepare(`
+        UPDATE production 
+        SET expiry_date = date(prod_date, '+' || ? || ' days')
+        WHERE product_code = ?
+      `).bind(days, code).run();
+      
+      // production_inbound 테이블 업데이트
+      const result2 = await c.env.DB.prepare(`
+        UPDATE production_inbound 
+        SET expiry_date = date(inbound_date, '+' || ? || ' days')
+        WHERE production_code = ?
+      `).bind(days, code).run();
+      
+      totalUpdated += (result1.meta?.changes || 0) + (result2.meta?.changes || 0);
+      console.log(`[recalculate-expiry] ${code}: ${days}일로 업데이트 (${result1.meta?.changes || 0} + ${result2.meta?.changes || 0}건)`);
+    }
+    
+    return c.json({
+      success: true,
+      message: `${expiryMap.size}개 생산코드의 소비기한을 바코드 설정에 맞게 재계산했습니다.`,
+      data: { 
+        production_codes: expiryMap.size,
+        total_updated: totalUpdated,
+        details: Object.fromEntries(expiryMap)
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('recalculate-expiry error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 생산 취소 (원복)
 productionRoutes.post('/:id/cancel', async (c) => {
   const id = c.req.param('id');

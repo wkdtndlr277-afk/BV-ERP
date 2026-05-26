@@ -40566,6 +40566,7 @@ let workHistoryFilters = {
   department_id: '',
   start_date: '',
   end_date: '',
+  search: '',
   page: 1
 };
 
@@ -40577,13 +40578,23 @@ async function showWorkHistoryModal() {
   workHistoryFilters.start_date = firstDay.toISOString().split('T')[0];
   workHistoryFilters.end_date = today.toISOString().split('T')[0];
   workHistoryFilters.department_id = '';
+  workHistoryFilters.search = '';
   workHistoryFilters.page = 1;
   
-  showModal('📋 업무 이력 관리', `
-    <div class="space-y-4" style="min-width: 700px;">
+  showModal('📋 일일업무 보고 조회', `
+    <div class="space-y-4" style="min-width: min(700px, 90vw);">
+      <!-- 검색 영역 -->
+      <div class="relative">
+        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+        <input type="text" id="wh-search" placeholder="보고자, 업무내용, 요약 검색..." 
+          class="w-full pl-10 pr-4 py-3 border-2 border-indigo-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+          onkeyup="workHistoryFilters.search = this.value; if(event.key === 'Enter') loadWorkHistory()"
+          value="${workHistoryFilters.search}">
+      </div>
+      
       <!-- 필터 영역 -->
-      <div class="bg-gray-50 rounded-lg p-4">
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div class="bg-gray-50 rounded-lg p-3 lg:p-4">
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-2 lg:gap-3">
           <div>
             <label class="block text-xs text-gray-500 mb-1">부서</label>
             <select id="wh-dept-filter" onchange="workHistoryFilters.department_id = this.value; loadWorkHistory()" 
@@ -40604,12 +40615,15 @@ async function showWorkHistoryModal() {
               onchange="workHistoryFilters.end_date = this.value; loadWorkHistory()"
               class="w-full px-3 py-2 border rounded-lg text-sm">
           </div>
-          <div class="flex items-end gap-2">
-            <button onclick="loadWorkHistoryStats()" class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
-              <i class="fas fa-chart-bar mr-1"></i>통계
+          <div class="col-span-2 lg:col-span-2 flex items-end gap-2">
+            <button onclick="searchWorkHistory()" class="flex-1 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+              <i class="fas fa-search mr-1"></i>검색
+            </button>
+            <button onclick="loadWorkHistoryStats()" class="px-3 py-2 bg-purple-600 text-white rounded-lg text-sm hover:bg-purple-700">
+              <i class="fas fa-chart-bar"></i>
             </button>
             <button onclick="exportWorkHistory()" class="px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
-              <i class="fas fa-download mr-1"></i>내보내기
+              <i class="fas fa-download"></i>
             </button>
           </div>
         </div>
@@ -40631,6 +40645,13 @@ async function showWorkHistoryModal() {
   loadWorkHistory();
 }
 
+// 검색 버튼 클릭
+function searchWorkHistory() {
+  workHistoryFilters.search = document.getElementById('wh-search')?.value || '';
+  workHistoryFilters.page = 1;
+  loadWorkHistory();
+}
+
 // 업무 이력 로드
 async function loadWorkHistory() {
   const container = document.getElementById('work-history-list');
@@ -40641,19 +40662,31 @@ async function loadWorkHistory() {
     if (workHistoryFilters.department_id) params.append('department_id', workHistoryFilters.department_id);
     if (workHistoryFilters.start_date) params.append('start_date', workHistoryFilters.start_date);
     if (workHistoryFilters.end_date) params.append('end_date', workHistoryFilters.end_date);
+    if (workHistoryFilters.search) params.append('search', workHistoryFilters.search);
     params.append('page', workHistoryFilters.page);
     params.append('limit', '15');
     
     const res = await axios.get('/api/task/work-history?' + params.toString());
     if (!res.data.success) throw new Error('로드 실패');
     
-    const { reports, pagination } = res.data.data;
+    let { reports, pagination } = res.data.data;
+    
+    // 클라이언트측 검색 필터 (API가 검색을 지원하지 않을 경우 대비)
+    if (workHistoryFilters.search) {
+      const searchLower = workHistoryFilters.search.toLowerCase();
+      reports = reports.filter(r => 
+        (r.reporter_name || '').toLowerCase().includes(searchLower) ||
+        (r.department_name || '').toLowerCase().includes(searchLower) ||
+        (r.summary || '').toLowerCase().includes(searchLower)
+      );
+    }
     
     if (reports.length === 0) {
       container.innerHTML = `
         <div class="text-center py-12 text-gray-400">
-          <i class="fas fa-inbox text-4xl mb-3"></i>
-          <p>해당 기간에 업무 보고가 없습니다</p>
+          <i class="fas fa-search text-4xl mb-3"></i>
+          <p>${workHistoryFilters.search ? '검색 결과가 없습니다' : '해당 기간에 업무 보고가 없습니다'}</p>
+          ${workHistoryFilters.search ? '<p class="text-sm mt-2">검색어를 변경해 보세요</p>' : ''}
         </div>
       `;
       document.getElementById('work-history-pagination').innerHTML = '';
@@ -40977,6 +41010,7 @@ async function exportWorkHistory() {
 // window 객체에 함수 등록
 window.showWorkHistoryModal = showWorkHistoryModal;
 window.loadWorkHistory = loadWorkHistory;
+window.searchWorkHistory = searchWorkHistory;
 window.viewWorkHistoryDetail = viewWorkHistoryDetail;
 window.deleteWorkReport = deleteWorkReport;
 window.loadWorkHistoryStats = loadWorkHistoryStats;

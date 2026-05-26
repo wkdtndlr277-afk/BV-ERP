@@ -19,7 +19,7 @@ app.get('/departments', async (c) => {
 app.put('/departments/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
-  const { name, description, color, sort_order } = body;
+  const { name, description, color, sort_order, is_active } = body;
   
   try {
     const updates: string[] = [];
@@ -29,6 +29,7 @@ app.put('/departments/:id', async (c) => {
     if (description !== undefined) { updates.push('description = ?'); values.push(description); }
     if (color) { updates.push('color = ?'); values.push(color); }
     if (sort_order !== undefined) { updates.push('sort_order = ?'); values.push(sort_order); }
+    if (is_active !== undefined) { updates.push('is_active = ?'); values.push(is_active ? 1 : 0); }
     
     if (updates.length === 0) {
       return c.json({ success: false, error: '수정할 내용이 없습니다' }, 400);
@@ -51,6 +52,27 @@ app.delete('/departments/:id', async (c) => {
     // 비활성화 처리 (실제 삭제하지 않음)
     await c.env.DB.prepare(`UPDATE task_departments SET is_active = 0 WHERE id = ?`).bind(id).run();
     return c.json({ success: true, message: '부서가 삭제되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 부서 추가 =====
+app.post('/departments', async (c) => {
+  const body = await c.req.json();
+  const { name, description, color, sort_order } = body;
+  
+  if (!name) {
+    return c.json({ success: false, error: '부서명을 입력해주세요' }, 400);
+  }
+  
+  try {
+    const result = await c.env.DB.prepare(`
+      INSERT INTO task_departments (name, description, color, sort_order, is_active) 
+      VALUES (?, ?, ?, ?, 1)
+    `).bind(name, description || '', color || '#6B7280', sort_order || 99).run();
+    
+    return c.json({ success: true, message: '부서가 추가되었습니다', id: result.meta.last_row_id });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }
@@ -88,7 +110,16 @@ app.get('/tasks', async (c) => {
       SELECT t.*, 
         (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id AND status = '완료') as completed_count,
         (SELECT COUNT(*) FROM task_checks WHERE task_id = t.id) as total_count,
-        (SELECT COUNT(*) FROM task_files WHERE task_id = t.id AND department_id IS NULL) as file_count
+        (SELECT COUNT(*) FROM task_files WHERE task_id = t.id AND department_id IS NULL) as file_count,
+        (SELECT GROUP_CONCAT(d.name, ', ') FROM task_checks tc 
+         JOIN task_departments d ON tc.department_id = d.id 
+         WHERE tc.task_id = t.id) as target_departments,
+        (SELECT CASE 
+          WHEN COUNT(*) = 0 THEN '대기'
+          WHEN SUM(CASE WHEN status = '완료' THEN 1 ELSE 0 END) = COUNT(*) THEN '완료'
+          WHEN SUM(CASE WHEN status IN ('진행중', '완료') THEN 1 ELSE 0 END) > 0 THEN '진행중'
+          ELSE '검토중'
+        END FROM task_checks WHERE task_id = t.id) as overall_status
       FROM tasks t
     `;
     

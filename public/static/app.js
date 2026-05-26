@@ -38788,21 +38788,34 @@ async function loadAdminTasksAndNotices() {
     if (tasks.length === 0) {
       taskContainer.innerHTML = '<div class="p-4 text-center text-gray-400 text-sm">등록된 업무가 없습니다</div>';
     } else {
-      taskContainer.innerHTML = tasks.slice(0, 8).map(t => `
-        <div class="p-3 hover:bg-rose-50 cursor-pointer" onclick="showTaskDetailModal(${t.id})">
-          <div class="flex items-center justify-between">
-            <div class="font-medium text-gray-800 text-sm truncate flex-1 mr-2">${t.title}</div>
-            <span class="px-2 py-0.5 rounded text-xs flex-shrink-0 ${
-              t.total_count > 0 && t.completed_count === t.total_count 
-                ? 'bg-green-100 text-green-700' 
-                : 'bg-amber-100 text-amber-700'
-            }">
-              ${t.completed_count || 0}/${t.total_count || 0}
-            </span>
+      taskContainer.innerHTML = tasks.slice(0, 8).map(t => {
+        const statusStyle = {
+          '완료': 'bg-green-100 text-green-700',
+          '진행중': 'bg-blue-100 text-blue-700',
+          '검토중': 'bg-yellow-100 text-yellow-700',
+          '대기': 'bg-gray-100 text-gray-600'
+        };
+        const status = t.overall_status || '대기';
+        return `
+          <div class="p-3 hover:bg-rose-50 cursor-pointer border-b border-gray-100" onclick="showTaskDetailModal(${t.id})">
+            <div class="flex items-center justify-between mb-1">
+              <div class="font-medium text-gray-800 text-sm truncate flex-1 mr-2">${t.title}</div>
+              <span class="px-2 py-0.5 rounded text-xs flex-shrink-0 ${statusStyle[status] || 'bg-gray-100 text-gray-600'}">
+                ${status}
+              </span>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <div class="text-gray-500 truncate">
+                <i class="fas fa-users mr-1"></i>${t.target_departments || '전체'}
+              </div>
+              <div class="flex items-center gap-2 text-gray-400">
+                <span>${t.completed_count || 0}/${t.total_count || 0}</span>
+                <span>${t.due_date}</span>
+              </div>
+            </div>
           </div>
-          <div class="text-xs text-gray-400 mt-1">${t.due_date}</div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
     }
   } catch (e) {
     console.error('업무 로드 오류:', e);

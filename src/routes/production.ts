@@ -546,7 +546,7 @@ productionRoutes.post('/batch', async (c) => {
   const productionItems = { results: allProductionItems };
   
   // 3. production_barcodes 테이블에서도 조회 (배치 처리)
-  // 참고: expiry_days는 production_items.shelf_life_days에서 가져옴
+  // 참고: expiry_days 우선순위 - 1) 바코드별 expiry_days → 2) production_items.shelf_life_days → 3) 7일
   let allBarcodeItems: any[] = [];
   for (let i = 0; i < newProductCodes.length; i += QUERY_BATCH_SIZE) {
     const batch = newProductCodes.slice(i, i + QUERY_BATCH_SIZE);
@@ -555,6 +555,7 @@ productionRoutes.post('/batch', async (c) => {
       SELECT pb.production_code as item_code, 
              pi.production_name as item_name,
              COALESCE(pi.shelf_life_days, 7) as default_expiry_days,
+             pb.expiry_days as barcode_expiry_days,
              pb.box_quantity,
              pb.barcode,
              pb.channel
@@ -570,14 +571,24 @@ productionRoutes.post('/batch', async (c) => {
   const boxQuantityMap = new Map<string, number>();
   // production_code별 기본 소비기한 맵 (production_items.shelf_life_days 기반)
   const productionExpiryMap = new Map<string, number>();
+  // 바코드별 소비기한 맵 (production_code + channel 조합으로 관리)
+  const barcodeExpiryMap = new Map<string, number>();
+  
   for (const b of barcodeItems.results || []) {
     // 여러 바코드가 있을 경우, 가장 큰 box_quantity 사용 (안전하게)
     const current = boxQuantityMap.get(b.item_code) || 1;
     boxQuantityMap.set(b.item_code, Math.max(current, b.box_quantity || 1));
     
-    // production_code별 소비기한 저장
+    // production_code별 기본 소비기한 저장 (production_items.shelf_life_days)
     if (b.default_expiry_days && !productionExpiryMap.has(b.item_code)) {
       productionExpiryMap.set(b.item_code, b.default_expiry_days);
+    }
+    
+    // 바코드별 소비기한 저장 (채널별로 다를 수 있음)
+    // 키: production_code|channel (예: PR078|오아시스)
+    if (b.barcode_expiry_days) {
+      const key = `${b.item_code}|${b.channel || ''}`;
+      barcodeExpiryMap.set(key, b.barcode_expiry_days);
     }
   }
   
@@ -684,15 +695,26 @@ productionRoutes.post('/batch', async (c) => {
     
     const productLot = `PRD-${productionDate.replace(/-/g, '')}-${item.product_code}-${String(Date.now()).slice(-4)}`;
     
-    // 소비기한 우선순위: 1) production_items.shelf_life_days → 2) master.expiry_days → 3) 7일
-    let expiryDays = productionExpiryMap.get(item.product_code) || product.expiry_days || 7;
+    // 소비기한 우선순위: 
+    // 1) 바코드별 expiry_days (채널 일치) → 2) 바코드별 expiry_days (채널 무관)
+    // 3) production_items.shelf_life_days → 4) master.expiry_days → 5) 7일
+    const itemChannel = item.channel || defaultChannel || '';
+    
+    // 바코드별 소비기한 확인 (채널 일치 우선)
+    let expiryDays = barcodeExpiryMap.get(`${item.product_code}|${itemChannel}`) ||  // 채널 일치
+                     barcodeExpiryMap.get(`${item.product_code}|`) ||                 // 채널 없는 바코드
+                     productionExpiryMap.get(item.product_code) ||                    // production_items.shelf_life_days
+                     product.expiry_days ||                                            // master.expiry_days
+                     7;
+    
+    console.log(`[production/batch] ${item.product_code} 소비기한: barcodeExpiry=${barcodeExpiryMap.get(`${item.product_code}|${itemChannel}`)}, productionExpiry=${productionExpiryMap.get(item.product_code)}, final=${expiryDays}일`);
     
     const itemExpiryDate = item.expiry_date || (() => {
       const d = new Date(productionDate);
       d.setDate(d.getDate() + expiryDays);
       return d.toISOString().split('T')[0];
     })();
-    const itemChannel = item.channel || defaultChannel || 'unknown';
+    // itemChannel은 위에서 이미 선언됨
     const boxQuantity = item.box_quantity || boxQuantityMap.get(item.product_code) || 1;
     const actualItemCount = item.quantity * boxQuantity;
     

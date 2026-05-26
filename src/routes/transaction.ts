@@ -170,6 +170,55 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
         
         for (const mat of materialsRaw.results || []) {
           let inboundInfo = null;
+          let itemName = mat.item_name;
+          
+          // 반제품(SF 코드) 처리
+          const isSemiFinished = mat.item_code.startsWith('SF');
+          
+          if (isSemiFinished) {
+            // 반제품: semi_finished_items에서 이름 조회
+            try {
+              if (!itemName) {
+                const sfItem = await c.env.DB.prepare(`
+                  SELECT item_name FROM semi_finished_items WHERE item_code = ?
+                `).bind(mat.item_code).first<any>();
+                itemName = sfItem?.item_name || mat.item_code;
+              }
+              
+              // semi_finished_lots에서 LOT 정보 조회 (FEFO)
+              const prodDate = productInbound.inbound_date;
+              if (mat.lot_number && mat.lot_number !== '-') {
+                inboundInfo = await c.env.DB.prepare(`
+                  SELECT lot_number, prod_date as inbound_date, expiry_date
+                  FROM semi_finished_lots WHERE lot_number = ?
+                `).bind(mat.lot_number).first<any>();
+              } else {
+                inboundInfo = await c.env.DB.prepare(`
+                  SELECT lot_number, prod_date as inbound_date, expiry_date
+                  FROM semi_finished_lots 
+                  WHERE item_code = ? 
+                    AND prod_date <= ?
+                    AND (expiry_date >= ? OR expiry_date IS NULL)
+                  ORDER BY expiry_date ASC, prod_date ASC
+                  LIMIT 1
+                `).bind(mat.item_code, prodDate, prodDate).first<any>();
+              }
+            } catch (e) {
+              // 테이블이 없거나 쿼리 실패 시 기본값 사용
+            }
+            
+            usedMaterials.push({
+              item_code: mat.item_code,
+              item_name: itemName || mat.item_code,
+              lot_number: mat.lot_number || inboundInfo?.lot_number || '-',
+              actual_qty: mat.actual_qty || mat.planned_qty,
+              unit: mat.unit || 'g',
+              supplier: '자체생산',
+              inbound_date: inboundInfo?.inbound_date || '-',
+              expiry_date: inboundInfo?.expiry_date || '-'
+            });
+            continue;  // 반제품 처리 완료, 다음 원료로
+          }
           
           // 자체생산 원료인지 확인 (코드 또는 이름으로)
           const isSelfMade = selfMadeMaterials.includes(mat.item_code) || 
@@ -250,48 +299,88 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
           ORDER BY pm.id
         `).bind(production.id).all<any>();
         
-        // 자체생산 원료 코드 목록 (르방, 탕종, 발효종 등)
-        const selfMadeMaterials = ['RM135', 'RM137', 'RM141', 'RM146', 'RM149', 'RM155', 'RM156'];
-        const selfMadeKeywords = ['르방', '탕종', '발효종'];
-        
         // 각 원료의 입고 정보 (거래처, 입고일, 유통기한) 조회
         for (const mat of materialsRaw.results || []) {
           let inboundInfo = null;
+          let itemName = mat.item_name;
           
-          // 자체생산 원료인지 확인 (코드 또는 이름으로)
-          const isSelfMade = selfMadeMaterials.includes(mat.item_code) || 
-            selfMadeKeywords.some(kw => (mat.item_name || '').includes(kw));
+          // 반제품(SF 코드) 처리
+          const isSemiFinished = mat.item_code.startsWith('SF');
           
-          if (mat.lot_number && mat.lot_number !== '-') {
-            // LOT 번호가 있으면 직접 조회
-            inboundInfo = await c.env.DB.prepare(`
-              SELECT supplier, inbound_date, expiry_date
-              FROM inbound WHERE lot_number = ?
-            `).bind(mat.lot_number).first<any>();
-          } else if (!isSelfMade) {
-            // LOT 번호가 없으면 FEFO 기준으로 해당 생산일에 사용 가능했던 LOT 조회
-            const prodDate = production.prod_date;
-            inboundInfo = await c.env.DB.prepare(`
-              SELECT supplier, inbound_date, expiry_date, lot_number
-              FROM inbound 
-              WHERE item_code = ? 
-                AND inbound_date <= ?
-                AND (expiry_date >= ? OR expiry_date IS NULL)
-              ORDER BY expiry_date ASC, inbound_date ASC
-              LIMIT 1
-            `).bind(mat.item_code, prodDate, prodDate).first<any>();
+          if (isSemiFinished) {
+            // 반제품: semi_finished_items에서 이름 조회
+            try {
+              if (!itemName) {
+                const sfItem = await c.env.DB.prepare(`
+                  SELECT item_name FROM semi_finished_items WHERE item_code = ?
+                `).bind(mat.item_code).first<any>();
+                itemName = sfItem?.item_name || mat.item_code;
+              }
+              
+              // semi_finished_lots에서 LOT 정보 조회 (FEFO)
+              const prodDate = production.prod_date;
+              if (mat.lot_number && mat.lot_number !== '-') {
+                inboundInfo = await c.env.DB.prepare(`
+                  SELECT lot_number, prod_date as inbound_date, expiry_date
+                  FROM semi_finished_lots WHERE lot_number = ?
+                `).bind(mat.lot_number).first<any>();
+              } else {
+                inboundInfo = await c.env.DB.prepare(`
+                  SELECT lot_number, prod_date as inbound_date, expiry_date
+                  FROM semi_finished_lots 
+                  WHERE item_code = ? 
+                    AND prod_date <= ?
+                    AND (expiry_date >= ? OR expiry_date IS NULL)
+                  ORDER BY expiry_date ASC, prod_date ASC
+                  LIMIT 1
+                `).bind(mat.item_code, prodDate, prodDate).first<any>();
+              }
+            } catch (e) {
+              // 테이블이 없거나 쿼리 실패 시 기본값 사용
+            }
+            
+            usedMaterials.push({
+              item_code: mat.item_code,
+              item_name: itemName || mat.item_code,
+              lot_number: mat.lot_number || inboundInfo?.lot_number || '-',
+              actual_qty: mat.actual_qty || mat.planned_qty,
+              unit: mat.unit || 'g',
+              supplier: '자체생산',
+              inbound_date: inboundInfo?.inbound_date || '-',
+              expiry_date: inboundInfo?.expiry_date || '-'
+            });
+          } else {
+            // 일반 원료
+            if (mat.lot_number && mat.lot_number !== '-') {
+              inboundInfo = await c.env.DB.prepare(`
+                SELECT supplier, inbound_date, expiry_date
+                FROM inbound WHERE lot_number = ?
+              `).bind(mat.lot_number).first<any>();
+            } else {
+              // LOT 번호가 없으면 FEFO 기준으로 해당 생산일에 사용 가능했던 LOT 조회
+              const prodDate = production.prod_date;
+              inboundInfo = await c.env.DB.prepare(`
+                SELECT supplier, inbound_date, expiry_date, lot_number
+                FROM inbound 
+                WHERE item_code = ? 
+                  AND inbound_date <= ?
+                  AND (expiry_date >= ? OR expiry_date IS NULL)
+                ORDER BY expiry_date ASC, inbound_date ASC
+                LIMIT 1
+              `).bind(mat.item_code, prodDate, prodDate).first<any>();
+            }
+            
+            usedMaterials.push({
+              item_code: mat.item_code,
+              item_name: itemName || mat.item_code,
+              lot_number: mat.lot_number || inboundInfo?.lot_number || '-',
+              actual_qty: mat.actual_qty || mat.planned_qty,
+              unit: mat.unit || 'g',
+              supplier: inboundInfo?.supplier || '-',
+              inbound_date: inboundInfo?.inbound_date || '-',
+              expiry_date: inboundInfo?.expiry_date || '-'
+            });
           }
-          
-          usedMaterials.push({
-            item_code: mat.item_code,
-            item_name: mat.item_name || mat.item_code,
-            lot_number: mat.lot_number || inboundInfo?.lot_number || '-',
-            actual_qty: mat.actual_qty || mat.planned_qty,
-            unit: mat.unit || 'g',  // production_materials의 단위 사용
-            supplier: isSelfMade ? '자체제작' : (inboundInfo?.supplier || '-'),
-            inbound_date: isSelfMade ? '-' : (inboundInfo?.inbound_date || '-'),
-            expiry_date: isSelfMade ? '-' : (inboundInfo?.expiry_date || '-')
-          });
         }
       }
     }

@@ -170,25 +170,41 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
         
         for (const mat of materialsRaw.results || []) {
           let inboundInfo = null;
-          if (mat.lot_number) {
+          
+          // 자체생산 원료인지 확인 (코드 또는 이름으로)
+          const isSelfMade = selfMadeMaterials.includes(mat.item_code) || 
+            selfMadeKeywords.some(kw => (mat.item_name || '').includes(kw));
+          
+          if (mat.lot_number && mat.lot_number !== '-') {
+            // LOT 번호가 있으면 직접 조회
             inboundInfo = await c.env.DB.prepare(`
               SELECT supplier, inbound_date, expiry_date
               FROM inbound WHERE lot_number = ?
             `).bind(mat.lot_number).first<any>();
+          } else if (!isSelfMade) {
+            // LOT 번호가 없으면 FEFO 기준으로 해당 생산일에 사용 가능했던 LOT 중 
+            // 가장 먼저 만료되는 LOT 정보 조회 (생산일 기준)
+            const prodDate = productInbound.inbound_date;
+            inboundInfo = await c.env.DB.prepare(`
+              SELECT supplier, inbound_date, expiry_date, lot_number
+              FROM inbound 
+              WHERE item_code = ? 
+                AND inbound_date <= ?
+                AND (expiry_date >= ? OR expiry_date IS NULL)
+              ORDER BY expiry_date ASC, inbound_date ASC
+              LIMIT 1
+            `).bind(mat.item_code, prodDate, prodDate).first<any>();
           }
-          
-          const isSelfMade = selfMadeMaterials.includes(mat.item_code) || 
-            selfMadeKeywords.some(kw => (mat.item_name || '').includes(kw));
           
           usedMaterials.push({
             item_code: mat.item_code,
             item_name: mat.item_name || mat.item_code,
-            lot_number: mat.lot_number || '-',
+            lot_number: mat.lot_number || inboundInfo?.lot_number || '-',
             actual_qty: mat.actual_qty || mat.planned_qty,
             unit: mat.unit || 'g',  // production_materials의 단위 사용
             supplier: isSelfMade ? '자체제작' : (inboundInfo?.supplier || '-'),
-            inbound_date: inboundInfo?.inbound_date || '-',
-            expiry_date: inboundInfo?.expiry_date || '-'
+            inbound_date: isSelfMade ? '-' : (inboundInfo?.inbound_date || '-'),
+            expiry_date: isSelfMade ? '-' : (inboundInfo?.expiry_date || '-')
           });
         }
       }
@@ -241,26 +257,40 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
         // 각 원료의 입고 정보 (거래처, 입고일, 유통기한) 조회
         for (const mat of materialsRaw.results || []) {
           let inboundInfo = null;
-          if (mat.lot_number) {
-            inboundInfo = await c.env.DB.prepare(`
-              SELECT supplier, inbound_date, expiry_date
-              FROM inbound WHERE lot_number = ?
-            `).bind(mat.lot_number).first<any>();
-          }
           
           // 자체생산 원료인지 확인 (코드 또는 이름으로)
           const isSelfMade = selfMadeMaterials.includes(mat.item_code) || 
             selfMadeKeywords.some(kw => (mat.item_name || '').includes(kw));
           
+          if (mat.lot_number && mat.lot_number !== '-') {
+            // LOT 번호가 있으면 직접 조회
+            inboundInfo = await c.env.DB.prepare(`
+              SELECT supplier, inbound_date, expiry_date
+              FROM inbound WHERE lot_number = ?
+            `).bind(mat.lot_number).first<any>();
+          } else if (!isSelfMade) {
+            // LOT 번호가 없으면 FEFO 기준으로 해당 생산일에 사용 가능했던 LOT 조회
+            const prodDate = production.prod_date;
+            inboundInfo = await c.env.DB.prepare(`
+              SELECT supplier, inbound_date, expiry_date, lot_number
+              FROM inbound 
+              WHERE item_code = ? 
+                AND inbound_date <= ?
+                AND (expiry_date >= ? OR expiry_date IS NULL)
+              ORDER BY expiry_date ASC, inbound_date ASC
+              LIMIT 1
+            `).bind(mat.item_code, prodDate, prodDate).first<any>();
+          }
+          
           usedMaterials.push({
             item_code: mat.item_code,
             item_name: mat.item_name || mat.item_code,
-            lot_number: mat.lot_number || '-',
+            lot_number: mat.lot_number || inboundInfo?.lot_number || '-',
             actual_qty: mat.actual_qty || mat.planned_qty,
             unit: mat.unit || 'g',  // production_materials의 단위 사용
             supplier: isSelfMade ? '자체제작' : (inboundInfo?.supplier || '-'),
-            inbound_date: inboundInfo?.inbound_date || '-',
-            expiry_date: inboundInfo?.expiry_date || '-'
+            inbound_date: isSelfMade ? '-' : (inboundInfo?.inbound_date || '-'),
+            expiry_date: isSelfMade ? '-' : (inboundInfo?.expiry_date || '-')
           });
         }
       }

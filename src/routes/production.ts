@@ -122,6 +122,70 @@ productionRoutes.get('/:id', async (c) => {
   });
 });
 
+// LOT 수량 수정 (관련 테이블 모두 업데이트)
+productionRoutes.put('/lot/:lotNumber', async (c) => {
+  const lotNumber = decodeURIComponent(c.req.param('lotNumber'));
+  const { quantity } = await c.req.json();
+  
+  if (!quantity || quantity <= 0) {
+    return c.json({ success: false, error: '유효한 수량을 입력하세요' }, 400);
+  }
+  
+  // 기존 생산 기록 조회
+  const production = await c.env.DB.prepare(`
+    SELECT * FROM production WHERE lot_number = ?
+  `).bind(lotNumber).first<any>();
+  
+  if (!production) {
+    return c.json({ success: false, error: '해당 LOT를 찾을 수 없습니다' }, 404);
+  }
+  
+  const oldQuantity = production.quantity;
+  const quantityDiff = quantity - oldQuantity;
+  
+  try {
+    // 1. production 테이블 수량 수정
+    await c.env.DB.prepare(`
+      UPDATE production SET quantity = ? WHERE lot_number = ?
+    `).bind(quantity, lotNumber).run();
+    
+    // 2. production_inbound 수량 수정 (origin_qty, remain_qty)
+    try {
+      await c.env.DB.prepare(`
+        UPDATE production_inbound 
+        SET origin_qty = ?, remain_qty = remain_qty + ?
+        WHERE lot_number = ? AND production_code = ?
+      `).bind(quantity, quantityDiff, lotNumber, production.product_code).run();
+    } catch (e) {
+      console.log('production_inbound 업데이트 스킵:', e);
+    }
+    
+    // 3. production_transactions 수량 수정 (생산입고, 출고)
+    try {
+      await c.env.DB.prepare(`
+        UPDATE production_transactions 
+        SET quantity = ?
+        WHERE lot_number = ? AND production_code = ?
+      `).bind(quantity, lotNumber, production.product_code).run();
+    } catch (e) {
+      console.log('production_transactions 업데이트 스킵:', e);
+    }
+    
+    // 4. production_daily_items 수량은 수정하지 않음 (PDF 원본 수량 유지)
+    // 생산일보 수량과 LOT 수량은 별개
+    
+    return c.json({ 
+      success: true, 
+      message: `LOT ${lotNumber} 수량이 ${oldQuantity} → ${quantity}로 변경되었습니다`,
+      data: { lot_number: lotNumber, old_quantity: oldQuantity, new_quantity: quantity }
+    });
+    
+  } catch (error: any) {
+    console.error('LOT 수량 수정 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // LOT 번호로 생산 조회 (이력추적용)
 productionRoutes.get('/lot/:lotNumber', async (c) => {
   const lotNumber = decodeURIComponent(c.req.param('lotNumber'));

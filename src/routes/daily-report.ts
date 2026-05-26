@@ -210,12 +210,13 @@ dailyReport.get('/reports/:id', async (c) => {
         lotMap.get(key)!.push(p)
       }
       
-      // 단순 product_code 매칭용 맵도 생성
-      const simpleLotMap = new Map<string, any>()
+      // product_code별 모든 LOT 목록 저장 (수량 기준 최적 매칭용)
+      const allLotsMap = new Map<string, any[]>()
       for (const p of productionLots.results as any[] || []) {
-        if (!simpleLotMap.has(p.product_code)) {
-          simpleLotMap.set(p.product_code, p)
+        if (!allLotsMap.has(p.product_code)) {
+          allLotsMap.set(p.product_code, [])
         }
+        allLotsMap.get(p.product_code)!.push(p)
       }
       
       // 각 품목에 LOT 할당 (같은 product_code에 대해서는 LOT 중복 사용 허용)
@@ -246,11 +247,19 @@ dailyReport.get('/reports/:id', async (c) => {
           }
         }
         
-        // 2차 시도: production_code만으로 매칭 (수량 무관 - 해당 날짜에 같은 제품 생산이 있으면)
-        // 수량이 달라도 생산등록이 된 것이므로 LOT 표시
-        const simpleLot = simpleLotMap.get(item.production_code)
-        if (simpleLot) {
-          return { ...item, lot_number: simpleLot.lot_number, channel: item.channel || simpleLot.channel }
+        // 2차 시도: production_code로 매칭하되, 적절한 수량의 LOT 선택
+        // 45개 품목이면 7개보다 90개 LOT가 더 적합 (생산량 >= 일보수량 우선)
+        const candidateLots = allLotsMap.get(item.production_code) || []
+        if (candidateLots.length > 0) {
+          // 1순위: 수량이 item.quantity 이상인 LOT 중 가장 작은 것
+          const validLots = candidateLots.filter(lot => lot.quantity >= item.quantity)
+          if (validLots.length > 0) {
+            validLots.sort((a, b) => a.quantity - b.quantity)
+            return { ...item, lot_number: validLots[0].lot_number, channel: item.channel || validLots[0].channel }
+          }
+          // 2순위: 없으면 가장 큰 수량의 LOT
+          candidateLots.sort((a, b) => b.quantity - a.quantity)
+          return { ...item, lot_number: candidateLots[0].lot_number, channel: item.channel || candidateLots[0].channel }
         }
         
         // 3차: 생산 등록이 없는 경우 - LOT 없음으로 표시 (null)

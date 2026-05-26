@@ -39979,6 +39979,28 @@ function taskBoardRenderTable() {
     return;
   }
   
+  // 상태 필터에 따른 강조 스타일
+  const getStatusStyle = (status, deptColor) => {
+    const currentStatus = status || '대기';
+    const targetStatus = taskBoardFilters.status;
+    
+    // 필터가 적용된 경우 해당 상태만 강조
+    if (targetStatus !== 'all') {
+      const isMatch = (targetStatus === 'pending' && currentStatus === '대기') ||
+                      (targetStatus === 'in_progress' && currentStatus === '진행중') ||
+                      (targetStatus === 'completed' && currentStatus === '완료');
+      
+      if (!isMatch) {
+        return { badge: 'bg-gray-100 text-gray-400', highlight: false, opacity: 'opacity-40' };
+      }
+    }
+    
+    // 기본 상태 스타일
+    if (currentStatus === '완료') return { badge: 'bg-green-500 text-white', highlight: true, opacity: '' };
+    if (currentStatus === '진행중') return { badge: 'bg-blue-500 text-white', highlight: true, opacity: '' };
+    return { badge: 'bg-gray-200 text-gray-600', highlight: false, opacity: '' };
+  };
+  
   container.innerHTML = `
     <table class="w-full text-sm">
       <thead class="bg-gray-50 sticky top-0">
@@ -40011,23 +40033,27 @@ function taskBoardRenderTable() {
               ${departments.map(d => {
                 const c = checksMap[d.id];
                 if (!c) return '<td class="px-2 py-2 lg:px-3 lg:py-3 text-center text-gray-300 text-xs lg:text-sm">-</td>';
-                const statusBadge = c.status === '완료' ? 'bg-green-100 text-green-700' : c.status === '진행중' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600';
+                const style = getStatusStyle(c.status, d.color);
                 return `
-                  <td class="px-2 py-2 lg:px-3 lg:py-3">
+                  <td class="px-2 py-2 lg:px-3 lg:py-3 ${style.opacity}">
                     <div class="space-y-1">
-                      <div class="flex justify-center"><span class="px-1.5 py-0.5 rounded text-xs ${statusBadge}">${c.status || '대기'}</span></div>
+                      <div class="flex justify-center">
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium ${style.badge}">
+                          ${c.status || '대기'}
+                        </span>
+                      </div>
                       <div class="flex items-center gap-1">
-                        <div class="flex-1 h-1 lg:h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                          <div class="h-full rounded-full" style="width: ${c.progress || 0}%; background: ${d.color}"></div>
+                        <div class="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div class="h-full rounded-full transition-all" style="width: ${c.progress || 0}%; background: ${style.highlight ? d.color : '#d1d5db'}"></div>
                         </div>
-                        <span class="text-xs text-gray-500 w-6 lg:w-8">${c.progress || 0}%</span>
+                        <span class="text-xs ${style.highlight ? 'text-gray-700 font-medium' : 'text-gray-400'} w-8">${c.progress || 0}%</span>
                       </div>
                     </div>
                   </td>
                 `;
               }).join('')}
               <td class="px-2 py-2 lg:px-3 lg:py-3 text-center">
-                <span class="font-bold text-xs lg:text-sm ${t.completed_count === t.total_count ? 'text-green-600' : 'text-gray-600'}">
+                <span class="font-bold text-xs lg:text-sm ${t.completed_count === t.total_count ? 'text-green-600' : t.completed_count > 0 ? 'text-blue-600' : 'text-gray-500'}">
                   ${t.completed_count}/${t.total_count}
                 </span>
               </td>

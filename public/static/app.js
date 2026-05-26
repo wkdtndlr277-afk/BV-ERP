@@ -38314,7 +38314,7 @@ async function loadRegisteredBarcodes() {
           '</div>' +
           '<div class="flex items-center gap-2">' +
             '<span class="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-mono">' + item.barcode + '</span>' +
-            '<button onclick="deleteBarcodeRegistration(\'' + item.item_code + '\', \'' + (item.item_name || '').replace(/'/g, "\\'") + '\')" class="p-2 text-red-500 hover:bg-red-50 rounded">' +
+            '<button onclick="deleteBarcodeRegistration(\'' + item.item_code + '\', \'' + (item.item_name || '').replace(/'/g, "\\'") + '\', \'' + item.table_type + '\')" class="p-2 text-red-500 hover:bg-red-50 rounded">' +
               '<i class="fas fa-trash"></i>' +
             '</button>' +
           '</div>' +
@@ -38335,13 +38335,13 @@ function searchRegisteredItems() {
   window.barcodeSearchTimeout = setTimeout(loadRegisteredBarcodes, 300);
 }
 
-async function deleteBarcodeRegistration(itemCode, itemName) {
+async function deleteBarcodeRegistration(itemCode, itemName, tableType) {
   if (!confirm(itemName + '의 바코드를 삭제하시겠습니까?')) {
     return;
   }
   
   try {
-    var response = await axios.delete(API_BASE + '/barcode/register?item_code=' + encodeURIComponent(itemCode));
+    var response = await axios.delete(API_BASE + '/barcode/registered/' + encodeURIComponent(itemCode) + '?table_type=' + encodeURIComponent(tableType));
     
     if (response.data.success) {
       showToast('바코드 삭제 완료', 'success');

@@ -38734,13 +38734,7 @@ async function loadAdminDailyReports() {
       `;
     }).join('');
     
-    // 첫 번째 부서 자동 펼치기
-    if (departments.length > 0 && reports.length > 0) {
-      const firstReport = reports[0];
-      if (firstReport) {
-        toggleDeptReport(firstReport.department_id);
-      }
-    }
+    // 모든 부서 기본 접힘 상태 유지 (클릭시 펼침)
   } catch (e) {
     container.innerHTML = '<div class="text-center py-8 text-red-400">로드 실패</div>';
   }

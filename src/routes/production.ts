@@ -710,8 +710,22 @@ productionRoutes.post('/batch', async (c) => {
       const requiredQty = bom.quantity * actualItemCount;
       const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
       
+      // FEFO 방식으로 원료 LOT 조회 (잔량이 있는 가장 오래된 LOT)
+      let materialLot = null;
+      try {
+        const lotResult = await c.env.DB.prepare(`
+          SELECT lot_number FROM inbound 
+          WHERE item_code = ? AND remain_qty > 0 
+          ORDER BY expiry_date ASC, inbound_date ASC, id ASC 
+          LIMIT 1
+        `).bind(actualItemCode).first<{lot_number: string}>();
+        materialLot = lotResult?.lot_number || null;
+      } catch (e) {
+        // LOT 조회 실패해도 계속 진행
+      }
+      
       materialRecords.push({
-        productLot, actualItemCode, requiredQty, unit: bom.unit
+        productLot, actualItemCode, requiredQty, unit: bom.unit, materialLot
       });
       
       if (materialDeductions.has(actualItemCode)) {
@@ -741,6 +755,37 @@ productionRoutes.post('/batch', async (c) => {
     // 배치 실행 (한 번의 네트워크 요청)
     if (productionInserts.length > 0) {
       await c.env.DB.batch(productionInserts);
+    }
+    
+    // 2-1단계: 생산 ID 조회 및 production_materials INSERT (원료 추적을 위해)
+    // LOT 번호로 방금 INSERT된 production ID 조회
+    const productionIdMap = new Map<string, number>();
+    for (const p of preparedItems) {
+      const prod = await c.env.DB.prepare(`
+        SELECT id FROM production WHERE lot_number = ? LIMIT 1
+      `).bind(p.productLot).first<{id: number}>();
+      if (prod) {
+        productionIdMap.set(p.productLot, prod.id);
+      }
+    }
+    
+    // BOM 기반 원료 정보를 production_materials에 INSERT (LOT 번호 포함)
+    const materialInserts: any[] = [];
+    for (const rec of materialRecords) {
+      const productionId = productionIdMap.get(rec.productLot);
+      if (productionId) {
+        materialInserts.push(
+          c.env.DB.prepare(`
+            INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).bind(productionId, rec.actualItemCode, rec.materialLot, rec.requiredQty, rec.requiredQty, rec.unit)
+        );
+      }
+    }
+    
+    if (materialInserts.length > 0) {
+      console.log(`[production/batch] production_materials INSERT ${materialInserts.length}건`);
+      await c.env.DB.batch(materialInserts);
     }
     
     // 3단계: 입고 기록 일괄 INSERT (PDF에서 추출한 소비기한 우선 사용)

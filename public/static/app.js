@@ -38482,57 +38482,57 @@ async function renderTaskAdminView() {
   const today = new Date().toISOString().split('T')[0];
   
   container.innerHTML = `
-    <div class="grid grid-cols-12 gap-6">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:gap-6">
       <!-- 좌측: 오늘 현황 요약 + 부서별 일일보고 -->
-      <div class="col-span-8 space-y-6">
+      <div class="lg:col-span-8 space-y-4 lg:space-y-6">
         <!-- 오늘 현황 카드 -->
-        <div class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-lg p-6 text-white">
-          <div class="flex items-center justify-between mb-4">
+        <div class="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl shadow-lg p-4 lg:p-6 text-white">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <div>
-              <h3 class="text-xl font-bold">📊 오늘의 업무 현황</h3>
-              <p class="text-indigo-200">${today.replace(/-/g, '.')}</p>
+              <h3 class="text-lg lg:text-xl font-bold">📊 오늘의 업무 현황</h3>
+              <p class="text-indigo-200 text-sm">${today.replace(/-/g, '.')}</p>
             </div>
-            <button onclick="showTaskDailyReportModal()" class="px-4 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-50 text-sm font-medium shadow">
+            <button onclick="showTaskDailyReportModal()" class="px-3 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-50 text-sm font-medium shadow whitespace-nowrap">
               <i class="fas fa-edit mr-1"></i>일일보고 작성
             </button>
           </div>
-          <div id="admin-summary-cards" class="grid grid-cols-5 gap-3">
-            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
-              <div class="text-3xl font-bold">-</div>
-              <div class="text-sm text-indigo-200">업무지시</div>
+          <div id="admin-summary-cards" class="grid grid-cols-3 sm:grid-cols-5 gap-2 lg:gap-3">
+            <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center">
+              <div class="text-xl lg:text-3xl font-bold">-</div>
+              <div class="text-xs lg:text-sm text-indigo-200">업무지시</div>
             </div>
-            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
-              <div class="text-3xl font-bold">-</div>
-              <div class="text-sm text-indigo-200">완료</div>
+            <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center">
+              <div class="text-xl lg:text-3xl font-bold">-</div>
+              <div class="text-xs lg:text-sm text-indigo-200">완료</div>
             </div>
-            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
-              <div class="text-3xl font-bold">-</div>
-              <div class="text-sm text-indigo-200">일일보고</div>
+            <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center">
+              <div class="text-xl lg:text-3xl font-bold">-</div>
+              <div class="text-xs lg:text-sm text-indigo-200">일일보고</div>
             </div>
-            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center cursor-pointer hover:bg-white/30" onclick="showCooperationModal()">
-              <div class="text-3xl font-bold">-</div>
-              <div class="text-sm text-indigo-200">협조요청</div>
+            <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center cursor-pointer hover:bg-white/30" onclick="showCooperationModal()">
+              <div class="text-xl lg:text-3xl font-bold">-</div>
+              <div class="text-xs lg:text-sm text-indigo-200">협조요청</div>
             </div>
-            <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
-              <div class="text-3xl font-bold">-</div>
-              <div class="text-sm text-indigo-200">완료율</div>
+            <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center hidden sm:block">
+              <div class="text-xl lg:text-3xl font-bold">-</div>
+              <div class="text-xs lg:text-sm text-indigo-200">완료율</div>
             </div>
           </div>
         </div>
         
         <!-- 부서별 일일보고 상세 -->
         <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-          <div class="bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-6 py-4 flex items-center justify-between">
+          <div class="bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-4 lg:px-6 py-3 lg:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
             <div class="flex items-center gap-2">
-              <i class="fas fa-clipboard-list text-xl"></i>
-              <span class="font-bold text-lg">부서별 일일보고</span>
+              <i class="fas fa-clipboard-list text-lg lg:text-xl"></i>
+              <span class="font-bold text-base lg:text-lg">부서별 일일보고</span>
             </div>
             <div class="flex items-center gap-2">
               <input type="date" id="admin-report-date" value="${today}" onchange="loadAdminDailyReports()"
-                class="px-3 py-1 rounded text-gray-700 text-sm">
+                class="px-3 py-1 rounded text-gray-700 text-sm w-full sm:w-auto">
             </div>
           </div>
-          <div id="admin-daily-reports" class="p-4 max-h-[500px] overflow-y-auto">
+          <div id="admin-daily-reports" class="p-3 lg:p-4 max-h-[400px] lg:max-h-[500px] overflow-y-auto">
             <div class="text-center py-8 text-gray-400">
               <i class="fas fa-spinner fa-spin text-2xl"></i>
             </div>
@@ -38541,32 +38541,32 @@ async function renderTaskAdminView() {
       </div>
       
       <!-- 우측: 업무지시/공지 목록 -->
-      <div class="col-span-4 space-y-6">
+      <div class="lg:col-span-4 space-y-4 lg:space-y-6">
         <!-- 공지사항 -->
         <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-          <div class="bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-5 py-3 flex items-center justify-between">
-            <span class="font-bold"><i class="fas fa-bullhorn mr-2"></i>공지사항</span>
-            <span id="admin-notice-count" class="bg-white/30 px-2 py-0.5 rounded text-sm">0건</span>
+          <div class="bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-4 lg:px-5 py-2 lg:py-3 flex items-center justify-between">
+            <span class="font-bold text-sm lg:text-base"><i class="fas fa-bullhorn mr-2"></i>공지사항</span>
+            <span id="admin-notice-count" class="bg-white/30 px-2 py-0.5 rounded text-xs lg:text-sm">0건</span>
           </div>
-          <div id="admin-notices" class="divide-y max-h-[200px] overflow-y-auto"></div>
+          <div id="admin-notices" class="divide-y max-h-[150px] lg:max-h-[200px] overflow-y-auto"></div>
         </div>
         
         <!-- 업무지시 -->
         <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-          <div class="bg-gradient-to-r from-rose-500 to-pink-500 text-white px-5 py-3 flex items-center justify-between">
-            <span class="font-bold"><i class="fas fa-tasks mr-2"></i>업무지시</span>
-            <span id="admin-task-count" class="bg-white/30 px-2 py-0.5 rounded text-sm">0건</span>
+          <div class="bg-gradient-to-r from-rose-500 to-pink-500 text-white px-4 lg:px-5 py-2 lg:py-3 flex items-center justify-between">
+            <span class="font-bold text-sm lg:text-base"><i class="fas fa-tasks mr-2"></i>업무지시</span>
+            <span id="admin-task-count" class="bg-white/30 px-2 py-0.5 rounded text-xs lg:text-sm">0건</span>
           </div>
-          <div id="admin-tasks" class="divide-y max-h-[280px] overflow-y-auto"></div>
+          <div id="admin-tasks" class="divide-y max-h-[200px] lg:max-h-[280px] overflow-y-auto"></div>
         </div>
         
         <!-- 대기중 협조 요청 -->
         <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-          <div class="bg-gradient-to-r from-purple-500 to-violet-500 text-white px-5 py-3 flex items-center justify-between">
-            <span class="font-bold"><i class="fas fa-handshake mr-2"></i>협조요청 대기</span>
-            <span id="admin-coop-count" class="bg-white/30 px-2 py-0.5 rounded text-sm">0건</span>
+          <div class="bg-gradient-to-r from-purple-500 to-violet-500 text-white px-4 lg:px-5 py-2 lg:py-3 flex items-center justify-between">
+            <span class="font-bold text-sm lg:text-base"><i class="fas fa-handshake mr-2"></i>협조요청 대기</span>
+            <span id="admin-coop-count" class="bg-white/30 px-2 py-0.5 rounded text-xs lg:text-sm">0건</span>
           </div>
-          <div id="admin-coops" class="divide-y max-h-[180px] overflow-y-auto"></div>
+          <div id="admin-coops" class="divide-y max-h-[150px] lg:max-h-[180px] overflow-y-auto"></div>
         </div>
       </div>
     </div>
@@ -38599,25 +38599,25 @@ async function loadAdminSummary() {
     } catch {}
     
     document.getElementById('admin-summary-cards').innerHTML = `
-      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
-        <div class="text-3xl font-bold">${totalTasks}</div>
-        <div class="text-sm text-indigo-200">업무지시</div>
+      <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center">
+        <div class="text-xl lg:text-3xl font-bold">${totalTasks}</div>
+        <div class="text-xs lg:text-sm text-indigo-200">업무지시</div>
       </div>
-      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
-        <div class="text-3xl font-bold">${completedTasks}</div>
-        <div class="text-sm text-indigo-200">완료</div>
+      <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center">
+        <div class="text-xl lg:text-3xl font-bold">${completedTasks}</div>
+        <div class="text-xs lg:text-sm text-indigo-200">완료</div>
       </div>
-      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
-        <div class="text-3xl font-bold">${totalReports}/${totalDepts}</div>
-        <div class="text-sm text-indigo-200">일일보고</div>
+      <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center">
+        <div class="text-xl lg:text-3xl font-bold">${totalReports}/${totalDepts}</div>
+        <div class="text-xs lg:text-sm text-indigo-200">일일보고</div>
       </div>
-      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center cursor-pointer hover:bg-white/30" onclick="showCooperationModal()">
-        <div class="text-3xl font-bold">${pendingCoops}</div>
-        <div class="text-sm text-indigo-200">협조요청</div>
+      <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center cursor-pointer hover:bg-white/30" onclick="showCooperationModal()">
+        <div class="text-xl lg:text-3xl font-bold">${pendingCoops}</div>
+        <div class="text-xs lg:text-sm text-indigo-200">협조요청</div>
       </div>
-      <div class="bg-white/20 backdrop-blur rounded-lg p-4 text-center">
-        <div class="text-3xl font-bold">${totalTasks > 0 ? Math.round(completedTasks/totalTasks*100) : 0}%</div>
-        <div class="text-sm text-indigo-200">완료율</div>
+      <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center hidden sm:block">
+        <div class="text-xl lg:text-3xl font-bold">${totalTasks > 0 ? Math.round(completedTasks/totalTasks*100) : 0}%</div>
+        <div class="text-xs lg:text-sm text-indigo-200">완료율</div>
       </div>
     `;
   } catch (e) {

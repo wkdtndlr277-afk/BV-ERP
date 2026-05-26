@@ -2877,7 +2877,7 @@ async function showNewItemModal(searchTerm = '', category = '원료') {
         </div>
       </div>
       
-      <div class="grid grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
           <select id="new-item-unit" class="w-full px-3 py-2 border rounded-lg">
@@ -3129,7 +3129,7 @@ async function showProductMasterModal() {
           </div>
         </div>
         
-        <div class="grid grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
             <select id="new-product-unit" class="w-full px-3 py-2 border rounded-lg">
@@ -9646,7 +9646,7 @@ async function showProcessKpiMonthlySummary() {
       <div class="space-y-4">
         <div class="text-center text-lg font-bold text-gray-800">${data.period.year}년 ${parseInt(data.period.month)}월 공정별 KPI 요약</div>
         
-        <div class="grid grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div class="bg-gray-50 rounded-lg p-4 text-center">
             <p class="text-sm text-gray-500">총 등록</p>
             <p class="text-xl font-bold">${data.total.total}건</p>
@@ -13676,7 +13676,7 @@ async function editAdminMaster(itemCode) {
           </div>
         </div>
         
-        <div class="grid grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">구분</label>
             <select id="edit-master-category" class="w-full px-3 py-2 border rounded-lg">
@@ -14679,7 +14679,7 @@ function showProcessQualityModal(record = null) {
     <form id="process-quality-form" class="space-y-4">
       <input type="hidden" id="pq-id" value="${record?.id || ''}">
       
-      <div class="grid grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">기록일자 <span class="text-red-500">*</span></label>
           <input type="date" id="pq-date" value="${record?.record_date || today}" required
@@ -15411,7 +15411,7 @@ async function loadMicrobialDaily(date) {
     
     document.getElementById('microbial-daily-content').innerHTML = `
       <!-- 요약 -->
-      <div class="grid grid-cols-3 gap-4 mb-6">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         <div class="bg-blue-50 rounded-lg p-4 text-center">
           <p class="text-2xl font-bold text-blue-600">${summary.total}</p>
           <p class="text-sm text-gray-600">총 검사</p>
@@ -15530,7 +15530,7 @@ async function loadMicrobialMonthlyData() {
     
     document.getElementById('microbial-monthly-content').innerHTML = `
       <!-- 월간 요약 -->
-      <div class="grid grid-cols-3 gap-4 mb-6">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
         <div class="bg-blue-50 rounded-lg p-4 text-center">
           <p class="text-2xl font-bold text-blue-600">${summary.total}</p>
           <p class="text-sm text-gray-600">총 검사</p>
@@ -15685,7 +15685,7 @@ async function showMicrobialModal(item = null) {
       
       <div class="border-t pt-4">
         <h4 class="font-medium text-gray-800 mb-3"><i class="fas fa-bacteria mr-2"></i>일반세균</h4>
-        <div class="grid grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <label class="block text-sm text-gray-600 mb-1">측정값 (CFU/g)</label>
             <input type="text" id="microbial-bacteria" value="${item?.total_bacteria || ''}"
@@ -15708,7 +15708,7 @@ async function showMicrobialModal(item = null) {
       
       <div class="border-t pt-4">
         <h4 class="font-medium text-gray-800 mb-3"><i class="fas fa-vial mr-2"></i>대장균</h4>
-        <div class="grid grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div>
             <label class="block text-sm text-gray-600 mb-1">측정값</label>
             <input type="text" id="microbial-coliform" value="${item?.coliform || ''}"
@@ -20805,7 +20805,7 @@ function showDailyReportModal(reportData) {
         
         <div class="p-4 overflow-y-auto max-h-[70vh]">
           <!-- 요약 카드 -->
-          <div class="grid grid-cols-4 gap-4 mb-6">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
             <div class="bg-blue-50 rounded-lg p-3 text-center">
               <div class="text-2xl font-bold text-blue-600">${total_products}</div>
               <div class="text-sm text-gray-600">총 품목</div>
@@ -25650,7 +25650,7 @@ async function openProductionManagement() {
       </div>
       
       <!-- 통계 카드 -->
-      <div id="production-stats" class="grid grid-cols-4 gap-4 mb-6">
+      <div id="production-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div class="bg-white rounded-xl shadow p-4">
           <div class="flex items-center gap-3">
             <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
@@ -29129,7 +29129,7 @@ function renderBarcodeProductionPlanResult(data, fileName) {
   resultContainer.innerHTML = `
     <div class="space-y-4">
       <!-- 요약 -->
-      <div class="grid grid-cols-4 gap-3">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div class="bg-blue-50 rounded-lg p-3 text-center">
           <div class="text-xl font-bold text-blue-600">${summary.total_items}</div>
           <div class="text-xs text-gray-500">총 품목</div>
@@ -29828,7 +29828,7 @@ function showDailyReportDetailModal(reportData) {
       </div>
       
       <!-- 요약 카드 -->
-      <div class="grid grid-cols-3 gap-3">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <div class="bg-blue-50 rounded-lg p-3 text-center">
           <div class="text-xl font-bold text-blue-600">${matchedItems.length}</div>
           <div class="text-xs text-gray-500">매칭 품목</div>
@@ -36647,7 +36647,7 @@ function showAddQualityItemModal() {
         <label class="block text-sm font-medium text-gray-700 mb-1">기준값</label>
         <input type="text" id="qi-standard_value" class="w-full border rounded-lg px-4 py-2" placeholder="예: 이상 없음">
       </div>
-      <div class="grid grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">최소값</label>
           <input type="number" id="qi-min_value" class="w-full border rounded-lg px-4 py-2" step="0.01">
@@ -38852,8 +38852,8 @@ function renderCalendarView() {
   container.innerHTML = `
     <div class="space-y-6">
       <!-- 필터 체크박스 -->
-      <div class="flex items-center justify-between flex-wrap gap-4">
-        <div class="flex items-center gap-3 bg-white rounded-lg shadow px-4 py-2 text-sm">
+      <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+        <div class="grid grid-cols-2 sm:flex sm:items-center gap-2 sm:gap-3 bg-white rounded-lg shadow px-3 sm:px-4 py-2 text-xs sm:text-sm w-full sm:w-auto">
           <label class="flex items-center gap-1 cursor-pointer">
             <input type="checkbox" id="filter-notice" checked onchange="toggleTaskFilter('notice')" class="rounded text-blue-600">
             <span class="text-blue-600 font-medium">📢 공지</span>
@@ -38871,11 +38871,11 @@ function renderCalendarView() {
             <span class="text-purple-600 font-medium">🤝 협조</span>
           </label>
         </div>
-        <div id="task-dept-legend" class="flex items-center gap-4 text-sm"></div>
+        <div id="task-dept-legend" class="flex flex-wrap items-center gap-2 sm:gap-4 text-xs sm:text-sm"></div>
       </div>
       
       <!-- 부서별 현황 요약 -->
-      <div id="task-dept-summary" class="grid grid-cols-3 gap-4"></div>
+      <div id="task-dept-summary" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"></div>
       
       <!-- 캘린더 네비게이션 -->
       <div class="bg-white rounded-xl shadow p-4">
@@ -38888,14 +38888,14 @@ function renderCalendarView() {
       
       <!-- 캘린더 (날짜별 색인) -->
       <div class="bg-white rounded-xl shadow overflow-hidden">
-        <div class="grid grid-cols-7 bg-gray-50 border-b">
-          <div class="p-3 text-center font-semibold text-red-500">일</div>
-          <div class="p-3 text-center font-semibold text-gray-700">월</div>
-          <div class="p-3 text-center font-semibold text-gray-700">화</div>
-          <div class="p-3 text-center font-semibold text-gray-700">수</div>
-          <div class="p-3 text-center font-semibold text-gray-700">목</div>
-          <div class="p-3 text-center font-semibold text-gray-700">금</div>
-          <div class="p-3 text-center font-semibold text-blue-500">토</div>
+        <div class="grid grid-cols-7 bg-gray-50 border-b text-xs sm:text-sm">
+          <div class="p-2 sm:p-3 text-center font-semibold text-red-500">일</div>
+          <div class="p-2 sm:p-3 text-center font-semibold text-gray-700">월</div>
+          <div class="p-2 sm:p-3 text-center font-semibold text-gray-700">화</div>
+          <div class="p-2 sm:p-3 text-center font-semibold text-gray-700">수</div>
+          <div class="p-2 sm:p-3 text-center font-semibold text-gray-700">목</div>
+          <div class="p-2 sm:p-3 text-center font-semibold text-gray-700">금</div>
+          <div class="p-2 sm:p-3 text-center font-semibold text-blue-500">토</div>
         </div>
         <div id="task-calendar-body" class="grid grid-cols-7"></div>
       </div>
@@ -39268,7 +39268,7 @@ async function taskLoadDeptSummary() {
             <i class="fas fa-file-alt mr-1"></i>일일보고
           </button>
         </div>
-        <div class="grid grid-cols-3 gap-2 text-center text-sm">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 text-center text-sm">
           <div class="bg-gray-100 rounded p-2">
             <div class="text-gray-500">대기</div>
             <div class="font-bold text-gray-700">${d.pending || 0}</div>
@@ -39641,7 +39641,7 @@ async function renderTaskBoard() {
       </div>
       
       <!-- 통계 -->
-      <div id="task-board-stats" class="grid grid-cols-4 gap-4"></div>
+      <div id="task-board-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
       
       <!-- 탭 -->
       <div class="bg-white rounded-t-xl border-b flex">
@@ -40358,7 +40358,7 @@ async function showWorkHistoryModal() {
     <div class="space-y-4" style="min-width: 700px;">
       <!-- 필터 영역 -->
       <div class="bg-gray-50 rounded-lg p-4">
-        <div class="grid grid-cols-4 gap-3">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div>
             <label class="block text-xs text-gray-500 mb-1">부서</label>
             <select id="wh-dept-filter" onchange="workHistoryFilters.department_id = this.value; loadWorkHistory()" 
@@ -40629,7 +40629,7 @@ async function loadWorkHistoryStats() {
         <!-- 부서별 통계 -->
         <div>
           <h4 class="font-semibold text-gray-700 mb-3"><i class="fas fa-building mr-1"></i>부서별 현황</h4>
-          <div class="grid grid-cols-3 gap-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             ${departments.map(d => `
               <div class="border rounded-lg p-3" style="border-left: 4px solid ${d.color}">
                 <div class="font-medium text-gray-800 mb-2">${d.name}</div>
@@ -40894,7 +40894,7 @@ function renderCoopNewForm() {
         </div>
       </div>
       
-      <div class="grid grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">요청자</label>
           <input type="text" id="coop-requester" class="w-full px-3 py-2 border rounded-lg" placeholder="이름">

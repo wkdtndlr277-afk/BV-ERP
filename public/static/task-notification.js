@@ -1,5 +1,5 @@
 // 업무/공지 알림 시스템
-// Version: 1.0.0
+// Version: 1.1.0 - 로그인 체크 추가
 
 (function() {
   'use strict';
@@ -11,6 +11,13 @@
   let checkIntervalId = null;
   let notificationQueue = [];
   let isShowingNotification = false;
+  let isInitialized = false;
+  
+  // 로그인 상태 확인
+  function isLoggedIn() {
+    const token = localStorage.getItem('erp_auth_token');
+    return !!token;
+  }
   
   // 알림음 초기화 (선택적)
   function initSound() {
@@ -38,10 +45,19 @@
   
   // 새 알림 체크
   async function checkNewNotifications() {
+    // 로그인 안 된 상태면 체크 안 함
+    if (!isLoggedIn()) {
+      console.log('📢 로그인 필요 - 알림 체크 건너뜀');
+      return;
+    }
+    
     try {
       const lastCheck = localStorage.getItem(LAST_CHECK_KEY) || new Date(Date.now() - 86400000).toISOString();
       
-      const response = await fetch(`/api/task/notifications?since=${encodeURIComponent(lastCheck)}`);
+      const token = localStorage.getItem('erp_auth_token');
+      const response = await fetch(`/api/task/notifications?since=${encodeURIComponent(lastCheck)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
       const result = await response.json();
       
       if (result.success && result.data && result.data.length > 0) {
@@ -256,15 +272,32 @@
   
   // 팝업 닫기
   function closePopup() {
+    console.log('📢 팝업 닫기 시도');
     const popup = document.getElementById('task-notification-popup');
     if (popup) {
-      popup.querySelector('.tn-overlay').style.animation = 'tnFadeIn 0.2s ease-out reverse';
-      setTimeout(() => {
-        popup.remove();
+      try {
+        const overlay = popup.querySelector('.tn-overlay');
+        if (overlay) {
+          overlay.style.animation = 'tnFadeIn 0.2s ease-out reverse';
+        }
+        setTimeout(() => {
+          if (popup && popup.parentNode) {
+            popup.parentNode.removeChild(popup);
+          }
+          isShowingNotification = false;
+          // 다음 알림 처리
+          setTimeout(processNotificationQueue, 500);
+        }, 200);
+      } catch (e) {
+        console.error('팝업 닫기 오류:', e);
+        // 강제로 제거
+        if (popup && popup.parentNode) {
+          popup.parentNode.removeChild(popup);
+        }
         isShowingNotification = false;
-        // 다음 알림 처리
-        setTimeout(processNotificationQueue, 500);
-      }, 200);
+      }
+    } else {
+      isShowingNotification = false;
     }
   }
   
@@ -351,9 +384,16 @@
   
   // 상세 팝업 닫기
   function closeDetailPopup() {
+    console.log('📢 상세 팝업 닫기 시도');
     const popup = document.getElementById('task-detail-popup');
     if (popup) {
-      popup.remove();
+      try {
+        if (popup.parentNode) {
+          popup.parentNode.removeChild(popup);
+        }
+      } catch (e) {
+        console.error('상세 팝업 닫기 오류:', e);
+      }
     }
   }
   
@@ -404,9 +444,43 @@
   
   // 초기화
   function init() {
+    if (isInitialized) {
+      console.log('📢 업무 알림 시스템 이미 초기화됨');
+      return;
+    }
+    
+    // 로그인 상태가 아니면 나중에 다시 시도
+    if (!isLoggedIn()) {
+      console.log('📢 로그인 대기 중 - 알림 시스템 대기');
+      // 5초마다 로그인 상태 확인
+      setTimeout(() => {
+        if (isLoggedIn() && !isInitialized) {
+          init();
+        }
+      }, 5000);
+      return;
+    }
+    
     initSound();
     startNotificationCheck();
+    isInitialized = true;
     console.log('📢 업무 알림 시스템 초기화 완료');
+  }
+  
+  // 로그아웃 시 정리
+  function cleanup() {
+    stopNotificationCheck();
+    isInitialized = false;
+    notificationQueue = [];
+    isShowingNotification = false;
+    
+    // 열린 팝업 모두 닫기
+    const popup1 = document.getElementById('task-notification-popup');
+    const popup2 = document.getElementById('task-detail-popup');
+    if (popup1 && popup1.parentNode) popup1.parentNode.removeChild(popup1);
+    if (popup2 && popup2.parentNode) popup2.parentNode.removeChild(popup2);
+    
+    console.log('📢 업무 알림 시스템 정리 완료');
   }
   
   // 전역 API 노출
@@ -417,7 +491,9 @@
     closeDetailPopup: closeDetailPopup,
     viewTask: viewTask,
     start: startNotificationCheck,
-    stop: stopNotificationCheck
+    stop: stopNotificationCheck,
+    cleanup: cleanup,
+    isLoggedIn: isLoggedIn
   };
   
   // DOM 로드 후 초기화

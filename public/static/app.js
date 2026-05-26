@@ -330,6 +330,11 @@ async function handleLogin(e) {
       await loadMasterData();
       await loadAlertCount();
       renderDashboard();
+      
+      // 알림 시스템 시작 (로그인 후)
+      if (window.TaskNotification && typeof window.TaskNotification.init === 'function') {
+        setTimeout(() => window.TaskNotification.init(), 1000);
+      }
     }
   } catch (error) {
     const message = error.response?.data?.error || '로그인에 실패했습니다.';
@@ -373,6 +378,11 @@ async function handleLogout() {
     });
   } catch (e) {
     // 무시
+  }
+  
+  // 알림 시스템 정리
+  if (window.TaskNotification && typeof window.TaskNotification.cleanup === 'function') {
+    window.TaskNotification.cleanup();
   }
   
   clearAuthToken();

@@ -246,8 +246,12 @@ dailyReport.get('/reports/:id', async (c) => {
           }
         }
         
-        // 2차 시도 제거: 수량이 다른 LOT를 매칭하면 혼란 발생
-        // 생산 등록이 안 된 경우 LOT 없이 표시하거나 자동 생성
+        // 2차 시도: production_code만으로 매칭 (수량 무관 - 해당 날짜에 같은 제품 생산이 있으면)
+        // 수량이 달라도 생산등록이 된 것이므로 LOT 표시
+        const simpleLot = simpleLotMap.get(item.production_code)
+        if (simpleLot) {
+          return { ...item, lot_number: simpleLot.lot_number, channel: item.channel || simpleLot.channel }
+        }
         
         // 3차: 생산 등록이 없는 경우 - LOT 없음으로 표시 (null)
         // 사용자가 생산등록 버튼을 눌러야 실제 LOT가 생성됨

@@ -38395,6 +38395,8 @@ let taskCalendarDate = new Date();
 let taskDepartments = [];
 let taskCalendarData = [];
 let taskSelectedDate = new Date().toISOString().split('T')[0];
+let taskFilters = { notice: true, task: true, dailyReport: true, cooperation: true };
+let taskCooperations = [];
 
 async function renderTaskCalendar() {
   const content = document.getElementById('page-content');
@@ -38412,19 +38414,45 @@ async function renderTaskCalendar() {
   
   content.innerHTML = `
     <div class="space-y-6">
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between flex-wrap gap-4">
         <h2 class="text-2xl font-bold text-gray-800">
           <i class="fas fa-calendar-alt mr-2 text-indigo-600"></i>
           업무 캘린더
         </h2>
-        <div class="flex items-center gap-4">
-          <!-- 부서별 색상 범례 -->
-          <div id="task-dept-legend" class="flex items-center gap-2 text-xs"></div>
+        <div class="flex items-center gap-3 flex-wrap">
+          <!-- 필터 체크박스 -->
+          <div class="flex items-center gap-3 bg-gray-100 rounded-lg px-4 py-2 text-sm">
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" id="filter-notice" checked onchange="toggleTaskFilter('notice')" class="rounded text-blue-600">
+              <span class="text-blue-600 font-medium">📢 공지</span>
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" id="filter-task" checked onchange="toggleTaskFilter('task')" class="rounded text-red-600">
+              <span class="text-red-600 font-medium">📋 업무지시</span>
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" id="filter-dailyReport" checked onchange="toggleTaskFilter('dailyReport')" class="rounded text-green-600">
+              <span class="text-green-600 font-medium">📝 일일업무</span>
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" id="filter-cooperation" checked onchange="toggleTaskFilter('cooperation')" class="rounded text-purple-600">
+              <span class="text-purple-600 font-medium">🤝 협조</span>
+            </label>
+          </div>
+          <button onclick="showCooperationModal()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm">
+            <i class="fas fa-handshake mr-1"></i>업무협조
+          </button>
+          <button onclick="showWorkHistoryModal()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm">
+            <i class="fas fa-history mr-1"></i>이력관리
+          </button>
           <button onclick="showTaskCreateModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm">
             <i class="fas fa-plus mr-1"></i>새 등록
           </button>
         </div>
       </div>
+      
+      <!-- 부서별 색상 범례 -->
+      <div id="task-dept-legend" class="flex items-center gap-4 text-sm bg-white rounded-lg shadow px-4 py-2"></div>
       
       <!-- 당일 업무현황 대시보드 -->
       <div id="task-daily-dashboard" class="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl shadow p-6 text-white">
@@ -38433,14 +38461,16 @@ async function renderTaskCalendar() {
             <h3 class="text-lg font-bold">오늘의 업무 현황</h3>
             <p id="task-today-date" class="text-indigo-200 text-sm"></p>
           </div>
-          <button onclick="showTaskDailyReportModal()" class="px-4 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-50 text-sm font-medium">
-            <i class="fas fa-file-alt mr-1"></i>일일보고 작성
-          </button>
+          <div class="flex gap-2">
+            <button onclick="showTaskDailyReportModal()" class="px-4 py-2 bg-white text-indigo-600 rounded-lg hover:bg-indigo-50 text-sm font-medium">
+              <i class="fas fa-file-alt mr-1"></i>일일보고 작성
+            </button>
+          </div>
         </div>
-        <div id="task-daily-summary" class="grid grid-cols-4 gap-4"></div>
+        <div id="task-daily-summary" class="grid grid-cols-5 gap-4"></div>
       </div>
       
-      <!-- 부서별 현황 요약 (클릭하면 일일보고로 이동) -->
+      <!-- 부서별 현황 요약 -->
       <div id="task-dept-summary" class="grid grid-cols-3 gap-4"></div>
       
       <!-- 캘린더 네비게이션 -->
@@ -38452,7 +38482,7 @@ async function renderTaskCalendar() {
         </div>
       </div>
       
-      <!-- 캘린더 -->
+      <!-- 캘린더 (날짜별 색인) -->
       <div class="bg-white rounded-xl shadow overflow-hidden">
         <div class="grid grid-cols-7 bg-gray-50 border-b">
           <div class="p-3 text-center font-semibold text-red-500">일</div>
@@ -38466,13 +38496,22 @@ async function renderTaskCalendar() {
         <div id="task-calendar-body" class="grid grid-cols-7"></div>
       </div>
       
+      <!-- 선택 날짜 상세 -->
+      <div id="task-selected-date-detail" class="bg-white rounded-xl shadow overflow-hidden hidden">
+        <div class="bg-gradient-to-r from-amber-500 to-orange-500 text-white px-6 py-3 flex items-center justify-between">
+          <span id="task-selected-date-title" class="font-semibold"><i class="fas fa-calendar-day mr-2"></i>날짜 선택</span>
+          <button onclick="hideSelectedDateDetail()" class="text-white/80 hover:text-white"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="task-selected-date-content" class="p-4 max-h-[400px] overflow-y-auto"></div>
+      </div>
+      
       <!-- 업무 목록 -->
       <div class="bg-white rounded-xl shadow overflow-hidden">
         <div class="bg-gradient-to-r from-orange-500 to-red-500 text-white px-6 py-3 flex items-center justify-between">
           <span class="font-semibold"><i class="fas fa-list-check mr-2"></i>업무지시/공지 목록</span>
-          <div class="flex items-center gap-2 text-sm">
-            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-white/30"></span>공지</span>
-            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-white/70"></span>업무지시</span>
+          <div class="flex items-center gap-3 text-sm">
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-blue-300"></span>공지</span>
+            <span class="flex items-center gap-1"><span class="w-3 h-3 rounded bg-red-300"></span>업무지시</span>
           </div>
         </div>
         <div id="task-list" class="divide-y max-h-[400px] overflow-y-auto"></div>
@@ -38485,6 +38524,14 @@ async function renderTaskCalendar() {
   taskLoadDeptSummary();
   taskLoadList();
   taskLoadDailyDashboard();
+  loadCooperations();
+}
+
+// 필터 토글
+function toggleTaskFilter(type) {
+  taskFilters[type] = document.getElementById('filter-' + type).checked;
+  taskRenderCalendar();
+  taskLoadList();
 }
 
 // 부서별 색상 범례 렌더링
@@ -38515,6 +38562,13 @@ async function taskLoadDailyDashboard() {
     const totalReports = data.reports.length;
     const totalDepts = data.departments.length;
     
+    // 협조 요청 수
+    let pendingCoops = 0;
+    try {
+      const coopRes = await axios.get('/api/task/cooperations?status=요청&limit=100');
+      pendingCoops = coopRes.data.success ? coopRes.data.data.items.length : 0;
+    } catch {}
+    
     document.getElementById('task-daily-summary').innerHTML = `
       <div class="bg-white/20 rounded-lg p-4 text-center">
         <div class="text-3xl font-bold">${totalTasks}</div>
@@ -38527,6 +38581,10 @@ async function taskLoadDailyDashboard() {
       <div class="bg-white/20 rounded-lg p-4 text-center">
         <div class="text-3xl font-bold">${totalReports}/${totalDepts}</div>
         <div class="text-sm text-indigo-200">일일보고 제출</div>
+      </div>
+      <div class="bg-white/20 rounded-lg p-4 text-center cursor-pointer hover:bg-white/30" onclick="showCooperationModal()">
+        <div class="text-3xl font-bold">${pendingCoops}</div>
+        <div class="text-sm text-indigo-200">대기 협조요청</div>
       </div>
       <div class="bg-white/20 rounded-lg p-4 text-center">
         <div class="text-3xl font-bold">${totalTasks > 0 ? Math.round(completedTasks/totalTasks*100) : 0}%</div>
@@ -38556,12 +38614,21 @@ async function taskRenderCalendar() {
   document.getElementById('task-calendar-title').textContent = year + '년 ' + (month + 1) + '월';
   
   const monthStr = taskGetMonthString(taskCalendarDate);
+  
+  // 업무지시/공지 로드
   try {
     const res = await axios.get('/api/task/calendar?month=' + monthStr);
     taskCalendarData = res.data.success ? res.data.data : [];
   } catch (e) {
     taskCalendarData = [];
   }
+  
+  // 달력 요약 데이터 로드 (일일보고, 협조)
+  let calendarSummary = { tasks: [], reports: [], cooperations: [] };
+  try {
+    const sumRes = await axios.get('/api/task/calendar-summary?year=' + year + '&month=' + (month + 1));
+    if (sumRes.data.success) calendarSummary = sumRes.data.data;
+  } catch (e) {}
   
   const firstDay = new Date(year, month, 1).getDay();
   const lastDay = new Date(year, month + 1, 0).getDate();
@@ -38570,59 +38637,65 @@ async function taskRenderCalendar() {
   let html = '';
   
   for (let i = 0; i < firstDay; i++) {
-    html += '<div class="min-h-[90px] p-2 bg-gray-50 border-b border-r"></div>';
+    html += '<div class="min-h-[100px] p-2 bg-gray-50 border-b border-r"></div>';
   }
   
   for (let day = 1; day <= lastDay; day++) {
     const dateStr = year + '-' + String(month + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
     const isToday = dateStr === todayStr;
-    const dayTasks = taskCalendarData.filter(t => t.due_date === dateStr);
     const dayOfWeek = (firstDay + day - 1) % 7;
     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
     
-    // 부서별 색상 바 생성
-    const deptColors = [...new Set(dayTasks.flatMap(t => {
-      if (t.target_departments) {
-        try {
-          const depts = JSON.parse(t.target_departments);
-          return depts.map(dId => {
-            const dept = taskDepartments.find(d => d.id == dId);
-            return dept ? dept.color : null;
-          }).filter(Boolean);
-        } catch { return []; }
-      }
-      return [];
-    }))];
+    // 필터 적용된 업무
+    let dayTasks = taskCalendarData.filter(t => t.due_date === dateStr);
+    if (!taskFilters.notice) dayTasks = dayTasks.filter(t => t.type !== 'notice');
+    if (!taskFilters.task) dayTasks = dayTasks.filter(t => t.type !== 'task');
+    
+    // 일일보고
+    const dayReports = taskFilters.dailyReport ? calendarSummary.reports.filter(r => r.report_date === dateStr) : [];
+    
+    // 협조 요청
+    const dayCoops = taskFilters.cooperation ? calendarSummary.cooperations.filter(c => c.date === dateStr) : [];
+    
+    // 날짜에 표시할 아이콘/뱃지
+    const hasNotice = dayTasks.some(t => t.type === 'notice');
+    const hasTask = dayTasks.some(t => t.type === 'task');
+    const hasReport = dayReports.length > 0;
+    const hasCoop = dayCoops.length > 0;
     
     html += `
-      <div class="min-h-[90px] p-2 border-b border-r cursor-pointer hover:bg-gray-50 ${isToday ? 'bg-indigo-50' : ''}" onclick="taskShowDayTasks('${dateStr}')">
+      <div class="min-h-[100px] p-2 border-b border-r cursor-pointer hover:bg-gray-50 transition-colors ${isToday ? 'bg-indigo-50 ring-2 ring-indigo-300 ring-inset' : ''}" 
+           onclick="showDateDetail('${dateStr}')">
         <div class="flex items-center justify-between mb-1">
-          <span class="${isToday ? 'bg-indigo-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-sm' : ''} ${isWeekend ? (dayOfWeek === 0 ? 'text-red-500' : 'text-blue-500') : 'text-gray-700'} font-medium">${day}</span>
-          <div class="flex gap-0.5">
-            ${deptColors.slice(0, 3).map(c => `<span class="w-2 h-2 rounded-full" style="background:${c}"></span>`).join('')}
+          <span class="${isToday ? 'bg-indigo-600 text-white w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold' : ''} ${isWeekend ? (dayOfWeek === 0 ? 'text-red-500' : 'text-blue-500') : 'text-gray-700'} font-medium">${day}</span>
+          <div class="flex gap-1">
+            ${hasNotice ? '<span class="w-2 h-2 rounded-full bg-blue-500" title="공지"></span>' : ''}
+            ${hasTask ? '<span class="w-2 h-2 rounded-full bg-red-500" title="업무지시"></span>' : ''}
+            ${hasReport ? '<span class="w-2 h-2 rounded-full bg-green-500" title="일일업무"></span>' : ''}
+            ${hasCoop ? '<span class="w-2 h-2 rounded-full bg-purple-500" title="협조"></span>' : ''}
           </div>
         </div>
-        <div class="space-y-1">
+        <div class="space-y-1 text-xs">
           ${dayTasks.slice(0, 2).map(t => {
-            // 첫 번째 대상 부서의 색상 사용
-            let borderColor = t.type === 'notice' ? '#3B82F6' : '#EF4444';
-            if (t.target_departments) {
-              try {
-                const depts = JSON.parse(t.target_departments);
-                if (depts.length > 0) {
-                  const dept = taskDepartments.find(d => d.id == depts[0]);
-                  if (dept) borderColor = dept.color;
-                }
-              } catch {}
-            }
+            const icon = t.type === 'notice' ? '📢' : '📋';
+            const borderColor = t.type === 'notice' ? '#3B82F6' : '#EF4444';
             return `
-              <div class="text-xs p-1 rounded truncate flex items-center gap-1 bg-gray-50" style="border-left: 3px solid ${borderColor}">
-                ${t.completed_count === t.total_count ? '<i class="fas fa-check-circle text-green-500"></i>' : '<i class="fas fa-clock text-gray-400"></i>'}
-                <span class="truncate text-gray-700">${t.title}</span>
+              <div class="p-1 rounded truncate bg-gray-50 hover:bg-gray-100" style="border-left: 3px solid ${borderColor}">
+                <span class="truncate">${icon} ${t.title}</span>
               </div>
             `;
           }).join('')}
-          ${dayTasks.length > 2 ? '<div class="text-xs text-gray-400 text-center">+' + (dayTasks.length - 2) + '개</div>' : ''}
+          ${dayReports.length > 0 ? `
+            <div class="p-1 rounded truncate bg-green-50 text-green-700" style="border-left: 3px solid #10B981">
+              📝 일일보고 ${dayReports.length}건
+            </div>
+          ` : ''}
+          ${dayCoops.length > 0 ? `
+            <div class="p-1 rounded truncate bg-purple-50 text-purple-700" style="border-left: 3px solid #8B5CF6">
+              🤝 협조 ${dayCoops.reduce((s, c) => s + c.count, 0)}건
+            </div>
+          ` : ''}
+          ${dayTasks.length > 2 ? `<div class="text-gray-400 text-center">+${dayTasks.length - 2}개 더</div>` : ''}
         </div>
       </div>
     `;
@@ -38630,10 +38703,145 @@ async function taskRenderCalendar() {
   
   const remaining = (7 - ((firstDay + lastDay) % 7)) % 7;
   for (let i = 0; i < remaining; i++) {
-    html += '<div class="min-h-[90px] p-2 bg-gray-50 border-b border-r"></div>';
+    html += '<div class="min-h-[100px] p-2 bg-gray-50 border-b border-r"></div>';
   }
   
   document.getElementById('task-calendar-body').innerHTML = html;
+}
+
+// 날짜 상세 보기
+async function showDateDetail(dateStr) {
+  taskSelectedDate = dateStr;
+  const container = document.getElementById('task-selected-date-detail');
+  const titleEl = document.getElementById('task-selected-date-title');
+  const contentEl = document.getElementById('task-selected-date-content');
+  
+  container.classList.remove('hidden');
+  titleEl.innerHTML = '<i class="fas fa-calendar-day mr-2"></i>' + dateStr + ' 상세';
+  contentEl.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-gray-400"></i></div>';
+  
+  try {
+    // 해당 날짜 업무 목록
+    const dayTasks = taskCalendarData.filter(t => t.due_date === dateStr);
+    
+    // 일일보고 로드
+    const reportRes = await axios.get('/api/task/daily-reports?date=' + dateStr);
+    const reports = reportRes.data.success ? reportRes.data.data : [];
+    
+    // 협조 요청 로드
+    const coopRes = await axios.get('/api/task/cooperations?limit=50');
+    const coops = coopRes.data.success ? coopRes.data.data.items.filter(c => c.created_at.startsWith(dateStr)) : [];
+    
+    let html = '<div class="space-y-4">';
+    
+    // 공지사항
+    const notices = taskFilters.notice ? dayTasks.filter(t => t.type === 'notice') : [];
+    if (notices.length > 0) {
+      html += `
+        <div>
+          <h4 class="font-semibold text-blue-600 mb-2"><i class="fas fa-bullhorn mr-1"></i>공지사항 (${notices.length})</h4>
+          <div class="space-y-2">
+            ${notices.map(t => `
+              <div class="border rounded-lg p-3 hover:bg-blue-50 cursor-pointer" onclick="showTaskDetailModal(${t.id})" style="border-left: 4px solid #3B82F6">
+                <div class="font-medium">${t.title}</div>
+                <div class="text-sm text-gray-500 mt-1 line-clamp-2">${t.content || ''}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+    
+    // 업무지시
+    const tasks = taskFilters.task ? dayTasks.filter(t => t.type === 'task') : [];
+    if (tasks.length > 0) {
+      html += `
+        <div>
+          <h4 class="font-semibold text-red-600 mb-2"><i class="fas fa-clipboard-list mr-1"></i>업무지시 (${tasks.length})</h4>
+          <div class="space-y-2">
+            ${tasks.map(t => `
+              <div class="border rounded-lg p-3 hover:bg-red-50 cursor-pointer" onclick="showTaskDetailModal(${t.id})" style="border-left: 4px solid #EF4444">
+                <div class="flex items-center justify-between">
+                  <span class="font-medium">${t.title}</span>
+                  <span class="text-xs px-2 py-0.5 rounded ${t.completed_count === t.total_count ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}">
+                    ${t.completed_count || 0}/${t.total_count || 0} 완료
+                  </span>
+                </div>
+                <div class="text-sm text-gray-500 mt-1 line-clamp-2">${t.content || ''}</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+    
+    // 일일업무 보고
+    if (taskFilters.dailyReport && reports.length > 0) {
+      html += `
+        <div>
+          <h4 class="font-semibold text-green-600 mb-2"><i class="fas fa-file-alt mr-1"></i>일일업무 보고 (${reports.length})</h4>
+          <div class="grid grid-cols-2 gap-2">
+            ${reports.map(r => `
+              <div class="border rounded-lg p-3 hover:bg-green-50 cursor-pointer" onclick="viewWorkHistoryDetail(${r.id})" style="border-left: 4px solid ${r.department_color}">
+                <div class="flex items-center gap-2">
+                  <span class="w-3 h-3 rounded-full" style="background: ${r.department_color}"></span>
+                  <span class="font-medium">${r.department_name}</span>
+                </div>
+                <div class="text-sm text-gray-500 mt-1">${r.reporter_name || '-'} · ${r.item_count || 0}건</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+    
+    // 업무 협조
+    if (taskFilters.cooperation && coops.length > 0) {
+      html += `
+        <div>
+          <h4 class="font-semibold text-purple-600 mb-2"><i class="fas fa-handshake mr-1"></i>업무 협조 (${coops.length})</h4>
+          <div class="space-y-2">
+            ${coops.map(c => `
+              <div class="border rounded-lg p-3 hover:bg-purple-50 cursor-pointer" onclick="showCooperationDetailModal(${c.id})" style="border-left: 4px solid #8B5CF6">
+                <div class="flex items-center justify-between">
+                  <span class="font-medium">${c.title}</span>
+                  <span class="text-xs px-2 py-0.5 rounded ${getCoopStatusStyle(c.status)}">${c.status}</span>
+                </div>
+                <div class="text-sm text-gray-500 mt-1">
+                  ${c.from_department_name} → ${c.to_department_name}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+    
+    if (notices.length === 0 && tasks.length === 0 && reports.length === 0 && coops.length === 0) {
+      html += '<div class="text-center py-8 text-gray-400"><i class="fas fa-inbox text-3xl mb-2"></i><p>등록된 업무가 없습니다</p></div>';
+    }
+    
+    html += '</div>';
+    contentEl.innerHTML = html;
+    
+  } catch (e) {
+    contentEl.innerHTML = '<div class="text-center py-8 text-red-400">로드 실패</div>';
+  }
+}
+
+function hideSelectedDateDetail() {
+  document.getElementById('task-selected-date-detail').classList.add('hidden');
+}
+
+function getCoopStatusStyle(status) {
+  const styles = {
+    '요청': 'bg-yellow-100 text-yellow-700',
+    '검토중': 'bg-blue-100 text-blue-700',
+    '진행중': 'bg-indigo-100 text-indigo-700',
+    '완료': 'bg-green-100 text-green-700',
+    '반려': 'bg-red-100 text-red-700'
+  };
+  return styles[status] || 'bg-gray-100 text-gray-700';
 }
 
 async function taskLoadDeptSummary() {
@@ -38684,20 +38892,30 @@ async function taskLoadList() {
       return;
     }
     
-    container.innerHTML = res.data.data.map(t => `
+    // 필터 적용
+    let filteredData = res.data.data;
+    if (!taskFilters.notice) filteredData = filteredData.filter(t => t.type !== 'notice');
+    if (!taskFilters.task) filteredData = filteredData.filter(t => t.type !== 'task');
+    
+    if (filteredData.length === 0) {
+      container.innerHTML = '<div class="p-6 text-center text-gray-400">필터 조건에 맞는 항목이 없습니다</div>';
+      return;
+    }
+    
+    container.innerHTML = filteredData.map(t => `
       <div class="p-4 hover:bg-gray-50 cursor-pointer" onclick="showTaskDetailModal(${t.id})">
         <div class="flex items-start justify-between">
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 mb-1 flex-wrap">
               <span class="px-2 py-0.5 rounded text-xs text-white ${t.type === 'notice' ? 'bg-blue-500' : 'bg-red-500'}">
-                ${t.type === 'notice' ? '공지' : '업무'}
+                ${t.type === 'notice' ? '📢 공지' : '📋 업무'}
               </span>
               <span class="font-semibold text-gray-800 truncate">${t.title}</span>
               ${t.file_count > 0 ? '<span class="text-gray-400 text-sm"><i class="fas fa-paperclip"></i></span>' : ''}
             </div>
             <div class="text-sm text-gray-500">${t.due_date}</div>
           </div>
-          <div class="flex items-center gap-1 ml-2">
+          <div class="flex items-center gap-2 ml-2">
             <span class="text-sm ${t.completed_count === t.total_count ? 'text-green-600' : 'text-gray-400'}">
               ${t.completed_count}/${t.total_count}
             </span>
@@ -40124,3 +40342,382 @@ window.viewWorkHistoryDetail = viewWorkHistoryDetail;
 window.deleteWorkReport = deleteWorkReport;
 window.loadWorkHistoryStats = loadWorkHistoryStats;
 window.exportWorkHistory = exportWorkHistory;
+
+// ========== 업무 협조 기능 ==========
+let cooperationList = [];
+
+// 협조 요청 로드
+async function loadCooperations() {
+  try {
+    const res = await axios.get('/api/task/cooperations?limit=50');
+    if (res.data.success) {
+      cooperationList = res.data.data.items || [];
+    }
+  } catch (e) {
+    cooperationList = [];
+  }
+}
+
+// 협조 요청 모달
+function showCooperationModal() {
+  showModal('🤝 업무 협조', `
+    <div class="space-y-4" style="min-width: 700px;">
+      <!-- 탭 -->
+      <div class="flex border-b">
+        <button onclick="showCoopTab('list')" id="coop-tab-list" class="px-4 py-2 font-medium text-indigo-600 border-b-2 border-indigo-600">
+          협조 현황
+        </button>
+        <button onclick="showCoopTab('sent')" id="coop-tab-sent" class="px-4 py-2 font-medium text-gray-500 hover:text-gray-700">
+          보낸 요청
+        </button>
+        <button onclick="showCoopTab('received')" id="coop-tab-received" class="px-4 py-2 font-medium text-gray-500 hover:text-gray-700">
+          받은 요청
+        </button>
+        <button onclick="showCoopTab('new')" id="coop-tab-new" class="px-4 py-2 font-medium text-gray-500 hover:text-gray-700">
+          <i class="fas fa-plus mr-1"></i>새 요청
+        </button>
+      </div>
+      
+      <div id="coop-content" class="max-h-[60vh] overflow-y-auto"></div>
+    </div>
+  `);
+  
+  showCoopTab('list');
+}
+
+async function showCoopTab(tab) {
+  // 탭 스타일 변경
+  ['list', 'sent', 'received', 'new'].forEach(t => {
+    const btn = document.getElementById('coop-tab-' + t);
+    if (btn) {
+      if (t === tab) {
+        btn.className = 'px-4 py-2 font-medium text-indigo-600 border-b-2 border-indigo-600';
+      } else {
+        btn.className = 'px-4 py-2 font-medium text-gray-500 hover:text-gray-700 border-b-2 border-transparent';
+      }
+    }
+  });
+  
+  const content = document.getElementById('coop-content');
+  
+  if (tab === 'new') {
+    content.innerHTML = renderCoopNewForm();
+    return;
+  }
+  
+  content.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-purple-500"></i></div>';
+  
+  try {
+    let url = '/api/task/cooperations?limit=50';
+    if (tab === 'sent') url += '&direction=sent';
+    else if (tab === 'received') url += '&direction=received';
+    
+    const res = await axios.get(url);
+    const items = res.data.success ? res.data.data.items : [];
+    
+    if (items.length === 0) {
+      content.innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-inbox text-4xl mb-3"></i><p>협조 요청이 없습니다</p></div>';
+      return;
+    }
+    
+    content.innerHTML = `
+      <div class="space-y-3">
+        ${items.map(c => `
+          <div class="border rounded-lg p-4 hover:shadow cursor-pointer" onclick="showCooperationDetailModal(${c.id})">
+            <div class="flex items-start justify-between">
+              <div class="flex-1">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-xs ${getCoopStatusStyle(c.status)}">${c.status}</span>
+                  <span class="px-2 py-0.5 rounded text-xs ${getCoopPriorityStyle(c.priority)}">${getCoopPriorityLabel(c.priority)}</span>
+                  <span class="font-semibold text-gray-800">${c.title}</span>
+                </div>
+                <div class="flex items-center gap-4 text-sm text-gray-500">
+                  <span>
+                    <span class="inline-block w-2 h-2 rounded-full mr-1" style="background: ${c.from_department_color}"></span>
+                    ${c.from_department_name}
+                  </span>
+                  <i class="fas fa-arrow-right"></i>
+                  <span>
+                    <span class="inline-block w-2 h-2 rounded-full mr-1" style="background: ${c.to_department_color}"></span>
+                    ${c.to_department_name}
+                  </span>
+                  ${c.due_date ? `<span class="text-orange-500"><i class="fas fa-calendar mr-1"></i>${c.due_date}</span>` : ''}
+                </div>
+              </div>
+              <div class="text-xs text-gray-400">${c.created_at.split(' ')[0]}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (e) {
+    content.innerHTML = '<div class="text-center py-8 text-red-400">로드 실패</div>';
+  }
+}
+
+function renderCoopNewForm() {
+  return `
+    <div class="space-y-4 p-2">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제목 <span class="text-red-500">*</span></label>
+        <input type="text" id="coop-title" class="w-full px-3 py-2 border rounded-lg" placeholder="협조 요청 제목">
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">요청 부서 <span class="text-red-500">*</span></label>
+          <select id="coop-from-dept" class="w-full px-3 py-2 border rounded-lg">
+            <option value="">선택하세요</option>
+            ${taskDepartments.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">협조 부서 <span class="text-red-500">*</span></label>
+          <select id="coop-to-dept" class="w-full px-3 py-2 border rounded-lg">
+            <option value="">선택하세요</option>
+            ${taskDepartments.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">요청자</label>
+          <input type="text" id="coop-requester" class="w-full px-3 py-2 border rounded-lg" placeholder="이름">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">우선순위</label>
+          <select id="coop-priority" class="w-full px-3 py-2 border rounded-lg">
+            <option value="low">낮음</option>
+            <option value="normal" selected>보통</option>
+            <option value="high">높음</option>
+            <option value="urgent">긴급</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">완료 희망일</label>
+          <input type="date" id="coop-due-date" class="w-full px-3 py-2 border rounded-lg">
+        </div>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">협조 내용</label>
+        <textarea id="coop-content" rows="4" class="w-full px-3 py-2 border rounded-lg" placeholder="협조 요청 상세 내용을 입력하세요"></textarea>
+      </div>
+      
+      <div class="flex justify-end gap-2 pt-4 border-t">
+        <button onclick="showCoopTab('list')" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button onclick="submitCooperation()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+          <i class="fas fa-paper-plane mr-1"></i>요청 보내기
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function submitCooperation() {
+  const title = document.getElementById('coop-title').value.trim();
+  const from_dept = document.getElementById('coop-from-dept').value;
+  const to_dept = document.getElementById('coop-to-dept').value;
+  const requester = document.getElementById('coop-requester').value.trim();
+  const priority = document.getElementById('coop-priority').value;
+  const due_date = document.getElementById('coop-due-date').value;
+  const content = document.getElementById('coop-content').value.trim();
+  
+  if (!title || !from_dept || !to_dept) {
+    showToast('필수 항목을 입력해주세요', 'warning');
+    return;
+  }
+  
+  if (from_dept === to_dept) {
+    showToast('요청 부서와 협조 부서가 같을 수 없습니다', 'warning');
+    return;
+  }
+  
+  try {
+    const res = await axios.post('/api/task/cooperations', {
+      title,
+      content,
+      from_department_id: parseInt(from_dept),
+      to_department_id: parseInt(to_dept),
+      requester_name: requester,
+      priority,
+      due_date: due_date || null
+    });
+    
+    if (res.data.success) {
+      showToast('협조 요청이 등록되었습니다', 'success');
+      loadCooperations();
+      showCoopTab('list');
+    } else {
+      showToast(res.data.error || '등록 실패', 'error');
+    }
+  } catch (e) {
+    showToast('등록 실패', 'error');
+  }
+}
+
+// 협조 상세 모달
+async function showCooperationDetailModal(id) {
+  try {
+    const res = await axios.get('/api/task/cooperations/' + id);
+    if (!res.data.success) throw new Error('로드 실패');
+    
+    const c = res.data.data;
+    
+    showModal('협조 요청 상세', `
+      <div class="space-y-4" style="min-width: 500px;">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-1 rounded text-sm ${getCoopStatusStyle(c.status)}">${c.status}</span>
+            <span class="px-2 py-1 rounded text-sm ${getCoopPriorityStyle(c.priority)}">${getCoopPriorityLabel(c.priority)}</span>
+          </div>
+          <span class="text-sm text-gray-400">${c.created_at}</span>
+        </div>
+        
+        <h3 class="text-xl font-bold text-gray-800">${c.title}</h3>
+        
+        <div class="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+          <div>
+            <span class="text-sm text-gray-500">요청 부서</span>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="w-3 h-3 rounded-full" style="background: ${c.from_department_color}"></span>
+              <span class="font-medium">${c.from_department_name}</span>
+            </div>
+            ${c.requester_name ? `<div class="text-sm text-gray-600 mt-1"><i class="fas fa-user mr-1"></i>${c.requester_name}</div>` : ''}
+          </div>
+          <div>
+            <span class="text-sm text-gray-500">협조 부서</span>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="w-3 h-3 rounded-full" style="background: ${c.to_department_color}"></span>
+              <span class="font-medium">${c.to_department_name}</span>
+            </div>
+            ${c.responder_name ? `<div class="text-sm text-gray-600 mt-1"><i class="fas fa-user mr-1"></i>${c.responder_name}</div>` : ''}
+          </div>
+        </div>
+        
+        ${c.due_date ? `
+          <div class="flex items-center gap-2 text-orange-600">
+            <i class="fas fa-calendar-alt"></i>
+            <span>완료 희망일: ${c.due_date}</span>
+          </div>
+        ` : ''}
+        
+        <div>
+          <h4 class="font-semibold text-gray-700 mb-2">요청 내용</h4>
+          <div class="p-3 bg-gray-50 rounded-lg text-gray-700 whitespace-pre-wrap">${c.content || '(내용 없음)'}</div>
+        </div>
+        
+        ${c.response ? `
+          <div>
+            <h4 class="font-semibold text-gray-700 mb-2">응답 내용</h4>
+            <div class="p-3 bg-purple-50 rounded-lg text-gray-700 whitespace-pre-wrap">${c.response}</div>
+            ${c.responded_at ? `<div class="text-xs text-gray-400 mt-1">${c.responded_at}</div>` : ''}
+          </div>
+        ` : ''}
+        
+        <!-- 응답 입력 (대기/검토 상태일 때) -->
+        ${c.status === '요청' || c.status === '검토중' ? `
+          <div class="border-t pt-4">
+            <h4 class="font-semibold text-gray-700 mb-2">응답하기</h4>
+            <div class="space-y-3">
+              <div class="flex gap-2">
+                <select id="coop-response-status" class="px-3 py-2 border rounded-lg">
+                  <option value="검토중">검토중</option>
+                  <option value="진행중">진행중</option>
+                  <option value="완료">완료</option>
+                  <option value="반려">반려</option>
+                </select>
+                <input type="text" id="coop-responder" class="flex-1 px-3 py-2 border rounded-lg" placeholder="응답자 이름">
+              </div>
+              <textarea id="coop-response" rows="3" class="w-full px-3 py-2 border rounded-lg" placeholder="응답 내용을 입력하세요"></textarea>
+              <div class="flex justify-end">
+                <button onclick="respondCooperation(${c.id})" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+                  <i class="fas fa-reply mr-1"></i>응답하기
+                </button>
+              </div>
+            </div>
+          </div>
+        ` : ''}
+        
+        <div class="flex justify-between pt-4 border-t">
+          <button onclick="deleteCooperation(${c.id})" class="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg">
+            <i class="fas fa-trash mr-1"></i>삭제
+          </button>
+          <button onclick="closeModal(); showCooperationModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">목록으로</button>
+        </div>
+      </div>
+    `);
+  } catch (e) {
+    showToast('로드 실패', 'error');
+  }
+}
+
+async function respondCooperation(id) {
+  const status = document.getElementById('coop-response-status').value;
+  const responder = document.getElementById('coop-responder').value.trim();
+  const response = document.getElementById('coop-response').value.trim();
+  
+  try {
+    const res = await axios.put('/api/task/cooperations/' + id, {
+      status,
+      responder_name: responder,
+      response
+    });
+    
+    if (res.data.success) {
+      showToast('응답이 등록되었습니다', 'success');
+      loadCooperations();
+      showCooperationDetailModal(id);
+    } else {
+      showToast(res.data.error || '응답 실패', 'error');
+    }
+  } catch (e) {
+    showToast('응답 실패', 'error');
+  }
+}
+
+async function deleteCooperation(id) {
+  if (!confirm('이 협조 요청을 삭제하시겠습니까?')) return;
+  
+  try {
+    const res = await axios.delete('/api/task/cooperations/' + id);
+    if (res.data.success) {
+      showToast('삭제되었습니다', 'success');
+      loadCooperations();
+      closeModal();
+      showCooperationModal();
+    } else {
+      showToast(res.data.error || '삭제 실패', 'error');
+    }
+  } catch (e) {
+    showToast('삭제 실패', 'error');
+  }
+}
+
+function getCoopPriorityStyle(priority) {
+  const styles = {
+    'low': 'bg-gray-100 text-gray-600',
+    'normal': 'bg-blue-100 text-blue-600',
+    'high': 'bg-orange-100 text-orange-600',
+    'urgent': 'bg-red-100 text-red-600'
+  };
+  return styles[priority] || styles['normal'];
+}
+
+function getCoopPriorityLabel(priority) {
+  const labels = { 'low': '낮음', 'normal': '보통', 'high': '높음', 'urgent': '긴급' };
+  return labels[priority] || '보통';
+}
+
+// window 객체 등록
+window.toggleTaskFilter = toggleTaskFilter;
+window.showDateDetail = showDateDetail;
+window.hideSelectedDateDetail = hideSelectedDateDetail;
+window.showCooperationModal = showCooperationModal;
+window.showCoopTab = showCoopTab;
+window.submitCooperation = submitCooperation;
+window.showCooperationDetailModal = showCooperationDetailModal;
+window.respondCooperation = respondCooperation;
+window.deleteCooperation = deleteCooperation;
+window.loadCooperations = loadCooperations;

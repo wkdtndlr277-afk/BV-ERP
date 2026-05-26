@@ -15,6 +15,34 @@ app.get('/departments', async (c) => {
   }
 });
 
+// ===== 부서 수정 =====
+app.put('/departments/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json();
+  const { name, description, color, sort_order } = body;
+  
+  try {
+    const updates: string[] = [];
+    const values: any[] = [];
+    
+    if (name) { updates.push('name = ?'); values.push(name); }
+    if (description !== undefined) { updates.push('description = ?'); values.push(description); }
+    if (color) { updates.push('color = ?'); values.push(color); }
+    if (sort_order !== undefined) { updates.push('sort_order = ?'); values.push(sort_order); }
+    
+    if (updates.length === 0) {
+      return c.json({ success: false, error: '수정할 내용이 없습니다' }, 400);
+    }
+    
+    values.push(id);
+    await c.env.DB.prepare(`UPDATE task_departments SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
+    
+    return c.json({ success: true, message: '부서가 수정되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
 // ===== 업무/공지 목록 =====
 app.get('/tasks', async (c) => {
   const month = c.req.query('month');
@@ -616,6 +644,33 @@ app.post('/migrate', async (c) => {
       )
     `).run();
     
+    // 업무 협조 요청 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS task_cooperations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        content TEXT,
+        from_department_id INTEGER NOT NULL,
+        to_department_id INTEGER NOT NULL,
+        requester_name TEXT,
+        priority TEXT DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+        status TEXT DEFAULT '요청' CHECK (status IN ('요청', '검토중', '진행중', '완료', '반려')),
+        due_date DATE,
+        response TEXT,
+        responder_name TEXT,
+        responded_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (from_department_id) REFERENCES task_departments(id),
+        FOREIGN KEY (to_department_id) REFERENCES task_departments(id)
+      )
+    `).run();
+    
+    // 업무 협조 인덱스
+    try { await c.env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_coop_from_dept ON task_cooperations(from_department_id)').run(); } catch {}
+    try { await c.env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_coop_to_dept ON task_cooperations(to_department_id)').run(); } catch {}
+    try { await c.env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_coop_status ON task_cooperations(status)').run(); } catch {}
+    
     return c.json({ success: true, message: '업무관리 테이블 마이그레이션 완료' });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
@@ -1007,6 +1062,215 @@ app.delete('/daily-reports/:id', async (c) => {
     await c.env.DB.prepare(`DELETE FROM daily_work_reports WHERE id = ?`).bind(id).run();
     
     return c.json({ success: true, message: '보고서가 삭제되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 업무 협조 요청 API =====
+
+// 협조 요청 목록 조회
+app.get('/cooperations', async (c) => {
+  const department_id = c.req.query('department_id');
+  const direction = c.req.query('direction') || 'all'; // 'sent', 'received', 'all'
+  const status = c.req.query('status');
+  const page = parseInt(c.req.query('page') || '1');
+  const limit = parseInt(c.req.query('limit') || '20');
+  const offset = (page - 1) * limit;
+  
+  try {
+    let whereClause = '1=1';
+    const params: any[] = [];
+    
+    if (department_id) {
+      if (direction === 'sent') {
+        whereClause += ' AND c.from_department_id = ?';
+        params.push(department_id);
+      } else if (direction === 'received') {
+        whereClause += ' AND c.to_department_id = ?';
+        params.push(department_id);
+      } else {
+        whereClause += ' AND (c.from_department_id = ? OR c.to_department_id = ?)';
+        params.push(department_id, department_id);
+      }
+    }
+    
+    if (status) {
+      whereClause += ' AND c.status = ?';
+      params.push(status);
+    }
+    
+    const countResult = await c.env.DB.prepare(`
+      SELECT COUNT(*) as total FROM task_cooperations c WHERE ${whereClause}
+    `).bind(...params).first<{total: number}>();
+    
+    const results = await c.env.DB.prepare(`
+      SELECT c.*, 
+        fd.name as from_department_name, fd.color as from_department_color,
+        td.name as to_department_name, td.color as to_department_color
+      FROM task_cooperations c
+      LEFT JOIN task_departments fd ON c.from_department_id = fd.id
+      LEFT JOIN task_departments td ON c.to_department_id = td.id
+      WHERE ${whereClause}
+      ORDER BY c.created_at DESC
+      LIMIT ? OFFSET ?
+    `).bind(...params, limit, offset).all();
+    
+    return c.json({
+      success: true,
+      data: {
+        items: results.results || [],
+        pagination: {
+          total: countResult?.total || 0,
+          page,
+          limit,
+          totalPages: Math.ceil((countResult?.total || 0) / limit)
+        }
+      }
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 협조 요청 상세 조회
+app.get('/cooperations/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  try {
+    const result = await c.env.DB.prepare(`
+      SELECT c.*, 
+        fd.name as from_department_name, fd.color as from_department_color,
+        td.name as to_department_name, td.color as to_department_color
+      FROM task_cooperations c
+      LEFT JOIN task_departments fd ON c.from_department_id = fd.id
+      LEFT JOIN task_departments td ON c.to_department_id = td.id
+      WHERE c.id = ?
+    `).bind(id).first();
+    
+    if (!result) {
+      return c.json({ success: false, error: '협조 요청을 찾을 수 없습니다' }, 404);
+    }
+    
+    return c.json({ success: true, data: result });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 협조 요청 등록
+app.post('/cooperations', async (c) => {
+  const body = await c.req.json();
+  const { title, content, from_department_id, to_department_id, requester_name, priority, due_date } = body;
+  
+  if (!title || !from_department_id || !to_department_id) {
+    return c.json({ success: false, error: '필수 항목을 입력해주세요' }, 400);
+  }
+  
+  try {
+    const result = await c.env.DB.prepare(`
+      INSERT INTO task_cooperations (title, content, from_department_id, to_department_id, requester_name, priority, due_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(title, content || '', from_department_id, to_department_id, requester_name || '', priority || 'normal', due_date || null).run();
+    
+    return c.json({ success: true, message: '협조 요청이 등록되었습니다', data: { id: result.meta.last_row_id } });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 협조 요청 상태 업데이트 (응답)
+app.put('/cooperations/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json();
+  const { status, response, responder_name } = body;
+  
+  try {
+    let updateQuery = 'UPDATE task_cooperations SET updated_at = CURRENT_TIMESTAMP';
+    const params: any[] = [];
+    
+    if (status) {
+      updateQuery += ', status = ?';
+      params.push(status);
+    }
+    if (response !== undefined) {
+      updateQuery += ', response = ?';
+      params.push(response);
+    }
+    if (responder_name) {
+      updateQuery += ', responder_name = ?';
+      params.push(responder_name);
+    }
+    if (status && status !== '요청') {
+      updateQuery += ', responded_at = CURRENT_TIMESTAMP';
+    }
+    
+    updateQuery += ' WHERE id = ?';
+    params.push(id);
+    
+    await c.env.DB.prepare(updateQuery).bind(...params).run();
+    
+    return c.json({ success: true, message: '협조 요청이 업데이트되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 협조 요청 삭제
+app.delete('/cooperations/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  try {
+    await c.env.DB.prepare('DELETE FROM task_cooperations WHERE id = ?').bind(id).run();
+    return c.json({ success: true, message: '협조 요청이 삭제되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 날짜별 업무 요약 (달력용)
+app.get('/calendar-summary', async (c) => {
+  const year = parseInt(c.req.query('year') || new Date().getFullYear().toString());
+  const month = parseInt(c.req.query('month') || (new Date().getMonth() + 1).toString());
+  
+  const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+  const endDate = `${year}-${String(month).padStart(2, '0')}-31`;
+  
+  try {
+    // 업무지시/공지 날짜별 집계
+    const tasks = await c.env.DB.prepare(`
+      SELECT due_date, type, COUNT(*) as count
+      FROM tasks
+      WHERE due_date >= ? AND due_date <= ?
+      GROUP BY due_date, type
+    `).bind(startDate, endDate).all();
+    
+    // 일일업무 보고 날짜별 집계
+    const reports = await c.env.DB.prepare(`
+      SELECT r.report_date, d.id as department_id, d.name as department_name, d.color as department_color,
+        (SELECT COUNT(*) FROM daily_work_items WHERE report_id = r.id) as item_count
+      FROM daily_work_reports r
+      LEFT JOIN task_departments d ON r.department_id = d.id
+      WHERE r.report_date >= ? AND r.report_date <= ?
+      ORDER BY r.report_date, d.sort_order
+    `).bind(startDate, endDate).all();
+    
+    // 협조 요청 날짜별 집계
+    const cooperations = await c.env.DB.prepare(`
+      SELECT DATE(created_at) as date, status, COUNT(*) as count
+      FROM task_cooperations
+      WHERE DATE(created_at) >= ? AND DATE(created_at) <= ?
+      GROUP BY DATE(created_at), status
+    `).bind(startDate, endDate).all();
+    
+    return c.json({
+      success: true,
+      data: {
+        tasks: tasks.results || [],
+        reports: reports.results || [],
+        cooperations: cooperations.results || []
+      }
+    });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }

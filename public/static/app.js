@@ -39979,26 +39979,24 @@ function taskBoardRenderTable() {
     return;
   }
   
-  // 상태 필터에 따른 강조 스타일
-  const getStatusStyle = (status, deptColor) => {
+  // 상태 필터에 따른 표시 여부 및 스타일
+  const shouldShowDept = (status) => {
     const currentStatus = status || '대기';
     const targetStatus = taskBoardFilters.status;
     
-    // 필터가 적용된 경우 해당 상태만 강조
-    if (targetStatus !== 'all') {
-      const isMatch = (targetStatus === 'pending' && currentStatus === '대기') ||
-                      (targetStatus === 'in_progress' && currentStatus === '진행중') ||
-                      (targetStatus === 'completed' && currentStatus === '완료');
-      
-      if (!isMatch) {
-        return { badge: 'bg-gray-100 text-gray-400', highlight: false, opacity: 'opacity-40' };
-      }
-    }
-    
-    // 기본 상태 스타일
-    if (currentStatus === '완료') return { badge: 'bg-green-500 text-white', highlight: true, opacity: '' };
-    if (currentStatus === '진행중') return { badge: 'bg-blue-500 text-white', highlight: true, opacity: '' };
-    return { badge: 'bg-gray-200 text-gray-600', highlight: false, opacity: '' };
+    if (targetStatus === 'all') return true;
+    if (targetStatus === 'pending' && currentStatus === '대기') return true;
+    if (targetStatus === 'in_progress' && currentStatus === '진행중') return true;
+    if (targetStatus === 'completed' && currentStatus === '완료') return true;
+    return false;
+  };
+  
+  // 기본 상태 스타일
+  const getStatusBadge = (status) => {
+    const currentStatus = status || '대기';
+    if (currentStatus === '완료') return 'bg-green-500 text-white';
+    if (currentStatus === '진행중') return 'bg-blue-500 text-white';
+    return 'bg-gray-200 text-gray-600';
   };
   
   container.innerHTML = `
@@ -40032,21 +40030,32 @@ function taskBoardRenderTable() {
               </td>
               ${departments.map(d => {
                 const c = checksMap[d.id];
+                // 부서 데이터 없음
                 if (!c) return '<td class="px-2 py-2 lg:px-3 lg:py-3 text-center text-gray-300 text-xs lg:text-sm">-</td>';
-                const style = getStatusStyle(c.status, d.color);
+                
+                // 상태 필터가 적용되었고, 해당 상태가 아니면 숨김
+                if (!shouldShowDept(c.status)) {
+                  return '<td class="px-2 py-2 lg:px-3 lg:py-3 text-center text-gray-200 text-xs">-</td>';
+                }
+                
+                const badge = getStatusBadge(c.status);
                 return `
-                  <td class="px-2 py-2 lg:px-3 lg:py-3 ${style.opacity}">
+                  <td class="px-2 py-2 lg:px-3 lg:py-3">
                     <div class="space-y-1">
                       <div class="flex justify-center">
-                        <span class="px-2 py-0.5 rounded-full text-xs font-medium ${style.badge}">
+                        <span class="px-2 py-0.5 rounded-full text-xs font-medium ${badge}">
                           ${c.status || '대기'}
                         </span>
                       </div>
                       <div class="flex items-center gap-1">
                         <div class="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                          <div class="h-full rounded-full transition-all" style="width: ${c.progress || 0}%; background: ${style.highlight ? d.color : '#d1d5db'}"></div>
+                          <div class="h-full rounded-full transition-all" style="width: ${c.progress || 0}%; background: ${d.color}"></div>
                         </div>
-                        <span class="text-xs ${style.highlight ? 'text-gray-700 font-medium' : 'text-gray-400'} w-8">${c.progress || 0}%</span>
+                        <span class="text-xs text-gray-700 font-medium w-8">${c.progress || 0}%</span>
+                      </div>
+                    </div>
+                  </td>
+                `;
                       </div>
                     </div>
                   </td>

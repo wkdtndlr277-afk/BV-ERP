@@ -186,6 +186,38 @@ productionRoutes.put('/lot/:lotNumber', async (c) => {
   }
 });
 
+// 생산 원료 LOT 수정
+productionRoutes.put('/lot/:lotNumber/material', async (c) => {
+  const lotNumber = decodeURIComponent(c.req.param('lotNumber'));
+  const { item_code, new_lot_number } = await c.req.json();
+  
+  if (!item_code || !new_lot_number) {
+    return c.json({ success: false, error: '원료코드와 새 LOT번호를 입력하세요' }, 400);
+  }
+  
+  // 생산 기록 조회
+  const production = await c.env.DB.prepare(`
+    SELECT id FROM production WHERE lot_number = ?
+  `).bind(lotNumber).first<any>();
+  
+  if (!production) {
+    return c.json({ success: false, error: '해당 LOT를 찾을 수 없습니다' }, 404);
+  }
+  
+  // 원료 LOT 수정
+  const result = await c.env.DB.prepare(`
+    UPDATE production_materials 
+    SET lot_number = ?
+    WHERE production_id = ? AND item_code = ?
+  `).bind(new_lot_number, production.id, item_code).run();
+  
+  return c.json({ 
+    success: true, 
+    message: `원료 ${item_code} LOT가 ${new_lot_number}로 변경되었습니다`,
+    changes: result.meta.changes
+  });
+});
+
 // LOT 번호로 생산 조회 (이력추적용)
 productionRoutes.get('/lot/:lotNumber', async (c) => {
   const lotNumber = decodeURIComponent(c.req.param('lotNumber'));

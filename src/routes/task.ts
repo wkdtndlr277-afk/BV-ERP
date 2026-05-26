@@ -853,4 +853,163 @@ app.get('/daily-dashboard', async (c) => {
   }
 });
 
+// 부서별 업무 이력 조회 (기간별)
+app.get('/work-history', async (c) => {
+  const deptId = c.req.query('department_id');
+  const startDate = c.req.query('start_date');
+  const endDate = c.req.query('end_date');
+  const page = parseInt(c.req.query('page') || '1');
+  const limit = parseInt(c.req.query('limit') || '20');
+  const offset = (page - 1) * limit;
+  
+  try {
+    let whereClause = '1=1';
+    const params: any[] = [];
+    
+    if (deptId) {
+      whereClause += ' AND r.department_id = ?';
+      params.push(deptId);
+    }
+    if (startDate) {
+      whereClause += ' AND r.report_date >= ?';
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereClause += ' AND r.report_date <= ?';
+      params.push(endDate);
+    }
+    
+    // 총 건수
+    const countResult = await c.env.DB.prepare(`
+      SELECT COUNT(*) as total
+      FROM daily_work_reports r
+      WHERE ${whereClause}
+    `).bind(...params).first<{total: number}>();
+    
+    // 보고서 목록
+    const reports = await c.env.DB.prepare(`
+      SELECT r.*, d.name as department_name, d.color as department_color,
+        (SELECT COUNT(*) FROM daily_work_items WHERE report_id = r.id) as item_count,
+        (SELECT SUM(work_hours) FROM daily_work_items WHERE report_id = r.id) as total_hours
+      FROM daily_work_reports r
+      LEFT JOIN task_departments d ON r.department_id = d.id
+      WHERE ${whereClause}
+      ORDER BY r.report_date DESC, d.sort_order
+      LIMIT ? OFFSET ?
+    `).bind(...params, limit, offset).all();
+    
+    return c.json({
+      success: true,
+      data: {
+        reports: reports.results || [],
+        pagination: {
+          total: countResult?.total || 0,
+          page,
+          limit,
+          totalPages: Math.ceil((countResult?.total || 0) / limit)
+        }
+      }
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 부서별 업무 통계
+app.get('/work-stats', async (c) => {
+  const deptId = c.req.query('department_id');
+  const startDate = c.req.query('start_date');
+  const endDate = c.req.query('end_date');
+  
+  try {
+    let whereClause = '1=1';
+    const params: any[] = [];
+    
+    if (deptId) {
+      whereClause += ' AND r.department_id = ?';
+      params.push(deptId);
+    }
+    if (startDate) {
+      whereClause += ' AND r.report_date >= ?';
+      params.push(startDate);
+    }
+    if (endDate) {
+      whereClause += ' AND r.report_date <= ?';
+      params.push(endDate);
+    }
+    
+    // 부서별 통계
+    const deptStats = await c.env.DB.prepare(`
+      SELECT 
+        d.id, d.name, d.color,
+        COUNT(DISTINCT r.id) as report_count,
+        COUNT(i.id) as total_items,
+        COALESCE(SUM(i.work_hours), 0) as total_hours,
+        COUNT(CASE WHEN i.status = '완료' THEN 1 END) as completed_items,
+        COUNT(CASE WHEN i.work_type = 'task' THEN 1 END) as task_items,
+        COUNT(CASE WHEN i.work_type = 'general' THEN 1 END) as general_items
+      FROM task_departments d
+      LEFT JOIN daily_work_reports r ON d.id = r.department_id AND ${whereClause.replace(/r\./g, 'r.')}
+      LEFT JOIN daily_work_items i ON r.id = i.report_id
+      WHERE d.is_active = 1
+      GROUP BY d.id
+      ORDER BY d.sort_order
+    `).bind(...params).all();
+    
+    // 일별 통계 (최근 30일)
+    const dailyStats = await c.env.DB.prepare(`
+      SELECT 
+        r.report_date,
+        COUNT(DISTINCT r.id) as report_count,
+        COUNT(i.id) as item_count,
+        COALESCE(SUM(i.work_hours), 0) as total_hours
+      FROM daily_work_reports r
+      LEFT JOIN daily_work_items i ON r.id = i.report_id
+      WHERE ${whereClause}
+      GROUP BY r.report_date
+      ORDER BY r.report_date DESC
+      LIMIT 30
+    `).bind(...params).all();
+    
+    // 업무 유형별 통계
+    const typeStats = await c.env.DB.prepare(`
+      SELECT 
+        i.work_type,
+        COUNT(*) as count,
+        COALESCE(SUM(i.work_hours), 0) as total_hours
+      FROM daily_work_items i
+      JOIN daily_work_reports r ON i.report_id = r.id
+      WHERE ${whereClause}
+      GROUP BY i.work_type
+    `).bind(...params).all();
+    
+    return c.json({
+      success: true,
+      data: {
+        departments: deptStats.results || [],
+        daily: dailyStats.results || [],
+        byType: typeStats.results || []
+      }
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 보고서 삭제
+app.delete('/daily-reports/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  try {
+    // 먼저 항목 삭제
+    await c.env.DB.prepare(`DELETE FROM daily_work_items WHERE report_id = ?`).bind(id).run();
+    // 보고서 삭제
+    await c.env.DB.prepare(`DELETE FROM daily_work_reports WHERE id = ?`).bind(id).run();
+    
+    return c.json({ success: true, message: '보고서가 삭제되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
 export default app;

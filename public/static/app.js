@@ -39260,42 +39260,122 @@ function taskBoardRenderDept() {
   }).join('');
 }
 
-function taskBoardRenderHistory() {
+async function taskBoardRenderHistory() {
   const container = document.getElementById('tb-content-history');
   
-  if (taskHistoryData.length === 0) {
-    container.innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-history text-4xl mb-3"></i><p>이번 달 업무 이력이 없습니다</p></div>';
-    return;
-  }
+  // 해당 월의 시작일/종료일 계산
+  const year = taskBoardDate.getFullYear();
+  const month = taskBoardDate.getMonth();
+  const startDate = new Date(year, month, 1).toISOString().split('T')[0];
+  const endDate = new Date(year, month + 1, 0).toISOString().split('T')[0];
   
   container.innerHTML = `
-    <div class="space-y-4">
-      ${taskHistoryData.map(h => `
-        <div class="flex gap-4 p-4 border rounded-lg hover:bg-gray-50">
-          <div class="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold" style="background: ${h.department_color || '#6b7280'}">
-            ${(h.department_name || '?').charAt(0)}
-          </div>
-          <div class="flex-1">
-            <div class="flex items-center gap-2 mb-1">
-              <span class="font-semibold" style="color: ${h.department_color || '#6b7280'}">${h.department_name || '알 수 없음'}</span>
-              <span class="text-gray-400">·</span>
-              <span class="text-sm text-gray-600">${h.task_title || '삭제된 업무'}</span>
-            </div>
-            <div class="text-sm mb-2">
-              ${h.action === 'status_change' 
-                ? `<span class="text-gray-500">상태:</span> ${h.old_status} → <span class="font-medium">${h.new_status}</span>` 
-                : `<span class="text-gray-500">진행률:</span> ${h.old_progress}% → <span class="font-medium">${h.new_progress}%</span>`}
-            </div>
-            ${h.comment ? `<div class="text-sm text-gray-600 bg-gray-100 rounded p-2 mb-2"><i class="fas fa-comment mr-1 text-gray-400"></i>${h.comment}</div>` : ''}
-            <div class="text-xs text-gray-400">
-              ${h.action_by ? `<span><i class="fas fa-user mr-1"></i>${h.action_by}</span> · ` : ''}
-              <span><i class="fas fa-clock mr-1"></i>${h.created_at}</span>
-            </div>
-          </div>
-        </div>
-      `).join('')}
+    <div class="text-center py-8">
+      <i class="fas fa-spinner fa-spin text-2xl text-indigo-500"></i>
+      <p class="mt-2 text-gray-500">로딩 중...</p>
     </div>
   `;
+  
+  try {
+    // 일일업무 보고 이력 조회
+    const res = await axios.get('/api/task/work-history?start_date=' + startDate + '&end_date=' + endDate + '&limit=50');
+    const dailyReports = res.data.success ? (res.data.data.reports || []) : [];
+    
+    // 업무지시 처리 이력
+    const taskHistory = taskHistoryData || [];
+    
+    if (dailyReports.length === 0 && taskHistory.length === 0) {
+      container.innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-history text-4xl mb-3"></i><p>이번 달 업무 이력이 없습니다</p></div>';
+      return;
+    }
+    
+    container.innerHTML = `
+      <div class="space-y-6">
+        <!-- 상단 버튼 -->
+        <div class="flex justify-between items-center">
+          <h3 class="text-lg font-semibold text-gray-700">
+            <i class="fas fa-calendar-alt mr-2"></i>${year}년 ${month + 1}월 업무 이력
+          </h3>
+          <button onclick="showWorkHistoryModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 text-sm">
+            <i class="fas fa-search mr-1"></i>상세 이력 조회
+          </button>
+        </div>
+        
+        <!-- 일일업무 보고 이력 -->
+        ${dailyReports.length > 0 ? `
+          <div>
+            <h4 class="text-sm font-semibold text-gray-600 mb-3 flex items-center">
+              <i class="fas fa-clipboard-list mr-2 text-indigo-500"></i>일일업무 보고 (${dailyReports.length}건)
+            </h4>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              ${dailyReports.slice(0, 9).map(r => `
+                <div class="border rounded-lg p-3 hover:shadow cursor-pointer" style="border-left: 3px solid ${r.department_color}" onclick="viewWorkHistoryDetail(${r.id})">
+                  <div class="flex items-center justify-between mb-2">
+                    <span class="font-medium text-gray-800">${r.report_date}</span>
+                    <span class="text-xs px-2 py-0.5 rounded" style="background-color: ${r.department_color}20; color: ${r.department_color}">${r.department_name}</span>
+                  </div>
+                  <div class="text-sm text-gray-600">
+                    <span class="mr-3"><i class="fas fa-user mr-1"></i>${r.reporter_name || '-'}</span>
+                    <span class="mr-3"><i class="fas fa-tasks mr-1"></i>${r.item_count || 0}건</span>
+                    <span><i class="fas fa-clock mr-1"></i>${(r.total_hours || 0).toFixed(1)}h</span>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+            ${dailyReports.length > 9 ? `
+              <div class="text-center mt-3">
+                <button onclick="showWorkHistoryModal()" class="text-sm text-indigo-600 hover:underline">
+                  +${dailyReports.length - 9}건 더보기
+                </button>
+              </div>
+            ` : ''}
+          </div>
+        ` : ''}
+        
+        <!-- 업무지시 처리 이력 -->
+        ${taskHistory.length > 0 ? `
+          <div>
+            <h4 class="text-sm font-semibold text-gray-600 mb-3 flex items-center">
+              <i class="fas fa-tasks mr-2 text-purple-500"></i>업무지시 처리 이력 (${taskHistory.length}건)
+            </h4>
+            <div class="space-y-3 max-h-[400px] overflow-y-auto">
+              ${taskHistory.map(h => `
+                <div class="flex gap-4 p-3 border rounded-lg hover:bg-gray-50">
+                  <div class="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold flex-shrink-0" style="background: ${h.department_color || '#6b7280'}">
+                    ${(h.department_name || '?').charAt(0)}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="font-semibold" style="color: ${h.department_color || '#6b7280'}">${h.department_name || '알 수 없음'}</span>
+                      <span class="text-gray-400">·</span>
+                      <span class="text-sm text-gray-600 truncate">${h.task_title || '삭제된 업무'}</span>
+                    </div>
+                    <div class="text-sm mb-1">
+                      ${h.action === 'status_change' 
+                        ? `<span class="text-gray-500">상태:</span> ${h.old_status} → <span class="font-medium">${h.new_status}</span>` 
+                        : `<span class="text-gray-500">진행률:</span> ${h.old_progress}% → <span class="font-medium">${h.new_progress}%</span>`}
+                    </div>
+                    ${h.comment ? `<div class="text-sm text-gray-600 bg-gray-100 rounded p-2 mb-1 truncate"><i class="fas fa-comment mr-1 text-gray-400"></i>${h.comment}</div>` : ''}
+                    <div class="text-xs text-gray-400">
+                      ${h.action_by ? `<span><i class="fas fa-user mr-1"></i>${h.action_by}</span> · ` : ''}
+                      <span><i class="fas fa-clock mr-1"></i>${h.created_at}</span>
+                    </div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = `
+      <div class="text-center py-12 text-red-400">
+        <i class="fas fa-exclamation-circle text-4xl mb-3"></i>
+        <p>이력 로드 실패</p>
+      </div>
+    `;
+  }
 }
 
 function printTaskBoard() {
@@ -39623,3 +39703,424 @@ async function viewDailyReports() {
     showToast('로드 실패', 'error');
   }
 }
+
+// ========== 업무 이력 관리 ==========
+let workHistoryFilters = {
+  department_id: '',
+  start_date: '',
+  end_date: '',
+  page: 1
+};
+
+// 업무 이력 관리 모달 열기
+async function showWorkHistoryModal() {
+  // 기본 필터 설정 (이번 달)
+  const today = new Date();
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+  workHistoryFilters.start_date = firstDay.toISOString().split('T')[0];
+  workHistoryFilters.end_date = today.toISOString().split('T')[0];
+  workHistoryFilters.department_id = '';
+  workHistoryFilters.page = 1;
+  
+  showModal('📋 업무 이력 관리', `
+    <div class="space-y-4" style="min-width: 700px;">
+      <!-- 필터 영역 -->
+      <div class="bg-gray-50 rounded-lg p-4">
+        <div class="grid grid-cols-4 gap-3">
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">부서</label>
+            <select id="wh-dept-filter" onchange="workHistoryFilters.department_id = this.value; loadWorkHistory()" 
+              class="w-full px-3 py-2 border rounded-lg text-sm">
+              <option value="">전체 부서</option>
+              ${taskDepartments.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">시작일</label>
+            <input type="date" id="wh-start-date" value="${workHistoryFilters.start_date}" 
+              onchange="workHistoryFilters.start_date = this.value; loadWorkHistory()"
+              class="w-full px-3 py-2 border rounded-lg text-sm">
+          </div>
+          <div>
+            <label class="block text-xs text-gray-500 mb-1">종료일</label>
+            <input type="date" id="wh-end-date" value="${workHistoryFilters.end_date}"
+              onchange="workHistoryFilters.end_date = this.value; loadWorkHistory()"
+              class="w-full px-3 py-2 border rounded-lg text-sm">
+          </div>
+          <div class="flex items-end gap-2">
+            <button onclick="loadWorkHistoryStats()" class="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+              <i class="fas fa-chart-bar mr-1"></i>통계
+            </button>
+            <button onclick="exportWorkHistory()" class="px-3 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700">
+              <i class="fas fa-download mr-1"></i>내보내기
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 이력 목록 -->
+      <div id="work-history-list" class="max-h-[50vh] overflow-y-auto">
+        <div class="text-center py-8 text-gray-400">
+          <i class="fas fa-spinner fa-spin text-2xl"></i>
+          <p class="mt-2">로딩 중...</p>
+        </div>
+      </div>
+      
+      <!-- 페이지네이션 -->
+      <div id="work-history-pagination" class="flex justify-center gap-2"></div>
+    </div>
+  `);
+  
+  loadWorkHistory();
+}
+
+// 업무 이력 로드
+async function loadWorkHistory() {
+  const container = document.getElementById('work-history-list');
+  if (!container) return;
+  
+  try {
+    const params = new URLSearchParams();
+    if (workHistoryFilters.department_id) params.append('department_id', workHistoryFilters.department_id);
+    if (workHistoryFilters.start_date) params.append('start_date', workHistoryFilters.start_date);
+    if (workHistoryFilters.end_date) params.append('end_date', workHistoryFilters.end_date);
+    params.append('page', workHistoryFilters.page);
+    params.append('limit', '15');
+    
+    const res = await axios.get('/api/task/work-history?' + params.toString());
+    if (!res.data.success) throw new Error('로드 실패');
+    
+    const { reports, pagination } = res.data.data;
+    
+    if (reports.length === 0) {
+      container.innerHTML = `
+        <div class="text-center py-12 text-gray-400">
+          <i class="fas fa-inbox text-4xl mb-3"></i>
+          <p>해당 기간에 업무 보고가 없습니다</p>
+        </div>
+      `;
+      document.getElementById('work-history-pagination').innerHTML = '';
+      return;
+    }
+    
+    container.innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100 sticky top-0">
+          <tr>
+            <th class="px-3 py-2 text-left">날짜</th>
+            <th class="px-3 py-2 text-left">부서</th>
+            <th class="px-3 py-2 text-left">보고자</th>
+            <th class="px-3 py-2 text-center">업무 건수</th>
+            <th class="px-3 py-2 text-center">총 시간</th>
+            <th class="px-3 py-2 text-center">작업</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y">
+          ${reports.map(r => `
+            <tr class="hover:bg-gray-50">
+              <td class="px-3 py-2 font-medium">${r.report_date}</td>
+              <td class="px-3 py-2">
+                <span class="inline-flex items-center gap-1">
+                  <span class="w-2 h-2 rounded-full" style="background-color: ${r.department_color}"></span>
+                  ${r.department_name}
+                </span>
+              </td>
+              <td class="px-3 py-2">${r.reporter_name || '-'}</td>
+              <td class="px-3 py-2 text-center">${r.item_count || 0}건</td>
+              <td class="px-3 py-2 text-center">${(r.total_hours || 0).toFixed(1)}h</td>
+              <td class="px-3 py-2 text-center">
+                <button onclick="viewWorkHistoryDetail(${r.id})" class="px-2 py-1 text-indigo-600 hover:bg-indigo-50 rounded text-xs">
+                  <i class="fas fa-eye"></i> 상세
+                </button>
+                <button onclick="deleteWorkReport(${r.id})" class="px-2 py-1 text-red-600 hover:bg-red-50 rounded text-xs">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+    
+    // 페이지네이션
+    renderWorkHistoryPagination(pagination);
+  } catch (e) {
+    container.innerHTML = `
+      <div class="text-center py-8 text-red-400">
+        <i class="fas fa-exclamation-circle text-2xl"></i>
+        <p class="mt-2">로드 실패</p>
+      </div>
+    `;
+  }
+}
+
+function renderWorkHistoryPagination(pagination) {
+  const container = document.getElementById('work-history-pagination');
+  if (!container || pagination.totalPages <= 1) {
+    if (container) container.innerHTML = '';
+    return;
+  }
+  
+  let html = '';
+  const { page, totalPages } = pagination;
+  
+  // 이전 버튼
+  html += `<button onclick="workHistoryFilters.page = ${page - 1}; loadWorkHistory()" 
+    class="px-3 py-1 rounded border ${page <= 1 ? 'text-gray-300 cursor-not-allowed' : 'hover:bg-gray-100'}"
+    ${page <= 1 ? 'disabled' : ''}>
+    <i class="fas fa-chevron-left"></i>
+  </button>`;
+  
+  // 페이지 번호
+  const startPage = Math.max(1, page - 2);
+  const endPage = Math.min(totalPages, page + 2);
+  
+  for (let i = startPage; i <= endPage; i++) {
+    html += `<button onclick="workHistoryFilters.page = ${i}; loadWorkHistory()" 
+      class="px-3 py-1 rounded border ${i === page ? 'bg-indigo-600 text-white' : 'hover:bg-gray-100'}">
+      ${i}
+    </button>`;
+  }
+  
+  // 다음 버튼
+  html += `<button onclick="workHistoryFilters.page = ${page + 1}; loadWorkHistory()" 
+    class="px-3 py-1 rounded border ${page >= totalPages ? 'text-gray-300 cursor-not-allowed' : 'hover:bg-gray-100'}"
+    ${page >= totalPages ? 'disabled' : ''}>
+    <i class="fas fa-chevron-right"></i>
+  </button>`;
+  
+  container.innerHTML = html;
+}
+
+// 업무 이력 상세 보기
+async function viewWorkHistoryDetail(reportId) {
+  try {
+    const res = await axios.get('/api/task/daily-reports/' + reportId);
+    if (!res.data.success) throw new Error('로드 실패');
+    
+    const report = res.data.data;
+    const items = report.items || [];
+    
+    showModal(`${report.department_name} 업무 보고 상세`, `
+      <div class="space-y-4" style="min-width: 500px;">
+        <div class="bg-gray-50 rounded-lg p-4">
+          <div class="grid grid-cols-2 gap-4 text-sm">
+            <div>
+              <span class="text-gray-500">보고 날짜:</span>
+              <span class="font-medium ml-2">${report.report_date}</span>
+            </div>
+            <div>
+              <span class="text-gray-500">보고자:</span>
+              <span class="font-medium ml-2">${report.reporter_name || '-'}</span>
+            </div>
+          </div>
+          ${report.summary ? `
+            <div class="mt-3 pt-3 border-t">
+              <span class="text-gray-500 text-sm">요약:</span>
+              <p class="mt-1 text-gray-700">${report.summary}</p>
+            </div>
+          ` : ''}
+        </div>
+        
+        <div>
+          <h4 class="font-semibold text-gray-700 mb-2"><i class="fas fa-tasks mr-1"></i>업무 항목 (${items.length}건)</h4>
+          <div class="space-y-2 max-h-[40vh] overflow-y-auto">
+            ${items.length === 0 ? `
+              <div class="text-center py-4 text-gray-400">등록된 업무 항목이 없습니다</div>
+            ` : items.map((item, idx) => `
+              <div class="border rounded-lg p-3">
+                <div class="flex items-start justify-between">
+                  <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="px-2 py-0.5 rounded text-xs ${item.work_type === 'task' ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-600'}">
+                        ${item.work_type === 'task' ? '업무지시' : '일반업무'}
+                      </span>
+                      <span class="px-2 py-0.5 rounded text-xs ${item.status === '완료' ? 'bg-green-100 text-green-600' : item.status === '진행중' ? 'bg-yellow-100 text-yellow-600' : 'bg-gray-100 text-gray-600'}">
+                        ${item.status}
+                      </span>
+                      ${item.work_hours > 0 ? `<span class="text-xs text-gray-500">${item.work_hours}시간</span>` : ''}
+                    </div>
+                    <p class="font-medium text-gray-800">${item.title}</p>
+                    ${item.content ? `<p class="text-sm text-gray-600 mt-1">${item.content}</p>` : ''}
+                    ${item.task_title ? `<p class="text-xs text-indigo-500 mt-1"><i class="fas fa-link mr-1"></i>연관 업무: ${item.task_title}</p>` : ''}
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        
+        <div class="flex justify-end gap-2 pt-4 border-t">
+          <button onclick="closeModal(); showWorkHistoryModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">목록으로</button>
+        </div>
+      </div>
+    `);
+  } catch (e) {
+    showToast('로드 실패', 'error');
+  }
+}
+
+// 업무 보고 삭제
+async function deleteWorkReport(reportId) {
+  if (!confirm('이 업무 보고를 삭제하시겠습니까?')) return;
+  
+  try {
+    const res = await axios.delete('/api/task/daily-reports/' + reportId);
+    if (!res.data.success) throw new Error(res.data.error);
+    
+    showToast('삭제되었습니다', 'success');
+    loadWorkHistory();
+  } catch (e) {
+    showToast('삭제 실패', 'error');
+  }
+}
+
+// 업무 통계 보기
+async function loadWorkHistoryStats() {
+  try {
+    const params = new URLSearchParams();
+    if (workHistoryFilters.department_id) params.append('department_id', workHistoryFilters.department_id);
+    if (workHistoryFilters.start_date) params.append('start_date', workHistoryFilters.start_date);
+    if (workHistoryFilters.end_date) params.append('end_date', workHistoryFilters.end_date);
+    
+    const res = await axios.get('/api/task/work-stats?' + params.toString());
+    if (!res.data.success) throw new Error('로드 실패');
+    
+    const { departments, daily, byType } = res.data.data;
+    
+    showModal('📊 업무 통계', `
+      <div class="space-y-6" style="min-width: 600px;">
+        <div class="text-sm text-gray-500 text-center">
+          ${workHistoryFilters.start_date} ~ ${workHistoryFilters.end_date}
+        </div>
+        
+        <!-- 부서별 통계 -->
+        <div>
+          <h4 class="font-semibold text-gray-700 mb-3"><i class="fas fa-building mr-1"></i>부서별 현황</h4>
+          <div class="grid grid-cols-3 gap-3">
+            ${departments.map(d => `
+              <div class="border rounded-lg p-3" style="border-left: 4px solid ${d.color}">
+                <div class="font-medium text-gray-800 mb-2">${d.name}</div>
+                <div class="grid grid-cols-2 gap-2 text-sm">
+                  <div class="bg-gray-50 rounded p-2 text-center">
+                    <div class="text-lg font-bold text-indigo-600">${d.report_count || 0}</div>
+                    <div class="text-xs text-gray-500">보고서</div>
+                  </div>
+                  <div class="bg-gray-50 rounded p-2 text-center">
+                    <div class="text-lg font-bold text-green-600">${d.total_items || 0}</div>
+                    <div class="text-xs text-gray-500">업무 건수</div>
+                  </div>
+                  <div class="bg-gray-50 rounded p-2 text-center">
+                    <div class="text-lg font-bold text-blue-600">${(d.total_hours || 0).toFixed(1)}h</div>
+                    <div class="text-xs text-gray-500">총 시간</div>
+                  </div>
+                  <div class="bg-gray-50 rounded p-2 text-center">
+                    <div class="text-lg font-bold text-purple-600">${d.completed_items || 0}</div>
+                    <div class="text-xs text-gray-500">완료</div>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        
+        <!-- 업무 유형별 통계 -->
+        <div>
+          <h4 class="font-semibold text-gray-700 mb-3"><i class="fas fa-tags mr-1"></i>업무 유형별</h4>
+          <div class="flex gap-4">
+            ${byType.map(t => `
+              <div class="flex-1 bg-gray-50 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold ${t.work_type === 'task' ? 'text-blue-600' : 'text-gray-600'}">${t.count || 0}</div>
+                <div class="text-sm text-gray-500">${t.work_type === 'task' ? '업무지시' : '일반업무'}</div>
+                <div class="text-xs text-gray-400 mt-1">${(t.total_hours || 0).toFixed(1)}시간</div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        
+        <!-- 일별 추이 (최근) -->
+        ${daily.length > 0 ? `
+          <div>
+            <h4 class="font-semibold text-gray-700 mb-3"><i class="fas fa-chart-line mr-1"></i>최근 일별 현황</h4>
+            <div class="max-h-40 overflow-y-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-100 sticky top-0">
+                  <tr>
+                    <th class="px-3 py-2 text-left">날짜</th>
+                    <th class="px-3 py-2 text-center">보고서</th>
+                    <th class="px-3 py-2 text-center">업무 건수</th>
+                    <th class="px-3 py-2 text-center">총 시간</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y">
+                  ${daily.slice(0, 10).map(d => `
+                    <tr class="hover:bg-gray-50">
+                      <td class="px-3 py-2">${d.report_date}</td>
+                      <td class="px-3 py-2 text-center">${d.report_count}</td>
+                      <td class="px-3 py-2 text-center">${d.item_count}</td>
+                      <td class="px-3 py-2 text-center">${(d.total_hours || 0).toFixed(1)}h</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ` : ''}
+        
+        <div class="flex justify-end pt-4 border-t">
+          <button onclick="closeModal(); showWorkHistoryModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">닫기</button>
+        </div>
+      </div>
+    `);
+  } catch (e) {
+    showToast('통계 로드 실패', 'error');
+  }
+}
+
+// 업무 이력 내보내기 (엑셀)
+async function exportWorkHistory() {
+  try {
+    const params = new URLSearchParams();
+    if (workHistoryFilters.department_id) params.append('department_id', workHistoryFilters.department_id);
+    if (workHistoryFilters.start_date) params.append('start_date', workHistoryFilters.start_date);
+    if (workHistoryFilters.end_date) params.append('end_date', workHistoryFilters.end_date);
+    params.append('limit', '1000');
+    
+    const res = await axios.get('/api/task/work-history?' + params.toString());
+    if (!res.data.success) throw new Error('로드 실패');
+    
+    const reports = res.data.data.reports;
+    
+    if (reports.length === 0) {
+      showToast('내보낼 데이터가 없습니다', 'warning');
+      return;
+    }
+    
+    // 엑셀 데이터 생성
+    const data = reports.map(r => ({
+      '날짜': r.report_date,
+      '부서': r.department_name,
+      '보고자': r.reporter_name || '',
+      '업무 건수': r.item_count || 0,
+      '총 시간': (r.total_hours || 0).toFixed(1),
+      '요약': r.summary || ''
+    }));
+    
+    const filename = `업무이력_${workHistoryFilters.start_date}_${workHistoryFilters.end_date}`;
+    downloadExcel(data, ['날짜', '부서', '보고자', '업무 건수', '총 시간', '요약'], filename, {
+      title: '업무 이력 보고서'
+    });
+    
+    showToast('엑셀 다운로드 완료', 'success');
+  } catch (e) {
+    showToast('내보내기 실패', 'error');
+  }
+}
+
+// window 객체에 함수 등록
+window.showWorkHistoryModal = showWorkHistoryModal;
+window.loadWorkHistory = loadWorkHistory;
+window.viewWorkHistoryDetail = viewWorkHistoryDetail;
+window.deleteWorkReport = deleteWorkReport;
+window.loadWorkHistoryStats = loadWorkHistoryStats;
+window.exportWorkHistory = exportWorkHistory;

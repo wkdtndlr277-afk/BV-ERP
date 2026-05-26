@@ -122,67 +122,101 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
   let usedMaterials: any[] = [];
   
   if (isProductLot) {
-    // 제품 LOT: production 테이블에서 조회
-    const production = await c.env.DB.prepare(`
-      SELECT p.*, m.item_name, m.category, m.unit
-      FROM production p
-      JOIN master m ON p.product_code = m.item_code
-      WHERE p.lot_number = ?
+    // 제품 LOT: 1. production_inbound 테이블에서 먼저 조회 (생산일보 연동)
+    const productInbound = await c.env.DB.prepare(`
+      SELECT pi.*, p.production_name as item_name, p.production_code as item_code,
+             '제품' as category, COALESCE(p.unit, 'EA') as unit
+      FROM production_inbound pi
+      JOIN production_items p ON pi.production_code = p.production_code
+      WHERE pi.lot_number = ?
     `).bind(lot_number).first<any>();
     
-    if (production) {
-      // 입고 형식에 맞게 변환
+    if (productInbound) {
       lot = {
-        lot_number: production.lot_number,
-        item_code: production.product_code,
-        item_name: production.item_name,
-        category: production.category,
-        unit: production.unit,
-        inbound_date: production.prod_date,
-        expiry_date: '-', // 제품은 유통기한 별도 관리
-        origin_qty: production.quantity,
-        remain_qty: production.quantity, // 제품은 잔량 = 생산량 (별도 관리 필요시 수정)
-        quality_status: production.status === '완료' ? '합격' : production.status,
-        supplier: '-' // 제품은 거래처 없음
+        lot_number: productInbound.lot_number,
+        item_code: productInbound.production_code,
+        item_name: productInbound.item_name,
+        category: '제품',
+        unit: productInbound.unit || 'EA',
+        inbound_date: productInbound.inbound_date,
+        expiry_date: productInbound.expiry_date || '-',
+        origin_qty: productInbound.origin_qty,
+        remain_qty: productInbound.remain_qty,
+        quality_status: productInbound.quality_status || '합격',
+        supplier: '-',
+        channel: productInbound.channel || '-'
       };
+    }
+    
+    // 2. production_inbound에 없으면 기존 production 테이블에서 조회
+    if (!lot) {
+      const production = await c.env.DB.prepare(`
+        SELECT p.*, 
+               COALESCE(pi.production_name, m.item_name) as item_name, 
+               COALESCE(pi.production_code, m.item_code) as item_code_resolved,
+               COALESCE('제품', m.category) as category, 
+               COALESCE(pi.unit, m.unit, 'EA') as unit
+        FROM production p
+        LEFT JOIN production_items pi ON p.product_code = pi.production_code
+        LEFT JOIN master m ON p.product_code = m.item_code
+        WHERE p.lot_number = ?
+      `).bind(lot_number).first<any>();
       
-      // production_materials에서 사용된 원료 조회
-      const materialsRaw = await c.env.DB.prepare(`
-        SELECT pm.*, m.item_name, m.unit as item_unit
-        FROM production_materials pm
-        LEFT JOIN master m ON pm.item_code = m.item_code
-        WHERE pm.production_id = ?
-        ORDER BY pm.id
-      `).bind(production.id).all<any>();
-      
-      // 자체생산 원료 코드 목록 (르방, 탕종, 발효종 등)
-      const selfMadeMaterials = ['RM135', 'RM137', 'RM141', 'RM146', 'RM149', 'RM155', 'RM156'];
-      const selfMadeKeywords = ['르방', '탕종', '발효종'];
-      
-      // 각 원료의 입고 정보 (거래처, 입고일, 유통기한) 조회
-      for (const mat of materialsRaw.results || []) {
-        let inboundInfo = null;
-        if (mat.lot_number) {
-          inboundInfo = await c.env.DB.prepare(`
-            SELECT supplier, inbound_date, expiry_date
-            FROM inbound WHERE lot_number = ?
-          `).bind(mat.lot_number).first<any>();
+      if (production) {
+        // 입고 형식에 맞게 변환
+        lot = {
+          lot_number: production.lot_number,
+          item_code: production.product_code,
+          item_name: production.item_name || production.product_code,
+          category: production.category || '제품',
+          unit: production.unit || 'EA',
+          inbound_date: production.prod_date,
+          expiry_date: production.expiry_date || '-',
+          origin_qty: production.quantity,
+          remain_qty: production.quantity,
+          quality_status: production.status === '완료' ? '합격' : production.status,
+          supplier: '-',
+          channel: production.channel || '-'
+        };
+        
+        // production_materials에서 사용된 원료 조회
+        const materialsRaw = await c.env.DB.prepare(`
+          SELECT pm.*, m.item_name, m.unit as item_unit
+          FROM production_materials pm
+          LEFT JOIN master m ON pm.item_code = m.item_code
+          WHERE pm.production_id = ?
+          ORDER BY pm.id
+        `).bind(production.id).all<any>();
+        
+        // 자체생산 원료 코드 목록 (르방, 탕종, 발효종 등)
+        const selfMadeMaterials = ['RM135', 'RM137', 'RM141', 'RM146', 'RM149', 'RM155', 'RM156'];
+        const selfMadeKeywords = ['르방', '탕종', '발효종'];
+        
+        // 각 원료의 입고 정보 (거래처, 입고일, 유통기한) 조회
+        for (const mat of materialsRaw.results || []) {
+          let inboundInfo = null;
+          if (mat.lot_number) {
+            inboundInfo = await c.env.DB.prepare(`
+              SELECT supplier, inbound_date, expiry_date
+              FROM inbound WHERE lot_number = ?
+            `).bind(mat.lot_number).first<any>();
+          }
+          
+          // 자체생산 원료인지 확인 (코드 또는 이름으로)
+          const isSelfMade = selfMadeMaterials.includes(mat.item_code) || 
+            selfMadeKeywords.some(kw => (mat.item_name || '').includes(kw));
+          
+          usedMaterials.push({
+            item_code: mat.item_code,
+            item_name: mat.item_name || mat.item_code,
+            lot_number: mat.lot_number || '-',
+            actual_qty: mat.actual_qty || mat.planned_qty,
+            unit: mat.item_unit || mat.unit || 'g',
+            supplier: isSelfMade ? '자체제작' : (inboundInfo?.supplier || '-'),
+            inbound_date: inboundInfo?.inbound_date || '-',
+            expiry_date: inboundInfo?.expiry_date || '-'
+          });
         }
-        
-        // 자체생산 원료인지 확인 (코드 또는 이름으로)
-        const isSelfMade = selfMadeMaterials.includes(mat.item_code) || 
-          selfMadeKeywords.some(kw => (mat.item_name || '').includes(kw));
-        
-        usedMaterials.push({
-          item_code: mat.item_code,
-          item_name: mat.item_name || mat.item_code,
-          lot_number: mat.lot_number || '-',
-          actual_qty: mat.actual_qty || mat.planned_qty,
-          unit: mat.item_unit || mat.unit || 'g',
-          supplier: isSelfMade ? '자체제작' : (inboundInfo?.supplier || '-'),
-          inbound_date: inboundInfo?.inbound_date || '-',
-          expiry_date: inboundInfo?.expiry_date || '-'
-        });
       }
     }
   } else {
@@ -193,6 +227,16 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
       JOIN master m ON i.item_code = m.item_code
       WHERE i.lot_number = ?
     `).bind(lot_number).first();
+    
+    // inbound에 없으면 supplies (부자재) 테이블도 확인
+    if (!lot) {
+      lot = await c.env.DB.prepare(`
+        SELECT i.*, s.item_name, s.category, s.unit 
+        FROM inbound i 
+        JOIN supplies s ON i.item_code = s.item_code
+        WHERE i.lot_number = ?
+      `).bind(lot_number).first();
+    }
   }
   
   if (!lot) {

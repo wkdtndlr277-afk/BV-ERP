@@ -39697,6 +39697,7 @@ async function renderTaskBoard() {
               <option value="all">전체 유형</option>
               <option value="notice" ${taskBoardFilters.type === 'notice' ? 'selected' : ''}>📢 공지사항</option>
               <option value="task" ${taskBoardFilters.type === 'task' ? 'selected' : ''}>📋 업무지시</option>
+              <option value="daily_report">📝 일일업무</option>
             </select>
           </div>
         </div>
@@ -39787,6 +39788,15 @@ function taskBoardApplyFilters() {
   taskBoardFilters.status = document.getElementById('tb-filter-status')?.value || 'all';
   taskBoardFilters.department = document.getElementById('tb-filter-dept')?.value || 'all';
   taskBoardFilters.type = document.getElementById('tb-filter-type')?.value || 'all';
+  
+  // 일일업무 선택 시 일일업무 조회 모달 열기
+  if (taskBoardFilters.type === 'daily_report') {
+    // 필터 초기화 (다음에 다시 열 때 일반 업무 표시되도록)
+    document.getElementById('tb-filter-type').value = 'all';
+    taskBoardFilters.type = 'all';
+    showWorkHistoryModal();
+    return;
+  }
   
   taskBoardRenderTable();
   taskBoardRenderHistory();

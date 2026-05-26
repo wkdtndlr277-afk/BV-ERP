@@ -1136,8 +1136,19 @@ productionRoutes.post('/recalculate-expiry', async (c) => {
         WHERE production_code = ?
       `).bind(days, code).run();
       
-      totalUpdated += (result1.meta?.changes || 0) + (result2.meta?.changes || 0);
-      console.log(`[recalculate-expiry] ${code}: ${days}일로 업데이트 (${result1.meta?.changes || 0} + ${result2.meta?.changes || 0}건)`);
+      // production_daily_items 테이블 업데이트 (생산일보 품목)
+      // report_id로 report_date를 조회해서 계산
+      const result3 = await c.env.DB.prepare(`
+        UPDATE production_daily_items 
+        SET expiry_date = date(
+          (SELECT report_date FROM production_daily_report WHERE id = production_daily_items.report_id),
+          '+' || ? || ' days'
+        )
+        WHERE production_code = ?
+      `).bind(days, code).run();
+      
+      totalUpdated += (result1.meta?.changes || 0) + (result2.meta?.changes || 0) + (result3.meta?.changes || 0);
+      console.log(`[recalculate-expiry] ${code}: ${days}일로 업데이트 (production: ${result1.meta?.changes || 0}, inbound: ${result2.meta?.changes || 0}, daily_items: ${result3.meta?.changes || 0}건)`);
     }
     
     return c.json({

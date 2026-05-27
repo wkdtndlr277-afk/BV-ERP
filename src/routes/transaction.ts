@@ -2193,14 +2193,17 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     // 월초재고 계산 (기간 시작일 이전까지의 누적)
     const carryOver = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
     
-    // 기간 내 입고 (입고량 + 양수 재고조정)
-    const periodInbound = item.period_inbound_raw + item.period_adj_plus;
+    // 기간 내 입고 (순수 입고량만 - 재고조정 제외)
+    const periodInbound = item.period_inbound_raw;
     
-    // 기간 내 출고 (출고량 + 음수 재고조정)
-    const periodOutbound = item.period_outbound_raw + item.period_adj_minus;
+    // 기간 내 사용 (바코드 사용 + 음수 재고조정)
+    const periodUsageTotal = item.period_usage + item.period_adj_minus;
     
-    // 월말재고 계산 (월초 + 입고 - 사용 - 출고)
-    const closingStock = carryOver + periodInbound - item.period_usage - periodOutbound;
+    // 기간 내 재고조정 (양수만 - 증가분)
+    const periodAdjustment = item.period_adj_plus;
+    
+    // 월말재고 계산 (월초 + 입고 + 조정 - 사용)
+    const closingStock = carryOver + periodInbound + periodAdjustment - periodUsageTotal;
     
     // 실제 재고 (LOT 잔량 또는 마스터 재고)
     const actualStock = isRawMaterial ? item.lot_remain_total : item.current_stock;
@@ -2212,7 +2215,9 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       ...item,
       carry_over: carryOver,
       period_inbound: periodInbound,
-      period_outbound: periodOutbound,
+      period_usage: periodUsageTotal,
+      period_adjustment: periodAdjustment,
+      period_outbound: 0, // 사용에 통합
       calc_remain: closingStock,
       actual_stock: actualStock,
       diff: diff
@@ -2224,7 +2229,7 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     acc.total_carry_over += item.carry_over;
     acc.total_inbound += item.period_inbound;
     acc.total_usage += item.period_usage;
-    acc.total_outbound += item.period_outbound;
+    acc.total_adjustment += item.period_adjustment || 0;
     acc.total_calc_remain += item.calc_remain;
     acc.total_current_stock += item.current_stock;
     acc.total_lot_remain += item.lot_remain_total;
@@ -2235,7 +2240,7 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     total_carry_over: 0,
     total_inbound: 0,
     total_usage: 0,
-    total_outbound: 0,
+    total_adjustment: 0,
     total_calc_remain: 0,
     total_current_stock: 0,
     total_lot_remain: 0,

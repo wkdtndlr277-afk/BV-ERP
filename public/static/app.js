@@ -33598,7 +33598,7 @@ function renderLedgerSummary(summary, isSampleView = false) {
   
   container.innerHTML = `
     <div class="bg-blue-50 rounded-lg p-3 border border-blue-200">
-      <p class="text-xs text-blue-600">이월 재고${sampleLabel}</p>
+      <p class="text-xs text-blue-600">현재재고${sampleLabel}</p>
       <p class="text-lg font-bold text-blue-800">${formatNumber(summary.total_carry_over)}</p>
     </div>
     <div class="bg-green-50 rounded-lg p-3 border border-green-200">
@@ -33610,7 +33610,7 @@ function renderLedgerSummary(summary, isSampleView = false) {
       <p class="text-lg font-bold text-orange-800">${formatNumber(summary.total_usage)}</p>
     </div>
     <div class="bg-teal-50 rounded-lg p-3 border border-teal-200">
-      <p class="text-xs text-teal-600">LOT 잔량${sampleLabel}</p>
+      <p class="text-xs text-teal-600">잔량재고${sampleLabel}</p>
       <p class="text-lg font-bold text-teal-800">${formatNumber(summary.total_lot_remain || 0)}</p>
     </div>
     <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
@@ -33647,10 +33647,10 @@ function renderLedgerTable(data, isSampleView = false) {
           <th class="px-3 py-2 text-left">품목명${sampleLabel}</th>
           <th class="px-3 py-2 text-center">분류</th>
           ${isSampleView ? '<th class="px-3 py-2 text-left text-yellow-700">보관장소</th>' : ''}
-          <th class="px-3 py-2 text-right">전일재고</th>
+          <th class="px-3 py-2 text-right">현재재고</th>
           <th class="px-3 py-2 text-right text-blue-600">입고</th>
           <th class="px-3 py-2 text-right text-orange-600">사용 <span class="text-xs font-normal text-gray-400">(바코드)</span></th>
-          <th class="px-3 py-2 text-right text-teal-600 font-bold">현재고 <i class="fas fa-edit text-xs text-gray-400" title="클릭하여 수정"></i></th>
+          <th class="px-3 py-2 text-right text-teal-600 font-bold">잔량재고 <i class="fas fa-edit text-xs text-gray-400" title="클릭하여 수정"></i></th>
           <th class="px-3 py-2 text-right">차이</th>
           <th class="px-3 py-2 text-center">소비기한</th>
           <th class="px-3 py-2 text-center">단위</th>

@@ -37750,6 +37750,26 @@ async function renderBarcodeInventory() {
         </div>
       </div>
       
+      <!-- 자동 차감 모드 토글 -->
+      <div id="auto-deduct-toggle" class="bg-gradient-to-r from-green-50 to-emerald-50 border border-green-300 rounded-xl p-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-green-600 rounded-lg flex items-center justify-center">
+              <i class="fas fa-bolt text-white"></i>
+            </div>
+            <div>
+              <h4 class="font-bold text-green-800">자동 차감 모드</h4>
+              <p class="text-xs text-gray-600">바코드 스캔 시 포장단위만큼 즉시 차감</p>
+            </div>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="auto-deduct-checkbox" class="sr-only peer" checked onchange="toggleAutoDeduct(this.checked)">
+            <div class="w-14 h-7 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-green-600"></div>
+            <span id="auto-deduct-label" class="ml-2 text-sm font-medium text-green-700">ON</span>
+          </label>
+        </div>
+      </div>
+      
       <!-- 스캐너 연결 안내 -->
       <div id="scanner-guide-banner" class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4">
         <div class="flex items-start gap-4">
@@ -37992,13 +38012,17 @@ async function renderBarcodeInventory() {
     
     console.log('[바코드] 전역 스캐너 리스너 활성화');
   }
+  
+  // 자동차감 설정 복원
+  setTimeout(() => restoreAutoDeductSetting(), 100);
 }
 
 // 바코드 관련 상태
 let barcodeCurrentItem = null;
 let barcodeCurrentTab = 'usage';
+let barcodeAutoDeductMode = true; // 자동 차감 모드 (기본: ON)
 
-// 바코드 스캔 처리
+// 바코드 스캔 처리 - 자동 차감 모드
 async function scanBarcode() {
   const input = document.getElementById('barcode-scan-input');
   const barcode = input?.value?.trim();
@@ -38008,7 +38032,7 @@ async function scanBarcode() {
     return;
   }
   
-  showLoading('품목 조회 중...');
+  showLoading('처리 중...');
   
   try {
     const response = await axios.get(`${API_BASE}/barcode/scan?barcode=${encodeURIComponent(barcode)}`);
@@ -38016,8 +38040,20 @@ async function scanBarcode() {
     
     if (result.success && result.data) {
       barcodeCurrentItem = result.data;
-      displayBarcodeItem(result.data);
-      showToast(`${result.data.item_name} 조회 완료`, 'success');
+      
+      // 자동 차감 모드이고 pack_unit이 설정되어 있으면 즉시 차감
+      if (barcodeAutoDeductMode && result.data.pack_unit && result.data.pack_unit > 0) {
+        // 즉시 자동 차감 실행
+        await autoDeductBarcode(result.data);
+      } else if (barcodeAutoDeductMode && !result.data.pack_unit) {
+        // pack_unit 미설정 시 경고 후 수동 모드로 표시
+        displayBarcodeItem(result.data);
+        showToast(`${result.data.item_name} - 포장단위 미설정 (수동 입력 필요)`, 'warning');
+      } else {
+        // 수동 모드
+        displayBarcodeItem(result.data);
+        showToast(`${result.data.item_name} 조회 완료`, 'success');
+      }
     } else {
       document.getElementById('barcode-scan-result').classList.add('hidden');
       document.getElementById('barcode-lot-list').classList.add('hidden');
@@ -38030,6 +38066,211 @@ async function scanBarcode() {
     hideLoading();
     input.value = '';
     input.focus();
+  }
+}
+
+// 자동 차감 실행
+async function autoDeductBarcode(item) {
+  const qty = item.pack_unit;
+  const packUnitName = item.pack_unit_name || (item.unit === 'kg' ? '포' : '개');
+  
+  try {
+    const response = await axios.post(`${API_BASE}/barcode/usage`, {
+      item_code: item.item_code,
+      quantity: qty,
+      memo: '바코드 스캔 자동차감'
+    });
+    
+    if (response.data.success) {
+      // 성공 시 화면 업데이트
+      barcodeCurrentItem = item;
+      barcodeCurrentItem.current_stock = (item.current_stock || 0) - qty;
+      
+      // 간략한 결과 표시
+      displayAutoDeductResult(item, qty, packUnitName, response.data);
+      
+      // 성공 토스트
+      showToast(`✅ ${item.item_name} ${qty}${item.unit} (1${packUnitName}) 차감 완료`, 'success');
+      
+      // 성공 사운드 (선택)
+      playBeepSound('success');
+    } else {
+      showToast(response.data.error || '차감 실패', 'error');
+      displayBarcodeItem(item); // 실패 시 상세 화면 표시
+    }
+  } catch (error) {
+    console.error('Auto deduct error:', error);
+    showToast('차감 실패: ' + (error.response?.data?.error || error.message), 'error');
+    displayBarcodeItem(item); // 실패 시 상세 화면 표시
+  }
+}
+
+// 자동 차감 결과 표시
+function displayAutoDeductResult(item, qty, packUnitName, result) {
+  const resultDiv = document.getElementById('barcode-scan-result');
+  const lotListDiv = document.getElementById('barcode-lot-list');
+  
+  resultDiv.classList.remove('hidden');
+  lotListDiv.classList.add('hidden');
+  
+  const newStock = (item.current_stock || 0) - qty;
+  const usedLots = result.used_lots || [];
+  
+  resultDiv.innerHTML = `
+    <div class="bg-white rounded-xl shadow-lg p-6">
+      <!-- 성공 표시 -->
+      <div class="text-center mb-4">
+        <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+          <i class="fas fa-check text-3xl text-green-600"></i>
+        </div>
+        <h3 class="text-xl font-bold text-green-700">차감 완료!</h3>
+      </div>
+      
+      <!-- 품목 정보 -->
+      <div class="bg-gray-50 rounded-lg p-4 mb-4">
+        <div class="flex justify-between items-center">
+          <div>
+            <span class="inline-block px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs mb-1">${item.category || '원료'}</span>
+            <h4 class="font-bold text-lg">${item.item_name}</h4>
+            <p class="text-gray-500 text-sm">${item.item_code}</p>
+          </div>
+          <div class="text-right">
+            <p class="text-sm text-gray-500">차감량</p>
+            <p class="text-2xl font-bold text-red-600">-${qty}${item.unit}</p>
+            <p class="text-xs text-gray-400">(1${packUnitName})</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 재고 변화 -->
+      <div class="flex items-center justify-center gap-4 mb-4">
+        <div class="text-center">
+          <p class="text-sm text-gray-500">이전 재고</p>
+          <p class="text-xl font-medium">${formatNumber(item.current_stock || 0)}</p>
+        </div>
+        <i class="fas fa-arrow-right text-gray-400"></i>
+        <div class="text-center">
+          <p class="text-sm text-gray-500">현재 재고</p>
+          <p class="text-xl font-bold text-blue-600">${formatNumber(newStock)}</p>
+        </div>
+      </div>
+      
+      <!-- 사용된 LOT -->
+      ${usedLots.length > 0 ? `
+        <div class="text-xs text-gray-500 text-center mb-4">
+          사용 LOT: ${usedLots.map(l => l.lot_number).join(', ')}
+        </div>
+      ` : ''}
+      
+      <!-- 취소 버튼 -->
+      <div class="flex gap-2">
+        <button onclick="undoLastDeduct('${item.item_code}', ${qty})" 
+                class="flex-1 py-3 bg-yellow-500 text-white rounded-lg font-medium hover:bg-yellow-600">
+          <i class="fas fa-undo mr-1"></i> 취소 (되돌리기)
+        </button>
+        <button onclick="document.getElementById('barcode-scan-input').focus()" 
+                class="flex-1 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700">
+          <i class="fas fa-barcode mr-1"></i> 다음 스캔
+        </button>
+      </div>
+      
+      <!-- 수동 모드 전환 -->
+      <div class="mt-4 text-center">
+        <button onclick="displayBarcodeItem(barcodeCurrentItem)" class="text-sm text-gray-500 hover:text-gray-700">
+          <i class="fas fa-edit mr-1"></i> 상세 화면 보기
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+// 마지막 차감 취소 (되돌리기)
+async function undoLastDeduct(itemCode, qty) {
+  if (!confirm(`${qty} 차감을 취소하고 재고를 복구하시겠습니까?`)) return;
+  
+  showLoading('취소 처리 중...');
+  
+  try {
+    // 입고로 복구
+    const response = await axios.post(`${API_BASE}/barcode/inbound`, {
+      item_code: itemCode,
+      quantity: qty,
+      memo: '차감 취소 (되돌리기)'
+    });
+    
+    if (response.data.success) {
+      showToast(`✅ ${qty} 복구 완료`, 'success');
+      // 다시 스캔 대기
+      document.getElementById('barcode-scan-result').classList.add('hidden');
+      document.getElementById('barcode-scan-input').focus();
+    } else {
+      showToast(response.data.error || '취소 실패', 'error');
+    }
+  } catch (error) {
+    showToast('취소 실패: ' + (error.response?.data?.error || error.message), 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// 비프음 재생
+function playBeepSound(type) {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const oscillator = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    
+    oscillator.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+    
+    if (type === 'success') {
+      oscillator.frequency.value = 800;
+      oscillator.type = 'sine';
+    } else {
+      oscillator.frequency.value = 300;
+      oscillator.type = 'square';
+    }
+    
+    gainNode.gain.value = 0.1;
+    oscillator.start();
+    oscillator.stop(audioCtx.currentTime + 0.1);
+  } catch (e) {
+    // 오디오 컨텍스트 오류 무시
+  }
+}
+
+// 자동 차감 모드 토글
+function toggleAutoDeduct(enabled) {
+  barcodeAutoDeductMode = enabled;
+  const label = document.getElementById('auto-deduct-label');
+  const toggle = document.getElementById('auto-deduct-toggle');
+  
+  if (enabled) {
+    label.textContent = 'ON';
+    label.className = 'ml-2 text-sm font-medium text-green-700';
+    toggle.className = 'bg-gradient-to-r from-green-50 to-emerald-50 border border-green-300 rounded-xl p-4';
+    showToast('자동 차감 모드 활성화 - 스캔 시 즉시 차감됩니다', 'success');
+  } else {
+    label.textContent = 'OFF';
+    label.className = 'ml-2 text-sm font-medium text-gray-500';
+    toggle.className = 'bg-gray-50 border border-gray-300 rounded-xl p-4';
+    showToast('수동 모드 - 스캔 후 수량 확인 후 차감합니다', 'info');
+  }
+  
+  // 로컬스토리지에 설정 저장
+  localStorage.setItem('barcode_auto_deduct', enabled ? 'true' : 'false');
+}
+
+// 페이지 로드 시 자동차감 설정 복원
+function restoreAutoDeductSetting() {
+  const saved = localStorage.getItem('barcode_auto_deduct');
+  if (saved !== null) {
+    barcodeAutoDeductMode = saved === 'true';
+    const checkbox = document.getElementById('auto-deduct-checkbox');
+    if (checkbox) {
+      checkbox.checked = barcodeAutoDeductMode;
+      toggleAutoDeduct(barcodeAutoDeductMode);
+    }
   }
 }
 

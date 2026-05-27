@@ -33611,7 +33611,6 @@ function renderLedgerTable(data, isSampleView = false) {
           <th class="px-3 py-2 text-right">전일재고</th>
           <th class="px-3 py-2 text-right text-blue-600">입고</th>
           <th class="px-3 py-2 text-right text-orange-600">사용 <span class="text-xs font-normal text-gray-400">(바코드)</span></th>
-          <th class="px-3 py-2 text-right text-red-600">출고</th>
           <th class="px-3 py-2 text-right text-teal-600 font-bold">현재고 <i class="fas fa-edit text-xs text-gray-400" title="클릭하여 수정"></i></th>
           <th class="px-3 py-2 text-right">차이</th>
           <th class="px-3 py-2 text-center">소비기한</th>
@@ -33651,7 +33650,6 @@ function renderLedgerTable(data, isSampleView = false) {
               <td class="px-3 py-2 text-right">${formatNumber(row.carry_over)}</td>
               <td class="px-3 py-2 text-right text-blue-600 font-medium">${formatNumber(row.period_inbound)}</td>
               <td class="px-3 py-2 text-right text-orange-600 font-medium">${formatNumber(row.period_usage)}</td>
-              <td class="px-3 py-2 text-right text-red-600">${formatNumber(row.period_outbound)}</td>
               <td class="px-3 py-2 text-right text-teal-600 font-bold cursor-pointer hover:bg-teal-100 rounded" onclick="showStockAdjustModal('${row.item_code}', '${row.item_name.replace(/'/g, "\\'")}', ${actualStock}, '${row.unit}')" title="클릭하여 재고 수정">
                 ${formatNumber(actualStock)}
                 <i class="fas fa-edit ml-1 text-xs text-gray-400"></i>
@@ -33856,9 +33854,8 @@ function downloadStockLedger() {
       품목명: r.item_name,
       분류: r.category,
       이월: r.carry_over,
-      '입고(+조정)': r.period_inbound,
+      입고: r.period_inbound,
       사용: r.period_usage,
-      '출고(-조정)': r.period_outbound,
       실재고: actualStock,
       현재고: r.current_stock,
       차이: stockDiff,
@@ -33874,9 +33871,8 @@ function downloadStockLedger() {
     품목명: '합계',
     분류: '',
     이월: s.total_carry_over,
-    '입고(+조정)': s.total_inbound,
+    입고: s.total_inbound,
     사용: s.total_usage,
-    '출고(-조정)': s.total_outbound,
     실재고: s.total_lot_remain || s.total_calc_remain,
     현재고: s.total_current_stock,
     차이: '',
@@ -33889,9 +33885,8 @@ function downloadStockLedger() {
     { key: '품목명', label: '품목명' },
     { key: '분류', label: '분류', type: 'center' },
     { key: '이월', label: '이월', type: 'number' },
-    { key: '입고(+조정)', label: '입고(+조정)', type: 'number' },
+    { key: '입고', label: '입고', type: 'number' },
     { key: '사용', label: '사용', type: 'number' },
-    { key: '출고(-조정)', label: '출고(-조정)', type: 'number' },
     { key: '실재고', label: '실재고', type: 'number' },
     { key: '현재고', label: '현재고', type: 'number' },
     { key: '차이', label: '차이', type: 'number' },

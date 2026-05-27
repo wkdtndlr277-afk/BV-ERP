@@ -2133,8 +2133,8 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%' AND ${sampleCondition}), 0) as before_inbound,
       -- 월초재고: 조회 시작일 이전까지의 사용량 합계 (바코드 스캔만)
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ? AND t.memo LIKE '%바코드%' AND ${sampleTransCondition}), 0) as before_usage,
-      -- 월초재고: 조회 시작일 이전까지의 출고량 합계
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_outbound,
+      -- 월초재고: 조회 시작일 이전까지의 출고량 합계 (사용에 통합하므로 0으로 처리)
+      0 as before_outbound,
       -- 월초재고: 조회 시작일 이전까지의 재고조정 합계 (양수/음수 모두)
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_adjustment,
       -- 기간 내 입고량 (재고조정 LOT 제외)
@@ -2143,8 +2143,8 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_adj_plus,
       -- 기간 내 사용량 (바코드 스캔만 - 생산등록은 제외)
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ? AND t.memo LIKE '%바코드%' AND ${sampleTransCondition}), 0) as period_usage,
-      -- 기간 내 출고량
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_outbound_raw,
+      -- 기간 내 출고량 (사용에 통합하므로 0으로 처리)
+      0 as period_outbound_raw,
       -- 기간 내 음수 재고조정
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_adj_minus
     FROM master m
@@ -2158,10 +2158,11 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     )
   `;
   
-  // 파라미터 순서: before(4개) + period(6개) + exists(6개)
+  // 파라미터 순서: before(3개: inbound, usage, adjustment) + period(4개: inbound, adj_plus, usage, adj_minus) + exists(6개)
+  // before_outbound와 period_outbound_raw는 0으로 하드코딩되어 파라미터 필요없음
   const params: any[] = [
-    dateStart, dateStart, dateStart, dateStart,  // before_inbound, before_usage, before_outbound, before_adjustment
-    dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd,  // period queries
+    dateStart, dateStart, dateStart,  // before_inbound, before_usage, before_adjustment (before_outbound 제거)
+    dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd, dateStart, dateEnd,  // period queries (period_outbound_raw 제거)
     dateStart, dateEnd, dateStart, dateEnd, dateStart, dateStart  // EXISTS queries
   ];
   

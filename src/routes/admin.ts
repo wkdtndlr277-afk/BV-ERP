@@ -5429,4 +5429,63 @@ admin.post('/fix-lot-remain', async (c) => {
   }
 })
 
+// 마이그레이션 실행 (pack_unit 컬럼 추가)
+admin.post('/migrate-pack-unit', async (c) => {
+  const { env } = c
+  
+  try {
+    const results: string[] = []
+    
+    // master 테이블에 pack_unit 컬럼 추가 시도
+    try {
+      await env.DB.prepare('ALTER TABLE master ADD COLUMN pack_unit REAL DEFAULT NULL').run()
+      results.push('master.pack_unit added')
+    } catch (e: any) {
+      if (e.message?.includes('duplicate column')) {
+        results.push('master.pack_unit already exists')
+      } else {
+        results.push(`master.pack_unit error: ${e.message}`)
+      }
+    }
+    
+    try {
+      await env.DB.prepare('ALTER TABLE master ADD COLUMN pack_unit_name TEXT DEFAULT NULL').run()
+      results.push('master.pack_unit_name added')
+    } catch (e: any) {
+      if (e.message?.includes('duplicate column')) {
+        results.push('master.pack_unit_name already exists')
+      } else {
+        results.push(`master.pack_unit_name error: ${e.message}`)
+      }
+    }
+    
+    // supplies 테이블에 pack_unit 컬럼 추가 시도
+    try {
+      await env.DB.prepare('ALTER TABLE supplies ADD COLUMN pack_unit REAL DEFAULT NULL').run()
+      results.push('supplies.pack_unit added')
+    } catch (e: any) {
+      if (e.message?.includes('duplicate column')) {
+        results.push('supplies.pack_unit already exists')
+      } else {
+        results.push(`supplies.pack_unit error: ${e.message}`)
+      }
+    }
+    
+    try {
+      await env.DB.prepare('ALTER TABLE supplies ADD COLUMN pack_unit_name TEXT DEFAULT NULL').run()
+      results.push('supplies.pack_unit_name added')
+    } catch (e: any) {
+      if (e.message?.includes('duplicate column')) {
+        results.push('supplies.pack_unit_name already exists')
+      } else {
+        results.push(`supplies.pack_unit_name error: ${e.message}`)
+      }
+    }
+    
+    return c.json({ success: true, message: 'Migration completed', results })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

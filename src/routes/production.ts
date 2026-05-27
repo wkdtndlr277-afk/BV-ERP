@@ -451,6 +451,27 @@ productionRoutes.post('/', async (c) => {
         `).bind(prod_date, actualItemCode, requiredKg, 
           `생산사용(재고미차감): ${product.item_name} ${quantity}개 - 정제수`).run();
         
+        // 일별/월별 수불부용 문서 기록 (정제수도 포함)
+        try {
+          await c.env.DB.prepare(`
+            INSERT INTO production_usage (usage_date, item_code, item_name, quantity, unit, lot_number, production_id, production_lot, product_code, product_name, memo)
+            VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
+          `).bind(
+            prod_date,
+            actualItemCode,
+            itemName,
+            requiredKg,
+            'kg',
+            productionId,
+            productLot,
+            product_code,
+            product.item_name,
+            `생산사용(정제수): ${product.item_name} ${quantity}개`
+          ).run();
+        } catch (e) {
+          console.log('production_usage insert skipped (water):', e);
+        }
+        
         continue; // 다음 원재료로
       }
       
@@ -539,6 +560,29 @@ productionRoutes.post('/', async (c) => {
         UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
         WHERE item_code = ?
       `).bind(requiredKg, actualItemCode).run();
+      
+      // 일별/월별 수불부용 문서 기록 (production_usage 테이블)
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO production_usage (usage_date, item_code, item_name, quantity, unit, lot_number, production_id, production_lot, product_code, product_name, memo)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          prod_date,
+          actualItemCode,
+          itemName || bom.item_name,
+          requiredKg,
+          'kg',
+          usedLots.length > 0 ? usedLots.join(', ') : null,
+          productionId,
+          productLot,
+          product_code,
+          product.item_name,
+          `생산사용: ${product.item_name} ${quantity}개`
+        ).run();
+      } catch (e) {
+        // production_usage 테이블이 없으면 무시 (마이그레이션 전)
+        console.log('production_usage insert skipped:', e);
+      }
     }
     
     // 3. 제품 재고 증가
@@ -573,6 +617,25 @@ productionRoutes.post('/', async (c) => {
       quantity,
       `생산입고 (생산ID: ${productionId})`
     ).run();
+    
+    // 6. 일별/월별 수불부용 제품 입고 문서 기록
+    try {
+      await c.env.DB.prepare(`
+        INSERT INTO production_inbound_doc (inbound_date, item_code, item_name, quantity, unit, lot_number, production_id, memo)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        prod_date,
+        product_code,
+        product.item_name,
+        quantity,
+        product.unit || 'EA',
+        productLot,
+        productionId,
+        `생산입고`
+      ).run();
+    } catch (e) {
+      console.log('production_inbound_doc insert skipped:', e);
+    }
     
     return c.json({ 
       success: true, 
@@ -1062,6 +1125,7 @@ productionRoutes.post('/batch', async (c) => {
   const materialUpdates: any[] = [];
   const semiFinishedUpdates: any[] = [];  // 반제품 차감
   const materialTransactions: any[] = [];
+  const productionUsageInserts: any[] = [];  // 일별/월별 수불부 문서용
   
   for (const [itemCode, data] of materialDeductions) {
     const isWater = data.itemName.includes('정제수');
@@ -1105,6 +1169,14 @@ productionRoutes.post('/batch', async (c) => {
           .bind(productionDate, itemCode, -data.qty, memoText, now)
       );
     }
+    
+    // 일별/월별 수불부 문서용 기록 (production_usage 테이블)
+    productionUsageInserts.push(
+      c.env.DB.prepare(`
+        INSERT INTO production_usage (usage_date, item_code, item_name, quantity, unit, memo, created_at)
+        VALUES (?, ?, ?, ?, 'kg', ?, ?)
+      `).bind(productionDate, itemCode, data.itemName, data.qty, memoText, now)
+    );
   }
   
   console.log(`[production/batch] 원료 차감 시작: materialUpdates=${materialUpdates.length}, semiFinishedUpdates=${semiFinishedUpdates.length}, materialTransactions=${materialTransactions.length}`);
@@ -1152,6 +1224,23 @@ productionRoutes.post('/batch', async (c) => {
     if (txFailCount > 0) {
       transactionRecordSuccess = false;
       transactionError = `${txFailCount}/${materialTransactions.length} 트랜잭션 기록 실패`;
+    }
+  }
+  
+  // 7단계: 일별/월별 수불부 문서용 기록 (production_usage 테이블)
+  if (productionUsageInserts.length > 0) {
+    console.log(`[production/batch] production_usage 기록 ${productionUsageInserts.length}건 실행`);
+    try {
+      for (const stmt of productionUsageInserts) {
+        try {
+          await stmt.run();
+        } catch (e: any) {
+          // 테이블이 없거나 오류 발생 시 무시
+          console.log('production_usage insert skipped:', e.message);
+        }
+      }
+    } catch (e) {
+      console.log('production_usage batch insert skipped:', e);
     }
   }
   

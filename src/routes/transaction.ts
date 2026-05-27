@@ -1798,27 +1798,89 @@ transactionRoutes.get('/monthly-daily-ledger', async (c) => {
         ORDER BY trans_date
       `).bind(item.item_code, startDate, endDate).all();
     } else {
-      // 원료/부자재: transactions 사용
-      const openingResult = await c.env.DB.prepare(`
-        SELECT COALESCE(SUM(quantity), 0) as balance
-        FROM transactions
-        WHERE item_code = ? AND trans_date < ?
+      // 원료/부자재: 입고는 inbound 테이블, 사용은 production_usage 테이블 (문서용)
+      // 월초재고: 기간 이전 입고량 - 기간 이전 사용량
+      let beforeInbound = 0;
+      let beforeUsage = 0;
+      
+      // 기간 이전 입고량 (inbound 테이블)
+      const beforeInboundResult = await c.env.DB.prepare(`
+        SELECT COALESCE(SUM(origin_qty), 0) as total
+        FROM inbound
+        WHERE item_code = ? AND inbound_date < ? AND quality_status = '합격'
       `).bind(item.item_code, startDate).first();
+      beforeInbound = (beforeInboundResult as any)?.total || 0;
       
-      openingStock = (openingResult as any)?.balance || 0;
+      // 기간 이전 사용량 (production_usage 테이블)
+      try {
+        const beforeUsageResult = await c.env.DB.prepare(`
+          SELECT COALESCE(SUM(quantity), 0) as total
+          FROM production_usage
+          WHERE item_code = ? AND usage_date < ?
+        `).bind(item.item_code, startDate).first();
+        beforeUsage = (beforeUsageResult as any)?.total || 0;
+      } catch (e) {
+        // production_usage 테이블이 없으면 기존 transactions 사용
+        const beforeUsageResult = await c.env.DB.prepare(`
+          SELECT COALESCE(SUM(ABS(quantity)), 0) as total
+          FROM transactions
+          WHERE item_code = ? AND trans_type = '사용' AND trans_date < ?
+        `).bind(item.item_code, startDate).first();
+        beforeUsage = (beforeUsageResult as any)?.total || 0;
+      }
       
-      dailyTrans = await c.env.DB.prepare(`
+      openingStock = beforeInbound - beforeUsage;
+      
+      // 일별 데이터: 입고(inbound) + 사용(production_usage)
+      // 먼저 입고 데이터 조회
+      const inboundDaily = await c.env.DB.prepare(`
         SELECT 
-          trans_date,
-          SUM(CASE WHEN trans_type = '입고' THEN quantity ELSE 0 END) as inbound,
-          SUM(CASE WHEN trans_type = '사용' THEN ABS(quantity) ELSE 0 END) as usage,
-          SUM(CASE WHEN trans_type = '출고' THEN ABS(quantity) ELSE 0 END) as outbound,
-          SUM(CASE WHEN trans_type = '재고조정' THEN quantity ELSE 0 END) as adjustment
-        FROM transactions
-        WHERE item_code = ? AND trans_date >= ? AND trans_date <= ?
-        GROUP BY trans_date
-        ORDER BY trans_date
+          inbound_date as trans_date,
+          SUM(origin_qty) as inbound
+        FROM inbound
+        WHERE item_code = ? AND inbound_date >= ? AND inbound_date <= ? AND quality_status = '합격'
+        GROUP BY inbound_date
       `).bind(item.item_code, startDate, endDate).all();
+      
+      // 사용 데이터 조회 (production_usage 테이블)
+      let usageDaily: any = { results: [] };
+      try {
+        usageDaily = await c.env.DB.prepare(`
+          SELECT 
+            usage_date as trans_date,
+            SUM(quantity) as usage
+          FROM production_usage
+          WHERE item_code = ? AND usage_date >= ? AND usage_date <= ?
+          GROUP BY usage_date
+        `).bind(item.item_code, startDate, endDate).all();
+      } catch (e) {
+        // production_usage 테이블이 없으면 기존 transactions 사용
+        usageDaily = await c.env.DB.prepare(`
+          SELECT 
+            trans_date,
+            SUM(ABS(quantity)) as usage
+          FROM transactions
+          WHERE item_code = ? AND trans_type = '사용' AND trans_date >= ? AND trans_date <= ?
+          GROUP BY trans_date
+        `).bind(item.item_code, startDate, endDate).all();
+      }
+      
+      // 입고/사용 데이터 병합
+      const mergedMap: { [key: string]: any } = {};
+      for (const row of (inboundDaily.results || []) as any[]) {
+        if (!mergedMap[row.trans_date]) {
+          mergedMap[row.trans_date] = { trans_date: row.trans_date, inbound: 0, usage: 0, outbound: 0, adjustment: 0 };
+        }
+        mergedMap[row.trans_date].inbound = row.inbound || 0;
+      }
+      for (const row of (usageDaily.results || []) as any[]) {
+        if (!mergedMap[row.trans_date]) {
+          mergedMap[row.trans_date] = { trans_date: row.trans_date, inbound: 0, usage: 0, outbound: 0, adjustment: 0 };
+        }
+        mergedMap[row.trans_date].usage = row.usage || 0;
+      }
+      
+      dailyTrans = { results: Object.values(mergedMap) };
     }
     
     // 일별 데이터 맵 생성
@@ -3264,6 +3326,194 @@ transactionRoutes.delete('/opening-stock', async (c) => {
     return c.json({ success: true, message: '월초재고 수정이 삭제되었습니다.' });
   } catch (error: any) {
     console.error('Opening stock delete error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 기존 transactions에서 생산사용 데이터를 production_usage로 마이그레이션
+// 쿼리 파라미터: start_date, end_date (날짜 범위 지정), limit (기본 100)
+transactionRoutes.post('/migrate-production-usage', async (c) => {
+  try {
+    const url = new URL(c.req.url);
+    const startDate = url.searchParams.get('start_date');
+    const endDate = url.searchParams.get('end_date');
+    const limit = parseInt(url.searchParams.get('limit') || '100');
+    
+    // 1. production_usage 테이블 생성 (없으면)
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usage_date DATE NOT NULL,
+        item_code TEXT NOT NULL,
+        item_name TEXT,
+        quantity REAL NOT NULL,
+        unit TEXT DEFAULT 'kg',
+        lot_number TEXT,
+        production_id INTEGER,
+        production_lot TEXT,
+        product_code TEXT,
+        product_name TEXT,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_usage_date ON production_usage(usage_date)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_usage_item_code ON production_usage(item_code)`).run();
+    
+    // 2. 기존 transactions에서 '생산사용' 데이터 조회 (날짜 범위 + limit)
+    let query = `
+      SELECT 
+        t.trans_date as usage_date,
+        t.item_code,
+        m.item_name,
+        ABS(t.quantity) as quantity,
+        COALESCE(m.unit, 'kg') as unit,
+        t.lot_number,
+        t.memo,
+        t.created_at
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE t.trans_type = '사용' AND t.memo LIKE '%생산사용%'
+    `;
+    const params: any[] = [];
+    
+    if (startDate) {
+      query += ' AND t.trans_date >= ?';
+      params.push(startDate);
+    }
+    if (endDate) {
+      query += ' AND t.trans_date <= ?';
+      params.push(endDate);
+    }
+    
+    query += ` ORDER BY t.trans_date LIMIT ?`;
+    params.push(limit);
+    
+    const existingData = await c.env.DB.prepare(query).bind(...params).all();
+    
+    let migrated = 0;
+    let skipped = 0;
+    
+    // 3. production_usage에 데이터 삽입 (중복 방지)
+    for (const row of (existingData.results || []) as any[]) {
+      // 이미 존재하는지 확인
+      const existing = await c.env.DB.prepare(`
+        SELECT id FROM production_usage 
+        WHERE usage_date = ? AND item_code = ? AND ABS(quantity - ?) < 0.001
+        LIMIT 1
+      `).bind(row.usage_date, row.item_code, row.quantity).first();
+      
+      if (existing) {
+        skipped++;
+        continue;
+      }
+      
+      // memo에서 제품 정보 추출 시도
+      let productName = null;
+      const memoMatch = row.memo?.match(/생산사용[^:]*:\s*([^\s]+)/);
+      if (memoMatch) {
+        productName = memoMatch[1];
+      }
+      
+      await c.env.DB.prepare(`
+        INSERT INTO production_usage (usage_date, item_code, item_name, quantity, unit, lot_number, product_name, memo, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        row.usage_date,
+        row.item_code,
+        row.item_name,
+        row.quantity,
+        row.unit,
+        row.lot_number,
+        productName,
+        row.memo,
+        row.created_at
+      ).run();
+      
+      migrated++;
+    }
+    
+    // 다음 마이그레이션 필요 여부 확인
+    const remainingCount = await c.env.DB.prepare(`
+      SELECT COUNT(*) as cnt FROM transactions t
+      WHERE t.trans_type = '사용' AND t.memo LIKE '%생산사용%'
+      AND NOT EXISTS (
+        SELECT 1 FROM production_usage pu 
+        WHERE pu.usage_date = t.trans_date AND pu.item_code = t.item_code AND ABS(pu.quantity - ABS(t.quantity)) < 0.001
+      )
+    `).first();
+    
+    return c.json({
+      success: true,
+      message: '마이그레이션 완료',
+      data: {
+        fetched: (existingData.results || []).length,
+        migrated,
+        skipped,
+        remaining: (remainingCount as any)?.cnt || 0
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('Migration error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// production_inbound_doc 테이블 생성 (문서용)
+transactionRoutes.post('/create-production-doc-tables', async (c) => {
+  try {
+    // production_usage 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        usage_date DATE NOT NULL,
+        item_code TEXT NOT NULL,
+        item_name TEXT,
+        quantity REAL NOT NULL,
+        unit TEXT DEFAULT 'kg',
+        lot_number TEXT,
+        production_id INTEGER,
+        production_lot TEXT,
+        product_code TEXT,
+        product_name TEXT,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_usage_date ON production_usage(usage_date)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_usage_item_code ON production_usage(item_code)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_usage_production_id ON production_usage(production_id)`).run();
+    
+    // production_inbound_doc 테이블
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_inbound_doc (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inbound_date DATE NOT NULL,
+        item_code TEXT NOT NULL,
+        item_name TEXT,
+        quantity REAL NOT NULL,
+        unit TEXT DEFAULT 'EA',
+        lot_number TEXT,
+        production_id INTEGER,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_inbound_doc_date ON production_inbound_doc(inbound_date)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_inbound_doc_item_code ON production_inbound_doc(item_code)`).run();
+    
+    return c.json({
+      success: true,
+      message: '문서용 테이블이 생성되었습니다.',
+      tables: ['production_usage', 'production_inbound_doc']
+    });
+    
+  } catch (error: any) {
+    console.error('Table creation error:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });

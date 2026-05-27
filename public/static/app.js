@@ -33610,9 +33610,9 @@ function renderLedgerTable(data, isSampleView = false) {
           ${isSampleView ? '<th class="px-3 py-2 text-left text-yellow-700">보관장소</th>' : ''}
           <th class="px-3 py-2 text-right">전일재고</th>
           <th class="px-3 py-2 text-right text-blue-600">입고</th>
-          <th class="px-3 py-2 text-right text-orange-600">사용</th>
+          <th class="px-3 py-2 text-right text-orange-600">사용 <span class="text-xs font-normal text-gray-400">(바코드)</span></th>
           <th class="px-3 py-2 text-right text-red-600">출고</th>
-          <th class="px-3 py-2 text-right text-teal-600 font-bold">현재고</th>
+          <th class="px-3 py-2 text-right text-teal-600 font-bold">현재고 <i class="fas fa-edit text-xs text-gray-400" title="클릭하여 수정"></i></th>
           <th class="px-3 py-2 text-right">차이</th>
           <th class="px-3 py-2 text-center">소비기한</th>
           <th class="px-3 py-2 text-center">단위</th>
@@ -33652,7 +33652,10 @@ function renderLedgerTable(data, isSampleView = false) {
               <td class="px-3 py-2 text-right text-blue-600 font-medium">${formatNumber(row.period_inbound)}</td>
               <td class="px-3 py-2 text-right text-orange-600 font-medium">${formatNumber(row.period_usage)}</td>
               <td class="px-3 py-2 text-right text-red-600">${formatNumber(row.period_outbound)}</td>
-              <td class="px-3 py-2 text-right text-teal-600 font-bold">${formatNumber(actualStock)}</td>
+              <td class="px-3 py-2 text-right text-teal-600 font-bold cursor-pointer hover:bg-teal-100 rounded" onclick="showStockAdjustModal('${row.item_code}', '${row.item_name.replace(/'/g, "\\'")}', ${actualStock}, '${row.unit}')" title="클릭하여 재고 수정">
+                ${formatNumber(actualStock)}
+                <i class="fas fa-edit ml-1 text-xs text-gray-400"></i>
+              </td>
               <td class="px-3 py-2 text-right ${diffClass}">${stockDiff > 0 ? '+' : ''}${formatNumber(stockDiff)}</td>
               <td class="px-3 py-2 text-center ${expiryClass}">${expiryDisplay}</td>
               <td class="px-3 py-2 text-center text-gray-500">${row.unit}</td>
@@ -33662,6 +33665,175 @@ function renderLedgerTable(data, isSampleView = false) {
       </tbody>
     </table>
   `;
+}
+
+// 재고 조정 모달 표시
+function showStockAdjustModal(itemCode, itemName, currentStock, unit) {
+  const today = new Date().toISOString().split('T')[0];
+  
+  const content = `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-center gap-4">
+          <div>
+            <p class="text-sm text-blue-600">품목코드</p>
+            <p class="font-bold text-blue-800">${itemCode}</p>
+          </div>
+          <div>
+            <p class="text-sm text-blue-600">품목명</p>
+            <p class="font-bold text-blue-800">${itemName}</p>
+          </div>
+          <div>
+            <p class="text-sm text-blue-600">현재 재고</p>
+            <p class="font-bold text-blue-800">${formatNumber(currentStock)} ${unit}</p>
+          </div>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">조정 방식</label>
+          <select id="adjust-type" class="w-full border rounded-lg px-3 py-2" onchange="updateAdjustPreview()">
+            <option value="set">절대값 설정 (재고를 입력값으로 변경)</option>
+            <option value="add">증가 (+)</option>
+            <option value="subtract">감소 (-)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">수량 (${unit})</label>
+          <input type="number" id="adjust-quantity" class="w-full border rounded-lg px-3 py-2" step="0.001" min="0" placeholder="수량 입력" oninput="updateAdjustPreview()">
+        </div>
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">조정 사유</label>
+        <input type="text" id="adjust-memo" class="w-full border rounded-lg px-3 py-2" placeholder="예: 실사 결과 반영, 파손 폐기 등">
+      </div>
+      
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">조정일</label>
+        <input type="date" id="adjust-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
+      </div>
+      
+      <div id="adjust-preview" class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 hidden">
+        <p class="text-sm text-yellow-600">변경 예상</p>
+        <p class="text-lg font-bold text-yellow-800">
+          <span id="preview-before">${formatNumber(currentStock)}</span> → 
+          <span id="preview-after" class="text-green-600">-</span> ${unit}
+          <span id="preview-diff" class="text-sm ml-2"></span>
+        </p>
+      </div>
+    </div>
+  `;
+  
+  const buttons = `
+    <button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">취소</button>
+    <button onclick="submitStockAdjust('${itemCode}', '${itemName}', ${currentStock})" class="px-4 py-2 bg-haccp-primary text-white rounded-lg hover:bg-blue-700">
+      <i class="fas fa-check mr-1"></i> 재고 조정
+    </button>
+  `;
+  
+  showModal(`<i class="fas fa-edit mr-2"></i>재고 수정 - ${itemName}`, content, buttons);
+  
+  // 미리보기 업데이트 함수를 전역으로
+  window.updateAdjustPreview = function() {
+    const type = document.getElementById('adjust-type').value;
+    const qty = parseFloat(document.getElementById('adjust-quantity').value) || 0;
+    const previewEl = document.getElementById('adjust-preview');
+    const afterEl = document.getElementById('preview-after');
+    const diffEl = document.getElementById('preview-diff');
+    
+    if (qty <= 0 && type !== 'set') {
+      previewEl.classList.add('hidden');
+      return;
+    }
+    
+    previewEl.classList.remove('hidden');
+    
+    let newStock;
+    if (type === 'set') {
+      newStock = qty;
+    } else if (type === 'add') {
+      newStock = currentStock + qty;
+    } else {
+      newStock = currentStock - qty;
+    }
+    
+    afterEl.textContent = formatNumber(newStock);
+    
+    const diff = newStock - currentStock;
+    if (diff > 0) {
+      diffEl.textContent = `(+${formatNumber(diff)})`;
+      diffEl.className = 'text-sm ml-2 text-green-600';
+    } else if (diff < 0) {
+      diffEl.textContent = `(${formatNumber(diff)})`;
+      diffEl.className = 'text-sm ml-2 text-red-600';
+    } else {
+      diffEl.textContent = '(변동 없음)';
+      diffEl.className = 'text-sm ml-2 text-gray-500';
+    }
+  };
+}
+
+// 재고 조정 제출
+async function submitStockAdjust(itemCode, itemName, currentStock) {
+  const type = document.getElementById('adjust-type').value;
+  const qty = parseFloat(document.getElementById('adjust-quantity').value) || 0;
+  const memo = document.getElementById('adjust-memo').value.trim();
+  const adjustDate = document.getElementById('adjust-date').value;
+  
+  if (qty <= 0 && type !== 'set') {
+    showToast('수량을 입력해주세요.', 'warning');
+    return;
+  }
+  
+  if (type === 'set' && qty < 0) {
+    showToast('재고는 음수가 될 수 없습니다.', 'warning');
+    return;
+  }
+  
+  // 조정량 계산
+  let adjustQty;
+  if (type === 'set') {
+    adjustQty = qty - currentStock;
+  } else if (type === 'add') {
+    adjustQty = qty;
+  } else {
+    adjustQty = -qty;
+  }
+  
+  if (adjustQty === 0) {
+    showToast('재고 변동이 없습니다.', 'info');
+    return;
+  }
+  
+  const newStock = currentStock + adjustQty;
+  if (newStock < 0) {
+    showToast('재고가 음수가 됩니다. 확인해주세요.', 'warning');
+    return;
+  }
+  
+  try {
+    const result = await api('/transactions/stock-adjust', {
+      method: 'POST',
+      body: JSON.stringify({
+        item_code: itemCode,
+        quantity: adjustQty,
+        memo: memo || `재고조정: ${itemName}`,
+        trans_date: adjustDate
+      })
+    });
+    
+    if (result.success) {
+      showToast(`재고가 조정되었습니다. (${currentStock} → ${newStock})`, 'success');
+      closeModal();
+      loadStockLedger(); // 재조회
+    } else {
+      showToast(result.error || '재고 조정 실패', 'error');
+    }
+  } catch (err) {
+    showToast('재고 조정 실패: ' + err.message, 'error');
+  }
 }
 
 function downloadStockLedger() {
@@ -34459,6 +34631,8 @@ window.switchStockLedgerTab = switchStockLedgerTab;
 window.loadStockLedger = loadStockLedger;
 window.downloadStockLedger = downloadStockLedger;
 window.printStockLedger = printStockLedger;
+window.showStockAdjustModal = showStockAdjustModal;
+window.submitStockAdjust = submitStockAdjust;
 window.parseUsageExcel = parseUsageExcel;
 window.parseUsageText = parseUsageText;
 window.submitBulkUsage = submitBulkUsage;

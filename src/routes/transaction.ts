@@ -2131,8 +2131,8 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       ${storageSelect}
       -- 월초재고: 조회 시작일 이전까지의 입고 합계 (재고조정 LOT 제외)
       COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%' AND ${sampleCondition}), 0) as before_inbound,
-      -- 월초재고: 조회 시작일 이전까지의 사용량 합계
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_usage,
+      -- 월초재고: 조회 시작일 이전까지의 사용량 합계 (바코드 스캔만)
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ? AND t.memo LIKE '%바코드%' AND ${sampleTransCondition}), 0) as before_usage,
       -- 월초재고: 조회 시작일 이전까지의 출고량 합계
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ? AND ${sampleTransCondition}), 0) as before_outbound,
       -- 월초재고: 조회 시작일 이전까지의 재고조정 합계 (양수/음수 모두)
@@ -2141,8 +2141,8 @@ transactionRoutes.get('/stock-ledger', async (c) => {
       COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND i.lot_number NOT LIKE 'ADJ-%' AND ${sampleCondition}), 0) as period_inbound_raw,
       -- 기간 내 양수 재고조정
       COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_adj_plus,
-      -- 기간 내 사용량
-      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_usage,
+      -- 기간 내 사용량 (바코드 스캔만 - 생산등록은 제외)
+      COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ? AND t.memo LIKE '%바코드%' AND ${sampleTransCondition}), 0) as period_usage,
       -- 기간 내 출고량
       COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ? AND ${sampleTransCondition}), 0) as period_outbound_raw,
       -- 기간 내 음수 재고조정
@@ -3457,6 +3457,106 @@ transactionRoutes.post('/migrate-production-usage', async (c) => {
     
   } catch (error: any) {
     console.error('Migration error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 재고 조정 API (재고수불부에서 직접 재고 수정)
+transactionRoutes.post('/stock-adjust', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { item_code, quantity, memo, trans_date } = body;
+    
+    if (!item_code || quantity === undefined) {
+      return c.json({ success: false, error: '품목 코드와 수량을 입력해주세요.' }, 400);
+    }
+    
+    const today = trans_date || new Date().toISOString().split('T')[0];
+    
+    // 품목 정보 조회
+    let itemInfo: any = await c.env.DB.prepare(
+      'SELECT item_code, item_name, category, unit, current_stock FROM master WHERE item_code = ?'
+    ).bind(item_code).first();
+    
+    let isSupply = false;
+    if (!itemInfo) {
+      itemInfo = await c.env.DB.prepare(
+        'SELECT item_code, item_name, category, unit, current_stock FROM supplies WHERE item_code = ?'
+      ).bind(item_code).first();
+      isSupply = !!itemInfo;
+    }
+    
+    if (!itemInfo) {
+      return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
+    }
+    
+    const newStock = (itemInfo.current_stock || 0) + quantity;
+    
+    // 트랜잭션 기록
+    await c.env.DB.prepare(`
+      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo, created_at)
+      VALUES (?, ?, '재고조정', ?, ?, datetime('now'))
+    `).bind(today, item_code, quantity, memo || '재고수불부 직접 조정').run();
+    
+    // 마스터/supplies 재고 업데이트
+    if (isSupply) {
+      await c.env.DB.prepare(`
+        UPDATE supplies SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+      `).bind(newStock, item_code).run();
+    } else {
+      await c.env.DB.prepare(`
+        UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+      `).bind(newStock, item_code).run();
+    }
+    
+    // LOT 잔량 조정 (양수면 새 LOT 생성, 음수면 기존 LOT에서 차감)
+    if (quantity > 0) {
+      // 양수 조정: 새 LOT 생성 (ADJ-날짜-시간)
+      const now = new Date();
+      const lotNumber = `ADJ-${today.replace(/-/g, '')}-${now.toTimeString().slice(0,8).replace(/:/g, '')}`;
+      
+      await c.env.DB.prepare(`
+        INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
+        VALUES (?, ?, ?, date(?, '+365 days'), ?, ?, '합격', '재고조정')
+      `).bind(lotNumber, item_code, today, today, quantity, quantity).run();
+      
+    } else if (quantity < 0) {
+      // 음수 조정: 기존 LOT에서 FIFO로 차감
+      let remainingToDeduct = Math.abs(quantity);
+      
+      const lots = await c.env.DB.prepare(`
+        SELECT * FROM inbound 
+        WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+        ORDER BY expiry_date ASC, inbound_date ASC
+      `).bind(item_code).all();
+      
+      for (const lot of (lots.results || []) as any[]) {
+        if (remainingToDeduct <= 0) break;
+        
+        const deductQty = Math.min(lot.remain_qty, remainingToDeduct);
+        
+        await c.env.DB.prepare(`
+          UPDATE inbound SET remain_qty = remain_qty - ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).bind(deductQty, lot.id).run();
+        
+        remainingToDeduct -= deductQty;
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `재고가 조정되었습니다.`,
+      data: {
+        item_code,
+        item_name: itemInfo.item_name,
+        before: itemInfo.current_stock || 0,
+        adjustment: quantity,
+        after: newStock
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('Stock adjust error:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });

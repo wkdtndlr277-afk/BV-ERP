@@ -90,8 +90,8 @@ masterRoutes.get('/:item_code', async (c) => {
 
 // 품목 등록 (부자재는 supplies 테이블에, 원료/제품은 master 테이블에)
 masterRoutes.post('/', async (c) => {
-  const body = await c.req.json<Partial<Master>>();
-  const { item_code, item_name, category, unit, safety_stock, expiry_days } = body;
+  const body = await c.req.json<any>();
+  const { item_code, item_name, category, unit, safety_stock, expiry_days, pack_unit, pack_unit_name } = body;
   
   if (!item_code || !item_name || !category) {
     return c.json({ success: false, error: '필수 항목을 입력해주세요.' }, 400);
@@ -100,6 +100,8 @@ masterRoutes.post('/', async (c) => {
   try {
     const unitValue = unit || (category === '부자재' ? 'ea' : 'kg');
     const safetyValue = safety_stock || 0;
+    const packUnitValue = pack_unit || null;
+    const packUnitNameValue = pack_unit_name || null;
     
     if (category === '부자재') {
       // 부자재는 supplies 테이블에 저장
@@ -127,20 +129,20 @@ masterRoutes.post('/', async (c) => {
         await c.env.DB.prepare(`CREATE INDEX idx_supplies_item_code ON supplies(item_code)`).run();
       }
       
-      // supplies 테이블에 삽입
+      // supplies 테이블에 삽입 (pack_unit 포함)
       await c.env.DB.prepare(`
-        INSERT INTO supplies (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
-        VALUES (?, ?, '부자재', ?, 0, ?, NULL)
-      `).bind(item_code, item_name, unitValue, safetyValue).run();
+        INSERT INTO supplies (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, pack_unit, pack_unit_name)
+        VALUES (?, ?, '부자재', ?, 0, ?, NULL, ?, ?)
+      `).bind(item_code, item_name, unitValue, safetyValue, packUnitValue, packUnitNameValue).run();
       
       return c.json({ success: true, message: '부자재가 등록되었습니다.' });
     } else {
-      // 원료/제품은 master 테이블에 저장
+      // 원료/제품은 master 테이블에 저장 (pack_unit 포함)
       const expiryValue = expiry_days || 365;
       await c.env.DB.prepare(`
-        INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
-        VALUES (?, ?, ?, ?, 0, ?, ?)
-      `).bind(item_code, item_name, category, unitValue, safetyValue, expiryValue).run();
+        INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, pack_unit, pack_unit_name)
+        VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
+      `).bind(item_code, item_name, category, unitValue, safetyValue, expiryValue, packUnitValue, packUnitNameValue).run();
       
       return c.json({ success: true, message: '품목이 등록되었습니다.' });
     }
@@ -159,8 +161,8 @@ masterRoutes.post('/', async (c) => {
 // 품목 수정 (카테고리 변경 시 테이블 간 이동 지원)
 masterRoutes.put('/:item_code', async (c) => {
   const item_code = c.req.param('item_code');
-  const body = await c.req.json<Partial<Master>>();
-  const { item_name, category, unit, safety_stock, expiry_days } = body;
+  const body = await c.req.json<any>();
+  const { item_name, category, unit, safety_stock, expiry_days, pack_unit, pack_unit_name } = body;
   
   try {
     // 현재 품목 위치 확인
@@ -254,7 +256,7 @@ masterRoutes.put('/:item_code', async (c) => {
       return c.json({ success: true, message: `품목이 ${newCategory}(으)로 변경되었습니다.` });
       
     } else {
-      // 같은 테이블 내 업데이트
+      // 같은 테이블 내 업데이트 (pack_unit 포함)
       if (isCurrentlyInMaster) {
         await c.env.DB.prepare(`
           UPDATE master 
@@ -263,9 +265,11 @@ masterRoutes.put('/:item_code', async (c) => {
               unit = COALESCE(?, unit),
               safety_stock = COALESCE(?, safety_stock),
               expiry_days = COALESCE(?, expiry_days),
+              pack_unit = ?,
+              pack_unit_name = ?,
               updated_at = CURRENT_TIMESTAMP
           WHERE item_code = ?
-        `).bind(item_name, category, unit, safety_stock, expiry_days, item_code).run();
+        `).bind(item_name, category, unit, safety_stock, expiry_days, pack_unit ?? null, pack_unit_name ?? null, item_code).run();
       } else {
         await c.env.DB.prepare(`
           UPDATE supplies 
@@ -273,9 +277,11 @@ masterRoutes.put('/:item_code', async (c) => {
               unit = COALESCE(?, unit),
               safety_stock = COALESCE(?, safety_stock),
               expiry_days = COALESCE(?, expiry_days),
+              pack_unit = ?,
+              pack_unit_name = ?,
               updated_at = CURRENT_TIMESTAMP
           WHERE item_code = ?
-        `).bind(item_name, unit, safety_stock, expiry_days, item_code).run();
+        `).bind(item_name, unit, safety_stock, expiry_days, pack_unit ?? null, pack_unit_name ?? null, item_code).run();
       }
       
       return c.json({ success: true, message: '품목이 수정되었습니다.' });

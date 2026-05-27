@@ -10585,6 +10585,17 @@ function showMasterModal(item = null) {
         <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 기준(일)</label>
         <input type="number" id="master-expiry" class="w-full border rounded-lg px-4 py-2" value="${item?.expiry_days || 365}" min="1">
       </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">포장단위 (선택)</label>
+          <input type="number" id="master-pack-unit" class="w-full border rounded-lg px-4 py-2" value="${item?.pack_unit || ''}" step="0.1" min="0" placeholder="예: 25">
+          <p class="text-xs text-gray-500 mt-1">바코드 1회 스캔 시 차감할 수량</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">포장단위명 (선택)</label>
+          <input type="text" id="master-pack-unit-name" class="w-full border rounded-lg px-4 py-2" value="${item?.pack_unit_name || ''}" placeholder="예: 포대, 박스">
+        </div>
+      </div>
     </form>
   `;
   
@@ -10597,13 +10608,16 @@ function showMasterModal(item = null) {
 }
 
 async function saveMaster(isEdit) {
+  const packUnitValue = document.getElementById('master-pack-unit').value;
   const data = {
     item_code: document.getElementById('master-code').value,
     item_name: document.getElementById('master-name').value,
     category: document.getElementById('master-category').value,
     unit: document.getElementById('master-unit').value,
     safety_stock: parseFloat(document.getElementById('master-safety').value) || 0,
-    expiry_days: parseInt(document.getElementById('master-expiry').value) || 365
+    expiry_days: parseInt(document.getElementById('master-expiry').value) || 365,
+    pack_unit: packUnitValue ? parseFloat(packUnitValue) : null,
+    pack_unit_name: document.getElementById('master-pack-unit-name').value || null
   };
   
   showLoading('품목 저장 중...');
@@ -13713,6 +13727,20 @@ async function editAdminMaster(itemCode) {
                  class="w-full px-3 py-2 border rounded-lg">
         </div>
         
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">포장단위</label>
+            <input type="number" id="edit-master-pack-unit" value="${item.pack_unit || ''}" step="0.1" min="0"
+                   class="w-full px-3 py-2 border rounded-lg" placeholder="예: 25">
+            <p class="text-xs text-gray-500 mt-1">바코드 1회 스캔 시 차감할 수량</p>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">포장단위명</label>
+            <input type="text" id="edit-master-pack-unit-name" value="${item.pack_unit_name || ''}"
+                   class="w-full px-3 py-2 border rounded-lg" placeholder="예: 포대, 박스">
+          </div>
+        </div>
+        
         <div class="flex justify-end space-x-3 pt-4 border-t">
           <button type="button" onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
             취소
@@ -13736,12 +13764,15 @@ async function editAdminMaster(itemCode) {
 // 품목 저장
 async function saveAdminMaster() {
   const itemCode = document.getElementById('edit-master-code-original').value;
+  const packUnitValue = document.getElementById('edit-master-pack-unit').value;
   const data = {
     item_name: document.getElementById('edit-master-name').value,
     category: document.getElementById('edit-master-category').value,
     unit: document.getElementById('edit-master-unit').value,
     safety_stock: parseFloat(document.getElementById('edit-master-safety').value) || 0,
-    expiry_days: parseInt(document.getElementById('edit-master-expiry').value) || 365
+    expiry_days: parseInt(document.getElementById('edit-master-expiry').value) || 365,
+    pack_unit: packUnitValue ? parseFloat(packUnitValue) : null,
+    pack_unit_name: document.getElementById('edit-master-pack-unit-name').value || null
   };
   
   try {
@@ -37816,6 +37847,9 @@ async function renderBarcodeInventory() {
             </button>
           </div>
           
+          <!-- 포장단위 정보 표시 영역 -->
+          <div id="barcode-pack-unit-info" class="hidden"></div>
+          
           <!-- 사용등록 탭 -->
           <div id="barcode-content-usage" class="barcode-tab-content">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -37834,7 +37868,7 @@ async function renderBarcodeInventory() {
                 </div>
               </div>
             </div>
-            <div class="flex gap-2 mt-3 flex-wrap">
+            <div id="barcode-quick-qty-buttons" class="flex gap-2 mt-3 flex-wrap">
               <button onclick="setBarcodeQty(0.5)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">0.5</button>
               <button onclick="setBarcodeQty(1)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">1</button>
               <button onclick="setBarcodeQty(5)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">5</button>
@@ -38018,6 +38052,28 @@ function displayBarcodeItem(item) {
     categoryEl.className = 'inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium mb-2';
   }
   
+  // 포장단위 정보 표시
+  const packUnitInfo = document.getElementById('barcode-pack-unit-info');
+  if (packUnitInfo) {
+    if (item.pack_unit && item.pack_unit > 0) {
+      const packUnitName = item.pack_unit_name || (item.unit === 'kg' ? '포대' : '단위');
+      packUnitInfo.innerHTML = `
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+          <div class="flex items-center justify-between">
+            <span class="text-yellow-800 font-medium">
+              <i class="fas fa-box mr-1"></i> 포장단위: ${item.pack_unit}${item.unit}/${packUnitName}
+            </span>
+            <span class="text-yellow-600 text-sm">1스캔 = ${item.pack_unit}${item.unit} 자동차감</span>
+          </div>
+        </div>
+      `;
+      packUnitInfo.classList.remove('hidden');
+    } else {
+      packUnitInfo.innerHTML = '';
+      packUnitInfo.classList.add('hidden');
+    }
+  }
+  
   // LOT 목록 표시
   const lotSelect = document.getElementById('barcode-lot-select');
   lotSelect.innerHTML = '<option value="">자동 선택 (FIFO)</option>';
@@ -38043,12 +38099,60 @@ function displayBarcodeItem(item) {
     document.getElementById('barcode-lot-list').classList.add('hidden');
   }
   
-  // 수량 초기화
-  document.getElementById('barcode-qty-input').value = '1';
+  // 수량 초기화 - pack_unit이 있으면 해당 값으로 설정
+  const defaultQty = (item.pack_unit && item.pack_unit > 0) ? item.pack_unit : 1;
+  document.getElementById('barcode-qty-input').value = defaultQty;
   document.getElementById('barcode-memo-input').value = '';
+  
+  // 입고 수량도 pack_unit 기본값 설정
+  const inboundQtyInput = document.getElementById('barcode-inbound-qty');
+  if (inboundQtyInput) {
+    inboundQtyInput.value = defaultQty;
+  }
+  
+  // 빠른수량 버튼 동적 생성 (포장단위 기준)
+  updateBarcodeQuickQtyButtons(item.pack_unit, item.unit);
   
   // 이력 조회
   loadBarcodeHistory(item.item_code);
+}
+
+// 포장단위 기준 빠른수량 버튼 업데이트
+function updateBarcodeQuickQtyButtons(packUnit, unit) {
+  const container = document.getElementById('barcode-quick-qty-buttons');
+  if (!container) return;
+  
+  let buttons = '';
+  
+  if (packUnit && packUnit > 0) {
+    // 포장단위가 있으면 1개, 2개, 3개, 5개 등의 배수 버튼
+    const unitLabel = unit === 'kg' ? '포' : '개';
+    buttons = `
+      <button onclick="setBarcodeQty(${packUnit})" class="px-4 py-2 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium hover:bg-yellow-200">
+        1${unitLabel} (${packUnit}${unit})
+      </button>
+      <button onclick="setBarcodeQty(${packUnit * 2})" class="px-4 py-2 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium hover:bg-yellow-200">
+        2${unitLabel} (${packUnit * 2}${unit})
+      </button>
+      <button onclick="setBarcodeQty(${packUnit * 3})" class="px-4 py-2 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium hover:bg-yellow-200">
+        3${unitLabel} (${packUnit * 3}${unit})
+      </button>
+      <button onclick="setBarcodeQty(${packUnit * 5})" class="px-4 py-2 bg-yellow-100 text-yellow-800 rounded-lg text-sm font-medium hover:bg-yellow-200">
+        5${unitLabel} (${packUnit * 5}${unit})
+      </button>
+    `;
+  } else {
+    // 포장단위가 없으면 기본 수량 버튼
+    buttons = `
+      <button onclick="setBarcodeQty(0.5)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">0.5</button>
+      <button onclick="setBarcodeQty(1)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">1</button>
+      <button onclick="setBarcodeQty(5)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">5</button>
+      <button onclick="setBarcodeQty(10)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">10</button>
+      <button onclick="setBarcodeQty(25)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">25</button>
+    `;
+  }
+  
+  container.innerHTML = buttons;
 }
 
 // 탭 전환
@@ -38066,18 +38170,26 @@ function switchBarcodeTab(tab) {
   document.getElementById(`barcode-content-${tab}`).classList.remove('hidden');
 }
 
-// 수량 조절
+// 수량 조절 (포장단위 기준)
 function adjustBarcodeQty(delta) {
   const input = barcodeCurrentTab === 'inbound' 
     ? document.getElementById('barcode-inbound-qty')
     : document.getElementById('barcode-qty-input');
   let value = parseFloat(input.value) || 0;
-  value = Math.max(0, value + delta);
+  
+  // pack_unit이 있으면 포장단위 배수로 증감
+  const packUnit = barcodeCurrentItem?.pack_unit || 1;
+  const adjustValue = packUnit > 0 ? packUnit * delta : delta;
+  
+  value = Math.max(0, value + adjustValue);
   input.value = value;
 }
 
 function setBarcodeQty(value) {
   document.getElementById('barcode-qty-input').value = value;
+  // 입고 탭에도 동시 적용
+  const inboundInput = document.getElementById('barcode-inbound-qty');
+  if (inboundInput) inboundInput.value = value;
 }
 
 // 사용 등록

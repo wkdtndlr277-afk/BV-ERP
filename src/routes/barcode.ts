@@ -14,27 +14,78 @@ barcodeRoutes.get('/scan', async (c) => {
   }
   
   try {
-    // 1. production_barcodes 테이블에서 바코드 검색 (먼저)
     let item: any = null;
     let source = '';
+    let mappedBarcode: any = null;
     
-    // production_barcodes 테이블 존재 확인 및 검색
+    // 0. barcode_mapping 테이블에서 먼저 검색 (업체별 바코드)
     try {
-      const barcodeResult = await c.env.DB.prepare(`
-        SELECT pb.*, pi.production_name as item_name, pi.production_code as item_code,
-               '제품' as category, COALESCE(pi.unit, 'EA') as unit, pi.current_stock
-        FROM production_barcodes pb
-        JOIN production_items pi ON pb.production_code = pi.production_code
-        WHERE pb.barcode = ?
+      const mappingResult = await c.env.DB.prepare(`
+        SELECT * FROM barcode_mapping WHERE barcode = ? AND is_active = 1
       `).bind(barcode).first();
       
-      if (barcodeResult) {
-        item = barcodeResult;
-        source = 'production_barcodes';
+      if (mappingResult) {
+        mappedBarcode = mappingResult;
+        // 매핑된 item_code로 품목 조회
+        const masterResult = await c.env.DB.prepare(`
+          SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
+                 pack_unit, pack_unit_name
+          FROM master WHERE item_code = ?
+        `).bind(mappingResult.item_code).first();
+        
+        if (masterResult) {
+          item = {
+            ...masterResult,
+            // 매핑 테이블의 pack_unit이 있으면 우선 사용
+            pack_unit: mappingResult.pack_unit || masterResult.pack_unit,
+            pack_unit_name: mappingResult.pack_unit_name || masterResult.pack_unit_name,
+            mapped_supplier: mappingResult.supplier,
+            mapped_barcode: mappingResult.barcode
+          };
+          source = 'barcode_mapping';
+        } else {
+          // supplies 테이블에서 검색
+          const suppliesResult = await c.env.DB.prepare(`
+            SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
+                   pack_unit, pack_unit_name
+            FROM supplies WHERE item_code = ?
+          `).bind(mappingResult.item_code).first();
+          
+          if (suppliesResult) {
+            item = {
+              ...suppliesResult,
+              pack_unit: mappingResult.pack_unit || suppliesResult.pack_unit,
+              pack_unit_name: mappingResult.pack_unit_name || suppliesResult.pack_unit_name,
+              mapped_supplier: mappingResult.supplier,
+              mapped_barcode: mappingResult.barcode
+            };
+            source = 'barcode_mapping';
+          }
+        }
       }
     } catch (e) {
-      // production_barcodes 테이블이 없을 수 있음
-      console.log('production_barcodes table not found or error:', e);
+      // barcode_mapping 테이블이 없을 수 있음
+      console.log('barcode_mapping table not found:', e);
+    }
+    
+    // 1. production_barcodes 테이블에서 바코드 검색
+    if (!item) {
+      try {
+        const barcodeResult = await c.env.DB.prepare(`
+          SELECT pb.*, pi.production_name as item_name, pi.production_code as item_code,
+                 '제품' as category, COALESCE(pi.unit, 'EA') as unit, pi.current_stock
+          FROM production_barcodes pb
+          JOIN production_items pi ON pb.production_code = pi.production_code
+          WHERE pb.barcode = ?
+        `).bind(barcode).first();
+        
+        if (barcodeResult) {
+          item = barcodeResult;
+          source = 'production_barcodes';
+        }
+      } catch (e) {
+        console.log('production_barcodes table not found or error:', e);
+      }
     }
     
     // 2. master 테이블에서 바코드 또는 item_code로 검색 (pack_unit 포함)
@@ -1210,6 +1261,161 @@ barcodeRoutes.post('/inventory-sync', async (c) => {
     }
     
     return c.json({ success: true, message: `${count}개 품목이 동기화되었습니다.` });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ===== 바코드 매핑 API (품목당 여러 바코드 지원) =====
+
+// 바코드 매핑 목록 조회
+barcodeRoutes.get('/mapping', async (c) => {
+  const item_code = c.req.query('item_code');
+  const search = c.req.query('search');
+  
+  try {
+    // barcode_mapping 테이블 존재 확인
+    try {
+      await c.env.DB.prepare("SELECT 1 FROM barcode_mapping LIMIT 1").first();
+    } catch {
+      // 테이블이 없으면 생성
+      await c.env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS barcode_mapping (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          item_code TEXT NOT NULL,
+          barcode TEXT NOT NULL,
+          supplier TEXT,
+          pack_unit REAL,
+          pack_unit_name TEXT,
+          memo TEXT,
+          is_active INTEGER DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(barcode)
+        )
+      `).run();
+    }
+    
+    let query = `
+      SELECT bm.*, 
+             COALESCE(m.item_name, s.item_name) as item_name,
+             COALESCE(m.unit, s.unit) as unit,
+             COALESCE(m.category, s.category) as category
+      FROM barcode_mapping bm
+      LEFT JOIN master m ON bm.item_code = m.item_code
+      LEFT JOIN supplies s ON bm.item_code = s.item_code
+      WHERE bm.is_active = 1
+    `;
+    const params: any[] = [];
+    
+    if (item_code) {
+      query += ' AND bm.item_code = ?';
+      params.push(item_code);
+    }
+    
+    if (search) {
+      query += ' AND (bm.barcode LIKE ? OR bm.supplier LIKE ? OR m.item_name LIKE ? OR s.item_name LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+    }
+    
+    query += ' ORDER BY bm.created_at DESC';
+    
+    const result = await c.env.DB.prepare(query).bind(...params).all();
+    
+    return c.json({ success: true, data: result.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 바코드 매핑 등록
+barcodeRoutes.post('/mapping', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { item_code, barcode, supplier, pack_unit, pack_unit_name, memo } = body;
+    
+    if (!item_code || !barcode) {
+      return c.json({ success: false, error: '품목코드와 바코드는 필수입니다.' }, 400);
+    }
+    
+    // 테이블 존재 확인 및 생성
+    try {
+      await c.env.DB.prepare("SELECT 1 FROM barcode_mapping LIMIT 1").first();
+    } catch {
+      await c.env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS barcode_mapping (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          item_code TEXT NOT NULL,
+          barcode TEXT NOT NULL,
+          supplier TEXT,
+          pack_unit REAL,
+          pack_unit_name TEXT,
+          memo TEXT,
+          is_active INTEGER DEFAULT 1,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(barcode)
+        )
+      `).run();
+    }
+    
+    // 중복 바코드 체크
+    const existing = await c.env.DB.prepare(`
+      SELECT * FROM barcode_mapping WHERE barcode = ? AND is_active = 1
+    `).bind(barcode).first();
+    
+    if (existing) {
+      return c.json({ success: false, error: '이미 등록된 바코드입니다.' }, 400);
+    }
+    
+    await c.env.DB.prepare(`
+      INSERT INTO barcode_mapping (item_code, barcode, supplier, pack_unit, pack_unit_name, memo)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(item_code, barcode, supplier || null, pack_unit || null, pack_unit_name || null, memo || null).run();
+    
+    return c.json({ success: true, message: '바코드가 등록되었습니다.' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 바코드 매핑 수정
+barcodeRoutes.put('/mapping/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  try {
+    const body = await c.req.json();
+    const { supplier, pack_unit, pack_unit_name, memo, is_active } = body;
+    
+    await c.env.DB.prepare(`
+      UPDATE barcode_mapping 
+      SET supplier = ?, pack_unit = ?, pack_unit_name = ?, memo = ?, is_active = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(
+      supplier || null, 
+      pack_unit || null, 
+      pack_unit_name || null, 
+      memo || null,
+      is_active !== undefined ? is_active : 1,
+      id
+    ).run();
+    
+    return c.json({ success: true, message: '바코드 정보가 수정되었습니다.' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 바코드 매핑 삭제 (비활성화)
+barcodeRoutes.delete('/mapping/:id', async (c) => {
+  const id = c.req.param('id');
+  
+  try {
+    await c.env.DB.prepare(`
+      UPDATE barcode_mapping SET is_active = 0, updated_at = datetime('now') WHERE id = ?
+    `).bind(id).run();
+    
+    return c.json({ success: true, message: '바코드가 삭제되었습니다.' });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }

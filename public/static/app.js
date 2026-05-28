@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
-// Version: 2.1.0 Build: 20260522
-const APP_VERSION = '2.1.0';
-const APP_BUILD = '20260522';
+// Version: 2.2.0 Build: 20260528
+const APP_VERSION = '2.2.0';
+const APP_BUILD = '20260528';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -61,9 +61,9 @@ function showVersionUpdateNotification(oldVersion, newVersion) {
                     text-align:left; margin-bottom:20px; font-size:13px; color:#444;">
           <div style="font-weight:bold; margin-bottom:8px; color:#333;">📋 업데이트 내용:</div>
           <div style="line-height:1.8;">
-            • 생산일보 원료LOT 표시 기능<br>
-            • 이상여부/비고란 추가<br>
-            • 상태 표시 개선
+            • 업체별 바코드 관리 기능 추가<br>
+            • 재고수불부 용어 변경 (현재재고/잔량재고)<br>
+            • 포장단위 설정 기능 개선
           </div>
         </div>
         <button onclick="document.getElementById('version-update-notification').remove()" 
@@ -38801,6 +38801,9 @@ async function openBarcodeRegisterModal() {
       '<button onclick="switchBarcodeRegisterTab(\'list\')" id="barcode-reg-tab-list" class="flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">' +
         '<i class="fas fa-list mr-1"></i> 등록현황' +
       '</button>' +
+      '<button onclick="switchBarcodeRegisterTab(\'supplier\')" id="barcode-reg-tab-supplier" class="flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700">' +
+        '<i class="fas fa-truck mr-1"></i> 업체별 바코드' +
+      '</button>' +
     '</div>' +
     
     // 등록 탭
@@ -38842,6 +38845,27 @@ async function openBarcodeRegisterModal() {
         '<p class="text-center text-gray-500 py-4">로딩 중...</p>' +
       '</div>' +
     '</div>' +
+    
+    // 업체별 바코드 탭
+    '<div id="barcode-reg-content-supplier" class="hidden">' +
+      '<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">' +
+        '<p class="text-sm text-yellow-800">' +
+          '<i class="fas fa-info-circle mr-1"></i> ' +
+          '같은 원료도 업체마다 바코드가 다를 수 있습니다. 여기서 업체별 바코드를 등록하세요.' +
+        '</p>' +
+      '</div>' +
+      '<div class="flex justify-between items-center mb-4">' +
+        '<div class="flex gap-2 flex-1 mr-2">' +
+          '<input type="text" id="supplier-barcode-search" class="flex-1 p-3 border rounded-lg" placeholder="품목 또는 업체 검색..." onkeyup="searchSupplierBarcodes()">' +
+        '</div>' +
+        '<button onclick="openSupplierBarcodeModal()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 whitespace-nowrap">' +
+          '<i class="fas fa-plus mr-1"></i> 바코드 추가' +
+        '</button>' +
+      '</div>' +
+      '<div id="supplier-barcode-list" class="max-h-72 overflow-y-auto border rounded-lg">' +
+        '<p class="text-center text-gray-500 py-4"><i class="fas fa-spinner fa-spin mr-2"></i>로딩 중...</p>' +
+      '</div>' +
+    '</div>' +
   '</div>';
   
   showModal('바코드 등록 관리', modalHtml, '', 'max-w-2xl');
@@ -38852,7 +38876,7 @@ async function openBarcodeRegisterModal() {
 function switchBarcodeRegisterTab(tab) {
   barcodeRegisterMode = tab;
   
-  var tabs = ['register', 'list'];
+  var tabs = ['register', 'list', 'supplier'];
   tabs.forEach(function(t) {
     var tabEl = document.getElementById('barcode-reg-tab-' + t);
     var contentEl = document.getElementById('barcode-reg-content-' + t);
@@ -38873,6 +38897,8 @@ function switchBarcodeRegisterTab(tab) {
   
   if (tab === 'list') {
     loadRegisteredBarcodes();
+  } else if (tab === 'supplier') {
+    loadSupplierBarcodes();
   }
 }
 
@@ -39034,6 +39060,292 @@ function registerBarcodeFromCamera() {
     document.getElementById('barcode-reg-barcode-input').value = scannedCode.trim();
   }
 }
+
+// ========== 업체별 바코드 (Barcode Mapping) 기능 ==========
+let supplierBarcodeData = [];
+
+// 업체별 바코드 목록 로드
+async function loadSupplierBarcodes() {
+  var container = document.getElementById('supplier-barcode-list');
+  if (!container) return;
+  
+  var search = document.getElementById('supplier-barcode-search')?.value?.trim() || '';
+  
+  container.innerHTML = '<p class="text-center text-gray-500 py-4"><i class="fas fa-spinner fa-spin mr-2"></i>로딩 중...</p>';
+  
+  try {
+    var url = API_BASE + '/barcode/mapping';
+    if (search) {
+      url += '?search=' + encodeURIComponent(search);
+    }
+    var response = await axios.get(url);
+    var result = response.data;
+    
+    supplierBarcodeData = result.data || [];
+    
+    if (supplierBarcodeData.length > 0) {
+      var html = '<table class="w-full text-sm">' +
+        '<thead class="bg-gray-50 sticky top-0">' +
+          '<tr>' +
+            '<th class="px-3 py-2 text-left">품목</th>' +
+            '<th class="px-3 py-2 text-left">업체</th>' +
+            '<th class="px-3 py-2 text-center">바코드</th>' +
+            '<th class="px-3 py-2 text-center">포장단위</th>' +
+            '<th class="px-3 py-2 text-center">관리</th>' +
+          '</tr>' +
+        '</thead>' +
+        '<tbody>';
+      
+      for (var i = 0; i < supplierBarcodeData.length; i++) {
+        var item = supplierBarcodeData[i];
+        var packUnitDisplay = item.pack_unit ? (item.pack_unit + (item.unit || '') + '/' + (item.pack_unit_name || '단위')) : '-';
+        
+        html += '<tr class="border-b hover:bg-gray-50">' +
+          '<td class="px-3 py-2">' +
+            '<div class="font-medium">' + (item.item_name || '-') + '</div>' +
+            '<div class="text-xs text-gray-500">' + item.item_code + '</div>' +
+          '</td>' +
+          '<td class="px-3 py-2">' +
+            '<span class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs">' + (item.supplier || '미지정') + '</span>' +
+          '</td>' +
+          '<td class="px-3 py-2 text-center">' +
+            '<span class="font-mono text-sm">' + item.barcode + '</span>' +
+          '</td>' +
+          '<td class="px-3 py-2 text-center text-xs">' + packUnitDisplay + '</td>' +
+          '<td class="px-3 py-2 text-center">' +
+            '<div class="flex justify-center gap-1">' +
+              '<button onclick="editSupplierBarcode(' + item.id + ')" class="p-1 text-blue-500 hover:bg-blue-50 rounded" title="수정">' +
+                '<i class="fas fa-edit"></i>' +
+              '</button>' +
+              '<button onclick="deleteSupplierBarcode(' + item.id + ', \'' + (item.item_name || '').replace(/'/g, "\\'") + '\', \'' + (item.supplier || '').replace(/'/g, "\\'") + '\')" class="p-1 text-red-500 hover:bg-red-50 rounded" title="삭제">' +
+                '<i class="fas fa-trash"></i>' +
+              '</button>' +
+            '</div>' +
+          '</td>' +
+        '</tr>';
+      }
+      
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    } else {
+      container.innerHTML = '<p class="text-center text-gray-500 py-8">' +
+        '<i class="fas fa-inbox text-4xl mb-2 block"></i>' +
+        '등록된 업체별 바코드가 없습니다.<br>' +
+        '<span class="text-sm">위의 [바코드 추가] 버튼으로 등록하세요.</span>' +
+      '</p>';
+    }
+  } catch (error) {
+    console.error('Load supplier barcodes error:', error);
+    container.innerHTML = '<p class="text-center text-red-500 py-4">로딩 오류: ' + (error.message || '') + '</p>';
+  }
+}
+
+// 업체별 바코드 검색
+function searchSupplierBarcodes() {
+  clearTimeout(window.supplierBarcodeSearchTimeout);
+  window.supplierBarcodeSearchTimeout = setTimeout(loadSupplierBarcodes, 300);
+}
+
+// 업체별 바코드 등록 모달
+async function openSupplierBarcodeModal(editData) {
+  var isEdit = !!editData;
+  
+  // 원료/부자재 목록 로드
+  var itemsHtml = '<option value="">품목 선택...</option>';
+  try {
+    var masterRes = await axios.get(API_BASE + '/master');
+    var items = masterRes.data.data || [];
+    items.forEach(function(item) {
+      var selected = (editData && editData.item_code === item.item_code) ? 'selected' : '';
+      itemsHtml += '<option value="' + item.item_code + '" data-unit="' + (item.unit || 'kg') + '" ' + selected + '>' + 
+        item.item_name + ' (' + item.item_code + ') - ' + (item.category || '원료') +
+      '</option>';
+    });
+    
+    // supplies 추가
+    try {
+      var suppliesRes = await axios.get(API_BASE + '/supplies');
+      var supplies = suppliesRes.data.data || [];
+      supplies.forEach(function(item) {
+        var selected = (editData && editData.item_code === item.item_code) ? 'selected' : '';
+        itemsHtml += '<option value="' + item.item_code + '" data-unit="' + (item.unit || 'ea') + '" ' + selected + '>' + 
+          item.item_name + ' (' + item.item_code + ') - 부자재' +
+        '</option>';
+      });
+    } catch (e) {}
+  } catch (e) {
+    console.error('Load items error:', e);
+  }
+  
+  var content = '<div class="space-y-4">' +
+    '<div>' +
+      '<label class="block text-sm font-medium text-gray-700 mb-1">품목 선택 <span class="text-red-500">*</span></label>' +
+      '<select id="supplier-barcode-item" class="w-full p-3 border rounded-lg" onchange="onSupplierItemSelect(this)"' + (isEdit ? ' disabled' : '') + '>' +
+        itemsHtml +
+      '</select>' +
+    '</div>' +
+    '<div>' +
+      '<label class="block text-sm font-medium text-gray-700 mb-1">업체명 <span class="text-red-500">*</span></label>' +
+      '<input type="text" id="supplier-barcode-supplier" class="w-full p-3 border rounded-lg" placeholder="예: (주)식품원료, 농협 등" value="' + (editData?.supplier || '') + '">' +
+    '</div>' +
+    '<div>' +
+      '<label class="block text-sm font-medium text-gray-700 mb-1">바코드 <span class="text-red-500">*</span></label>' +
+      '<div class="flex gap-2">' +
+        '<input type="text" id="supplier-barcode-barcode" class="flex-1 p-3 border-2 border-blue-300 rounded-lg font-mono text-lg" placeholder="바코드 스캔 또는 입력" value="' + (editData?.barcode || '') + '"' + (isEdit ? ' readonly' : '') + '>' +
+        (isEdit ? '' : '<button onclick="scanSupplierBarcode()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"><i class="fas fa-camera"></i></button>') +
+      '</div>' +
+    '</div>' +
+    '<div class="grid grid-cols-2 gap-4">' +
+      '<div>' +
+        '<label class="block text-sm font-medium text-gray-700 mb-1">포장단위 <span id="supplier-unit-label" class="text-gray-500">(kg)</span></label>' +
+        '<input type="number" id="supplier-barcode-packunit" class="w-full p-3 border rounded-lg" placeholder="예: 25" step="0.01" min="0" value="' + (editData?.pack_unit || '') + '">' +
+      '</div>' +
+      '<div>' +
+        '<label class="block text-sm font-medium text-gray-700 mb-1">포장명칭</label>' +
+        '<input type="text" id="supplier-barcode-packname" class="w-full p-3 border rounded-lg" placeholder="예: 포, 박스, 팩" value="' + (editData?.pack_unit_name || '') + '">' +
+      '</div>' +
+    '</div>' +
+    '<div>' +
+      '<label class="block text-sm font-medium text-gray-700 mb-1">메모</label>' +
+      '<input type="text" id="supplier-barcode-memo" class="w-full p-3 border rounded-lg" placeholder="비고 (선택사항)" value="' + (editData?.memo || '') + '">' +
+    '</div>' +
+  '</div>';
+  
+  var buttons = '<button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">취소</button>' +
+    '<button onclick="submitSupplierBarcode(' + (isEdit ? editData.id : 'null') + ')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">' +
+      '<i class="fas fa-save mr-1"></i> ' + (isEdit ? '수정' : '등록') +
+    '</button>';
+  
+  showModal((isEdit ? '업체별 바코드 수정' : '업체별 바코드 등록'), content, buttons, 'max-w-lg');
+}
+
+// 품목 선택 시 단위 라벨 업데이트
+function onSupplierItemSelect(select) {
+  var selectedOption = select.options[select.selectedIndex];
+  var unit = selectedOption?.dataset?.unit || 'kg';
+  var unitLabel = document.getElementById('supplier-unit-label');
+  if (unitLabel) {
+    unitLabel.textContent = '(' + unit + ')';
+  }
+}
+
+// 바코드 스캔 (프롬프트)
+function scanSupplierBarcode() {
+  var scannedCode = prompt('바코드를 스캔하거나 직접 입력하세요:');
+  if (scannedCode) {
+    document.getElementById('supplier-barcode-barcode').value = scannedCode.trim();
+  }
+}
+
+// 업체별 바코드 등록/수정 제출
+async function submitSupplierBarcode(editId) {
+  var itemCode = document.getElementById('supplier-barcode-item').value;
+  var supplier = document.getElementById('supplier-barcode-supplier').value.trim();
+  var barcode = document.getElementById('supplier-barcode-barcode').value.trim();
+  var packUnit = parseFloat(document.getElementById('supplier-barcode-packunit').value) || null;
+  var packUnitName = document.getElementById('supplier-barcode-packname').value.trim() || null;
+  var memo = document.getElementById('supplier-barcode-memo').value.trim() || null;
+  
+  if (!itemCode) {
+    showToast('품목을 선택하세요', 'warning');
+    return;
+  }
+  if (!supplier) {
+    showToast('업체명을 입력하세요', 'warning');
+    return;
+  }
+  if (!barcode) {
+    showToast('바코드를 입력하세요', 'warning');
+    return;
+  }
+  
+  showLoading(editId ? '수정 중...' : '등록 중...');
+  
+  try {
+    var response;
+    if (editId) {
+      // 수정
+      response = await axios.put(API_BASE + '/barcode/mapping/' + editId, {
+        supplier: supplier,
+        pack_unit: packUnit,
+        pack_unit_name: packUnitName,
+        memo: memo
+      });
+    } else {
+      // 등록
+      response = await axios.post(API_BASE + '/barcode/mapping', {
+        item_code: itemCode,
+        barcode: barcode,
+        supplier: supplier,
+        pack_unit: packUnit,
+        pack_unit_name: packUnitName,
+        memo: memo
+      });
+    }
+    
+    if (response.data.success) {
+      showToast(editId ? '수정 완료!' : '바코드 등록 완료!', 'success');
+      closeModal();
+      // 목록 새로고침
+      setTimeout(function() {
+        openBarcodeRegisterModal();
+        setTimeout(function() {
+          switchBarcodeRegisterTab('supplier');
+        }, 100);
+      }, 100);
+    } else {
+      showToast(response.data.error || '처리 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Submit supplier barcode error:', error);
+    var errMsg = error.response?.data?.error || error.message;
+    showToast('처리 실패: ' + errMsg, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// 업체별 바코드 수정
+function editSupplierBarcode(id) {
+  var item = supplierBarcodeData.find(function(d) { return d.id === id; });
+  if (item) {
+    closeModal();
+    setTimeout(function() {
+      openSupplierBarcodeModal(item);
+    }, 100);
+  }
+}
+
+// 업체별 바코드 삭제
+async function deleteSupplierBarcode(id, itemName, supplier) {
+  if (!confirm('[' + (supplier || '미지정') + '] ' + itemName + '의 바코드를 삭제하시겠습니까?')) {
+    return;
+  }
+  
+  try {
+    var response = await axios.delete(API_BASE + '/barcode/mapping/' + id);
+    
+    if (response.data.success) {
+      showToast('삭제 완료', 'success');
+      loadSupplierBarcodes();
+    } else {
+      showToast(response.data.error || '삭제 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Delete supplier barcode error:', error);
+    showToast('삭제 실패', 'error');
+  }
+}
+
+// 전역 함수 노출 - 업체별 바코드
+window.loadSupplierBarcodes = loadSupplierBarcodes;
+window.searchSupplierBarcodes = searchSupplierBarcodes;
+window.openSupplierBarcodeModal = openSupplierBarcodeModal;
+window.onSupplierItemSelect = onSupplierItemSelect;
+window.scanSupplierBarcode = scanSupplierBarcode;
+window.submitSupplierBarcode = submitSupplierBarcode;
+window.editSupplierBarcode = editSupplierBarcode;
+window.deleteSupplierBarcode = deleteSupplierBarcode;
 
 // 전역 함수 노출
 window.scanBarcode = scanBarcode;

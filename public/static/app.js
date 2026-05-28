@@ -33854,25 +33854,22 @@ async function submitStockAdjust(itemCode, itemName, currentStock) {
   }
   
   try {
-    const result = await api('/transactions/stock-adjust', {
-      method: 'POST',
-      body: JSON.stringify({
-        item_code: itemCode,
-        quantity: adjustQty,
-        memo: memo || `재고조정: ${itemName}`,
-        trans_date: adjustDate
-      })
+    const response = await axios.post(`${API_BASE}/transactions/stock-adjust`, {
+      item_code: itemCode,
+      quantity: adjustQty,
+      memo: memo || `재고조정: ${itemName}`,
+      trans_date: adjustDate
     });
     
-    if (result.success) {
+    if (response.data.success) {
       showToast(`재고가 조정되었습니다. (${currentStock} → ${newStock})`, 'success');
       closeModal();
       loadStockLedger(); // 재조회
     } else {
-      showToast(result.error || '재고 조정 실패', 'error');
+      showToast(response.data.error || '재고 조정 실패', 'error');
     }
   } catch (err) {
-    showToast('재고 조정 실패: ' + err.message, 'error');
+    showToast('재고 조정 실패: ' + (err.response?.data?.error || err.message), 'error');
   }
 }
 

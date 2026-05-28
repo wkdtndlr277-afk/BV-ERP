@@ -21409,37 +21409,61 @@ async function registerDailyReportById(reportId) {
       return;
     }
     
-    showToast('생산등록 처리 중...', 'info');
-    
     // 배치 생산등록 API 호출 (소비기한 포함)
     const batchItems = matchedItems.map(item => ({
       product_code: item.production_code,
       quantity: item.quantity,
-      expiry_date: item.expiry_date || null, // 소비기한 전달
+      expiry_date: item.expiry_date || null,
       channel: item.channel || 'coupang',
       memo: `생산일보 자동등록 (${report.report_no})`
     }));
     
-    const registerResult = await api('/production/batch', 'POST', {
-      production_date: report.report_date,
-      items: batchItems
-    });
+    // 30개씩 나누어 처리 (Cloudflare Workers 타임아웃 방지)
+    const BATCH_SIZE = 30;
+    let totalSuccess = 0;
+    let totalFail = 0;
+    let totalSkipped = 0;
     
-    if (registerResult.success) {
-      // 생산일보 상태 변경
-      await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'registered' });
+    for (let i = 0; i < batchItems.length; i += BATCH_SIZE) {
+      const chunk = batchItems.slice(i, i + BATCH_SIZE);
+      const progress = Math.min(i + BATCH_SIZE, batchItems.length);
+      showToast(`생산등록 처리 중... (${progress}/${batchItems.length})`, 'info');
       
-      const summary = registerResult.summary || {};
-      showToast(`생산등록 완료! (성공: ${summary.success_count || matchedItems.length}건)`, 'success');
-      loadDailyReportList();
-    } else if (registerResult.already_registered) {
-      // 이미 모두 등록된 경우에도 상태를 registered로 변경
-      await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'registered' });
-      showToast(`이미 등록된 품목입니다. (${registerResult.already_registered}건)`, 'info');
-      loadDailyReportList();
-    } else {
-      showToast(registerResult.error || '생산등록 실패', 'error');
+      try {
+        const registerResult = await api('/production/batch', 'POST', {
+          production_date: report.report_date,
+          items: chunk
+        });
+        
+        if (registerResult.success && registerResult.data) {
+          totalSuccess += registerResult.data.success || 0;
+          totalFail += registerResult.data.fail || 0;
+          totalSkipped += registerResult.data.skipped || 0;
+        } else if (registerResult.already_registered) {
+          totalSkipped += registerResult.already_registered;
+        } else {
+          totalFail += chunk.length;
+          console.error('배치 등록 실패:', registerResult.error);
+        }
+      } catch (chunkError) {
+        totalFail += chunk.length;
+        console.error('배치 처리 오류:', chunkError);
+      }
+      
+      // 짧은 대기 (서버 부하 방지)
+      if (i + BATCH_SIZE < batchItems.length) {
+        await new Promise(r => setTimeout(r, 500));
+      }
     }
+    
+    // 생산일보 상태 변경 (하나라도 성공하면)
+    if (totalSuccess > 0 || totalSkipped > 0) {
+      await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'registered' });
+      showToast(`생산등록 완료! (성공: ${totalSuccess}건, 스킵: ${totalSkipped}건, 실패: ${totalFail}건)`, 'success');
+    } else {
+      showToast(`생산등록 실패 (실패: ${totalFail}건)`, 'error');
+    }
+    loadDailyReportList();
     
   } catch (e) {
     console.error('생산등록 오류:', e);

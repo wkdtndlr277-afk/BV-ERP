@@ -38052,14 +38052,24 @@ async function scanBarcode() {
     if (result.success && result.data) {
       barcodeCurrentItem = result.data;
       
-      // 자동 차감 모드이고 pack_unit이 설정되어 있으면 즉시 차감
-      if (barcodeAutoDeductMode && result.data.pack_unit && result.data.pack_unit > 0) {
-        // 즉시 자동 차감 실행
-        await autoDeductBarcode(result.data);
-      } else if (barcodeAutoDeductMode && !result.data.pack_unit) {
-        // pack_unit 미설정 시 경고 후 수동 모드로 표시
-        displayBarcodeItem(result.data);
-        showToast(`${result.data.item_name} - 포장단위 미설정 (수동 입력 필요)`, 'warning');
+      // 자동 차감 모드 처리
+      if (barcodeAutoDeductMode) {
+        // pack_unit이 없으면 수량 입력 모달 표시
+        if (!result.data.pack_unit || result.data.pack_unit <= 0) {
+          displayBarcodeItem(result.data);
+          // 수량 입력 필드에 포커스
+          setTimeout(() => {
+            const qtyInput = document.getElementById('barcode-usage-qty');
+            if (qtyInput) {
+              qtyInput.focus();
+              qtyInput.select();
+            }
+          }, 100);
+          showToast(`${result.data.item_name} - 차감 수량을 입력하세요`, 'info');
+        } else {
+          // pack_unit 설정됨 - 즉시 자동 차감
+          await autoDeductBarcode(result.data);
+        }
       } else {
         // 수동 모드
         displayBarcodeItem(result.data);

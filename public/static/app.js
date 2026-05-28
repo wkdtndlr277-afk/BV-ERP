@@ -6410,7 +6410,6 @@ function renderDailyLotDetail(result, date) {
       '<td class="p-2 text-right text-purple-600">' + (lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (lotUsage > 0 ? '-' + formatNumber(lotUsage) : '-') + '</td>' +
-      '<td class="p-2 text-right text-green-600">' + (lot.period_adjustment !== 0 ? formatNumber(lot.period_adjustment) : '-') + '</td>' +
       '<td class="p-2 text-right font-bold">' + formatNumber(lot.closing_qty) + ' <span class="text-gray-400 font-normal">' + (item.unit || '') + '</span></td>' +
       '<td class="p-2 text-center">' + statusBadge + '</td>' +
     '</tr>';
@@ -6440,7 +6439,6 @@ function renderDailyLotDetail(result, date) {
         '<th class="p-2 text-right text-purple-600">전일</th>' +
         '<th class="p-2 text-right ' + itemTerms.inboundColor + '">' + itemTerms.inbound + '</th>' +
         '<th class="p-2 text-right ' + itemTerms.usageColor + '">' + itemTerms.usage + '</th>' +
-        '<th class="p-2 text-right text-green-600">조정</th>' +
         '<th class="p-2 text-right font-bold">잔량</th>' +
         '<th class="p-2 text-center">상태</th>' +
         '</tr></thead><tbody>' + lotRowsHtml + '</tbody></table></div>';
@@ -6455,30 +6453,21 @@ function renderDailyLotDetail(result, date) {
       '<td class="p-2 text-right text-purple-600">' + formatNumber(item.summary.carry_over) + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-') + '</td>' +
       '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (totalUsage > 0 ? '-' + formatNumber(totalUsage) : '-') + '</td>' +
-      '<td class="p-2 text-right text-green-600">' + (item.summary.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-') + '</td>' +
       '<td class="p-2 text-right font-bold">' + formatNumber(item.summary.closing_qty) + '</td>' +
       '<td class="p-2 text-center"><span class="px-2 py-0.5 text-xs rounded ' + (item.lot_count > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500') + '">' + item.lot_count + '</span></td>' +
     '</tr>' +
-    '<tr id="daily-lot-' + idx + '" class="hidden"><td colspan="9" class="p-0 bg-gray-50">' + lotTableHtml + '</td></tr>';
+    '<tr id="daily-lot-' + idx + '" class="hidden"><td colspan="8" class="p-0 bg-gray-50">' + lotTableHtml + '</td></tr>';
   }
   
   var bodyHtml = data.length === 0 
-    ? '<tr><td colspan="9" class="p-8 text-center text-gray-400">해당일 데이터가 없습니다.</td></tr>'
+    ? '<tr><td colspan="8" class="p-8 text-center text-gray-400">해당일 데이터가 없습니다.</td></tr>'
     : data.map(function(item, idx) { return renderItemRow(item, idx); }).join('');
   
-  contentEl.innerHTML = '<div class="p-3 border-b bg-gradient-to-r from-blue-50 to-white flex justify-between items-center flex-wrap gap-2">' +
-    '<div class="flex items-center gap-3">' +
+  contentEl.innerHTML = '<div class="p-3 border-b bg-gradient-to-r from-blue-50 to-white flex items-center gap-3">' +
       '<span class="text-lg font-bold text-gray-700">' + date + '</span>' +
       '<span class="text-sm text-gray-500">품목 ' + data.length + '건, LOT ' + (result.total_lot_count || 0) + '건</span>' +
       (isProduct ? '<span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">HACCP 제품 수불부</span>' : '') +
       '<button onclick="toggleAllDailyLots()" class="text-xs bg-gray-200 text-gray-600 px-2 py-1 rounded hover:bg-gray-300"><i class="fas fa-expand-alt mr-1"></i>전체 펼침/접기</button>' +
-    '</div>' +
-    '<div class="flex items-center gap-4 text-sm">' +
-      '<span class="text-purple-600"><b>전일</b> ' + formatNumber(summary.carry_over || 0) + '</span>' +
-      '<span class="' + terms.inboundColor + '"><b>' + terms.inbound + '</b> +' + formatNumber(summary.period_inbound || 0) + '</span>' +
-      '<span class="' + terms.usageColor + '"><b>' + terms.usage + '</b> -' + formatNumber((summary.period_usage || 0) + (summary.period_outbound || 0)) + '</span>' +
-      '<span class="text-gray-800 font-bold"><b>현재고</b> ' + formatNumber(summary.closing_qty || 0) + '</span>' +
-    '</div>' +
   '</div>' +
   '<div class="overflow-x-auto"><table class="w-full text-sm" id="daily-lot-table">' +
     '<thead><tr class="bg-gray-100 text-gray-600 text-xs">' +
@@ -6488,7 +6477,6 @@ function renderDailyLotDetail(result, date) {
       '<th class="p-2 text-right text-purple-600">전일</th>' +
       '<th class="p-2 text-right ' + terms.inboundColor + '">' + terms.inbound + '</th>' +
       '<th class="p-2 text-right ' + terms.usageColor + '">' + terms.usage + '</th>' +
-      '<th class="p-2 text-right text-green-600">조정</th>' +
       '<th class="p-2 text-right font-bold">현재고</th>' +
       '<th class="p-2 text-center">거래처</th>' +
     '</tr></thead>' +

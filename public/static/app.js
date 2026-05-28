@@ -33949,6 +33949,7 @@ function printStockLedger() {
   const startDate = document.getElementById('ledger-start-date').value;
   const endDate = document.getElementById('ledger-end-date').value;
   const s = data.summary;
+  const today = getLocalDateString();
   
   const printContent = `
     <html>
@@ -33956,35 +33957,42 @@ function printStockLedger() {
       <title>재고 수불부</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Malgun Gothic', sans-serif; padding: 5mm; font-size: 6.5px; line-height: 1.2; }
-        h1 { text-align: center; font-size: 11px; margin-bottom: 2px; font-weight: bold; }
-        .info { text-align: center; color: #666; margin-bottom: 4px; font-size: 7px; }
-        .note { text-align: center; color: #b45309; margin-bottom: 4px; font-size: 6px; background: #fef3c7; padding: 2px 4px; border-radius: 2px; }
+        body { font-family: 'Malgun Gothic', sans-serif; padding: 5mm; font-size: 7px; line-height: 1.3; }
+        h1 { text-align: center; font-size: 14px; margin-bottom: 3px; font-weight: bold; }
+        .info { text-align: center; color: #666; margin-bottom: 5px; font-size: 8px; }
+        .summary { display: flex; justify-content: center; gap: 15px; margin-bottom: 8px; font-size: 8px; }
+        .summary-item { padding: 3px 8px; border-radius: 3px; }
+        .summary-item.blue { background: #dbeafe; color: #1d4ed8; }
+        .summary-item.green { background: #dcfce7; color: #15803d; }
+        .summary-item.orange { background: #ffedd5; color: #c2410c; }
+        .summary-item.teal { background: #ccfbf1; color: #0f766e; }
         table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        th, td { border: 1px solid #ccc; padding: 1px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        th { background: #f0f0f0; font-size: 6px; font-weight: bold; }
-        td { font-size: 6px; }
+        th, td { border: 1px solid #d1d5db; padding: 3px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        th { background: #f3f4f6; font-size: 7px; font-weight: bold; }
+        td { font-size: 7px; }
         .right { text-align: right; }
         .center { text-align: center; }
-        .total { background: #e5e5e5; font-weight: bold; }
+        .total { background: #e5e7eb; font-weight: bold; }
         .blue { color: #2563eb; }
         .orange { color: #ea580c; }
-        .red { color: #dc2626; }
         .teal { color: #0d9488; font-weight: bold; }
+        .red { color: #dc2626; }
+        .gray { color: #9ca3af; }
         .expiry-warn { color: #dc2626; font-weight: bold; }
-        /* 컬럼 너비 최적화 */
-        th:nth-child(1), td:nth-child(1) { width: 6%; } /* 품목코드 */
-        th:nth-child(2), td:nth-child(2) { width: 18%; } /* 품목명 */
+        .category { font-size: 6px; padding: 1px 4px; border-radius: 2px; }
+        .category-raw { background: #dcfce7; color: #15803d; }
+        .category-sub { background: #dbeafe; color: #1d4ed8; }
+        /* 컬럼 너비 - ERP 화면과 동일 */
+        th:nth-child(1), td:nth-child(1) { width: 7%; } /* 품목코드 */
+        th:nth-child(2), td:nth-child(2) { width: 20%; } /* 품목명 */
         th:nth-child(3), td:nth-child(3) { width: 5%; } /* 분류 */
-        th:nth-child(4), td:nth-child(4) { width: 7%; } /* 이월 */
-        th:nth-child(5), td:nth-child(5) { width: 7%; } /* 입고 */
-        th:nth-child(6), td:nth-child(6) { width: 7%; } /* 사용 */
-        th:nth-child(7), td:nth-child(7) { width: 7%; } /* 출고 */
-        th:nth-child(8), td:nth-child(8) { width: 8%; } /* 실재고 */
-        th:nth-child(9), td:nth-child(9) { width: 8%; } /* 현재고 */
-        th:nth-child(10), td:nth-child(10) { width: 6%; } /* 차이 */
-        th:nth-child(11), td:nth-child(11) { width: 9%; } /* 소비기한 */
-        th:nth-child(12), td:nth-child(12) { width: 4%; } /* 단위 */
+        th:nth-child(4), td:nth-child(4) { width: 10%; } /* 현재재고 */
+        th:nth-child(5), td:nth-child(5) { width: 10%; } /* 입고 */
+        th:nth-child(6), td:nth-child(6) { width: 10%; } /* 사용(바코드) */
+        th:nth-child(7), td:nth-child(7) { width: 10%; } /* 잔량재고 */
+        th:nth-child(8), td:nth-child(8) { width: 8%; } /* 차이 */
+        th:nth-child(9), td:nth-child(9) { width: 10%; } /* 소비기한 */
+        th:nth-child(10), td:nth-child(10) { width: 5%; } /* 단위 */
         @media print { 
           body { padding: 0; } 
           @page { size: A4 landscape; margin: 5mm; } 
@@ -33994,53 +34002,68 @@ function printStockLedger() {
       </style>
     </head>
     <body>
-      <h1>(주)본비반트 재고 수불부</h1>
+      <h1>재고 수불부</h1>
       <p class="info">기간: ${startDate} ~ ${endDate} / 품목 수: ${s.item_count}종</p>
-      <p class="note">※ 원료/부자재는 LOT 잔량이 실재고입니다. 재고조정(+)는 입고에, 재고조정(-)는 출고에 포함됩니다.</p>
+      <div class="summary">
+        <span class="summary-item blue">현재재고: ${formatNumber(s.total_carry_over)}</span>
+        <span class="summary-item green">기간입고: ${formatNumber(s.total_inbound)}</span>
+        <span class="summary-item orange">기간사용: ${formatNumber(s.total_usage)}</span>
+        <span class="summary-item teal">잔량재고: ${formatNumber(s.total_lot_remain)}</span>
+      </div>
       <table>
         <thead>
           <tr>
-            <th>품목코드</th><th>품목명</th><th>분류</th>
-            <th>이월</th><th class="blue">입고(+조정)</th><th class="orange">사용</th><th class="red">출고(-조정)</th>
-            <th class="teal">실재고</th><th>현재고</th><th>차이</th><th>소비기한</th><th>단위</th>
+            <th>품목코드</th>
+            <th>품목명</th>
+            <th>분류</th>
+            <th>현재재고</th>
+            <th class="blue">입고</th>
+            <th class="orange">사용(바코드)</th>
+            <th class="teal">잔량재고</th>
+            <th>차이</th>
+            <th>소비기한</th>
+            <th>단위</th>
           </tr>
         </thead>
         <tbody>
           ${data.data.map(r => {
             const isRawMaterial = r.category === '원료' || r.category === '부자재';
-            const actualStock = isRawMaterial ? (r.lot_remain_total || 0) : r.calc_remain;
-            const stockDiff = r.current_stock - actualStock;
-            const today = new Date().toISOString().split('T')[0];
+            const currentStock = r.carry_over || 0;
+            const periodInbound = r.period_inbound || 0;
+            const periodUsage = r.period_usage || 0;
+            const remainStock = r.calc_remain !== undefined ? r.calc_remain : (currentStock + periodInbound - periodUsage);
+            const stockDiff = r.diff || 0;
+            
             let expiryClass = '';
             if (r.nearest_expiry) {
               const daysUntil = Math.floor((new Date(r.nearest_expiry) - new Date(today)) / (1000 * 60 * 60 * 24));
               if (daysUntil <= 7) expiryClass = 'expiry-warn';
             }
+            
+            const categoryClass = r.category === '원료' ? 'category-raw' : 'category-sub';
+            const diffClass = Math.abs(stockDiff) > 0.01 ? (stockDiff > 0 ? 'blue' : 'red') : 'gray';
+            
             return `
             <tr>
               <td>${r.item_code}</td>
               <td title="${r.item_name}">${r.item_name}</td>
-              <td class="center">${r.category}</td>
-              <td class="right">${formatNumber(r.carry_over)}</td>
-              <td class="right blue">${formatNumber(r.period_inbound)}</td>
-              <td class="right orange">${formatNumber(r.period_usage)}</td>
-              <td class="right red">${formatNumber(r.period_outbound)}</td>
-              <td class="right teal">${formatNumber(actualStock)}</td>
-              <td class="right">${formatNumber(r.current_stock)}</td>
-              <td class="right" style="color:${Math.abs(stockDiff) > 0.01 ? '#dc2626' : '#888'}">${formatNumber(stockDiff)}</td>
+              <td class="center"><span class="category ${categoryClass}">${r.category}</span></td>
+              <td class="right">${formatNumber(currentStock)}</td>
+              <td class="right blue">${periodInbound > 0 ? formatNumber(periodInbound) : '-'}</td>
+              <td class="right orange">${periodUsage > 0 ? formatNumber(periodUsage) : '-'}</td>
+              <td class="right teal">${formatNumber(remainStock)}</td>
+              <td class="right ${diffClass}">${stockDiff !== 0 ? (stockDiff > 0 ? '+' : '') + formatNumber(stockDiff) : '0'}</td>
               <td class="center ${expiryClass}">${r.nearest_expiry || '-'}</td>
               <td class="center">${r.unit}</td>
             </tr>
           `}).join('')}
           <tr class="total">
-            <td></td><td>합계</td><td></td>
+            <td colspan="3">합계 (${data.data.length}종)</td>
             <td class="right">${formatNumber(s.total_carry_over)}</td>
             <td class="right">${formatNumber(s.total_inbound)}</td>
             <td class="right">${formatNumber(s.total_usage)}</td>
-            <td class="right">${formatNumber(s.total_outbound)}</td>
-            <td class="right">${formatNumber(s.total_lot_remain || s.total_calc_remain)}</td>
-            <td class="right">${formatNumber(s.total_current_stock)}</td>
-            <td></td><td></td><td></td>
+            <td class="right">${formatNumber(s.total_lot_remain)}</td>
+            <td colspan="3"></td>
           </tr>
         </tbody>
       </table>

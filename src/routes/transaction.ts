@@ -485,22 +485,22 @@ transactionRoutes.get('/daily-report', async (c) => {
           m.current_stock,
           COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
-          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
+          COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date < ?), 0) as before_usage,
+          0 as before_outbound,
+          0 as before_adjustment,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date = ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as inbound_qty,
-          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date = ?), 0) as adj_plus,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date = ?), 0) as adj_minus,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date = ?), 0) as usage,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date = ?), 0) as outbound_qty
+          0 as adj_plus,
+          0 as adj_minus,
+          COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date = ?), 0) as usage,
+          0 as outbound_qty
         FROM master m
         WHERE (
           m.current_stock > 0
           OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date = ?)
-          OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date = ?)
+          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date = ?)
           OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
           OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date < ?)
-          OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_date < ?)
+          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date < ?)
         )
         
         UNION ALL
@@ -515,22 +515,22 @@ transactionRoutes.get('/daily-report', async (c) => {
           s.current_stock,
           COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
-          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
+          COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date < ?), 0) as before_usage,
+          0 as before_outbound,
+          0 as before_adjustment,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격' AND i.inbound_date = ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as inbound_qty,
-          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date = ?), 0) as adj_plus,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date = ?), 0) as adj_minus,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '사용' AND t.trans_date = ?), 0) as usage,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '출고' AND t.trans_date = ?), 0) as outbound_qty
+          0 as adj_plus,
+          0 as adj_minus,
+          COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date = ?), 0) as usage,
+          0 as outbound_qty
         FROM supplies s
         WHERE (
           s.current_stock > 0
           OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date = ?)
-          OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = s.item_code AND t.trans_date = ?)
+          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date = ?)
           OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.remain_qty > 0)
           OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date < ?)
-          OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = s.item_code AND t.trans_date < ?)
+          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date < ?)
         )
         
         UNION ALL
@@ -563,23 +563,24 @@ transactionRoutes.get('/daily-report', async (c) => {
       ) combined
       WHERE 1=1
     `;
-    // 파라미터 순서: master(14) + supplies(14) + production_items(10)
+    // 파라미터 순서: master(9) + supplies(9) + production_items(10) = 28개
+    // 문서관리용: production_usage 테이블만 사용 (바코드 차감 제외)
     const params: any[] = [
-      // master 파라미터
+      // master 파라미터 (9개)
       date,  // report_date
-      date, date, date, date,  // before queries
-      date, date, date, date, date,  // period queries
-      date, date, date, date,  // EXISTS queries
-      // supplies 파라미터
+      date, date,  // before_inbound, before_usage (< date)
+      date, date,  // inbound_qty, usage (= date)
+      date, date, date, date,  // EXISTS: inbound=date, usage=date, inbound<date, usage<date
+      // supplies 파라미터 (9개)
       date,  // report_date
-      date, date, date, date,  // before queries
-      date, date, date, date, date,  // period queries
-      date, date, date, date,  // EXISTS queries
-      // production_items 파라미터
+      date, date,  // before_inbound, before_usage (< date)
+      date, date,  // inbound_qty, usage (= date)
+      date, date, date, date,  // EXISTS: inbound=date, usage=date, inbound<date, usage<date
+      // production_items 파라미터 (10개)
       date,  // report_date
-      date, date, date,  // before queries
-      date, date, date, date,  // period queries
-      date, date  // EXISTS queries
+      date, date, date,  // before queries (생산입고, 출고, 조정 < date)
+      date, date, date, date,  // period queries (입고, +조정, -조정, 출고 = date)
+      date, date  // EXISTS: trans_date=date, trans_date<date
     ];
     
     if (category && category !== '전체') {

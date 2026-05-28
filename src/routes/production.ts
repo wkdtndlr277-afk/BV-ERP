@@ -472,14 +472,14 @@ productionRoutes.post('/', async (c) => {
         continue; // 다음 원재료로
       }
       
-      // FEFO 방식으로 LOT에서 차감
+      // FEFO 방식으로 LOT에서 차감 (유통기한이 지나지 않은 LOT만 사용)
       let remainingToDeduct = requiredKg;
       const usedLots: string[] = [];
       let lots = await c.env.DB.prepare(`
         SELECT * FROM inbound 
-        WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+        WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격' AND expiry_date >= ?
         ORDER BY expiry_date ASC, inbound_date ASC
-      `).bind(actualItemCode).all<any>();
+      `).bind(actualItemCode, prod_date).all<any>();
       
       // LOT이 없으면 다른 형식의 코드로 재시도
       if (!lots.results || lots.results.length === 0) {
@@ -492,9 +492,9 @@ productionRoutes.post('/', async (c) => {
         if (altCode) {
           lots = await c.env.DB.prepare(`
             SELECT * FROM inbound 
-            WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+            WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격' AND expiry_date >= ?
             ORDER BY expiry_date ASC, inbound_date ASC
-          `).bind(altCode).all<any>();
+          `).bind(altCode, prod_date).all<any>();
         }
       }
       
@@ -959,18 +959,39 @@ productionRoutes.post('/batch', async (c) => {
       const requiredQty = bom.quantity * actualItemCount;
       const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
       
-      // FEFO 방식으로 원료 LOT 조회 (잔량이 있는 가장 오래된 LOT)
+      // FEFO 방식으로 원료 LOT 조회 (잔량이 있고 유통기한이 지나지 않은 가장 오래된 LOT)
+      // 유통기한 필터: expiry_date >= 생산일 (생산일 기준으로 유효한 LOT만 선택)
       let materialLot = null;
       try {
         const lotResult = await c.env.DB.prepare(`
           SELECT lot_number FROM inbound 
-          WHERE item_code = ? AND remain_qty > 0 
+          WHERE item_code = ? AND remain_qty > 0 AND expiry_date >= ?
           ORDER BY expiry_date ASC, inbound_date ASC, id ASC 
           LIMIT 1
-        `).bind(actualItemCode).first<{lot_number: string}>();
+        `).bind(actualItemCode, productionDate).first<{lot_number: string}>();
         materialLot = lotResult?.lot_number || null;
+        
+        // 유효한 LOT가 없으면 RM/R 코드 변환 후 재시도
+        if (!materialLot) {
+          let altCode = '';
+          if (actualItemCode.startsWith('RM')) {
+            altCode = 'R' + actualItemCode.substring(2);
+          } else if (actualItemCode.startsWith('R') && !actualItemCode.startsWith('RM')) {
+            altCode = 'RM' + actualItemCode.substring(1);
+          }
+          if (altCode) {
+            const altLotResult = await c.env.DB.prepare(`
+              SELECT lot_number FROM inbound 
+              WHERE item_code = ? AND remain_qty > 0 AND expiry_date >= ?
+              ORDER BY expiry_date ASC, inbound_date ASC, id ASC 
+              LIMIT 1
+            `).bind(altCode, productionDate).first<{lot_number: string}>();
+            materialLot = altLotResult?.lot_number || null;
+          }
+        }
       } catch (e) {
         // LOT 조회 실패해도 계속 진행
+        console.log(`[production/batch] LOT 조회 실패 ${actualItemCode}:`, e);
       }
       
       materialRecords.push({

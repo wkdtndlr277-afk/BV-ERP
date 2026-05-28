@@ -38292,6 +38292,113 @@ function restoreAutoDeductSetting() {
   }
 }
 
+// 포장단위 설정 모달 표시
+function showPackUnitSettingModal(itemCode, itemName, currentPackUnit, currentPackUnitName, unit) {
+  const content = `
+    <div class="space-y-4">
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
+            <i class="fas fa-box text-white"></i>
+          </div>
+          <div>
+            <p class="font-bold text-blue-800">${itemName}</p>
+            <p class="text-sm text-blue-600">${itemCode}</p>
+          </div>
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">포장단위 (${unit})</label>
+          <input type="number" id="pack-unit-value" value="${currentPackUnit || ''}" step="0.01" min="0"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                 placeholder="예: 25">
+          <p class="text-xs text-gray-500 mt-1">1스캔당 차감될 수량</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">단위명</label>
+          <input type="text" id="pack-unit-name" value="${currentPackUnitName || ''}"
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                 placeholder="예: 포, 팩, 박스">
+          <p class="text-xs text-gray-500 mt-1">선택사항</p>
+        </div>
+      </div>
+      
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+        <p class="text-sm text-yellow-800">
+          <i class="fas fa-info-circle mr-1"></i>
+          포장단위 설정 시 바코드 스캔하면 <strong>자동으로 해당 수량이 차감</strong>됩니다.
+        </p>
+      </div>
+      
+      <!-- 빠른 설정 버튼 -->
+      <div>
+        <p class="text-sm text-gray-600 mb-2">빠른 설정:</p>
+        <div class="flex flex-wrap gap-2">
+          <button onclick="document.getElementById('pack-unit-value').value=1" class="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 text-sm">1${unit}</button>
+          <button onclick="document.getElementById('pack-unit-value').value=5" class="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 text-sm">5${unit}</button>
+          <button onclick="document.getElementById('pack-unit-value').value=10" class="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 text-sm">10${unit}</button>
+          <button onclick="document.getElementById('pack-unit-value').value=18" class="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 text-sm">18${unit}</button>
+          <button onclick="document.getElementById('pack-unit-value').value=20" class="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 text-sm">20${unit}</button>
+          <button onclick="document.getElementById('pack-unit-value').value=25" class="px-3 py-1 bg-gray-100 rounded hover:bg-gray-200 text-sm">25${unit}</button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  const buttons = `
+    <button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">취소</button>
+    <button onclick="savePackUnitSetting('${itemCode}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+      <i class="fas fa-save mr-1"></i> 저장
+    </button>
+  `;
+  
+  showModal(`<i class="fas fa-box mr-2"></i>포장단위 설정`, content, buttons);
+}
+
+// 포장단위 저장
+async function savePackUnitSetting(itemCode) {
+  const packUnit = parseFloat(document.getElementById('pack-unit-value').value) || 0;
+  const packUnitName = document.getElementById('pack-unit-name').value.trim();
+  
+  if (packUnit < 0) {
+    showToast('포장단위는 0 이상이어야 합니다', 'warning');
+    return;
+  }
+  
+  showLoading('저장 중...');
+  
+  try {
+    const response = await axios.put(`${API_BASE}/master/${itemCode}`, {
+      pack_unit: packUnit > 0 ? packUnit : null,
+      pack_unit_name: packUnitName || null
+    });
+    
+    if (response.data.success) {
+      showToast(`포장단위가 설정되었습니다${packUnit > 0 ? ` (${packUnit})` : ' (해제)'}`, 'success');
+      closeModal();
+      
+      // 현재 품목 정보 업데이트 후 다시 표시
+      if (barcodeCurrentItem && barcodeCurrentItem.item_code === itemCode) {
+        barcodeCurrentItem.pack_unit = packUnit > 0 ? packUnit : null;
+        barcodeCurrentItem.pack_unit_name = packUnitName || null;
+        displayBarcodeItem(barcodeCurrentItem);
+      }
+    } else {
+      showToast(response.data.error || '저장 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Pack unit save error:', error);
+    showToast('저장 실패: ' + (error.response?.data?.error || error.message), 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+window.showPackUnitSettingModal = showPackUnitSettingModal;
+window.savePackUnitSetting = savePackUnitSetting;
+
 // 스캔된 품목 표시
 function displayBarcodeItem(item) {
   document.getElementById('barcode-scan-result').classList.remove('hidden');
@@ -38322,14 +38429,30 @@ function displayBarcodeItem(item) {
             <span class="text-yellow-800 font-medium">
               <i class="fas fa-box mr-1"></i> 포장단위: ${item.pack_unit}${item.unit}/${packUnitName}
             </span>
-            <span class="text-yellow-600 text-sm">1스캔 = ${item.pack_unit}${item.unit} 자동차감</span>
+            <button onclick="showPackUnitSettingModal('${item.item_code}', '${item.item_name.replace(/'/g, "\\'")}', ${item.pack_unit || 0}, '${item.pack_unit_name || ''}', '${item.unit}')" 
+                    class="text-yellow-600 hover:text-yellow-800 text-sm">
+              <i class="fas fa-cog mr-1"></i>변경
+            </button>
           </div>
         </div>
       `;
       packUnitInfo.classList.remove('hidden');
     } else {
-      packUnitInfo.innerHTML = '';
-      packUnitInfo.classList.add('hidden');
+      packUnitInfo.innerHTML = `
+        <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-3">
+          <div class="flex items-center justify-between">
+            <span class="text-gray-600">
+              <i class="fas fa-box mr-1"></i> 포장단위 미설정
+            </span>
+            <button onclick="showPackUnitSettingModal('${item.item_code}', '${item.item_name.replace(/'/g, "\\'")}', 0, '', '${item.unit}')" 
+                    class="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
+              <i class="fas fa-plus mr-1"></i>설정
+            </button>
+          </div>
+          <p class="text-xs text-gray-500 mt-1">포장단위를 설정하면 스캔 시 자동 차감됩니다</p>
+        </div>
+      `;
+      packUnitInfo.classList.remove('hidden');
     }
   }
   

@@ -33647,10 +33647,10 @@ function renderLedgerTable(data, isSampleView = false) {
           <th class="px-3 py-2 text-left">품목명${sampleLabel}</th>
           <th class="px-3 py-2 text-center">분류</th>
           ${isSampleView ? '<th class="px-3 py-2 text-left text-yellow-700">보관장소</th>' : ''}
-          <th class="px-3 py-2 text-right">현재재고</th>
+          <th class="px-3 py-2 text-right">현재재고 <i class="fas fa-edit text-xs text-gray-400" title="클릭하여 수정"></i></th>
           <th class="px-3 py-2 text-right text-blue-600">입고</th>
           <th class="px-3 py-2 text-right text-orange-600">사용 <span class="text-xs font-normal text-gray-400">(바코드)</span></th>
-          <th class="px-3 py-2 text-right text-teal-600 font-bold">잔량재고 <i class="fas fa-edit text-xs text-gray-400" title="클릭하여 수정"></i></th>
+          <th class="px-3 py-2 text-right text-teal-600 font-bold">잔량재고</th>
           <th class="px-3 py-2 text-right">차이</th>
           <th class="px-3 py-2 text-center">소비기한</th>
           <th class="px-3 py-2 text-center">단위</th>
@@ -33680,19 +33680,22 @@ function renderLedgerTable(data, isSampleView = false) {
             }
           }
           
+          // 잔량재고 계산: 현재재고 + 입고 - 사용(바코드)
+          const remainStock = row.calc_remain !== undefined ? row.calc_remain : (actualStock + row.period_inbound - row.period_usage);
+          
           return `
             <tr class="border-b hover:bg-blue-50">
               <td class="px-3 py-2 text-gray-600">${row.item_code}</td>
               <td class="px-3 py-2 font-medium">${row.item_name}${isSampleView ? '<span class="ml-1 text-xs text-yellow-600"><i class="fas fa-flask"></i></span>' : ''}</td>
               <td class="px-3 py-2 text-center"><span class="px-2 py-0.5 ${isRawMaterial ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'} rounded text-xs">${row.category}</span></td>
               ${isSampleView ? `<td class="px-3 py-2 text-yellow-700">${row.storage_location || '-'}</td>` : ''}
-              <td class="px-3 py-2 text-right">${formatNumber(row.carry_over)}</td>
-              <td class="px-3 py-2 text-right text-blue-600 font-medium">${formatNumber(row.period_inbound)}</td>
-              <td class="px-3 py-2 text-right text-orange-600 font-medium">${formatNumber(row.period_usage)}</td>
-              <td class="px-3 py-2 text-right text-teal-600 font-bold cursor-pointer hover:bg-teal-100 rounded" onclick="showStockAdjustModal('${row.item_code}', '${row.item_name.replace(/'/g, "\\'")}', ${actualStock}, '${row.unit}')" title="클릭하여 재고 수정">
+              <td class="px-3 py-2 text-right cursor-pointer hover:bg-blue-100 rounded" onclick="showStockAdjustModal('${row.item_code}', '${row.item_name.replace(/'/g, "\\'")}', ${actualStock}, '${row.unit}')" title="클릭하여 재고 수정">
                 ${formatNumber(actualStock)}
                 <i class="fas fa-edit ml-1 text-xs text-gray-400"></i>
               </td>
+              <td class="px-3 py-2 text-right text-blue-600 font-medium">${formatNumber(row.period_inbound)}</td>
+              <td class="px-3 py-2 text-right text-orange-600 font-medium">${formatNumber(row.period_usage)}</td>
+              <td class="px-3 py-2 text-right text-teal-600 font-bold">${formatNumber(remainStock)}</td>
               <td class="px-3 py-2 text-right ${diffClass}">${stockDiff > 0 ? '+' : ''}${formatNumber(stockDiff)}</td>
               <td class="px-3 py-2 text-center ${expiryClass}">${expiryDisplay}</td>
               <td class="px-3 py-2 text-center text-gray-500">${row.unit}</td>

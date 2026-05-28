@@ -2184,55 +2184,46 @@ transactionRoutes.get('/stock-ledger', async (c) => {
   
   const result = await c.env.DB.prepare(query).bind(...params).all();
   
-  // 계산 잔량과 차이 추가
-  // 월초재고 = 기간 이전 입고 - 기간 이전 사용 - 기간 이전 출고 + 기간 이전 조정
-  // 월말재고 = 월초재고 + 기간 입고 - 기간 사용 - 기간 출고 + 기간 조정
+  // 재고수불부 로직:
+  // - 현재재고: LOT 잔량 합계 (실제 현재 보유 재고)
+  // - 입고: 기간 내 순수 입고량
+  // - 사용(바코드): 바코드 스캔으로 차감된 양만
+  // - 잔량재고: 현재재고 + 입고 - 사용(바코드) = 자동 계산
   const ledgerData = (result.results || []).map((item: any) => {
     const isRawMaterial = item.category === '원료' || item.category === '부자재';
     
-    // 월초재고 계산 (기간 시작일 이전까지의 누적)
-    const carryOver = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
+    // 현재재고: LOT 잔량 합계 (실제 현재 재고)
+    const currentStock = isRawMaterial ? item.lot_remain_total : item.current_stock;
     
-    // 기간 내 입고 (순수 입고량만 - 재고조정 제외)
+    // 기간 내 입고 (순수 입고량만)
     const periodInbound = item.period_inbound_raw;
     
-    // 기간 내 사용 (바코드 사용 + 음수 재고조정)
-    const periodUsageTotal = item.period_usage + item.period_adj_minus;
+    // 기간 내 사용 (바코드 스캔만 - period_usage는 이미 바코드만 필터링됨)
+    const periodUsage = item.period_usage;
     
-    // 기간 내 재고조정 (양수만 - 증가분)
-    const periodAdjustment = item.period_adj_plus;
+    // 잔량재고: 현재재고 + 입고 - 사용(바코드)
+    const remainStock = currentStock + periodInbound - periodUsage;
     
-    // 월말재고 계산 (월초 + 입고 + 조정 - 사용)
-    const closingStock = carryOver + periodInbound + periodAdjustment - periodUsageTotal;
-    
-    // 실제 재고 (LOT 잔량 또는 마스터 재고)
-    const actualStock = isRawMaterial ? item.lot_remain_total : item.current_stock;
-    
-    // 차이: 계산된 월말재고 vs 실제 재고
-    const diff = isRawMaterial ? (closingStock - item.lot_remain_total) : 0;
+    // 차이: 잔량재고 vs LOT 잔량
+    const diff = isRawMaterial ? (remainStock - item.lot_remain_total) : 0;
     
     return {
       ...item,
-      carry_over: carryOver,
-      period_inbound: periodInbound,
-      period_usage: periodUsageTotal,
-      period_adjustment: periodAdjustment,
-      period_outbound: 0, // 사용에 통합
-      calc_remain: closingStock,
-      actual_stock: actualStock,
+      carry_over: currentStock,  // 현재재고
+      period_inbound: periodInbound,  // 입고
+      period_usage: periodUsage,  // 사용(바코드)
+      calc_remain: remainStock,  // 잔량재고 (자동계산)
+      actual_stock: currentStock,
       diff: diff
     };
   });
   
   // 요약 통계
   const summary = ledgerData.reduce((acc: any, item: any) => {
-    acc.total_carry_over += item.carry_over;
-    acc.total_inbound += item.period_inbound;
-    acc.total_usage += item.period_usage;
-    acc.total_adjustment += item.period_adjustment || 0;
-    acc.total_calc_remain += item.calc_remain;
-    acc.total_current_stock += item.current_stock;
-    acc.total_lot_remain += item.lot_remain_total;
+    acc.total_carry_over += item.carry_over;  // 현재재고 합계
+    acc.total_inbound += item.period_inbound;  // 입고 합계
+    acc.total_usage += item.period_usage;  // 사용(바코드) 합계
+    acc.total_lot_remain += item.calc_remain;  // 잔량재고 합계
     acc.item_count++;
     if (Math.abs(item.diff) > 0.01) acc.diff_count++;
     return acc;
@@ -2240,9 +2231,6 @@ transactionRoutes.get('/stock-ledger', async (c) => {
     total_carry_over: 0,
     total_inbound: 0,
     total_usage: 0,
-    total_adjustment: 0,
-    total_calc_remain: 0,
-    total_current_stock: 0,
     total_lot_remain: 0,
     item_count: 0,
     diff_count: 0

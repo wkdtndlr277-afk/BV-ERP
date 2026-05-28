@@ -21405,18 +21405,36 @@ async function registerDailyReportById(reportId) {
       return;
     }
     
-    if (!confirm(`${matchedItems.length}개 품목을 생산등록 하시겠습니까?\n\n※ 원재료 재고가 차감되고, 제품 재고가 증가합니다.`)) {
+    // 같은 제품코드+채널은 수량 합산 (중복 등록 방지)
+    const mergedMap = new Map();
+    for (const item of matchedItems) {
+      const key = `${item.production_code}|${item.channel || 'coupang'}`;
+      if (mergedMap.has(key)) {
+        const existing = mergedMap.get(key);
+        existing.quantity += item.quantity;
+        // 소비기한은 더 이른 날짜 사용
+        if (item.expiry_date && (!existing.expiry_date || item.expiry_date < existing.expiry_date)) {
+          existing.expiry_date = item.expiry_date;
+        }
+      } else {
+        mergedMap.set(key, {
+          product_code: item.production_code,
+          quantity: item.quantity,
+          expiry_date: item.expiry_date || null,
+          channel: item.channel || 'coupang'
+        });
+      }
+    }
+    const batchItems = Array.from(mergedMap.values());
+    
+    if (!confirm(`${matchedItems.length}개 품목(합산 후 ${batchItems.length}건)을 생산등록 하시겠습니까?\n\n※ 같은 제품은 수량이 합산됩니다.\n※ 원재료 재고가 차감되고, 제품 재고가 증가합니다.`)) {
       return;
     }
     
-    // 배치 생산등록 API 호출 (소비기한 포함)
-    const batchItems = matchedItems.map(item => ({
-      product_code: item.production_code,
-      quantity: item.quantity,
-      expiry_date: item.expiry_date || null,
-      channel: item.channel || 'coupang',
-      memo: `생산일보 자동등록 (${report.report_no})`
-    }));
+    // memo 추가
+    batchItems.forEach(item => {
+      item.memo = `생산일보 자동등록 (${report.report_no})`;
+    });
     
     // 30개씩 나누어 처리 (Cloudflare Workers 타임아웃 방지)
     const BATCH_SIZE = 30;

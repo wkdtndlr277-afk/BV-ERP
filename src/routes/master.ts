@@ -162,7 +162,10 @@ masterRoutes.post('/', async (c) => {
 masterRoutes.put('/:item_code', async (c) => {
   const item_code = c.req.param('item_code');
   const body = await c.req.json<any>();
-  const { item_name, category, unit, safety_stock, expiry_days, pack_unit, pack_unit_name } = body;
+  const { item_name, category, unit, safety_stock, expiry_days } = body;
+  // pack_unit, pack_unit_name은 undefined가 아닌 null로 명시적 변환
+  const pack_unit = body.pack_unit !== undefined ? body.pack_unit : null;
+  const pack_unit_name = body.pack_unit_name !== undefined ? body.pack_unit_name : null;
   
   try {
     // 현재 품목 위치 확인
@@ -258,6 +261,10 @@ masterRoutes.put('/:item_code', async (c) => {
     } else {
       // 같은 테이블 내 업데이트 (pack_unit 포함)
       if (isCurrentlyInMaster) {
+        // 전달된 값이 있으면 사용, 없으면 기존값 유지
+        const finalPackUnit = body.hasOwnProperty('pack_unit') ? (body.pack_unit === null ? null : body.pack_unit) : currentItem!.pack_unit;
+        const finalPackUnitName = body.hasOwnProperty('pack_unit_name') ? (body.pack_unit_name === null ? null : body.pack_unit_name) : currentItem!.pack_unit_name;
+        
         await c.env.DB.prepare(`
           UPDATE master 
           SET item_name = COALESCE(?, item_name),
@@ -269,8 +276,20 @@ masterRoutes.put('/:item_code', async (c) => {
               pack_unit_name = ?,
               updated_at = CURRENT_TIMESTAMP
           WHERE item_code = ?
-        `).bind(item_name, category, unit, safety_stock, expiry_days, pack_unit ?? null, pack_unit_name ?? null, item_code).run();
+        `).bind(
+          item_name || null, 
+          category || null, 
+          unit || null, 
+          safety_stock !== undefined ? safety_stock : null, 
+          expiry_days !== undefined ? expiry_days : null, 
+          finalPackUnit !== undefined ? finalPackUnit : null, 
+          finalPackUnitName !== undefined ? finalPackUnitName : null, 
+          item_code
+        ).run();
       } else {
+        const finalPackUnit = body.hasOwnProperty('pack_unit') ? (body.pack_unit === null ? null : body.pack_unit) : currentItem!.pack_unit;
+        const finalPackUnitName = body.hasOwnProperty('pack_unit_name') ? (body.pack_unit_name === null ? null : body.pack_unit_name) : currentItem!.pack_unit_name;
+        
         await c.env.DB.prepare(`
           UPDATE supplies 
           SET item_name = COALESCE(?, item_name),
@@ -281,7 +300,15 @@ masterRoutes.put('/:item_code', async (c) => {
               pack_unit_name = ?,
               updated_at = CURRENT_TIMESTAMP
           WHERE item_code = ?
-        `).bind(item_name, unit, safety_stock, expiry_days, pack_unit ?? null, pack_unit_name ?? null, item_code).run();
+        `).bind(
+          item_name || null, 
+          unit || null, 
+          safety_stock !== undefined ? safety_stock : null, 
+          expiry_days !== undefined ? expiry_days : null, 
+          finalPackUnit !== undefined ? finalPackUnit : null, 
+          finalPackUnitName !== undefined ? finalPackUnitName : null, 
+          item_code
+        ).run();
       }
       
       return c.json({ success: true, message: '품목이 수정되었습니다.' });

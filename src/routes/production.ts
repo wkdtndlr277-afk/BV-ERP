@@ -1249,20 +1249,25 @@ productionRoutes.post('/batch', async (c) => {
   }
   
   // 7단계: 일별/월별 수불부 문서용 기록 (production_usage 테이블)
+  let usageInsertSuccess = 0;
+  let usageInsertFail = 0;
+  let usageInsertError = '';
+  
   if (productionUsageInserts.length > 0) {
     console.log(`[production/batch] production_usage 기록 ${productionUsageInserts.length}건 실행`);
-    try {
-      for (const stmt of productionUsageInserts) {
-        try {
-          await stmt.run();
-        } catch (e: any) {
-          // 테이블이 없거나 오류 발생 시 무시
-          console.log('production_usage insert skipped:', e.message);
+    for (const stmt of productionUsageInserts) {
+      try {
+        await stmt.run();
+        usageInsertSuccess++;
+      } catch (e: any) {
+        usageInsertFail++;
+        if (!usageInsertError) {
+          usageInsertError = e.message || String(e);
         }
+        console.log('production_usage insert error:', e.message);
       }
-    } catch (e) {
-      console.log('production_usage batch insert skipped:', e);
     }
+    console.log(`[production/batch] production_usage 기록 완료: 성공=${usageInsertSuccess}, 실패=${usageInsertFail}`);
   }
   
   return c.json({
@@ -1275,6 +1280,9 @@ productionRoutes.post('/batch', async (c) => {
       material_deduction_success: materialDeductionSuccess,
       transaction_record_success: transactionRecordSuccess,
       transaction_error: transactionError || null,
+      usage_insert_success: usageInsertSuccess,
+      usage_insert_fail: usageInsertFail,
+      usage_insert_error: usageInsertError || null,
       results
     }
   });
@@ -1286,6 +1294,124 @@ productionRoutes.post('/batch', async (c) => {
       error: '생산 등록 중 오류가 발생했습니다.',
       detail: error.message || String(error)
     }, 500);
+  }
+});
+
+// production_usage 백필 API (기존 생산 데이터에서 BOM 기반으로 사용량 복구)
+productionRoutes.post('/backfill-usage', async (c) => {
+  try {
+    const { date, dry_run } = await c.req.json<{ date?: string; dry_run?: boolean }>();
+    
+    if (!date) {
+      return c.json({ success: false, error: 'date 파라미터가 필요합니다.' }, 400);
+    }
+    
+    // 해당 날짜의 생산 기록 조회
+    const productionResult = await c.env.DB.prepare(`
+      SELECT id, product_code, quantity FROM production WHERE prod_date = ?
+    `).bind(date).all();
+    const productions = productionResult.results || [];
+    
+    if (productions.length === 0) {
+      return c.json({ success: false, error: `${date}에 생산 기록이 없습니다.` });
+    }
+    
+    // 제품별 BOM 조회 (배치로 나눠서 처리)
+    const productCodes = [...new Set((productions as any[]).map(p => p.product_code))];
+    
+    // production_bom 테이블에서 BOM 조회 (50개씩 배치)
+    const BATCH_SIZE = 50;
+    let bomData: any[] = [];
+    
+    for (let i = 0; i < productCodes.length; i += BATCH_SIZE) {
+      const batch = productCodes.slice(i, i + BATCH_SIZE);
+      const placeholders = batch.map(() => '?').join(',');
+      const bomResult = await c.env.DB.prepare(`
+        SELECT production_code, material_code, material_name, quantity as bom_qty
+        FROM production_bom 
+        WHERE production_code IN (${placeholders})
+      `).bind(...batch).all();
+      bomData = bomData.concat(bomResult.results || []);
+    }
+    
+    // 제품별 BOM 맵
+    const bomMap = new Map<string, any[]>();
+    for (const bom of bomData as any[]) {
+      if (!bomMap.has(bom.production_code)) {
+        bomMap.set(bom.production_code, []);
+      }
+      bomMap.get(bom.production_code)!.push(bom);
+    }
+    
+    // 원료별 사용량 집계
+    const usageMap = new Map<string, { item_code: string; item_name: string; quantity: number }>();
+    
+    for (const prod of productions as any[]) {
+      const boms = bomMap.get(prod.product_code) || [];
+      for (const bom of boms) {
+        // 사용량 = BOM 수량 * 생산수량 / 1000 (g → kg 변환)
+        const usedQty = (bom.bom_qty * prod.quantity) / 1000;
+        const key = bom.material_code;
+        
+        if (usageMap.has(key)) {
+          usageMap.get(key)!.quantity += usedQty;
+        } else {
+          usageMap.set(key, {
+            item_code: bom.material_code,
+            item_name: bom.material_name,
+            quantity: usedQty
+          });
+        }
+      }
+    }
+    
+    const materials = Array.from(usageMap.values());
+    
+    if (dry_run) {
+      return c.json({
+        success: true,
+        dry_run: true,
+        message: `${materials.length}건의 사용량 데이터가 복구 대상입니다.`,
+        productions_count: productions.length,
+        products_with_bom: bomMap.size,
+        sample: materials.slice(0, 10)
+      });
+    }
+    
+    // production_usage에 INSERT (기존 데이터 삭제 후)
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    let insertCount = 0;
+    let errorCount = 0;
+    
+    // 해당 날짜의 기존 데이터 삭제
+    await c.env.DB.prepare(`DELETE FROM production_usage WHERE usage_date = ?`).bind(date).run();
+    
+    for (const mat of materials) {
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO production_usage (usage_date, item_code, item_name, quantity, unit, memo, created_at)
+          VALUES (?, ?, ?, ?, 'kg', '백필 복구', ?)
+        `).bind(date, mat.item_code, mat.item_name, mat.quantity, now).run();
+        insertCount++;
+      } catch (e: any) {
+        errorCount++;
+        console.log('backfill error:', mat.item_code, e.message);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `백필 완료: ${insertCount}건 성공, ${errorCount}건 실패`,
+      date,
+      productions_count: productions.length,
+      total: materials.length,
+      inserted: insertCount,
+      errors: errorCount
+    });
+    
+  } catch (error: any) {
+    console.error('Backfill usage error:', error);
+    return c.json({ success: false, error: error.message }, 500);
   }
 });
 

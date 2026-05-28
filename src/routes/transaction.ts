@@ -1129,11 +1129,11 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
           m.expiry_days,
           COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
+          COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date < ?), 0) as before_usage,
           COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
           COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as period_inbound,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
+          COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date >= ? AND pu.usage_date <= ?), 0) as period_usage,
           COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
           COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
         FROM master m
@@ -1157,11 +1157,11 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
           s.expiry_days,
           COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '사용' AND t.trans_date < ?), 0) as before_usage,
+          COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date < ?), 0) as before_usage,
           COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '출고' AND t.trans_date < ?), 0) as before_outbound,
           COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격' AND i.inbound_date >= ? AND i.inbound_date <= ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as period_inbound,
-          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '사용' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_usage,
+          COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date >= ? AND pu.usage_date <= ?), 0) as period_usage,
           COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '출고' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_outbound,
           COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.trans_date >= ? AND t.trans_date <= ?), 0) as period_adjustment
         FROM supplies s

@@ -200,23 +200,30 @@ dailyReport.get('/reports/:id', async (c) => {
         WHERE prod_date = ?
       `).bind(reportDate).all()
       
-      // production_code + quantity로 매칭하여 LOT 할당
+      // 채널 정규화 함수 (kurly_paste -> kurly 등)
+      const normalizeChannel = (ch: string) => (ch || 'unknown').toLowerCase().replace('_paste', '').replace('_pdf', '')
+      
+      // production_code + quantity + channel로 매칭하여 LOT 할당 (채널 포함)
       const lotMap = new Map<string, any[]>()
       for (const p of productionLots.results as any[] || []) {
-        const key = `${p.product_code}_${p.quantity}`
+        // 채널 정규화 후 키 생성
+        const normalizedChannel = normalizeChannel(p.channel)
+        const key = `${p.product_code}_${p.quantity}_${normalizedChannel}`
         if (!lotMap.has(key)) {
           lotMap.set(key, [])
         }
         lotMap.get(key)!.push(p)
       }
       
-      // product_code별 모든 LOT 목록 저장 (수량 기준 최적 매칭용)
+      // product_code + channel별 모든 LOT 목록 저장 (수량 기준 최적 매칭용)
       const allLotsMap = new Map<string, any[]>()
       for (const p of productionLots.results as any[] || []) {
-        if (!allLotsMap.has(p.product_code)) {
-          allLotsMap.set(p.product_code, [])
+        const normalizedChannel = normalizeChannel(p.channel)
+        const key = `${p.product_code}_${normalizedChannel}`
+        if (!allLotsMap.has(key)) {
+          allLotsMap.set(key, [])
         }
-        allLotsMap.get(p.product_code)!.push(p)
+        allLotsMap.get(key)!.push(p)
       }
       
       // 각 품목에 LOT 할당 (같은 product_code에 대해서는 LOT 중복 사용 허용)
@@ -233,8 +240,9 @@ dailyReport.get('/reports/:id', async (c) => {
           return item
         }
         
-        // 1차 시도: production_code + quantity로 매칭
-        const key = `${item.production_code}_${item.quantity}`
+        // 1차 시도: production_code + quantity + channel로 매칭 (채널 포함)
+        const itemChannel = normalizeChannel(item.channel)
+        const key = `${item.production_code}_${item.quantity}_${itemChannel}`
         const matchedLots = lotMap.get(key) || []
         
         for (const lot of matchedLots) {
@@ -247,9 +255,10 @@ dailyReport.get('/reports/:id', async (c) => {
           }
         }
         
-        // 2차 시도: production_code로 매칭하되, 적절한 수량의 LOT 선택
+        // 2차 시도: production_code + channel로 매칭하되, 적절한 수량의 LOT 선택
         // 45개 품목이면 7개보다 90개 LOT가 더 적합 (생산량 >= 일보수량 우선)
-        const candidateLots = allLotsMap.get(item.production_code) || []
+        const candidateKey = `${item.production_code}_${itemChannel}`
+        const candidateLots = allLotsMap.get(candidateKey) || []
         if (candidateLots.length > 0) {
           // 1순위: 수량이 item.quantity 이상인 LOT 중 가장 작은 것
           const validLots = candidateLots.filter(lot => lot.quantity >= item.quantity)

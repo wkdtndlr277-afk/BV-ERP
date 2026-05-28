@@ -38401,103 +38401,170 @@ window.savePackUnitSetting = savePackUnitSetting;
 
 // 스캔된 품목 표시
 function displayBarcodeItem(item) {
-  document.getElementById('barcode-scan-result').classList.remove('hidden');
-  
-  document.getElementById('barcode-item-name').textContent = item.item_name;
-  document.getElementById('barcode-item-code').textContent = `코드: ${item.item_code}`;
-  document.getElementById('barcode-current-stock').textContent = formatNumber(item.current_stock || 0);
-  document.getElementById('barcode-stock-unit').textContent = item.unit || 'ea';
-  
-  const categoryEl = document.getElementById('barcode-item-category');
-  categoryEl.textContent = item.category || '원료';
-  if (item.category === '제품') {
-    categoryEl.className = 'inline-block px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium mb-2';
-  } else if (item.category === '부자재') {
-    categoryEl.className = 'inline-block px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm font-medium mb-2';
-  } else {
-    categoryEl.className = 'inline-block px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium mb-2';
+  const resultDiv = document.getElementById('barcode-scan-result');
+  if (!resultDiv) {
+    console.error('barcode-scan-result not found');
+    return;
   }
   
-  // 포장단위 정보 표시
-  const packUnitInfo = document.getElementById('barcode-pack-unit-info');
-  if (packUnitInfo) {
-    if (item.pack_unit && item.pack_unit > 0) {
-      const packUnitName = item.pack_unit_name || (item.unit === 'kg' ? '포대' : '단위');
-      packUnitInfo.innerHTML = `
-        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
-          <div class="flex items-center justify-between">
-            <span class="text-yellow-800 font-medium">
-              <i class="fas fa-box mr-1"></i> 포장단위: ${item.pack_unit}${item.unit}/${packUnitName}
-            </span>
-            <button onclick="showPackUnitSettingModal('${item.item_code}', '${item.item_name.replace(/'/g, "\\'")}', ${item.pack_unit || 0}, '${item.pack_unit_name || ''}', '${item.unit}')" 
-                    class="text-yellow-600 hover:text-yellow-800 text-sm">
-              <i class="fas fa-cog mr-1"></i>변경
-            </button>
+  // innerHTML로 구조가 변경되었을 수 있으므로 전체 HTML을 다시 렌더링
+  resultDiv.classList.remove('hidden');
+  resultDiv.innerHTML = `
+    <div class="bg-white rounded-xl shadow-lg p-6">
+      <div class="flex justify-between items-start mb-4">
+        <div>
+          <span id="barcode-item-category" class="inline-block px-3 py-1 ${item.category === '제품' ? 'bg-purple-100 text-purple-700' : item.category === '부자재' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'} rounded-full text-sm font-medium mb-2">${item.category || '원료'}</span>
+          <h3 id="barcode-item-name" class="text-2xl font-bold text-gray-800">${item.item_name}</h3>
+          <p id="barcode-item-code" class="text-gray-500">코드: ${item.item_code}</p>
+        </div>
+        <div class="text-right">
+          <p class="text-sm text-gray-500">현재고</p>
+          <p id="barcode-current-stock" class="text-4xl font-bold text-blue-600">${formatNumber(item.current_stock || 0)}</p>
+          <p id="barcode-stock-unit" class="text-gray-500">${item.unit || 'ea'}</p>
+        </div>
+      </div>
+      
+      <!-- 탭 버튼 -->
+      <div class="flex border-b mb-4">
+        <button onclick="switchBarcodeTab('usage')" id="barcode-tab-usage" class="flex-1 py-3 text-center font-medium border-b-2 ${barcodeCurrentTab === 'usage' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}">
+          <i class="fas fa-minus-circle mr-1"></i> 사용등록
+        </button>
+        <button onclick="switchBarcodeTab('inbound')" id="barcode-tab-inbound" class="flex-1 py-3 text-center font-medium border-b-2 ${barcodeCurrentTab === 'inbound' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}">
+          <i class="fas fa-plus-circle mr-1"></i> 입고등록
+        </button>
+        <button onclick="switchBarcodeTab('history')" id="barcode-tab-history" class="flex-1 py-3 text-center font-medium border-b-2 ${barcodeCurrentTab === 'history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}">
+          <i class="fas fa-history mr-1"></i> 이력조회
+        </button>
+      </div>
+      
+      <!-- 포장단위 정보 표시 영역 -->
+      <div id="barcode-pack-unit-info" class="${item.pack_unit && item.pack_unit > 0 ? '' : ''}">
+        ${item.pack_unit && item.pack_unit > 0 ? `
+          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
+            <div class="flex items-center justify-between">
+              <span class="text-yellow-800 font-medium">
+                <i class="fas fa-box mr-1"></i> 포장단위: ${item.pack_unit}${item.unit}/${item.pack_unit_name || (item.unit === 'kg' ? '포대' : '단위')}
+              </span>
+              <button onclick="showPackUnitSettingModal('${item.item_code}', '${(item.item_name || '').replace(/'/g, "\\'")}', ${item.pack_unit || 0}, '${item.pack_unit_name || ''}', '${item.unit}')" 
+                      class="text-yellow-600 hover:text-yellow-800 text-sm">
+                <i class="fas fa-cog mr-1"></i>변경
+              </button>
+            </div>
+          </div>
+        ` : `
+          <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-3">
+            <div class="flex items-center justify-between">
+              <span class="text-gray-600">
+                <i class="fas fa-box mr-1"></i> 포장단위 미설정
+              </span>
+              <button onclick="showPackUnitSettingModal('${item.item_code}', '${(item.item_name || '').replace(/'/g, "\\'")}', 0, '', '${item.unit}')" 
+                      class="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
+                <i class="fas fa-plus mr-1"></i>설정
+              </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">포장단위를 설정하면 스캔 시 자동 차감됩니다</p>
+          </div>
+        `}
+      </div>
+      
+      <!-- 사용등록 탭 -->
+      <div id="barcode-content-usage" class="barcode-tab-content ${barcodeCurrentTab === 'usage' ? '' : 'hidden'}">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">LOT 선택 (선입선출)</label>
+            <select id="barcode-lot-select" class="w-full p-3 border rounded-lg">
+              <option value="">자동 선택 (FIFO)</option>
+              ${(item.lots || []).map(lot => `<option value="${lot.lot_number}">${lot.lot_number} | 잔량: ${formatNumber(lot.remain_qty)} | 유효: ${lot.expiry_date || '-'}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">수량</label>
+            <div class="flex items-center gap-2">
+              <button onclick="adjustBarcodeQty(-1)" class="w-12 h-12 bg-red-100 text-red-600 rounded-full text-2xl font-bold hover:bg-red-200">-</button>
+              <input type="number" id="barcode-qty-input" class="flex-1 p-3 border rounded-lg text-center text-xl font-bold" value="${item.pack_unit && item.pack_unit > 0 ? item.pack_unit : 1}" step="0.1" min="0">
+              <button onclick="adjustBarcodeQty(1)" class="w-12 h-12 bg-green-100 text-green-600 rounded-full text-2xl font-bold hover:bg-green-200">+</button>
+            </div>
           </div>
         </div>
-      `;
-      packUnitInfo.classList.remove('hidden');
+        <div id="barcode-quick-qty-buttons" class="flex gap-2 mt-3 flex-wrap">
+          <button onclick="setBarcodeQty(0.5)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">0.5</button>
+          <button onclick="setBarcodeQty(1)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">1</button>
+          <button onclick="setBarcodeQty(5)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">5</button>
+          <button onclick="setBarcodeQty(10)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">10</button>
+          <button onclick="setBarcodeQty(25)" class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-medium hover:bg-gray-200">25</button>
+        </div>
+        <div class="mt-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">메모 (선택)</label>
+          <input type="text" id="barcode-memo-input" class="w-full p-3 border rounded-lg" placeholder="사용 용도 입력">
+        </div>
+        <button onclick="submitBarcodeUsage()" class="w-full mt-4 py-4 bg-red-500 text-white rounded-xl font-bold text-lg hover:bg-red-600">
+          <i class="fas fa-minus-circle mr-2"></i> 사용 등록 (재고 차감)
+        </button>
+      </div>
+      
+      <!-- 입고등록 탭 -->
+      <div id="barcode-content-inbound" class="barcode-tab-content ${barcodeCurrentTab === 'inbound' ? '' : 'hidden'}">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">입고 수량</label>
+            <div class="flex items-center gap-2">
+              <button onclick="adjustBarcodeQty(-1)" class="w-12 h-12 bg-red-100 text-red-600 rounded-full text-2xl font-bold hover:bg-red-200">-</button>
+              <input type="number" id="barcode-inbound-qty" class="flex-1 p-3 border rounded-lg text-center text-xl font-bold" value="${item.pack_unit && item.pack_unit > 0 ? item.pack_unit : 1}" step="0.1" min="0">
+              <button onclick="adjustBarcodeQty(1)" class="w-12 h-12 bg-green-100 text-green-600 rounded-full text-2xl font-bold hover:bg-green-200">+</button>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">유통기한 (선택)</label>
+            <input type="date" id="barcode-expiry-date" class="w-full p-3 border rounded-lg">
+          </div>
+        </div>
+        <div class="mt-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">메모 (선택)</label>
+          <input type="text" id="barcode-inbound-memo" class="w-full p-3 border rounded-lg" placeholder="입고 메모 입력">
+        </div>
+        <button onclick="submitBarcodeInbound()" class="w-full mt-4 py-4 bg-green-500 text-white rounded-xl font-bold text-lg hover:bg-green-600">
+          <i class="fas fa-plus-circle mr-2"></i> 입고 등록 (재고 증가)
+        </button>
+      </div>
+      
+      <!-- 이력조회 탭 -->
+      <div id="barcode-content-history" class="barcode-tab-content ${barcodeCurrentTab === 'history' ? '' : 'hidden'}">
+        <div id="barcode-history-list" class="space-y-2 max-h-96 overflow-y-auto">
+          <p class="text-center text-gray-500 py-4">이력을 조회하려면 품목을 먼저 스캔하세요</p>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // LOT 목록 표시
+  const lotListDiv = document.getElementById('barcode-lot-list');
+  if (lotListDiv) {
+    if (item.lots && item.lots.length > 0) {
+      lotListDiv.classList.remove('hidden');
+      const tbody = document.getElementById('barcode-lot-tbody');
+      if (tbody) {
+        tbody.innerHTML = item.lots.map((lot, idx) => `
+          <tr class="border-b hover:bg-gray-50">
+            <td class="px-4 py-3 font-bold text-blue-600">${idx + 1}</td>
+            <td class="px-4 py-3 font-mono">${lot.lot_number}</td>
+            <td class="px-4 py-3">${lot.inbound_date || '-'}</td>
+            <td class="px-4 py-3">${lot.expiry_date || '-'}</td>
+            <td class="px-4 py-3 text-right font-bold">${formatNumber(lot.remain_qty)}</td>
+          </tr>
+        `).join('');
+      }
     } else {
-      packUnitInfo.innerHTML = `
-        <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-3">
-          <div class="flex items-center justify-between">
-            <span class="text-gray-600">
-              <i class="fas fa-box mr-1"></i> 포장단위 미설정
-            </span>
-            <button onclick="showPackUnitSettingModal('${item.item_code}', '${item.item_name.replace(/'/g, "\\'")}', 0, '', '${item.unit}')" 
-                    class="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
-              <i class="fas fa-plus mr-1"></i>설정
-            </button>
-          </div>
-          <p class="text-xs text-gray-500 mt-1">포장단위를 설정하면 스캔 시 자동 차감됩니다</p>
-        </div>
-      `;
-      packUnitInfo.classList.remove('hidden');
+      lotListDiv.classList.add('hidden');
     }
   }
   
-  // LOT 목록 표시
-  const lotSelect = document.getElementById('barcode-lot-select');
-  lotSelect.innerHTML = '<option value="">자동 선택 (FIFO)</option>';
-  
-  if (item.lots && item.lots.length > 0) {
-    item.lots.forEach((lot, idx) => {
-      lotSelect.innerHTML += `<option value="${lot.lot_number}">${lot.lot_number} | 잔량: ${formatNumber(lot.remain_qty)} | 유효: ${lot.expiry_date || '-'}</option>`;
-    });
-    
-    // LOT 테이블 표시
-    document.getElementById('barcode-lot-list').classList.remove('hidden');
-    const tbody = document.getElementById('barcode-lot-tbody');
-    tbody.innerHTML = item.lots.map((lot, idx) => `
-      <tr class="border-b hover:bg-gray-50">
-        <td class="px-4 py-3 font-bold text-blue-600">${idx + 1}</td>
-        <td class="px-4 py-3 font-mono">${lot.lot_number}</td>
-        <td class="px-4 py-3">${lot.inbound_date || '-'}</td>
-        <td class="px-4 py-3">${lot.expiry_date || '-'}</td>
-        <td class="px-4 py-3 text-right font-bold">${formatNumber(lot.remain_qty)}</td>
-      </tr>
-    `).join('');
-  } else {
-    document.getElementById('barcode-lot-list').classList.add('hidden');
+  // 이력 탭이면 이력 로드
+  if (barcodeCurrentTab === 'history') {
+    loadBarcodeHistory(item.item_code);
   }
-  
-  // 수량 초기화 - pack_unit이 있으면 해당 값으로 설정
-  const defaultQty = (item.pack_unit && item.pack_unit > 0) ? item.pack_unit : 1;
-  document.getElementById('barcode-qty-input').value = defaultQty;
-  document.getElementById('barcode-memo-input').value = '';
-  
-  // 입고 수량도 pack_unit 기본값 설정
-  const inboundQtyInput = document.getElementById('barcode-inbound-qty');
-  if (inboundQtyInput) {
-    inboundQtyInput.value = defaultQty;
-  }
-  
-  // 빠른수량 버튼 동적 생성 (포장단위 기준)
-  updateBarcodeQuickQtyButtons(item.pack_unit, item.unit);
-  
-  // 이력 조회
-  loadBarcodeHistory(item.item_code);
 }
+
+// LOT 선택 변경 핸들러
 
 // 포장단위 기준 빠른수량 버튼 업데이트
 function updateBarcodeQuickQtyButtons(packUnit, unit) {

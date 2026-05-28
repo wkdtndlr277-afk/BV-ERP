@@ -1381,8 +1381,11 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       const lots = lotsByItem[item.item_code] || [];
       totalLotCount += lots.length;
       
+      // 정제수 여부 확인 (재고 개념 없음 - 매일 정수기에서 공급)
+      const isNoStockItem = item.item_name?.includes('정제수');
+      
       // 정방향 계산: 월초재고 = 기간 이전 입고 - 사용 - 출고 + 조정
-      let carryOver = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
+      let carryOver = isNoStockItem ? 0 : (item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment);
       
       // 마이너스 월초재고 방지: 로트 합계와 비교하여 보정
       const lotCarryOverSum = lots.reduce((sum: number, lot: any) => sum + lot.carry_over, 0);
@@ -1424,41 +1427,48 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       const calculatedClosing = carryOver + item.period_inbound - item.period_usage - item.period_outbound + item.period_adjustment;
       
       // LOT 잔량이 있으면 LOT 기준, 없으면 계산값 또는 current_stock 사용
-      let closingQty = lotRemainTotal > 0 ? lotRemainTotal : 
+      // 정제수는 재고 개념 없음 - 항상 0
+      let closingQty = isNoStockItem ? 0 : (
+                       lotRemainTotal > 0 ? lotRemainTotal : 
                        item.current_stock > 0 ? item.current_stock :
-                       Math.max(0, calculatedClosing);
+                       Math.max(0, calculatedClosing));
       
       return {
         item_code: item.item_code,
         item_name: item.item_name,
         category: item.category,
         unit: item.unit,
-        current_stock: item.current_stock,
+        current_stock: isNoStockItem ? 0 : item.current_stock,
         expiry_days: item.expiry_days,
-        lot_remain_total: item.lot_remain_total,
+        lot_remain_total: isNoStockItem ? 0 : item.lot_remain_total,
+        is_no_stock: isNoStockItem, // 정제수 등 재고 개념 없는 품목 표시
         summary: {
-          carry_over: carryOver,
-          period_inbound: item.period_inbound,
-          period_usage: item.period_usage,
-          period_outbound: item.period_outbound,
-          period_adjustment: item.period_adjustment,
-          closing_qty: closingQty,
-          calculated_closing: calculatedClosing // 트랜잭션 기반 계산값 (참고용)
+          carry_over: isNoStockItem ? null : carryOver, // 정제수: null로 표시
+          period_inbound: isNoStockItem ? 0 : item.period_inbound,
+          period_usage: item.period_usage, // 사용량은 표시
+          period_outbound: isNoStockItem ? 0 : item.period_outbound,
+          period_adjustment: isNoStockItem ? 0 : item.period_adjustment,
+          closing_qty: isNoStockItem ? null : closingQty, // 정제수: null로 표시
+          calculated_closing: isNoStockItem ? null : calculatedClosing
         },
-        lot_count: lots.length,
-        lots
+        lot_count: isNoStockItem ? 0 : lots.length,
+        lots: isNoStockItem ? [] : lots // 정제수는 LOT 없음
       };
     });
     
-    // 전체 요약
+    // 전체 요약 (정제수 등 재고 없는 품목은 재고 합계에서 제외)
     const summary = itemData.reduce((acc: any, item: any) => {
-      acc.carry_over += item.summary.carry_over;
-      acc.period_inbound += item.summary.period_inbound;
-      acc.period_usage += item.summary.period_usage;
-      acc.period_outbound += item.summary.period_outbound;
-      acc.period_adjustment += item.summary.period_adjustment;
-      acc.closing_qty += item.summary.closing_qty;
-      acc.lot_remain_total += item.lot_remain_total;
+      // 재고 개념 없는 품목(정제수)은 사용량만 합산, 재고 관련 수치는 제외
+      if (!item.is_no_stock) {
+        acc.carry_over += item.summary.carry_over || 0;
+        acc.period_inbound += item.summary.period_inbound || 0;
+        acc.period_outbound += item.summary.period_outbound || 0;
+        acc.period_adjustment += item.summary.period_adjustment || 0;
+        acc.closing_qty += item.summary.closing_qty || 0;
+        acc.lot_remain_total += item.lot_remain_total || 0;
+      }
+      // 사용량은 모든 품목 합산 (정제수 포함)
+      acc.period_usage += item.summary.period_usage || 0;
       return acc;
     }, {
       carry_over: 0,

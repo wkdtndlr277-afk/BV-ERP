@@ -459,8 +459,8 @@ dailyReport.get('/reports/:id', async (c) => {
             }
           }
           
-          // 원재료 집계
-          const allMaterials = new Map<string, { material_code: string, material_name: string, quantity: number, unit: string }>()
+          // 원재료 집계 - 모든 수량을 g로 통일
+          const allMaterials = new Map<string, { material_code: string, material_name: string, quantity_in_grams: number }>()
           const bomMap = new Map<string, any[]>()
           
           for (const row of allBomResults) {
@@ -470,8 +470,15 @@ dailyReport.get('/reports/:id', async (c) => {
             bomMap.get(row.production_code)!.push(row)
           }
           
+          // 단위를 g로 변환하는 헬퍼 함수
+          const convertToGrams = (qty: number, unit: string): number => {
+            const unitLower = (unit || 'g').toLowerCase()
+            if (unitLower === 'kg') return qty * 1000
+            return qty // g, ea 등은 그대로
+          }
+          
           // 원료 코드 기반 집계 (코드가 있으면 코드로, 없으면 이름으로)
-          // material_code 우선, 없으면 material_name으로 키 생성
+          // 단위를 키에서 제외하여 같은 원료는 무조건 합산
           for (const item of itemsList) {
             const bomItems = bomMap.get(item.production_code) || []
             const boxQuantity = item.barcode ? (barcodeBoxQtyMap.get(item.barcode) || 1) : 1
@@ -479,14 +486,17 @@ dailyReport.get('/reports/:id', async (c) => {
             
             for (const bom of bomItems) {
               const requiredQty = (bom.quantity || 0) * actualItemCount
-              // 코드가 있으면 코드로, 없으면 이름으로 키 생성 (중복 방지)
+              // g로 변환
+              const requiredQtyInGrams = convertToGrams(requiredQty, bom.unit || 'g')
+              
+              // 코드가 있으면 코드로, 없으면 이름으로 키 생성 (단위 제외)
               const materialCode = bom.material_code || ''
               const materialName = bom.material_name || ''
-              const key = materialCode ? `CODE:${materialCode}|${bom.unit || 'g'}` : `NAME:${materialName}|${bom.unit || 'g'}`
+              const key = materialCode ? `CODE:${materialCode}` : `NAME:${materialName}`
               
               const existing = allMaterials.get(key)
               if (existing) {
-                existing.quantity += requiredQty
+                existing.quantity_in_grams += requiredQtyInGrams
                 // 코드가 비어있던 항목에 코드가 있으면 업데이트
                 if (!existing.material_code && materialCode) {
                   existing.material_code = materialCode
@@ -495,18 +505,18 @@ dailyReport.get('/reports/:id', async (c) => {
                 allMaterials.set(key, { 
                   material_code: materialCode, 
                   material_name: materialName,
-                  quantity: requiredQty, 
-                  unit: bom.unit || 'g' 
+                  quantity_in_grams: requiredQtyInGrams
                 })
               }
             }
           }
           
+          // 모든 원재료를 g 단위로 통일하여 출력
           materials_summary = Array.from(allMaterials.values()).map(val => ({ 
             material_code: val.material_code || '', 
             material_name: val.material_name || '', 
-            total_quantity: val.quantity, 
-            unit: val.unit || 'g',
+            total_quantity: val.quantity_in_grams, 
+            unit: 'g',  // 항상 g로 통일
             lots: []
           })).sort((a, b) => (a.material_name || '').localeCompare(b.material_name || ''))
         }

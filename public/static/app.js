@@ -38452,6 +38452,76 @@ async function savePackUnitSetting(itemCode) {
 window.showPackUnitSettingModal = showPackUnitSettingModal;
 window.savePackUnitSetting = savePackUnitSetting;
 
+// 인라인 포장단위 빠른 설정
+function setInlinePackUnit(value) {
+  const input = document.getElementById('inline-pack-unit-value');
+  if (input) {
+    input.value = value;
+    // 자동 저장
+    if (barcodeCurrentItem) {
+      quickSavePackUnit(barcodeCurrentItem.item_code);
+    }
+  }
+}
+window.setInlinePackUnit = setInlinePackUnit;
+
+// 인라인 포장단위 빠른 저장
+async function quickSavePackUnit(itemCode) {
+  const packUnitInput = document.getElementById('inline-pack-unit-value');
+  const packUnitNameInput = document.getElementById('inline-pack-unit-name');
+  
+  if (!packUnitInput) return;
+  
+  const packUnit = parseFloat(packUnitInput.value) || 0;
+  const packUnitName = packUnitNameInput?.value || '';
+  
+  try {
+    const response = await axios.put(`/api/master/${itemCode}`, {
+      pack_unit: packUnit > 0 ? packUnit : null,
+      pack_unit_name: packUnitName || null
+    });
+    
+    if (response.data.success) {
+      // 현재 아이템 정보 업데이트
+      if (barcodeCurrentItem) {
+        barcodeCurrentItem.pack_unit = packUnit > 0 ? packUnit : null;
+        barcodeCurrentItem.pack_unit_name = packUnitName || null;
+      }
+      
+      // UI 업데이트 - 상태 뱃지 변경
+      const badge = document.querySelector('#barcode-pack-unit-info span.rounded');
+      if (badge) {
+        if (packUnit > 0) {
+          badge.className = 'text-xs px-2 py-1 rounded bg-green-100 text-green-700';
+          badge.textContent = '설정됨';
+        } else {
+          badge.className = 'text-xs px-2 py-1 rounded bg-gray-200 text-gray-600';
+          badge.textContent = '미설정';
+        }
+      }
+      
+      // 수량 입력 필드 기본값 업데이트
+      const qtyInput = document.getElementById('barcode-qty-input');
+      const inboundQtyInput = document.getElementById('barcode-inbound-qty');
+      if (packUnit > 0) {
+        if (qtyInput) qtyInput.value = packUnit;
+        if (inboundQtyInput) inboundQtyInput.value = packUnit;
+      }
+      
+      // 빠른수량 버튼 업데이트
+      updateQuickQtyButtons();
+      
+      showToast(`포장단위 저장됨: ${packUnit > 0 ? packUnit + (barcodeCurrentItem?.unit || 'kg') : '해제'}`, 'success');
+    } else {
+      showToast(response.data.error || '저장 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Quick pack unit save error:', error);
+    showToast('저장 실패', 'error');
+  }
+}
+window.quickSavePackUnit = quickSavePackUnit;
+
 // 스캔된 품목 표시
 function displayBarcodeItem(item) {
   const resultDiv = document.getElementById('barcode-scan-result');
@@ -38490,34 +38560,51 @@ function displayBarcodeItem(item) {
         </button>
       </div>
       
-      <!-- 포장단위 정보 표시 영역 -->
-      <div id="barcode-pack-unit-info" class="${item.pack_unit && item.pack_unit > 0 ? '' : ''}">
-        ${item.pack_unit && item.pack_unit > 0 ? `
-          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-3">
-            <div class="flex items-center justify-between">
-              <span class="text-yellow-800 font-medium">
-                <i class="fas fa-box mr-1"></i> 포장단위: ${item.pack_unit}${item.unit}/${item.pack_unit_name || (item.unit === 'kg' ? '포대' : '단위')}
-              </span>
-              <button onclick="showPackUnitSettingModal('${item.item_code}', '${(item.item_name || '').replace(/'/g, "\\'")}', ${item.pack_unit || 0}, '${item.pack_unit_name || ''}', '${item.unit}')" 
-                      class="text-yellow-600 hover:text-yellow-800 text-sm">
-                <i class="fas fa-cog mr-1"></i>변경
-              </button>
+      <!-- 포장단위 정보 표시 및 인라인 수정 영역 -->
+      <div id="barcode-pack-unit-info" class="mb-3">
+        <div class="bg-gradient-to-r ${item.pack_unit && item.pack_unit > 0 ? 'from-yellow-50 to-orange-50 border-yellow-300' : 'from-gray-50 to-blue-50 border-blue-300'} border-2 rounded-xl p-4">
+          <div class="flex items-center justify-between mb-3">
+            <span class="font-bold text-gray-800">
+              <i class="fas fa-box mr-2 ${item.pack_unit && item.pack_unit > 0 ? 'text-yellow-600' : 'text-blue-600'}"></i>포장단위 설정
+            </span>
+            <span class="text-xs px-2 py-1 rounded ${item.pack_unit && item.pack_unit > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}">
+              ${item.pack_unit && item.pack_unit > 0 ? '설정됨' : '미설정'}
+            </span>
+          </div>
+          
+          <!-- 인라인 수정 폼 -->
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">수량 (${item.unit})</label>
+              <input type="number" id="inline-pack-unit-value" value="${item.pack_unit || ''}" step="0.01" min="0"
+                     class="w-full border-2 border-gray-300 rounded-lg px-3 py-2 text-center font-bold text-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                     placeholder="예: 25"
+                     onchange="quickSavePackUnit('${item.item_code}')">
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">단위명</label>
+              <input type="text" id="inline-pack-unit-name" value="${item.pack_unit_name || ''}"
+                     class="w-full border-2 border-gray-300 rounded-lg px-3 py-2 text-center focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                     placeholder="포, 팩, 박스"
+                     onchange="quickSavePackUnit('${item.item_code}')">
             </div>
           </div>
-        ` : `
-          <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-3">
-            <div class="flex items-center justify-between">
-              <span class="text-gray-600">
-                <i class="fas fa-box mr-1"></i> 포장단위 미설정
-              </span>
-              <button onclick="showPackUnitSettingModal('${item.item_code}', '${(item.item_name || '').replace(/'/g, "\\'")}', 0, '', '${item.unit}')" 
-                      class="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
-                <i class="fas fa-plus mr-1"></i>설정
-              </button>
-            </div>
-            <p class="text-xs text-gray-500 mt-1">포장단위를 설정하면 스캔 시 자동 차감됩니다</p>
+          
+          <!-- 빠른 설정 버튼 -->
+          <div class="flex flex-wrap gap-2 mt-3">
+            <button onclick="setInlinePackUnit(1)" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 text-sm font-medium">1${item.unit}</button>
+            <button onclick="setInlinePackUnit(5)" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 text-sm font-medium">5${item.unit}</button>
+            <button onclick="setInlinePackUnit(10)" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 text-sm font-medium">10${item.unit}</button>
+            <button onclick="setInlinePackUnit(18)" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 text-sm font-medium">18${item.unit}</button>
+            <button onclick="setInlinePackUnit(20)" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 text-sm font-medium">20${item.unit}</button>
+            <button onclick="setInlinePackUnit(25)" class="px-3 py-1.5 bg-white border border-gray-300 rounded-lg hover:bg-gray-100 text-sm font-medium">25${item.unit}</button>
           </div>
-        `}
+          
+          <p class="text-xs text-gray-500 mt-2">
+            <i class="fas fa-info-circle mr-1"></i>
+            포장단위 설정 시 바코드 스캔하면 자동으로 해당 수량이 차감됩니다
+          </p>
+        </div>
       </div>
       
       <!-- 사용등록 탭 -->

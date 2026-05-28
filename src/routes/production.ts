@@ -389,8 +389,8 @@ productionRoutes.post('/', async (c) => {
   
   const bomItems = bomResult.results || [];
   
-  // 재고 확인 (BOM이 있는 경우만)
-  const stockErrors: string[] = [];
+  // 재고 확인 (BOM이 있는 경우만) - 경고만 표시하고 진행 허용
+  const stockWarnings: string[] = [];
   for (const bom of bomItems) {
     // 매칭된 실제 아이템 코드 사용 (RM/R 코드 자동 매칭)
     const actualItemCode = bom.matched_item_code || bom.item_code;
@@ -399,18 +399,15 @@ productionRoutes.post('/', async (c) => {
     const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
     
     if (bom.current_stock < requiredKg) {
-      stockErrors.push(`${bom.item_name || actualItemCode}: 필요 ${requiredKg.toFixed(2)}kg, 재고 ${bom.current_stock.toFixed(2)}kg`);
+      stockWarnings.push(`${bom.item_name || actualItemCode}: 필요 ${requiredKg.toFixed(2)}kg, 재고 ${bom.current_stock.toFixed(2)}kg`);
     }
     // 매칭된 코드를 BOM 객체에 저장하여 나중에 사용
     bom.actualItemCode = actualItemCode;
   }
   
-  if (stockErrors.length > 0) {
-    return c.json({ 
-      success: false, 
-      error: '원재료 재고가 부족합니다.',
-      details: stockErrors
-    }, 400);
+  // 재고 부족 시 경고만 로깅 (생산 진행은 허용)
+  if (stockWarnings.length > 0) {
+    console.log(`[생산등록] 재고 부족 경고 - ${product_code}: ${stockWarnings.join(', ')}`);
   }
   
   // 제품 LOT 자동 생성 (없으면)
@@ -639,11 +636,14 @@ productionRoutes.post('/', async (c) => {
     
     return c.json({ 
       success: true, 
-      message: '생산이 등록되었습니다.',
+      message: stockWarnings.length > 0 
+        ? `생산이 등록되었습니다. (재고 부족 경고: ${stockWarnings.length}건)`
+        : '생산이 등록되었습니다.',
       data: {
         production_id: productionId,
         lot_number: productLot,
-        materials_used: bomItems.length
+        materials_used: bomItems.length,
+        stock_warnings: stockWarnings.length > 0 ? stockWarnings : undefined
       }
     });
     

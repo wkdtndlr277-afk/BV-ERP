@@ -21436,47 +21436,65 @@ async function registerDailyReportById(reportId) {
       item.memo = `생산일보 자동등록 (${report.report_no})`;
     });
     
-    // 30개씩 나누어 처리 (Cloudflare Workers 타임아웃 방지)
-    const BATCH_SIZE = 30;
+    // 15개씩 나누어 처리 (Cloudflare Workers 타임아웃 방지 - 30개에서 축소)
+    const BATCH_SIZE = 15;
     let totalSuccess = 0;
     let totalFail = 0;
     let totalSkipped = 0;
+    const totalBatches = Math.ceil(batchItems.length / BATCH_SIZE);
     
     for (let i = 0; i < batchItems.length; i += BATCH_SIZE) {
       const chunk = batchItems.slice(i, i + BATCH_SIZE);
+      const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
       const progress = Math.min(i + BATCH_SIZE, batchItems.length);
-      showToast(`생산등록 처리 중... (${progress}/${batchItems.length})`, 'info');
+      showToast(`생산등록 처리 중... (${currentBatch}/${totalBatches} 배치, ${progress}/${batchItems.length}건)`, 'info');
       
       try {
+        // 타임아웃 30초 설정
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000);
+        
         const registerResult = await api('/production/batch', 'POST', {
           production_date: report.report_date,
           items: chunk
         });
         
+        clearTimeout(timeoutId);
+        
         if (registerResult.success && registerResult.data) {
           totalSuccess += registerResult.data.success || 0;
           totalFail += registerResult.data.fail || 0;
           totalSkipped += registerResult.data.skipped || 0;
+          console.log(`배치 ${currentBatch}/${totalBatches} 완료: 성공=${registerResult.data.success}, 실패=${registerResult.data.fail}`);
         } else if (registerResult.already_registered) {
           totalSkipped += registerResult.already_registered;
+          console.log(`배치 ${currentBatch}/${totalBatches}: ${registerResult.already_registered}건 이미 등록됨`);
         } else {
           totalFail += chunk.length;
-          console.error('배치 등록 실패:', registerResult.error);
+          console.error(`배치 ${currentBatch}/${totalBatches} 등록 실패:`, registerResult.error);
         }
       } catch (chunkError) {
         totalFail += chunk.length;
-        console.error('배치 처리 오류:', chunkError);
+        console.error(`배치 ${currentBatch}/${totalBatches} 처리 오류:`, chunkError);
+        // 타임아웃 오류인 경우 사용자에게 알림
+        if (chunkError.name === 'AbortError') {
+          showToast(`배치 ${currentBatch} 타임아웃 - 계속 진행합니다...`, 'warning');
+        }
       }
       
-      // 짧은 대기 (서버 부하 방지)
+      // 배치 간 대기 시간 증가 (500ms → 1000ms)
       if (i + BATCH_SIZE < batchItems.length) {
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
     
     // 생산일보 상태 변경 (하나라도 성공하면)
     if (totalSuccess > 0 || totalSkipped > 0) {
-      await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'registered' });
+      try {
+        await api(`/daily-report/reports/${reportId}/status`, 'PUT', { status: 'registered' });
+      } catch (statusError) {
+        console.error('상태 변경 실패:', statusError);
+      }
       showToast(`생산등록 완료! (성공: ${totalSuccess}건, 스킵: ${totalSkipped}건, 실패: ${totalFail}건)`, 'success');
     } else {
       showToast(`생산등록 실패 (실패: ${totalFail}건)`, 'error');

@@ -1111,22 +1111,35 @@ productionRoutes.post('/batch', async (c) => {
     }
     
     // 7단계: 생산일보 품목에 LOT 업데이트 (해당 날짜의 생산일보 품목)
+    // 최적화: report_id를 먼저 조회하여 서브쿼리 제거
     try {
-      const dailyItemUpdates = preparedItems.map(p =>
-        c.env.DB.prepare(`
-          UPDATE production_daily_items 
-          SET lot_number = ?
-          WHERE production_code = ? 
-            AND quantity = ?
-            AND (lot_number IS NULL OR lot_number = '')
-            AND report_id IN (
-              SELECT id FROM production_daily_report WHERE report_date = ?
-            )
-        `).bind(p.productLot, p.item.product_code, p.item.quantity, productionDate)
-      );
+      const reportIds = await c.env.DB.prepare(`
+        SELECT id FROM production_daily_report WHERE report_date = ?
+      `).bind(productionDate).all<{id: number}>();
       
-      if (dailyItemUpdates.length > 0) {
-        await c.env.DB.batch(dailyItemUpdates);
+      if (reportIds.results && reportIds.results.length > 0) {
+        const reportIdList = reportIds.results.map(r => r.id);
+        const reportIdPlaceholders = reportIdList.map(() => '?').join(',');
+        
+        // 5개씩 배치로 업데이트 (너무 많으면 타임아웃)
+        const BATCH_LOT_UPDATE = 5;
+        for (let i = 0; i < preparedItems.length; i += BATCH_LOT_UPDATE) {
+          const batch = preparedItems.slice(i, i + BATCH_LOT_UPDATE);
+          const dailyItemUpdates = batch.map(p =>
+            c.env.DB.prepare(`
+              UPDATE production_daily_items 
+              SET lot_number = ?
+              WHERE production_code = ? 
+                AND quantity = ?
+                AND (lot_number IS NULL OR lot_number = '')
+                AND report_id IN (${reportIdPlaceholders})
+            `).bind(p.productLot, p.item.product_code, p.item.quantity, ...reportIdList)
+          );
+          
+          if (dailyItemUpdates.length > 0) {
+            await c.env.DB.batch(dailyItemUpdates);
+          }
+        }
       }
     } catch (e) {
       console.error('Daily item LOT update error:', e);

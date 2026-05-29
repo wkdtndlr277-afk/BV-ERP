@@ -148,6 +148,7 @@ bomRoutes.use('*', async (c, next) => {
 
 // BOM 목록 조회 (제품별)
 // SF 계열은 semi_finished_items, 일반 원료는 master에서 이름 조회
+// ★ 재고는 inbound.remain_qty 합계 사용 (수불부와 동일 기준)
 bomRoutes.get('/', async (c) => {
   const productCode = c.req.query('product_code');
   
@@ -155,7 +156,10 @@ bomRoutes.get('/', async (c) => {
     SELECT b.*, 
            COALESCE(m.item_name, sf.item_name) as item_name,
            COALESCE(m.unit, sf.unit) as item_unit,
-           m.current_stock as item_stock,
+           COALESCE(
+             (SELECT SUM(remain_qty) FROM inbound i WHERE i.item_code = b.item_code AND i.quality_status = '합격' AND i.remain_qty > 0),
+             0
+           ) as item_stock,
            p.item_name as product_name
     FROM bom b
     LEFT JOIN master m ON b.item_code = m.item_code
@@ -267,10 +271,40 @@ bomRoutes.get('/product/:product_code', async (c) => {
     const isSelfMade = selfMadeMaterials.includes(actualItemCode) || 
       selfMadeKeywords.some(kw => (master?.item_name || '').includes(kw));
     
+    // ★ 실제 재고 = inbound.remain_qty 합계 (수불부와 동일한 기준)
     // 자체생산 원료가 아닌 경우에만 입고 정보 조회
     let supplierInfo: any = null;
+    let actualStock = 0; // LOT 잔량 합계
+    
     if (!isSelfMade) {
-      // 최근 입고 LOT에서 거래처 정보 조회 (FEFO 순서로 첫번째)
+      // 1) LOT 잔량 합계 조회 (실제 재고)
+      const stockResult = await c.env.DB.prepare(`
+        SELECT COALESCE(SUM(remain_qty), 0) as total_remain 
+        FROM inbound 
+        WHERE item_code = ? AND quality_status = '합격' AND remain_qty > 0
+      `).bind(actualItemCode).first<{total_remain: number}>();
+      
+      actualStock = stockResult?.total_remain || 0;
+      
+      // 없으면 다른 형식 코드로 시도
+      if (actualStock === 0) {
+        let altCode = '';
+        if (actualItemCode.startsWith('RM')) {
+          altCode = 'R' + actualItemCode.substring(2);
+        } else if (actualItemCode.startsWith('R') && !actualItemCode.startsWith('RM')) {
+          altCode = 'RM' + actualItemCode.substring(1);
+        }
+        if (altCode) {
+          const altStockResult = await c.env.DB.prepare(`
+            SELECT COALESCE(SUM(remain_qty), 0) as total_remain 
+            FROM inbound 
+            WHERE item_code = ? AND quality_status = '합격' AND remain_qty > 0
+          `).bind(altCode).first<{total_remain: number}>();
+          actualStock = altStockResult?.total_remain || 0;
+        }
+      }
+      
+      // 2) 최근 입고 LOT에서 거래처 정보 조회 (FEFO 순서로 첫번째)
       supplierInfo = await c.env.DB.prepare(`
         SELECT supplier, expiry_date FROM inbound 
         WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
@@ -299,7 +333,8 @@ bomRoutes.get('/product/:product_code', async (c) => {
       ...item,
       item_name: master?.item_name || null,
       item_unit: master?.unit || item.unit,
-      current_stock: master?.current_stock ?? 0,
+      // ★ 수불부와 동일하게 LOT 잔량 합계 사용 (기존: master?.current_stock)
+      current_stock: actualStock,
       supplier: isSelfMade ? '자체제작' : (supplierInfo?.supplier || null),
       expiry_date: supplierInfo?.expiry_date || null,
       bom_table: bomTable // 어떤 테이블에서 조회했는지

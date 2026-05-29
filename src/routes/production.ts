@@ -1111,35 +1111,53 @@ productionRoutes.post('/batch', async (c) => {
     }
     
     // 7단계: 생산일보 품목에 LOT 업데이트 (해당 날짜의 생산일보 품목)
-    // 최적화: report_id를 먼저 조회하여 서브쿼리 제거
+    // ★ 핵심 수정: 같은 제품/수량이 여러 개일 수 있으므로 id 기반으로 1개씩 업데이트
     try {
-      const reportIds = await c.env.DB.prepare(`
-        SELECT id FROM production_daily_report WHERE report_date = ?
-      `).bind(productionDate).all<{id: number}>();
+      // 해당 날짜의 모든 생산일보 품목 중 LOT가 없는 것들 조회
+      const pendingItems = await c.env.DB.prepare(`
+        SELECT pdi.id, pdi.production_code, pdi.quantity
+        FROM production_daily_items pdi
+        JOIN production_daily_report pdr ON pdi.report_id = pdr.id
+        WHERE pdr.report_date = ?
+          AND (pdi.lot_number IS NULL OR pdi.lot_number = '')
+        ORDER BY pdi.id ASC
+      `).bind(productionDate).all<{id: number, production_code: string, quantity: number}>();
       
-      if (reportIds.results && reportIds.results.length > 0) {
-        const reportIdList = reportIds.results.map(r => r.id);
-        const reportIdPlaceholders = reportIdList.map(() => '?').join(',');
+      if (pendingItems.results && pendingItems.results.length > 0) {
+        // 제품코드+수량별로 그룹화된 LOT 목록 생성
+        const lotByCodeQty = new Map<string, string[]>();
+        for (const p of preparedItems) {
+          const key = `${p.item.product_code}|${p.item.quantity}`;
+          if (!lotByCodeQty.has(key)) {
+            lotByCodeQty.set(key, []);
+          }
+          lotByCodeQty.get(key)!.push(p.productLot);
+        }
         
-        // 5개씩 배치로 업데이트 (너무 많으면 타임아웃)
-        const BATCH_LOT_UPDATE = 5;
-        for (let i = 0; i < preparedItems.length; i += BATCH_LOT_UPDATE) {
-          const batch = preparedItems.slice(i, i + BATCH_LOT_UPDATE);
-          const dailyItemUpdates = batch.map(p =>
-            c.env.DB.prepare(`
-              UPDATE production_daily_items 
-              SET lot_number = ?
-              WHERE production_code = ? 
-                AND quantity = ?
-                AND (lot_number IS NULL OR lot_number = '')
-                AND report_id IN (${reportIdPlaceholders})
-            `).bind(p.productLot, p.item.product_code, p.item.quantity, ...reportIdList)
-          );
-          
-          if (dailyItemUpdates.length > 0) {
-            await c.env.DB.batch(dailyItemUpdates);
+        // 각 pending 품목에 LOT 할당 (같은 제품/수량이면 순서대로 매칭)
+        const updates: any[] = [];
+        for (const item of pendingItems.results) {
+          const key = `${item.production_code}|${item.quantity}`;
+          const lots = lotByCodeQty.get(key);
+          if (lots && lots.length > 0) {
+            const lotNumber = lots.shift()!; // 첫 번째 LOT 사용 후 제거
+            updates.push(
+              c.env.DB.prepare(`
+                UPDATE production_daily_items SET lot_number = ? WHERE id = ?
+              `).bind(lotNumber, item.id)
+            );
           }
         }
+        
+        // 10개씩 배치로 업데이트
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < updates.length; i += BATCH_SIZE) {
+          const batch = updates.slice(i, i + BATCH_SIZE);
+          if (batch.length > 0) {
+            await c.env.DB.batch(batch);
+          }
+        }
+        console.log(`[production/batch] LOT 업데이트: ${updates.length}건`);
       }
     } catch (e) {
       console.error('Daily item LOT update error:', e);

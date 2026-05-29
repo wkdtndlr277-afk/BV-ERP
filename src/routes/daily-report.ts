@@ -790,19 +790,25 @@ dailyReport.post('/reports/from-order', async (c) => {
     const productionItemInfo = productionMap.get(productionCode)
     const hasBom = (bomItems.length > 0 || (productionItemInfo?.bom_count || 0) > 0) ? 1 : 0
     
-    // ★ 소비기한 계산 우선순위:
-    // 1) PDF에서 추출한 소비기한
-    // 2) 바코드별 소비기한 설정 (production_barcodes.expiry_days) - 채널별 다를 수 있음
-    // 3) production_code별 바코드 소비기한 (바코드 매칭 실패 시 fallback)
-    // 4) 제품 기본 설정 (production_items.shelf_life_days)
-    const barcodeExpiryDays = productionInfo?.barcode_expiry_days || null
-    const productionCodeExpiryDays = productionExpiryMap.get(productionCode) || null  // ★ fallback
-    const shelfLifeDays = productionInfo?.shelf_life_days || productionItemInfo?.shelf_life_days || null
-    const effectiveExpiryDays = barcodeExpiryDays || productionCodeExpiryDays || shelfLifeDays
-    
     // 채널 먼저 결정 (소비기한 계산에 필요)
     const itemChannel = item.channel || channel || 'unknown'
     const isCoupang = itemChannel.toLowerCase().includes('coupang') || itemChannel.includes('쿠팡')
+    
+    // ★ 소비기한 계산 우선순위:
+    // 1) PDF에서 추출한 소비기한
+    // 2) 쿠팡 채널: production_items.shelf_life_days 우선 (바코드가 냉동용 90일로 설정되어 있어도 무시)
+    // 3) 기타 채널: 바코드별 소비기한 (production_barcodes.expiry_days) 우선
+    // 4) production_code별 바코드 소비기한 (바코드 매칭 실패 시 fallback)
+    // 5) 제품 기본 설정 (production_items.shelf_life_days)
+    const barcodeExpiryDays = productionInfo?.barcode_expiry_days || null
+    const productionCodeExpiryDays = productionExpiryMap.get(productionCode) || null  // ★ fallback
+    const shelfLifeDays = productionInfo?.shelf_life_days || productionItemInfo?.shelf_life_days || null
+    
+    // ★ 쿠팡 채널: 바코드 expiry_days 무시하고 production_items.shelf_life_days 우선 사용
+    // (쿠팡 바코드는 모두 실온용이므로 냉동용 90일 설정 무시)
+    const effectiveExpiryDays = isCoupang 
+      ? (shelfLifeDays || barcodeExpiryDays || productionCodeExpiryDays)
+      : (barcodeExpiryDays || productionCodeExpiryDays || shelfLifeDays)
     
     // ★ 쿠팡 쿠키류 판별: 생산명에 '쿠키' 포함
     const isCookie = productionName.includes('쿠키')

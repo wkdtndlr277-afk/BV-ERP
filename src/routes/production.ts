@@ -710,11 +710,64 @@ productionRoutes.post('/batch', async (c) => {
   });
   
   if (newItems.length === 0) {
+    // ★ 모든 품목이 이미 등록된 경우에도 생산일보 LOT 업데이트 수행
+    try {
+      const skippedCodes = items.map((i: any) => i.product_code);
+      const uniqueSkippedCodes = [...new Set(skippedCodes)];
+      
+      if (uniqueSkippedCodes.length > 0) {
+        // 기존 LOT 조회
+        const lotByCode = new Map<string, string>();
+        const QUERY_BATCH = 50;
+        for (let i = 0; i < uniqueSkippedCodes.length; i += QUERY_BATCH) {
+          const batch = uniqueSkippedCodes.slice(i, i + QUERY_BATCH);
+          const placeholders = batch.map(() => '?').join(',');
+          const existingLots = await c.env.DB.prepare(`
+            SELECT product_code, lot_number FROM production 
+            WHERE prod_date = ? AND product_code IN (${placeholders})
+            ORDER BY id DESC
+          `).bind(productionDate, ...batch).all<{product_code: string, lot_number: string}>();
+          
+          for (const row of existingLots.results || []) {
+            if (!lotByCode.has(row.product_code)) {
+              lotByCode.set(row.product_code, row.lot_number);
+            }
+          }
+        }
+        
+        // 생산일보 LOT 업데이트
+        const productCodes = Array.from(lotByCode.keys());
+        const BATCH_SIZE = 10;
+        for (let i = 0; i < productCodes.length; i += BATCH_SIZE) {
+          const batch = productCodes.slice(i, i + BATCH_SIZE);
+          const updates = batch.map(code => {
+            const lotNumber = lotByCode.get(code)!;
+            return c.env.DB.prepare(`
+              UPDATE production_daily_items 
+              SET lot_number = ?
+              WHERE production_code = ?
+                AND (lot_number IS NULL OR lot_number = '')
+                AND report_id IN (
+                  SELECT id FROM production_daily_report WHERE report_date = ?
+                )
+            `).bind(lotNumber, code, productionDate);
+          });
+          if (updates.length > 0) {
+            await c.env.DB.batch(updates);
+          }
+        }
+        console.log(`[production/batch] 스킵된 품목 LOT 업데이트: ${productCodes.length}개`);
+      }
+    } catch (e) {
+      console.error('LOT update error for skipped items:', e);
+    }
+    
     return c.json({ 
-      success: false, 
-      error: `해당 날짜(${productionDate})와 채널에 모든 제품이 이미 등록되어 있습니다.`,
-      already_registered: items.length
-    }, 400);
+      success: true, 
+      message: `해당 날짜(${productionDate})와 채널에 모든 제품이 이미 등록되어 있습니다. (LOT 업데이트 완료)`,
+      already_registered: items.length,
+      data: { total: items.length, success: 0, fail: 0, skipped: items.length }
+    });
   }
   
   const skippedCount = items.length - newItems.length;
@@ -1111,20 +1164,43 @@ productionRoutes.post('/batch', async (c) => {
     }
     
     // 7단계: 생산일보 품목에 LOT 업데이트 (해당 날짜의 생산일보 품목)
-    // ★ 핵심 수정: 프론트엔드에서 같은 제품을 합산해서 등록하므로
-    // 수량 무관하게 제품코드만으로 매칭 (같은 제품의 모든 품목에 같은 LOT 할당)
+    // ★ 핵심 수정: 새로 등록된 품목 + 이미 등록되어 스킵된 품목 모두 LOT 업데이트
     try {
-      // 제품코드별 LOT 맵 생성 (합산된 수량으로 등록되었으므로 제품코드당 1개 LOT)
+      // 1) 새로 등록된 품목의 LOT
       const lotByCode = new Map<string, string>();
       for (const p of preparedItems) {
-        // 같은 제품코드면 마지막 LOT로 덮어씀 (어차피 합산되어 1개 LOT)
         lotByCode.set(p.item.product_code, p.productLot);
       }
       
-      // 해당 날짜의 모든 생산일보 품목 중 LOT가 없는 것들을 제품코드 기준으로 업데이트
+      // 2) 스킵된 품목 (이미 등록된 품목)의 LOT를 production 테이블에서 조회
+      // existingSet에 있는 품목들이 스킵된 것들
+      const skippedCodes = Array.from(existingSet).map(key => key.split('|')[0]);
+      const uniqueSkippedCodes = [...new Set(skippedCodes)].filter(code => !lotByCode.has(code));
+      
+      if (uniqueSkippedCodes.length > 0) {
+        // 스킵된 품목들의 LOT를 production 테이블에서 조회
+        const QUERY_BATCH = 50;
+        for (let i = 0; i < uniqueSkippedCodes.length; i += QUERY_BATCH) {
+          const batch = uniqueSkippedCodes.slice(i, i + QUERY_BATCH);
+          const placeholders = batch.map(() => '?').join(',');
+          const existingLots = await c.env.DB.prepare(`
+            SELECT product_code, lot_number FROM production 
+            WHERE prod_date = ? AND product_code IN (${placeholders})
+            ORDER BY id DESC
+          `).bind(productionDate, ...batch).all<{product_code: string, lot_number: string}>();
+          
+          for (const row of existingLots.results || []) {
+            if (!lotByCode.has(row.product_code)) {
+              lotByCode.set(row.product_code, row.lot_number);
+            }
+          }
+        }
+        console.log(`[production/batch] 스킵된 품목 LOT 조회: ${uniqueSkippedCodes.length}개`);
+      }
+      
+      // 3) 해당 날짜의 모든 생산일보 품목 중 LOT가 없는 것들을 제품코드 기준으로 업데이트
       const productCodes = Array.from(lotByCode.keys());
       if (productCodes.length > 0) {
-        // 10개씩 배치로 처리
         const BATCH_SIZE = 10;
         for (let i = 0; i < productCodes.length; i += BATCH_SIZE) {
           const batch = productCodes.slice(i, i + BATCH_SIZE);
@@ -1145,7 +1221,7 @@ productionRoutes.post('/batch', async (c) => {
             await c.env.DB.batch(updates);
           }
         }
-        console.log(`[production/batch] LOT 업데이트: ${productCodes.length}개 제품코드`);
+        console.log(`[production/batch] LOT 업데이트: ${productCodes.length}개 제품코드 (신규+스킵)`);
       }
     } catch (e) {
       console.error('Daily item LOT update error:', e);

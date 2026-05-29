@@ -804,14 +804,26 @@ dailyReport.post('/reports/from-order', async (c) => {
     const itemChannel = item.channel || channel || 'unknown'
     const isCoupang = itemChannel.toLowerCase().includes('coupang') || itemChannel.includes('쿠팡')
     
+    // ★ 쿠팡 쿠키류 판별: 생산명에 '쿠키' 포함
+    const isCookie = productionName.includes('쿠키')
+    const isCoupangCookie = isCoupang && isCookie
+    
     let expiryDate: string | null = null
     if (item.expiry_date) {
       // PDF에서 추출한 소비기한이 있으면 우선 사용
       expiryDate = item.expiry_date
     } else if (effectiveExpiryDays) {
-      // ★ 쿠팡 채널: 제조일 = 생산일 - 9일 기준으로 소비기한 계산
-      // 예: 생산일 2026-05-20, 제조일 2026-05-11, 소비기한 32일 → 2026-06-12
-      if (isCoupang) {
+      if (isCoupangCookie) {
+        // ★ 쿠팡 쿠키류: 입력된 생산일 +1일을 실제 생산일로 적용, 제조일 = 실제 생산일 - 9일
+        // 예: 입력 2026-05-19 → 실제 생산일 2026-05-20 → 제조일 2026-05-11 → 소비기한 32일 = 2026-06-12
+        const actualProdDate = new Date(report_date + 'T00:00:00')
+        actualProdDate.setDate(actualProdDate.getDate() + 1)  // 실제 생산일 = 입력일 + 1일
+        const manufacturingDate = new Date(actualProdDate)
+        manufacturingDate.setDate(manufacturingDate.getDate() - 9)  // 제조일 = 실제 생산일 - 9일
+        manufacturingDate.setDate(manufacturingDate.getDate() + effectiveExpiryDays)  // 제조일 + 소비기한일수
+        expiryDate = manufacturingDate.toISOString().split('T')[0]
+      } else if (isCoupang) {
+        // ★ 쿠팡 비쿠키류: 제조일 = 생산일 - 9일 기준으로 소비기한 계산
         const manufacturingDate = new Date(report_date + 'T00:00:00')
         manufacturingDate.setDate(manufacturingDate.getDate() - 9)  // 제조일 = 생산일 - 9일
         manufacturingDate.setDate(manufacturingDate.getDate() + effectiveExpiryDays)  // 제조일 + 소비기한일수

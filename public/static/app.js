@@ -21384,8 +21384,18 @@ async function printDailyReportById(reportId) {
 }
 
 // 목록에서 바로 생산등록
+// 생산등록 진행 중 플래그 (중복 클릭 방지)
+let isProductionRegistering = false;
+
 async function registerDailyReportById(reportId) {
+  // ★ 이미 진행 중이면 무시
+  if (isProductionRegistering) {
+    showToast('이미 생산등록이 진행 중입니다. 잠시 기다려 주세요.', 'warning');
+    return;
+  }
+  
   try {
+    isProductionRegistering = true;  // ★ 진행 중 플래그 설정
     showToast('생산일보 로딩 중...', 'info');
     const result = await api(`/daily-report/reports/${reportId}`);
     
@@ -21504,6 +21514,8 @@ async function registerDailyReportById(reportId) {
   } catch (e) {
     console.error('생산등록 오류:', e);
     showToast('생산등록 실패', 'error');
+  } finally {
+    isProductionRegistering = false;  // ★ 항상 플래그 해제
   }
 }
 
@@ -21519,6 +21531,12 @@ async function confirmDailyReport(reportId) {
 
 // 생산일보에서 생산등록 실행 (청크 단위 처리)
 async function registerProductionFromDailyReport() {
+  // ★ 이미 진행 중이면 무시
+  if (isProductionRegistering) {
+    showToast('이미 생산등록이 진행 중입니다. 잠시 기다려 주세요.', 'warning');
+    return;
+  }
+  
   const reportData = window.currentDailyReport;
   if (!reportData || !reportData.items) {
     showToast('생산일보 데이터가 없습니다', 'error');
@@ -21537,6 +21555,7 @@ async function registerProductionFromDailyReport() {
   const confirmed = confirm(`${matchedItems.length}개 품목을 생산등록 하시겠습니까?\n\n※ 원재료 재고가 차감되고, 제품 재고가 증가합니다.`);
   if (!confirmed) return;
   
+  isProductionRegistering = true;  // ★ 진행 중 플래그 설정
   showLoading('생산등록 처리 중...');
   
   try {
@@ -21638,6 +21657,8 @@ async function registerProductionFromDailyReport() {
     console.error('생산등록 오류:', e);
     showToast(`생산등록 오류: ${e.message || '서버 오류'}`, 'error');
     closeDailyReportModal();
+  } finally {
+    isProductionRegistering = false;  // ★ 항상 플래그 해제
   }
 }
 

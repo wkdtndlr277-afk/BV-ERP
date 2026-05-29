@@ -800,19 +800,29 @@ dailyReport.post('/reports/from-order', async (c) => {
     const shelfLifeDays = productionInfo?.shelf_life_days || productionItemInfo?.shelf_life_days || null
     const effectiveExpiryDays = barcodeExpiryDays || productionCodeExpiryDays || shelfLifeDays
     
+    // 채널 먼저 결정 (소비기한 계산에 필요)
+    const itemChannel = item.channel || channel || 'unknown'
+    const isCoupang = itemChannel.toLowerCase().includes('coupang') || itemChannel.includes('쿠팡')
+    
     let expiryDate: string | null = null
     if (item.expiry_date) {
       // PDF에서 추출한 소비기한이 있으면 우선 사용
       expiryDate = item.expiry_date
     } else if (effectiveExpiryDays) {
-      // 바코드 또는 기본 소비기한 일수로 계산
-      const prodDate = new Date(report_date + 'T00:00:00')
-      prodDate.setDate(prodDate.getDate() + effectiveExpiryDays)
-      expiryDate = prodDate.toISOString().split('T')[0]
+      // ★ 쿠팡 채널: 제조일 = 생산일 - 9일 기준으로 소비기한 계산
+      // 예: 생산일 2026-05-20, 제조일 2026-05-11, 소비기한 32일 → 2026-06-12
+      if (isCoupang) {
+        const manufacturingDate = new Date(report_date + 'T00:00:00')
+        manufacturingDate.setDate(manufacturingDate.getDate() - 9)  // 제조일 = 생산일 - 9일
+        manufacturingDate.setDate(manufacturingDate.getDate() + effectiveExpiryDays)  // 제조일 + 소비기한일수
+        expiryDate = manufacturingDate.toISOString().split('T')[0]
+      } else {
+        // 기타 채널: 생산일 기준으로 소비기한 계산
+        const prodDate = new Date(report_date + 'T00:00:00')
+        prodDate.setDate(prodDate.getDate() + effectiveExpiryDays)
+        expiryDate = prodDate.toISOString().split('T')[0]
+      }
     }
-    
-    // 품목 등록 (비동기 배치) - channel(판매처), box_quantity(입수량) 필드 추가
-    const itemChannel = item.channel || channel || 'unknown'
     const boxQuantity = productionInfo?.box_quantity || 1
     itemInserts.push(
       c.env.DB.prepare(`

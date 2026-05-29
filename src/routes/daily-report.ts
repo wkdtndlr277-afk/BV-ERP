@@ -822,13 +822,8 @@ dailyReport.post('/reports/from-order', async (c) => {
         manufacturingDate.setDate(manufacturingDate.getDate() - 9)  // 제조일 = 실제 생산일 - 9일
         manufacturingDate.setDate(manufacturingDate.getDate() + effectiveExpiryDays)  // 제조일 + 소비기한일수
         expiryDate = manufacturingDate.toISOString().split('T')[0]
-      } else if (isCoupang) {
-        // ★ 쿠팡 비쿠키류: 제조일 = 생산일 - 9일 기준으로 소비기한 계산
-        const manufacturingDate = new Date(report_date + 'T00:00:00')
-        manufacturingDate.setDate(manufacturingDate.getDate() - 9)  // 제조일 = 생산일 - 9일
-        manufacturingDate.setDate(manufacturingDate.getDate() + effectiveExpiryDays)  // 제조일 + 소비기한일수
-        expiryDate = manufacturingDate.toISOString().split('T')[0]
       } else {
+        // ★ 쿠팡 비쿠키류 및 기타 채널: 생산일 + 소비기한일수
         // 기타 채널: 생산일 기준으로 소비기한 계산
         const prodDate = new Date(report_date + 'T00:00:00')
         prodDate.setDate(prodDate.getDate() + effectiveExpiryDays)

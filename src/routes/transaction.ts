@@ -470,79 +470,151 @@ transactionRoutes.get('/daily-report', async (c) => {
     }
     const result = await c.env.DB.prepare(productQuery).bind(...params).all();
     results.push(...(result.results || []));
-  } else {
-    // 원료/부자재 또는 전체 조회
-    // master 테이블 (원료) + supplies 테이블 (부자재) + production_items 테이블 (제품) 통합 조회
+  } else if (category === '원료' || (category && category !== '전체' && category !== '부자재')) {
+    // 원료 카테고리만 조회 (master 테이블만 - supplies 테이블 제외)
+    // v2.2.4: 재고조정 데이터를 transactions 테이블에서 조회
     let query = `
-      SELECT * FROM (
-        -- 원료 (master 테이블)
+      SELECT 
+        ? as report_date,
+        m.item_code,
+        m.item_name,
+        m.category,
+        m.unit,
+        m.current_stock as master_stock,
+        COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
+        -- 전일재고 계산용: 조회일 이전 모든 거래
+        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
+        COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date < ?), 0) as before_usage,
+        0 as before_outbound,
+        COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
+        -- 당일 거래
+        COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date = ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as inbound_qty,
+        COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date = ?), 0) as adj_plus,
+        COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date = ?), 0) as adj_minus,
+        COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date = ?), 0) as usage,
+        0 as outbound_qty
+      FROM master m
+      WHERE (
+        m.current_stock > 0
+        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date = ?)
+        OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date = ?)
+        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
+        OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date <= ?)
+        OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date <= ?)
+        OR EXISTS (SELECT 1 FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date <= ?)
+      )
+    `;
+    // 파라미터: 1(report) + 3(before) + 4(day) + 6(EXISTS) = 14개
+    const params: any[] = [
+      date,  // report_date
+      date, date, date,  // before_inbound, before_usage, before_adjustment (< date)
+      date, date, date, date,  // inbound_qty, adj_plus, adj_minus, usage (= date)
+      date, date, date, date, date  // EXISTS (5개: =date, =date, <=date, <=date, <=date)
+    ];
+    
+    // 카테고리가 '원료'가 아닌 경우 특정 카테고리로 필터
+    if (category && category !== '원료' && category !== '전체') {
+      query += ' AND m.category = ?';
+      params.push(category);
+    }
+    if (search) {
+      query += ' AND (m.item_name LIKE ? OR m.item_code LIKE ?)';
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    
+    query += ' ORDER BY m.category, m.item_name';
+    
+    try {
+      const result = await c.env.DB.prepare(query).bind(...params).all();
+      results.push(...(result.results || []));
+    } catch (error: any) {
+      console.error('Daily report (원료) query error:', error.message);
+      return c.json({ success: false, error: error.message }, 500);
+    }
+  } else {
+    // 전체 또는 부자재 조회 - UNION ALL로 모든 테이블 조회
+    // 부자재 카테고리는 supplies 테이블에서만 조회
+    const includeSupplies = !category || category === '전체' || category === '부자재';
+    const includeMaster = !category || category === '전체';
+    const includeProducts = !category || category === '전체';
+    
+    let queryParts: string[] = [];
+    let params: any[] = [];
+    
+    // master 테이블 (원료) - 전체 조회시에만
+    if (includeMaster) {
+      queryParts.push(`
         SELECT 
           ? as report_date,
           m.item_code,
           m.item_name,
           m.category,
           m.unit,
-          m.current_stock,
+          m.current_stock as master_stock,
           COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
           COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date < ?), 0) as before_usage,
           0 as before_outbound,
-          0 as before_adjustment,
+          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격' AND i.inbound_date = ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as inbound_qty,
-          0 as adj_plus,
-          0 as adj_minus,
+          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date = ?), 0) as adj_plus,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = m.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date = ?), 0) as adj_minus,
           COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date = ?), 0) as usage,
           0 as outbound_qty
         FROM master m
         WHERE (
           m.current_stock > 0
-          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date = ?)
-          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date = ?)
-          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.remain_qty > 0)
-          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date < ?)
-          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date < ?)
+          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = m.item_code AND i.inbound_date <= ?)
+          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = m.item_code AND pu.usage_date <= ?)
         )
-        
-        UNION ALL
-        
-        -- 부자재 (supplies 테이블)
+      `);
+      // master params: 1 + 3 + 4 + 2 = 10개
+      params.push(date, date, date, date, date, date, date, date, date, date);
+    }
+    
+    // supplies 테이블 (부자재) - 전체 또는 부자재 조회시
+    if (includeSupplies) {
+      if (queryParts.length > 0) queryParts.push('UNION ALL');
+      queryParts.push(`
         SELECT 
           ? as report_date,
           s.item_code,
           s.item_name,
           s.category,
           s.unit,
-          s.current_stock,
+          s.current_stock as master_stock,
           COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격'), 0) as lot_remain_total,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격' AND i.inbound_date < ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as before_inbound,
           COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date < ?), 0) as before_usage,
           0 as before_outbound,
-          0 as before_adjustment,
+          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.trans_date < ?), 0) as before_adjustment,
           COALESCE((SELECT SUM(i.origin_qty) FROM inbound i WHERE i.item_code = s.item_code AND i.quality_status = '합격' AND i.inbound_date = ? AND i.lot_number NOT LIKE 'ADJ-%'), 0) as inbound_qty,
-          0 as adj_plus,
-          0 as adj_minus,
+          COALESCE((SELECT SUM(t.quantity) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.quantity > 0 AND t.trans_date = ?), 0) as adj_plus,
+          COALESCE((SELECT SUM(ABS(t.quantity)) FROM transactions t WHERE t.item_code = s.item_code AND t.trans_type = '재고조정' AND t.quantity < 0 AND t.trans_date = ?), 0) as adj_minus,
           COALESCE((SELECT SUM(pu.quantity) FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date = ?), 0) as usage,
           0 as outbound_qty
         FROM supplies s
         WHERE (
           s.current_stock > 0
-          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date = ?)
-          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date = ?)
-          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.remain_qty > 0)
-          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date < ?)
-          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date < ?)
+          OR EXISTS (SELECT 1 FROM inbound i WHERE i.item_code = s.item_code AND i.inbound_date <= ?)
+          OR EXISTS (SELECT 1 FROM production_usage pu WHERE pu.item_code = s.item_code AND pu.usage_date <= ?)
         )
-        
-        UNION ALL
-        
-        -- 제품 (production_items 테이블) - 생산 입고/출고 트랜잭션 사용
+      `);
+      // supplies params: 10개
+      params.push(date, date, date, date, date, date, date, date, date, date);
+    }
+    
+    // production_items 테이블 (제품) - 전체 조회시에만
+    if (includeProducts) {
+      if (queryParts.length > 0) queryParts.push('UNION ALL');
+      queryParts.push(`
         SELECT 
           ? as report_date,
           p.production_code as item_code,
           COALESCE(p.alias1, p.production_name) as item_name,
           '제품' as category,
           COALESCE(p.unit, 'EA') as unit,
-          p.current_stock,
+          p.current_stock as master_stock,
           COALESCE((SELECT SUM(pi.remain_qty) FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.quality_status = '합격'), 0) as lot_remain_total,
           COALESCE((SELECT SUM(pt.quantity) FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_type = '생산입고' AND pt.trans_date < ?), 0) as before_inbound,
           0 as before_usage,
@@ -556,37 +628,15 @@ transactionRoutes.get('/daily-report', async (c) => {
         FROM production_items p
         WHERE (
           p.current_stock > 0
-          OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date = ?)
-          OR EXISTS (SELECT 1 FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.remain_qty > 0)
-          OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date < ?)
+          OR EXISTS (SELECT 1 FROM production_transactions pt WHERE pt.production_code = p.production_code AND pt.trans_date <= ?)
         )
-      ) combined
-      WHERE 1=1
-    `;
-    // 파라미터 순서: master(9) + supplies(9) + production_items(10) = 28개
-    // 문서관리용: production_usage 테이블만 사용 (바코드 차감 제외)
-    const params: any[] = [
-      // master 파라미터 (9개)
-      date,  // report_date
-      date, date,  // before_inbound, before_usage (< date)
-      date, date,  // inbound_qty, usage (= date)
-      date, date, date, date,  // EXISTS: inbound=date, usage=date, inbound<date, usage<date
-      // supplies 파라미터 (9개)
-      date,  // report_date
-      date, date,  // before_inbound, before_usage (< date)
-      date, date,  // inbound_qty, usage (= date)
-      date, date, date, date,  // EXISTS: inbound=date, usage=date, inbound<date, usage<date
-      // production_items 파라미터 (10개)
-      date,  // report_date
-      date, date, date,  // before queries (생산입고, 출고, 조정 < date)
-      date, date, date, date,  // period queries (입고, +조정, -조정, 출고 = date)
-      date, date  // EXISTS: trans_date=date, trans_date<date
-    ];
-    
-    if (category && category !== '전체') {
-      query += ' AND category = ?';
-      params.push(category);
+      `);
+      // production params: 9개
+      params.push(date, date, date, date, date, date, date, date, date);
     }
+    
+    let query = `SELECT * FROM (${queryParts.join(' ')}) combined WHERE 1=1`;
+    
     if (search) {
       query += ' AND (item_name LIKE ? OR item_code LIKE ?)';
       params.push(`%${search}%`, `%${search}%`);
@@ -594,31 +644,48 @@ transactionRoutes.get('/daily-report', async (c) => {
     
     query += ' ORDER BY category, item_name';
     
-    const result = await c.env.DB.prepare(query).bind(...params).all();
-    results.push(...(result.results || []));
+    try {
+      const result = await c.env.DB.prepare(query).bind(...params).all();
+      results.push(...(result.results || []));
+    } catch (error: any) {
+      console.error('Daily report (전체/부자재) query error:', error.message);
+      return c.json({ success: false, error: error.message }, 500);
+    }
   }
   
-  // 정방향 계산
-  // 전일재고 = 이전입고 - 이전사용 - 이전출고 + 이전조정
+  // 정방향 계산 - v2.2.4
+  // 전일재고 = 조회일 이전까지의 (입고 - 사용 - 출고 + 조정) 누적
   // 당일재고 = 전일재고 + 당일입고 - 당일사용 - 당일출고 + 당일조정
   const dataWithCarryOver = results.map((item: any) => {
-    // 전일재고 (정방향 누적 계산)
-    const carryOver = item.before_inbound - item.before_usage - item.before_outbound + item.before_adjustment;
+    // 전일재고 (정방향 누적 계산) - null 체크 추가
+    const beforeInbound = item.before_inbound || 0;
+    const beforeUsage = item.before_usage || 0;
+    const beforeOutbound = item.before_outbound || 0;
+    const beforeAdjustment = item.before_adjustment || 0;
+    const carryOver = beforeInbound - beforeUsage - beforeOutbound + beforeAdjustment;
     
     // 당일 입고 총계 (입고량 + 양수 재고조정)
-    const totalInbound = item.inbound_qty + item.adj_plus;
+    const dayInbound = (item.inbound_qty || 0) + (item.adj_plus || 0);
     // 당일 출고 총계 (출고량 + 음수 재고조정)
-    const totalOutbound = item.outbound_qty + item.adj_minus;
+    const dayOutbound = (item.outbound_qty || 0) + (item.adj_minus || 0);
+    // 당일 사용
+    const dayUsage = item.usage || 0;
     
-    // 당일재고 (정방향 계산)
-    const closingStock = carryOver + totalInbound - item.usage - totalOutbound;
+    // 당일재고 (정방향 계산) - 이 값이 해당 날짜 기준 현재고
+    const closingStock = carryOver + dayInbound - dayUsage - dayOutbound;
     
     return {
       ...item,
-      carry_over: carryOver,            // 전일재고
-      inbound: totalInbound,            // 당일입고 (입고+양수조정)
-      outbound: totalOutbound,          // 당일출고 (출고+음수조정)
-      calc_remain: closingStock         // 당일재고
+      // 전일재고 (조회일 이전까지의 누적)
+      carry_over: carryOver,
+      // 당일입고 (입고+양수조정)
+      inbound: dayInbound,
+      // 당일출고 (출고+음수조정)
+      outbound: dayOutbound,
+      // 당일재고 = 전일재고 + 당일입고 - 당일사용 - 당일출고
+      calc_remain: closingStock,
+      // 호환성: current_stock은 참고용(오늘 기준 마스터 재고)으로 유지
+      current_stock: item.master_stock || item.current_stock || 0
     };
   });
   

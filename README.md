@@ -195,7 +195,40 @@ Proprietary - (주)본비반트
 
 ## 업데이트 이력
 
+- **2026-06-01**: v2.1.0 - 기술적 최적화 + 감사 스크립트
+  - Atomic Transaction (D1 batch()) 적용: 모든 재고 업데이트를 원자적으로 처리
+  - FEFO 쿼리 강제 적용: `ORDER BY expiry_date ASC, inbound_date ASC`
+  - MAX(0, current_stock - ?) 적용: 음수 재고 완전 방지
+  - 재고 부족 방어 코드: 차감 전 검증, 부족 시 작업 중단 (errorCode: INSUFFICIENT_STOCK)
+  - 감사(Audit) API 추가: `/api/audit/run-all`, `/api/audit/stock-consistency`
+  - 런타임 엔진 모드: 시스템 운영 규칙 고정 (src/runtime-rules.ts)
+
 - **2026-01-29**: 초기 버전 완성
   - 전체 기능 구현 완료
   - D1 데이터베이스 연동
   - 샘플 데이터 포함
+
+## 감사(Audit) API
+
+### 재고 일치성 검사
+- `GET /api/audit/stock-consistency` - 원료 inbound vs master 불일치 검사
+- `GET /api/audit/product-consistency` - 제품 production_inbound vs master 불일치 검사
+- `GET /api/audit/semifinished-consistency` - 반제품 semi_finished_lots 불일치 검사
+- `GET /api/audit/negative-stock` - 음수 재고 검사
+- `POST /api/audit/run-all` - 전체 감사 실행 (매일 자정 호출 권장)
+- `GET /api/audit/history` - 감사 이력 조회
+- `POST /api/audit/fix-consistency` - 재고 불일치 자동 수정
+
+### 자정 실행 설정
+Cloudflare Pages Functions는 Cron Triggers를 직접 지원하지 않습니다.
+외부 스케줄러(Cloudflare Workers, GitHub Actions 등)에서 다음을 호출하세요:
+```
+POST https://bv-erp.pages.dev/api/audit/run-all
+```
+권장 시간: UTC 15:00 (KST 00:00)
+
+## 시스템 운영 규칙 (Runtime Engine Mode)
+
+시스템은 `src/runtime-rules.ts`에 정의된 규칙만 실행합니다:
+- 규칙에 없는 상황 발생 시: 작업 중단 + 에러 반환
+- AI가 자의적으로 추론하지 않음

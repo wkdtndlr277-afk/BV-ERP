@@ -10,5 +10,10 @@
       "database_name": "haccp-erp-production",
       "database_id": "596dc841-d436-4555-a774-5aa647455162"
     }
-  ]
+  ],
+  // 매일 자정(한국시간) 재고 감사 스케줄
+  // Cloudflare Pages Functions에서는 cron triggers 직접 지원하지 않음
+  // 대신 외부 스케줄러나 Cloudflare Workers에서 /api/audit/run-all 호출 필요
+  // UTC 15:00 = KST 00:00
+  "_audit_schedule_note": "Call POST /api/audit/run-all at UTC 15:00 daily"
 }

@@ -1,55 +1,67 @@
 // 출고 관리 API (원료·제품 공통, FEFO 자동 적용)
+// 최적화: Atomic Transaction, FEFO 강제, MAX(0,...) 적용, 재고 부족 방어
 import { Hono } from 'hono';
 import type { Bindings, OutboundRequest, Inbound } from '../types';
+import { FEFO_QUERY } from '../utils/inventory';
 
 const outboundRoutes = new Hono<{ Bindings: Bindings }>();
 
-// FEFO 방식으로 LOT에서 출고 차감 처리
+// FEFO 방식으로 LOT에서 출고 차감 처리 (Atomic Transaction 버전)
 async function deductForOutbound(
   db: D1Database,
   item_code: string,
   quantity: number,
   trans_date: string,
   supplier: string | null
-): Promise<{ success: boolean; error?: string; deductions?: any[] }> {
-  // 해당 품목의 잔량이 있는 LOT를 FEFO(유통기한 빠른 순)로 조회
-  const lots = await db.prepare(`
-    SELECT * FROM inbound 
-    WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
-    ORDER BY expiry_date ASC, inbound_date ASC
-  `).bind(item_code).all<Inbound>();
+): Promise<{ success: boolean; error?: string; errorCode?: string; deductions?: any[] }> {
+  // ===== FEFO 쿼리 강제: 소비기한 빠른 순 =====
+  const lots = await db.prepare(FEFO_QUERY.INBOUND).bind(item_code, trans_date).all<Inbound>();
   
-  // LOT이 없으면 마스터 재고에서 직접 차감 (제품 재고 실사 등록 케이스)
+  // LOT이 없으면 마스터 재고에서 직접 차감
   if (!lots.results || lots.results.length === 0) {
     const master = await db.prepare(
       'SELECT current_stock FROM master WHERE item_code = ?'
     ).bind(item_code).first<{ current_stock: number }>();
     
+    // 재고 부족 방어 코드
     if (!master || master.current_stock < quantity) {
-      return { success: false, error: `${item_code}: 재고 부족` };
+      return { 
+        success: false, 
+        error: `${item_code}: 재고 부족 (요청: ${quantity}, 가용: ${master?.current_stock || 0})`,
+        errorCode: 'INSUFFICIENT_STOCK'
+      };
     }
     
-    // Master 재고 감소
-    await db.prepare(`
-      UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
-    `).bind(quantity, item_code).run();
+    // Atomic Transaction 준비
+    const batchStatements: D1PreparedStatement[] = [
+      // Master 재고 차감 (MAX(0,...) 적용)
+      db.prepare(`
+        UPDATE master SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
+        WHERE item_code = ?
+      `).bind(quantity, item_code),
+      // Transaction 기록
+      db.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, supplier)
+        VALUES (?, ?, '출고', ?, ?)
+      `).bind(trans_date, item_code, -quantity, supplier)
+    ];
     
-    // Transaction 기록 (LOT 없이)
-    await db.prepare(`
-      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, supplier)
-      VALUES (?, ?, '출고', ?, ?)
-    `).bind(trans_date, item_code, -quantity, supplier).run();
-    
+    await db.batch(batchStatements);
     return { success: true, deductions: [{ lot_number: null, deducted: quantity }] };
   }
   
-  // 총 가용 재고 확인
+  // ===== 재고 검증 (방어 코드) =====
   const totalAvailable = lots.results.reduce((sum, lot) => sum + lot.remain_qty, 0);
   if (totalAvailable < quantity) {
-    return { success: false, error: `${item_code}: 재고 부족 (가용: ${totalAvailable}, 요청: ${quantity})` };
+    return { 
+      success: false, 
+      error: `${item_code}: 재고 부족 (요청: ${quantity}, 가용: ${totalAvailable.toFixed(2)})`,
+      errorCode: 'INSUFFICIENT_STOCK'
+    };
   }
   
-  // FEFO 방식으로 차감
+  // ===== Atomic Transaction 준비 (FEFO 차감) =====
+  const batchStatements: D1PreparedStatement[] = [];
   let remaining = quantity;
   const deductions: any[] = [];
   
@@ -59,30 +71,42 @@ async function deductForOutbound(
     const deductQty = Math.min(lot.remain_qty, remaining);
     const newRemainQty = lot.remain_qty - deductQty;
     
-    // LOT 잔량 업데이트
-    await db.prepare(`
-      UPDATE inbound SET remain_qty = ?, updated_at = CURRENT_TIMESTAMP WHERE lot_number = ?
-    `).bind(newRemainQty, lot.lot_number).run();
+    // LOT 잔량 업데이트 (MAX(0,...) 적용)
+    batchStatements.push(
+      db.prepare(`
+        UPDATE inbound SET remain_qty = MAX(0, remain_qty - ?), updated_at = CURRENT_TIMESTAMP 
+        WHERE lot_number = ? AND remain_qty >= ?
+      `).bind(deductQty, lot.lot_number, deductQty)
+    );
     
     // Transaction 기록
-    await db.prepare(`
-      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier)
-      VALUES (?, ?, '출고', ?, ?, ?, ?)
-    `).bind(trans_date, item_code, -deductQty, lot.lot_number, newRemainQty, supplier).run();
+    batchStatements.push(
+      db.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier)
+        VALUES (?, ?, '출고', ?, ?, ?, ?)
+      `).bind(trans_date, item_code, -deductQty, lot.lot_number, newRemainQty, supplier)
+    );
     
     deductions.push({
       lot_number: lot.lot_number,
       deducted: deductQty,
-      remain_qty: newRemainQty
+      remain_qty: newRemainQty,
+      expiry_date: lot.expiry_date  // FEFO 확인용
     });
     
     remaining -= deductQty;
   }
   
-  // Master 재고 감소
-  await db.prepare(`
-    UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
-  `).bind(quantity, item_code).run();
+  // Master 재고 차감 (MAX(0,...) 적용)
+  batchStatements.push(
+    db.prepare(`
+      UPDATE master SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
+      WHERE item_code = ?
+    `).bind(quantity, item_code)
+  );
+  
+  // Atomic 실행
+  await db.batch(batchStatements);
   
   return { success: true, deductions };
 }

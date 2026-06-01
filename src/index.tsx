@@ -29,6 +29,7 @@ import systemConfigRoutes from './routes/system-config';
 import semiFinishedRoutes from './routes/semi-finished';
 import barcodeRoutes from './routes/barcode';
 import taskRoutes from './routes/task';
+import auditRoutes from './routes/audit';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -62,6 +63,7 @@ app.route('/api/system-config', systemConfigRoutes);
 app.route('/api/semi-finished', semiFinishedRoutes);
 app.route('/api/barcode', barcodeRoutes);
 app.route('/api/task', taskRoutes);
+app.route('/api/audit', auditRoutes);
 
 // 시스템 버전
 const SYSTEM_VERSION = '2.1.0';

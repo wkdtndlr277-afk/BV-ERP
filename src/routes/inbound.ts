@@ -596,7 +596,7 @@ inboundRoutes.delete('/:lot_number', async (c) => {
       const targetTable = isSupplies ? 'supplies' : 'master';
       
       await c.env.DB.prepare(`
-        UPDATE ${targetTable} SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP 
+        UPDATE ${targetTable} SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
         WHERE item_code = ?
       `).bind(lot.remain_qty, lot.item_code).run();
     }
@@ -653,7 +653,7 @@ inboundRoutes.post('/delete-batch', async (c) => {
           const targetTable = isSupplies ? 'supplies' : 'master';
           
           await c.env.DB.prepare(`
-            UPDATE ${targetTable} SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP 
+            UPDATE ${targetTable} SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
             WHERE item_code = ?
           `).bind(lot.remain_qty, lot.item_code).run();
         }

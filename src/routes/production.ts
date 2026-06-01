@@ -1,6 +1,18 @@
 // 생산 관리 API
+// 최적화: Atomic Transaction, FEFO 강제, MAX(0,...) 적용, 재고 부족 방어
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
+import { 
+  checkStockAvailability, 
+  checkSemiFinishedAvailability,
+  prepareFEFODeduction,
+  prepareSemiFinishedDeduction,
+  prepareMasterDeduction,
+  prepareMasterIncrease,
+  FEFO_QUERY,
+  StockError,
+  createInsufficientStockError
+} from '../utils/inventory';
 
 const productionRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -389,249 +401,183 @@ productionRoutes.post('/', async (c) => {
   
   const bomItems = bomResult.results || [];
   
-  // 재고 확인 (BOM이 있는 경우만) - 경고만 표시하고 진행 허용
+  // ===== 재고 검증 (방어 코드: 부족 시 작업 중단) =====
+  const stockErrors: string[] = [];
   const stockWarnings: string[] = [];
+  
   for (const bom of bomItems) {
-    // 매칭된 실제 아이템 코드 사용 (RM/R 코드 자동 매칭)
     const actualItemCode = bom.matched_item_code || bom.item_code;
     const requiredQty = bom.quantity * quantity;
-    // 단위 변환: BOM은 g 기준, 재고는 kg 기준일 수 있음
     const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
     
-    if (bom.current_stock < requiredKg) {
-      stockWarnings.push(`${bom.item_name || actualItemCode}: 필요 ${requiredKg.toFixed(2)}kg, 재고 ${bom.current_stock.toFixed(2)}kg`);
+    // 정제수는 재고 확인 제외
+    const itemName = bom.item_name || '';
+    const isWater = itemName.includes('정제수');
+    
+    if (!isWater) {
+      // FEFO 쿼리로 실제 가용 재고 확인
+      const stockCheck = await checkStockAvailability(c.env.DB, actualItemCode, requiredKg, prod_date);
+      
+      if (!stockCheck.available) {
+        stockErrors.push(`${itemName || actualItemCode}: 필요 ${requiredKg.toFixed(2)}kg, 가용 ${stockCheck.totalAvailable.toFixed(2)}kg (부족: ${stockCheck.shortage.toFixed(2)}kg)`);
+      } else if (stockCheck.totalAvailable < requiredKg * 1.1) {
+        // 10% 미만 여유 시 경고
+        stockWarnings.push(`${itemName || actualItemCode}: 재고 여유 부족 (가용: ${stockCheck.totalAvailable.toFixed(2)}kg)`);
+      }
     }
-    // 매칭된 코드를 BOM 객체에 저장하여 나중에 사용
+    
     bom.actualItemCode = actualItemCode;
   }
   
-  // 재고 부족 시 경고만 로깅 (생산 진행은 허용)
+  // ===== 재고 부족 시 작업 중단 =====
+  if (stockErrors.length > 0) {
+    console.error(`[생산등록] 재고 부족으로 작업 중단 - ${product_code}`);
+    for (const err of stockErrors) {
+      console.error(`  - ${err}`);
+    }
+    return c.json({ 
+      success: false, 
+      error: '재고 부족으로 생산을 진행할 수 없습니다.',
+      errorCode: 'INSUFFICIENT_STOCK',
+      details: stockErrors
+    }, 400);
+  }
+  
+  // 경고만 있는 경우 로깅
   if (stockWarnings.length > 0) {
-    console.log(`[생산등록] 재고 부족 경고 - ${product_code}: ${stockWarnings.join(', ')}`);
+    console.log(`[생산등록] 재고 경고 - ${product_code}: ${stockWarnings.join(', ')}`);
   }
   
   // 제품 LOT 자동 생성 (없으면)
   const productLot = lot_number || `PRD-${prod_date.replace(/-/g, '')}-${product_code}-${String(Date.now()).slice(-4)}`;
   
   try {
-    // 1. 생산 기록 등록
-    const prodResult = await c.env.DB.prepare(`
-      INSERT INTO production (prod_date, product_code, quantity, lot_number, status, memo, created_by)
-      VALUES (?, ?, ?, ?, '완료', ?, ?)
-    `).bind(prod_date, product_code, quantity, productLot, memo || null, created_by || null).run();
+    // ===== Atomic Transaction: 모든 DB 작업을 batch()로 묶어서 실행 =====
+    const batchStatements: D1PreparedStatement[] = [];
+    const deductionRecords: Array<{itemCode: string; deductions: any[]}> = [];
     
-    const productionId = prodResult.meta.last_row_id;
+    // 1. 생산 기록 등록 준비 (ID는 나중에 조회)
+    batchStatements.push(
+      c.env.DB.prepare(`
+        INSERT INTO production (prod_date, product_code, quantity, lot_number, status, memo, created_by)
+        VALUES (?, ?, ?, ?, '완료', ?, ?)
+      `).bind(prod_date, product_code, quantity, productLot, memo || null, created_by || null)
+    );
     
-    // 2. 원재료 차감 (BOM 기반, FEFO)
+    // 2. BOM 기반 원재료 FEFO 차감 준비
     for (const bom of bomItems) {
       const requiredQty = bom.quantity * quantity;
       const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
-      
-      // 매칭된 실제 아이템 코드
       const actualItemCode = bom.actualItemCode || bom.matched_item_code || bom.item_code;
-      
-      // 정제수는 재고 차감 제외 (사용량 기록만)
       const itemName = bom.item_name || '';
       const isWater = itemName.includes('정제수');
+      const isSemiFinished = actualItemCode.startsWith('SF');
       
       if (isWater) {
-        // 정제수: 사용 기록만 남기고 재고 차감 안함
-        await c.env.DB.prepare(`
-          INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
-          VALUES (?, ?, NULL, ?, ?, ?)
-        `).bind(productionId, actualItemCode, requiredQty, requiredQty, bom.unit).run();
-        
-        // 사용 트랜잭션 기록 (재고 차감 없이 기록만)
-        await c.env.DB.prepare(`
-          INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
-          VALUES (?, ?, '사용', ?, ?)
-        `).bind(prod_date, actualItemCode, requiredKg, 
-          `생산사용(재고미차감): ${product.item_name} ${quantity}개 - 정제수`).run();
-        
-        // 일별/월별 수불부용 문서 기록 (정제수도 포함)
-        try {
-          await c.env.DB.prepare(`
-            INSERT INTO production_usage (usage_date, item_code, item_name, quantity, unit, lot_number, production_id, production_lot, product_code, product_name, memo)
-            VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)
-          `).bind(
-            prod_date,
-            actualItemCode,
-            itemName,
-            requiredKg,
-            'kg',
-            productionId,
-            productLot,
-            product_code,
-            product.item_name,
-            `생산사용(정제수): ${product.item_name} ${quantity}개`
-          ).run();
-        } catch (e) {
-          console.log('production_usage insert skipped (water):', e);
-        }
-        
-        continue; // 다음 원재료로
+        // 정제수: 사용 기록만 (재고 차감 없음)
+        batchStatements.push(
+          c.env.DB.prepare(`
+            INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+            VALUES (?, ?, '사용', ?, ?)
+          `).bind(prod_date, actualItemCode, requiredKg, 
+            `생산사용(재고미차감): ${product.item_name} ${quantity}개 - 정제수`)
+        );
+        continue;
       }
       
-      // FEFO 방식으로 LOT에서 차감 (유통기한이 지나지 않은 LOT만 사용)
-      let remainingToDeduct = requiredKg;
-      const usedLots: string[] = [];
-      let lots = await c.env.DB.prepare(`
-        SELECT * FROM inbound 
-        WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격' AND expiry_date >= ?
-        ORDER BY expiry_date ASC, inbound_date ASC
-      `).bind(actualItemCode, prod_date).all<any>();
-      
-      // LOT이 없으면 다른 형식의 코드로 재시도
-      if (!lots.results || lots.results.length === 0) {
-        let altCode = '';
-        if (actualItemCode.startsWith('RM')) {
-          altCode = 'R' + actualItemCode.substring(2);
-        } else if (actualItemCode.startsWith('R') && !actualItemCode.startsWith('RM')) {
-          altCode = 'RM' + actualItemCode.substring(1);
-        }
-        if (altCode) {
-          lots = await c.env.DB.prepare(`
-            SELECT * FROM inbound 
-            WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격' AND expiry_date >= ?
-            ORDER BY expiry_date ASC, inbound_date ASC
-          `).bind(altCode, prod_date).all<any>();
-        }
-      }
-      
-      for (const lot of lots.results || []) {
-        if (remainingToDeduct <= 0) break;
-        
-        const deductQty = Math.min(lot.remain_qty, remainingToDeduct);
-        usedLots.push(lot.lot_number);
-        
-        // LOT 잔량 차감
-        await c.env.DB.prepare(`
-          UPDATE inbound SET remain_qty = remain_qty - ?, updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `).bind(deductQty, lot.id).run();
-        
-        // 거래 이력 기록 (생산사용) - 실제 LOT의 item_code 사용
-        await c.env.DB.prepare(`
-          INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, memo)
-          VALUES (?, ?, '사용', ?, ?, ?, ?)
-        `).bind(
-          prod_date,
-          lot.item_code, // 실제 LOT의 item_code 사용
-          deductQty,
-          lot.lot_number,
-          lot.remain_qty - deductQty,
-          `생산사용: ${product.item_name} ${quantity}개 (생산ID: ${productionId})`
-        ).run();
-        
-        remainingToDeduct -= deductQty;
-      }
-      
-      // LOT이 없는 경우 마스터 재고에서 직접 차감
-      if (remainingToDeduct > 0) {
-        await c.env.DB.prepare(`
-          INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
-          VALUES (?, ?, '사용', ?, ?)
-        `).bind(
-          prod_date,
-          actualItemCode, // 매칭된 실제 코드 사용
-          remainingToDeduct,
-          `생산사용: ${product.item_name} ${quantity}개 (생산ID: ${productionId}) - LOT 없음`
-        ).run();
-      }
-      
-      // 원재료 사용 기록 (사용된 LOT 번호 포함)
-      await c.env.DB.prepare(`
-        INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `).bind(
-        productionId, 
-        actualItemCode, // 매칭된 실제 코드 사용
-        usedLots.length > 0 ? usedLots.join(', ') : null,
-        requiredQty, 
-        requiredQty, 
-        bom.unit
-      ).run();
-      
-      // 마스터 재고 업데이트 - 매칭된 실제 코드로 업데이트
-      await c.env.DB.prepare(`
-        UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP
-        WHERE item_code = ?
-      `).bind(requiredKg, actualItemCode).run();
-      
-      // 일별/월별 수불부용 문서 기록 (production_usage 테이블)
-      try {
-        await c.env.DB.prepare(`
-          INSERT INTO production_usage (usage_date, item_code, item_name, quantity, unit, lot_number, production_id, production_lot, product_code, product_name, memo)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).bind(
-          prod_date,
-          actualItemCode,
-          itemName || bom.item_name,
-          requiredKg,
-          'kg',
-          usedLots.length > 0 ? usedLots.join(', ') : null,
-          productionId,
-          productLot,
-          product_code,
-          product.item_name,
+      // FEFO 차감 준비 (반제품 또는 원료)
+      let deductResult;
+      if (isSemiFinished) {
+        deductResult = await prepareSemiFinishedDeduction(
+          c.env.DB, actualItemCode, requiredKg, prod_date,
           `생산사용: ${product.item_name} ${quantity}개`
-        ).run();
-      } catch (e) {
-        // production_usage 테이블이 없으면 무시 (마이그레이션 전)
-        console.log('production_usage insert skipped:', e);
+        );
+      } else {
+        deductResult = await prepareFEFODeduction(
+          c.env.DB, actualItemCode, requiredKg, prod_date,
+          `생산사용: ${product.item_name} ${quantity}개`
+        );
+      }
+      
+      if (!deductResult.success) {
+        // 재고 부족 발생 - 전체 작업 중단
+        return c.json({
+          success: false,
+          error: deductResult.error,
+          errorCode: 'INSUFFICIENT_STOCK'
+        }, 400);
+      }
+      
+      // 차감 statements 추가
+      batchStatements.push(...deductResult.statements);
+      deductionRecords.push({ itemCode: actualItemCode, deductions: deductResult.deductions });
+      
+      // 마스터 재고 차감 (MAX(0, ...) 적용)
+      if (!isSemiFinished) {
+        batchStatements.push(prepareMasterDeduction(c.env.DB, actualItemCode, requiredKg));
       }
     }
     
     // 3. 제품 재고 증가
-    await c.env.DB.prepare(`
-      UPDATE master SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
-      WHERE item_code = ?
-    `).bind(quantity, product_code).run();
+    batchStatements.push(prepareMasterIncrease(c.env.DB, product_code, quantity));
     
     // 4. 제품 입고 기록 (생산입고)
-    await c.env.DB.prepare(`
-      INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
-      VALUES (?, ?, ?, date(?, '+' || ? || ' days'), ?, ?, '합격', '자체생산')
-    `).bind(
-      productLot,
-      product_code,
-      prod_date,
-      prod_date,
-      product.expiry_days || 30,
-      quantity,
-      quantity
-    ).run();
+    batchStatements.push(
+      c.env.DB.prepare(`
+        INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier)
+        VALUES (?, ?, ?, date(?, '+' || ? || ' days'), ?, ?, '합격', '자체생산')
+      `).bind(
+        productLot,
+        product_code,
+        prod_date,
+        prod_date,
+        product.expiry_days || 30,
+        quantity,
+        quantity
+      )
+    );
     
     // 5. 거래 이력 (생산입고)
-    await c.env.DB.prepare(`
-      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, memo)
-      VALUES (?, ?, '입고', ?, ?, ?, ?)
-    `).bind(
-      prod_date,
-      product_code,
-      quantity,
-      productLot,
-      quantity,
-      `생산입고 (생산ID: ${productionId})`
-    ).run();
-    
-    // 6. 일별/월별 수불부용 제품 입고 문서 기록
-    try {
-      await c.env.DB.prepare(`
-        INSERT INTO production_inbound_doc (inbound_date, item_code, item_name, quantity, unit, lot_number, production_id, memo)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    batchStatements.push(
+      c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, memo)
+        VALUES (?, ?, '입고', ?, ?, ?, ?)
       `).bind(
         prod_date,
         product_code,
-        product.item_name,
         quantity,
-        product.unit || 'EA',
         productLot,
-        productionId,
+        quantity,
         `생산입고`
-      ).run();
-    } catch (e) {
-      console.log('production_inbound_doc insert skipped:', e);
+      )
+    );
+    
+    // ===== Atomic 실행: batch()로 모든 작업 한 번에 실행 =====
+    await c.env.DB.batch(batchStatements);
+    
+    // 6. 생산 ID 조회 (batch 실행 후)
+    const prodRecord = await c.env.DB.prepare(
+      'SELECT id FROM production WHERE lot_number = ? LIMIT 1'
+    ).bind(productLot).first<{id: number}>();
+    const productionId = prodRecord?.id || 0;
+    
+    // 7. production_materials 기록 (별도 batch - 선택적)
+    const materialStatements: D1PreparedStatement[] = [];
+    for (const bom of bomItems) {
+      const requiredQty = bom.quantity * quantity;
+      const actualItemCode = bom.actualItemCode || bom.matched_item_code || bom.item_code;
+      const record = deductionRecords.find(r => r.itemCode === actualItemCode);
+      const usedLots = record?.deductions.map(d => d.lot_number).join(', ') || null;
+      
+      materialStatements.push(
+        c.env.DB.prepare(`
+          INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(productionId, actualItemCode, usedLots, requiredQty, requiredQty, bom.unit)
+      );
+    }
+    if (materialStatements.length > 0) {
+      await c.env.DB.batch(materialStatements);
     }
     
     return c.json({ 

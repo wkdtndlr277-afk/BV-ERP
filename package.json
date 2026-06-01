@@ -1,6 +1,6 @@
 {
   "name": "haccp-erp",
-  "version": "1.6.0",
+  "version": "2.2.0",
   "description": "(주)본비반트 HACCP 통합관리시스템",
   "type": "module",
   "scripts": {

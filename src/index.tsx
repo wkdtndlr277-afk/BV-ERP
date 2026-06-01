@@ -66,8 +66,8 @@ app.route('/api/task', taskRoutes);
 app.route('/api/audit', auditRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '2.1.0';
-const SYSTEM_BUILD_DATE = '2026-05-22';
+const SYSTEM_VERSION = '2.2.0';
+const SYSTEM_BUILD_DATE = '2026-06-01';
 
 // Health check
 app.get('/api/health', (c) => {

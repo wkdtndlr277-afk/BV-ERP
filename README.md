@@ -195,6 +195,24 @@ Proprietary - (주)본비반트
 
 ## 업데이트 이력
 
+- **2026-06-01**: v2.2.0 - LOT 생성 강제 + 수불부 AI 추론 배제 + inbound 전수 조사
+  - **LOT 생성 로직 완전 고정** (`src/utils/lot-generator.ts`)
+    - LOT 번호 누락 시 DB 기록 금지 (LOTGenerationError 발생)
+    - 자동 생성: YYYYMMDD-코드-순번 형식
+    - 반제품 LOT 기준일 = 생산일 전날 (고정)
+  - **수불부 AI 추론 배제** (`src/utils/stock-calculator.ts`)
+    - current_stock은 `SUM(remain_qty)` 쿼리 결과만 사용
+    - 불일치 시 'DataInconsistencyError' (데이터 불일치 오류: 관리자 확인 필요)
+    - AI 예측값 완전 배제, DB 실제 잔량만 신뢰
+  - **inbound 전수 조사 API** (`/api/audit/inbound-inspection`)
+    - LOT 누락 데이터 추출
+    - 음수 잔량 데이터 추출
+    - LOT 형식 검증 (비표준 형식 추출)
+  - **일괄 수정 쿼리 생성** (`POST /api/audit/generate-fix-queries`)
+    - dry_run 모드: 쿼리만 생성
+    - 실행 모드: Atomic 일괄 수정
+  - **전체 데이터 일관성 보고서** (`/api/audit/full-report`)
+
 - **2026-06-01**: v2.1.0 - 기술적 최적화 + 감사 스크립트
   - Atomic Transaction (D1 batch()) 적용: 모든 재고 업데이트를 원자적으로 처리
   - FEFO 쿼리 강제 적용: `ORDER BY expiry_date ASC, inbound_date ASC`
@@ -218,6 +236,15 @@ Proprietary - (주)본비반트
 - `POST /api/audit/run-all` - 전체 감사 실행 (매일 자정 호출 권장)
 - `GET /api/audit/history` - 감사 이력 조회
 - `POST /api/audit/fix-consistency` - 재고 불일치 자동 수정
+
+### inbound 전수 조사 (v2.2.0 추가)
+- `GET /api/audit/inbound-inspection` - LOT 누락/음수 재고/형식 오류 데이터 전수 조사
+- `POST /api/audit/generate-fix-queries` - 일괄 수정 쿼리 생성/실행
+  - `{ "dry_run": true }` - 쿼리만 생성 (미리보기)
+  - `{ "dry_run": false }` - 실제 수정 실행
+  - `{ "fix_types": ["lot_missing"] }` - LOT 누락만 수정
+  - `{ "fix_types": ["negative_remain"] }` - 음수 잔량만 수정
+- `GET /api/audit/full-report` - 전체 데이터 일관성 보고서
 
 ### 자정 실행 설정
 Cloudflare Pages Functions는 Cron Triggers를 직접 지원하지 않습니다.

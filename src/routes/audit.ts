@@ -9,6 +9,7 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
 import { auditStockConsistency } from '../utils/inventory';
+import { LOT_FORMAT, generateRawMaterialLOT, LOTGenerationError } from '../utils/lot-generator';
 
 const auditRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -538,6 +539,370 @@ auditRoutes.post('/fix-consistency', async (c) => {
 
   } catch (error: any) {
     console.error('[AUDIT] 재고 수정 오류:', error);
+    return c.json({
+      success: false,
+      error: error.message
+    }, 500);
+  }
+});
+
+// ===== inbound 테이블 전수 조사 =====
+
+/**
+ * inbound 테이블 전수 조사
+ * LOT 누락 또는 음수 재고 데이터 추출
+ * GET /api/audit/inbound-inspection
+ */
+auditRoutes.get('/inbound-inspection', async (c) => {
+  try {
+    // 1. LOT 번호가 누락된 데이터 (supplies 테이블 없을 수 있어서 master만 사용)
+    const lotMissing = await c.env.DB.prepare(`
+      SELECT 
+        i.id,
+        i.lot_number,
+        i.item_code,
+        COALESCE(m.item_name, '미등록') as item_name,
+        COALESCE(m.category, '미분류') as category,
+        i.inbound_date,
+        i.expiry_date,
+        i.origin_qty,
+        i.remain_qty,
+        i.quality_status,
+        i.supplier,
+        'LOT_MISSING' as issue_type
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.lot_number IS NULL OR i.lot_number = ''
+      ORDER BY i.inbound_date DESC, i.id DESC
+    `).all();
+
+    // 2. 잔량이 음수인 데이터
+    const negativeRemain = await c.env.DB.prepare(`
+      SELECT 
+        i.id,
+        i.lot_number,
+        i.item_code,
+        COALESCE(m.item_name, '미등록') as item_name,
+        COALESCE(m.category, '미분류') as category,
+        i.inbound_date,
+        i.expiry_date,
+        i.origin_qty,
+        i.remain_qty,
+        i.quality_status,
+        i.supplier,
+        'NEGATIVE_REMAIN' as issue_type
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.remain_qty < 0
+      ORDER BY i.remain_qty ASC, i.id DESC
+    `).all();
+
+    // 3. LOT 형식이 올바르지 않은 데이터 (선택적)
+    const invalidFormat = await c.env.DB.prepare(`
+      SELECT 
+        i.id,
+        i.lot_number,
+        i.item_code,
+        COALESCE(m.item_name, '미등록') as item_name,
+        COALESCE(m.category, '미분류') as category,
+        i.inbound_date,
+        i.expiry_date,
+        i.origin_qty,
+        i.remain_qty,
+        i.quality_status,
+        i.supplier,
+        'INVALID_FORMAT' as issue_type
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.lot_number IS NOT NULL 
+        AND i.lot_number != ''
+        AND i.lot_number NOT LIKE '________-%-___'
+        AND i.lot_number NOT LIKE '________-%-___-S'
+      ORDER BY i.id DESC
+      LIMIT 100
+    `).all();
+
+    const lotMissingList = lotMissing.results || [];
+    const negativeRemainList = negativeRemain.results || [];
+    const invalidFormatList = invalidFormat.results || [];
+
+    // 통계 요약
+    const stats = {
+      total_issues: lotMissingList.length + negativeRemainList.length + invalidFormatList.length,
+      lot_missing_count: lotMissingList.length,
+      negative_remain_count: negativeRemainList.length,
+      invalid_format_count: invalidFormatList.length,
+      inspection_time: new Date().toISOString()
+    };
+
+    return c.json({
+      success: true,
+      stats,
+      data: {
+        lot_missing: lotMissingList,
+        negative_remain: negativeRemainList,
+        invalid_format: invalidFormatList
+      }
+    });
+  } catch (error: any) {
+    console.error('[AUDIT] inbound 전수 조사 오류:', error);
+    return c.json({
+      success: false,
+      error: error.message
+    }, 500);
+  }
+});
+
+/**
+ * inbound 문제 데이터 일괄 수정 쿼리 생성
+ * POST /api/audit/generate-fix-queries
+ * 
+ * 수정 규칙:
+ * 1. LOT 누락: YYYYMMDD-품목코드-순번 형식으로 자동 생성
+ * 2. 음수 잔량: 0으로 수정
+ */
+auditRoutes.post('/generate-fix-queries', async (c) => {
+  const { fix_types, dry_run } = await c.req.json<{
+    fix_types?: ('lot_missing' | 'negative_remain')[];
+    dry_run?: boolean;  // true면 쿼리만 생성, 실행 안함
+  }>();
+
+  const typesToFix = fix_types || ['lot_missing', 'negative_remain'];
+  const queries: Array<{
+    id: number;
+    issue_type: string;
+    item_code: string;
+    old_value: string | number | null;
+    new_value: string | number;
+    query: string;
+  }> = [];
+
+  try {
+    // 1. LOT 누락 수정
+    if (typesToFix.includes('lot_missing')) {
+      const lotMissing = await c.env.DB.prepare(`
+        SELECT id, item_code, inbound_date, lot_number
+        FROM inbound
+        WHERE lot_number IS NULL OR lot_number = ''
+        ORDER BY inbound_date ASC, id ASC
+      `).all<{
+        id: number;
+        item_code: string;
+        inbound_date: string;
+        lot_number: string | null;
+      }>();
+
+      const lotMissingList = lotMissing.results || [];
+
+      // 날짜 + 품목코드별 순번 추적
+      const sequenceMap = new Map<string, number>();
+
+      for (const row of lotMissingList) {
+        const key = `${row.inbound_date}-${row.item_code}`;
+        
+        // 기존 LOT 순번 조회 (이미 있는 LOT 번호들)
+        if (!sequenceMap.has(key)) {
+          const existingCount = await c.env.DB.prepare(`
+            SELECT COUNT(*) as count FROM inbound 
+            WHERE item_code = ? AND inbound_date = ? AND lot_number IS NOT NULL AND lot_number != ''
+          `).bind(row.item_code, row.inbound_date).first<{ count: number }>();
+          sequenceMap.set(key, existingCount?.count || 0);
+        }
+
+        const sequence = (sequenceMap.get(key) || 0) + 1;
+        sequenceMap.set(key, sequence);
+
+        // LOT 번호 생성 (YYYYMMDD-품목코드-순번)
+        const dateStr = row.inbound_date.replace(/-/g, '');
+        const newLot = `${dateStr}-${row.item_code}-${String(sequence).padStart(3, '0')}`;
+
+        queries.push({
+          id: row.id,
+          issue_type: 'LOT_MISSING',
+          item_code: row.item_code,
+          old_value: row.lot_number,
+          new_value: newLot,
+          query: `UPDATE inbound SET lot_number = '${newLot}', updated_at = CURRENT_TIMESTAMP WHERE id = ${row.id};`
+        });
+      }
+    }
+
+    // 2. 음수 잔량 수정
+    if (typesToFix.includes('negative_remain')) {
+      const negativeRemain = await c.env.DB.prepare(`
+        SELECT id, item_code, remain_qty, lot_number
+        FROM inbound
+        WHERE remain_qty < 0
+      `).all<{
+        id: number;
+        item_code: string;
+        remain_qty: number;
+        lot_number: string;
+      }>();
+
+      const negativeRemainList = negativeRemain.results || [];
+
+      for (const row of negativeRemainList) {
+        queries.push({
+          id: row.id,
+          issue_type: 'NEGATIVE_REMAIN',
+          item_code: row.item_code,
+          old_value: row.remain_qty,
+          new_value: 0,
+          query: `UPDATE inbound SET remain_qty = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ${row.id};`
+        });
+      }
+    }
+
+    // dry_run이 아니면 실제 실행
+    if (!dry_run && queries.length > 0) {
+      const statements: D1PreparedStatement[] = [];
+
+      for (const q of queries) {
+        if (q.issue_type === 'LOT_MISSING') {
+          statements.push(
+            c.env.DB.prepare(`
+              UPDATE inbound SET lot_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+            `).bind(q.new_value, q.id)
+          );
+        } else if (q.issue_type === 'NEGATIVE_REMAIN') {
+          statements.push(
+            c.env.DB.prepare(`
+              UPDATE inbound SET remain_qty = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+            `).bind(q.id)
+          );
+        }
+      }
+
+      // Atomic 실행
+      await c.env.DB.batch(statements);
+
+      // 수정 로그 기록
+      await c.env.DB.prepare(`
+        INSERT INTO audit_logs (audit_type, audit_time, has_issues, total_mismatches, details, created_at)
+        VALUES (?, ?, 0, ?, ?, CURRENT_TIMESTAMP)
+      `).bind(
+        'INBOUND_DATA_FIX',
+        new Date().toISOString(),
+        queries.length,
+        JSON.stringify({ fix_types: typesToFix, fixed_count: queries.length })
+      ).run();
+
+      return c.json({
+        success: true,
+        executed: true,
+        message: `${queries.length}건의 데이터가 수정되었습니다.`,
+        fix_summary: {
+          lot_missing_fixed: queries.filter(q => q.issue_type === 'LOT_MISSING').length,
+          negative_remain_fixed: queries.filter(q => q.issue_type === 'NEGATIVE_REMAIN').length
+        },
+        queries
+      });
+    }
+
+    // dry_run인 경우 쿼리만 반환
+    return c.json({
+      success: true,
+      executed: false,
+      dry_run: true,
+      message: `${queries.length}건의 수정 쿼리가 생성되었습니다. 실행하려면 dry_run: false로 요청하세요.`,
+      fix_summary: {
+        lot_missing_count: queries.filter(q => q.issue_type === 'LOT_MISSING').length,
+        negative_remain_count: queries.filter(q => q.issue_type === 'NEGATIVE_REMAIN').length
+      },
+      queries
+    });
+
+  } catch (error: any) {
+    console.error('[AUDIT] 수정 쿼리 생성 오류:', error);
+    return c.json({
+      success: false,
+      error: error.message
+    }, 500);
+  }
+});
+
+/**
+ * 전체 데이터 일관성 검증 보고서
+ * GET /api/audit/full-report
+ */
+auditRoutes.get('/full-report', async (c) => {
+  try {
+    const reportTime = new Date().toISOString();
+    const report: any = {
+      report_time: reportTime,
+      sections: {}
+    };
+
+    // 1. 원료 재고 일관성
+    const rawMaterialConsistency = await auditStockConsistency(c.env.DB);
+    report.sections.raw_material_consistency = {
+      title: '원료 재고 일관성 (inbound vs master)',
+      consistent: rawMaterialConsistency.success,
+      total_checked: rawMaterialConsistency.total_checked,
+      mismatch_count: rawMaterialConsistency.mismatch_count,
+      sample_mismatches: rawMaterialConsistency.mismatches.slice(0, 5)
+    };
+
+    // 2. LOT 누락 검사
+    const lotMissingCount = await c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM inbound WHERE lot_number IS NULL OR lot_number = ''
+    `).first<{ count: number }>();
+    report.sections.lot_missing = {
+      title: 'LOT 번호 누락',
+      count: lotMissingCount?.count || 0,
+      status: (lotMissingCount?.count || 0) === 0 ? 'OK' : 'ISSUE'
+    };
+
+    // 3. 음수 재고 검사
+    const negativeInbound = await c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM inbound WHERE remain_qty < 0
+    `).first<{ count: number }>();
+    const negativeMaster = await c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM master WHERE current_stock < 0
+    `).first<{ count: number }>();
+    report.sections.negative_stock = {
+      title: '음수 재고',
+      inbound_negative_count: negativeInbound?.count || 0,
+      master_negative_count: negativeMaster?.count || 0,
+      status: ((negativeInbound?.count || 0) + (negativeMaster?.count || 0)) === 0 ? 'OK' : 'ISSUE'
+    };
+
+    // 4. 전체 통계
+    const totalInbound = await c.env.DB.prepare(`
+      SELECT COUNT(*) as total, SUM(remain_qty) as total_remain FROM inbound
+    `).first<{ total: number; total_remain: number }>();
+    const totalMaster = await c.env.DB.prepare(`
+      SELECT COUNT(*) as total, SUM(current_stock) as total_stock FROM master WHERE category = '원료'
+    `).first<{ total: number; total_stock: number }>();
+
+    report.sections.statistics = {
+      title: '전체 통계',
+      inbound_records: totalInbound?.total || 0,
+      inbound_total_remain: totalInbound?.total_remain || 0,
+      master_items: totalMaster?.total || 0,
+      master_total_stock: totalMaster?.total_stock || 0
+    };
+
+    // 5. 전체 상태 판정
+    const hasIssues = 
+      !rawMaterialConsistency.success ||
+      (lotMissingCount?.count || 0) > 0 ||
+      (negativeInbound?.count || 0) > 0 ||
+      (negativeMaster?.count || 0) > 0;
+
+    report.overall_status = hasIssues ? 'ISSUES_FOUND' : 'ALL_OK';
+    report.overall_message = hasIssues 
+      ? '데이터 불일치가 발견되었습니다. 관리자 확인이 필요합니다.' 
+      : '모든 데이터가 일관성을 유지하고 있습니다.';
+
+    return c.json({
+      success: true,
+      report
+    });
+
+  } catch (error: any) {
+    console.error('[AUDIT] 전체 보고서 생성 오류:', error);
     return c.json({
       success: false,
       error: error.message

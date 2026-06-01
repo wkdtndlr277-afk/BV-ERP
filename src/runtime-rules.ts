@@ -5,7 +5,13 @@
  * AI가 자의적으로 추론하지 않고, 반드시 이 규칙에 정의된 SQL 로직만 실행합니다.
  * 규칙에 없는 상황이 발생하면 '작업 중단'과 함께 에러를 반환합니다.
  * 
- * @version 1.0.0
+ * ⚠️ 핵심 원칙:
+ * 1. 모든 수불 계산은 DB 잔량 합계(SUM(remain_qty))만을 신뢰한다.
+ * 2. 재고 부족 시 계산하지 말고 즉시 'INSUFFICIENT_STOCK' 오류를 발생시켜 작업을 중단한다.
+ * 3. LOT 생성 누락 시 기록을 거부하고 'LOT_MISSING' 알람을 발생시킨다.
+ * 4. AI 예측값 완전 배제 - DB 실제 잔량만 신뢰한다.
+ * 
+ * @version 2.2.0
  * @lastUpdated 2026-06-01
  */
 
@@ -251,7 +257,7 @@ export const SYSTEM_CONFIG = {
   /**
    * 버전 정보
    */
-  VERSION: '2.1.0',
+  VERSION: '2.2.0',
   BUILD_DATE: '2026-06-01',
 
   /**
@@ -264,7 +270,80 @@ export const SYSTEM_CONFIG = {
   }
 };
 
-// ===== 8. 규칙 요약 =====
+// ===== 8. 수불부 계산 규칙 (AI 추론 배제) =====
+
+export const STOCK_CALCULATION_RULES = {
+  /**
+   * 재고 계산 시 신뢰할 데이터 소스
+   * - current_stock은 AI가 계산하지 않음
+   * - SUM(remain_qty) 쿼리 결과만 사용
+   */
+  TRUST_SOURCE: {
+    raw_material: 'SELECT COALESCE(SUM(remain_qty), 0) as current_stock FROM inbound WHERE item_code = ? AND quality_status = "합격"',
+    product: 'SELECT COALESCE(SUM(remain_qty), 0) as current_stock FROM production_inbound WHERE production_code = ? AND quality_status = "합격"',
+    semi_finished: 'SELECT COALESCE(SUM(remain_qty), 0) as current_stock FROM semi_finished_lots WHERE item_code = ?'
+  },
+
+  /**
+   * 데이터 불일치 시 행동
+   * - 계산 결과를 보여주지 말고 에러 메시지 반환
+   * - 에러 코드: DATA_MISMATCH
+   */
+  ON_MISMATCH: {
+    action: 'ABORT',
+    error_code: 'DATA_MISMATCH',
+    message: '데이터 불일치 오류: 관리자 확인 필요'
+  },
+
+  /**
+   * AI 추론 완전 배제
+   * - DB의 실제 잔량 합계만 신뢰
+   * - 예측값, 추정값, 계산값 사용 금지
+   */
+  AI_INFERENCE: {
+    enabled: false,
+    reason: 'DB SUM 쿼리 결과만 사용, AI 예측값 배제'
+  }
+};
+
+// ===== 9. LOT 생성 강제 규칙 =====
+
+export const LOT_GENERATION_RULES = {
+  /**
+   * LOT 번호 필수 생성
+   * - LOT 번호 누락 시 DB 기록 거부
+   * - 시스템이 자동으로 생성
+   */
+  REQUIRED: {
+    enabled: true,
+    on_missing: 'REJECT',
+    error_code: 'LOT_MISSING',
+    message: 'LOT 생성 오류: LOT 번호가 누락되었습니다.'
+  },
+
+  /**
+   * LOT 형식
+   * - 원료: YYYYMMDD-R코드-순번 (입고일 기준)
+   * - 반제품: YYYYMMDD-SF코드-순번 (생산일 전날 기준!)
+   * - 제품: PRD-YYYYMMDD-제품코드-랜덤4자리
+   */
+  FORMAT: {
+    raw_material: 'YYYYMMDD-{item_code}-{sequence:3}',
+    semi_finished: 'YYYYMMDD-{item_code}-{sequence:3}',  // 기준일 = 생산일 전날
+    product: 'PRD-YYYYMMDD-{product_code}-{random:4}'
+  },
+
+  /**
+   * 반제품 LOT 기준일
+   * - 생산일 전날 고정
+   */
+  SEMI_FINISHED_REFERENCE_DATE: {
+    rule: 'production_date - 1 day',
+    description: '반제품 LOT 조회 시 기준일은 생산일 전날'
+  }
+};
+
+// ===== 10. 규칙 요약 =====
 
 export const RULES_SUMMARY = `
 ## ERP 시스템 운영 규칙 요약

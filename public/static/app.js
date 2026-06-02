@@ -41145,13 +41145,17 @@ async function showTaskDetailModal(id) {
                 '진행중': 'bg-blue-100 text-blue-600',
                 '완료': 'bg-green-100 text-green-600'
               };
+              // 안전한 데이터 전달을 위해 encodeURIComponent 사용
+              const safeComment = encodeURIComponent(c.comment || '');
+              const safeDeptName = encodeURIComponent(c.department_name || '');
+              const safeCheckedBy = encodeURIComponent(c.checked_by || '');
               return `
                 <div class="rounded-lg border p-3" style="border-left: 3px solid ${c.department_color}">
                   <div class="flex items-center justify-between mb-2">
                     <span class="font-bold" style="color: ${c.department_color}">${c.department_name}</span>
                     <div class="flex items-center gap-2">
                       <span class="px-2 py-0.5 rounded text-xs ${statusColors[c.status] || statusColors['대기']}">${c.status || '대기'}</span>
-                      <button onclick="showTaskDeptUpdateModal(${t.id}, ${c.department_id}, '${c.department_name}', '${c.status || '대기'}', ${c.progress || 0}, '${(c.comment || '').replace(/'/g, "\\'")}', '${c.checked_by || ''}')" 
+                      <button onclick="showTaskDeptUpdateModalSafe(${t.id}, ${c.department_id}, '${safeDeptName}', '${c.status || '대기'}', ${c.progress || 0}, '${safeComment}', '${safeCheckedBy}')" 
                               class="px-2 py-1 text-xs rounded border hover:bg-gray-50" style="border-color: ${c.department_color}; color: ${c.department_color}">
                         <i class="fas fa-edit"></i> 수정
                       </button>
@@ -41204,8 +41208,22 @@ async function showTaskDetailModal(id) {
   }
 }
 
+// URL 인코딩된 데이터를 디코딩하여 모달 호출 (특수문자 안전 처리)
+function showTaskDeptUpdateModalSafe(taskId, deptId, encodedDeptName, currentStatus, currentProgress, encodedComment, encodedCheckedBy) {
+  const deptName = decodeURIComponent(encodedDeptName);
+  const currentComment = decodeURIComponent(encodedComment);
+  const currentBy = decodeURIComponent(encodedCheckedBy);
+  showTaskDeptUpdateModal(taskId, deptId, deptName, currentStatus, currentProgress, currentComment, currentBy);
+}
+window.showTaskDeptUpdateModalSafe = showTaskDeptUpdateModalSafe;
+
 function showTaskDeptUpdateModal(taskId, deptId, deptName, currentStatus, currentProgress, currentComment, currentBy) {
   closeModal();
+  // HTML 특수문자 이스케이프
+  const escapeHtml = (str) => (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const safeComment = escapeHtml(currentComment);
+  const safeBy = escapeHtml(currentBy);
+  
   showModal(deptName + ' 진행현황 수정', `
     <div class="space-y-4 p-4">
       <div>
@@ -41240,11 +41258,11 @@ function showTaskDeptUpdateModal(taskId, deptId, deptName, currentStatus, curren
       </div>
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">코멘트</label>
-        <textarea id="dept-comment" rows="3" class="w-full border rounded-lg px-3 py-2">${currentComment}</textarea>
+        <textarea id="dept-comment" rows="3" class="w-full border rounded-lg px-3 py-2">${safeComment}</textarea>
       </div>
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">담당자</label>
-        <input type="text" id="dept-checked-by" value="${currentBy}" class="w-full border rounded-lg px-3 py-2">
+        <input type="text" id="dept-checked-by" value="${safeBy}" class="w-full border rounded-lg px-3 py-2">
       </div>
       <div class="flex justify-end gap-2 pt-4 border-t">
         <button onclick="closeModal(); showTaskDetailModal(${taskId})" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
@@ -41502,11 +41520,11 @@ async function taskBoardLoadData() {
     }
     
     // 부서 필터 옵션 채우기
-    if (deptRes.data.success) {
+    if (deptRes.data.success && deptRes.data.departments) {
       const deptSelect = document.getElementById('tb-filter-dept');
       if (deptSelect) {
         deptSelect.innerHTML = '<option value="all">전체 부서</option>' + 
-          deptRes.data.departments.map(d => 
+          (deptRes.data.departments || []).map(d => 
             `<option value="${d.id}" ${taskBoardFilters.department == d.id ? 'selected' : ''}>${d.name}</option>`
           ).join('');
       }

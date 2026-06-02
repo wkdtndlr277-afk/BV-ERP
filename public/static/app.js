@@ -429,6 +429,32 @@ function formatNumber(num, decimals = 2) {
   return n.toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
 }
 
+// v2.4.1: kg 단위 중량 데이터 포맷 (소수점 4자리 고정)
+// 수불부, 생산일보 원재료 사용량 등 미량 데이터 표시용
+function formatWeight(num, unit = 'kg') {
+  const n = Number(num || 0);
+  if (n === 0) return '0';
+  
+  // kg 또는 미지정 단위는 소수점 4자리까지 표시
+  if (unit === 'kg' || unit === '' || !unit) {
+    // 소수점 4자리까지 표시하되, 불필요한 0은 제거
+    const formatted = n.toFixed(4);
+    // 소수점 이하 trailing zeros 제거하되 최소 소수점 이하 유지
+    const trimmed = formatted.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+    // 0.0001 이하의 매우 작은 값은 그대로 4자리로 표시
+    if (Math.abs(n) < 0.0001 && n !== 0) {
+      return n.toFixed(4);
+    }
+    // 천단위 구분자 추가
+    const parts = trimmed.split('.');
+    parts[0] = Number(parts[0]).toLocaleString('ko-KR');
+    return parts.length > 1 ? parts.join('.') : parts[0];
+  }
+  
+  // 기타 단위는 기본 formatNumber 사용
+  return formatNumber(n);
+}
+
 function showToast(message, type = 'success') {
   const container = document.getElementById('toast-container');
   const toast = document.createElement('div');
@@ -6401,16 +6427,17 @@ function renderDailyLotDetail(result, date) {
     var lotUsage = (lot.period_usage || 0) + (lot.period_outbound || 0);
     var lotNumClass = (lot.lot_number && lot.lot_number.indexOf('ADJ-') === 0) ? 'text-yellow-600' : '';
     
+    // v2.4.1: formatWeight로 소수점 4자리까지 표시
     return '<tr class="border-b border-gray-200 hover:bg-indigo-50 ' + (lot.closing_qty <= 0 ? 'text-gray-400 bg-gray-100' : '') + '">' +
       '<td class="p-2 text-center"><span class="inline-flex items-center justify-center w-5 h-5 rounded-full ' + (lot.closing_qty > 0 ? 'bg-indigo-500 text-white' : 'bg-gray-300 text-gray-500') + ' text-xs font-bold">' + (lotIdx + 1) + '</span></td>' +
       '<td class="p-2 text-center text-gray-500">' + (lot.supplier || '-') + '</td>' +
       '<td class="p-2 text-center">' + (lot.inbound_date || '-') + '</td>' +
       '<td class="p-2 text-center ' + (status === 'expired' || status === 'urgent' ? 'text-red-600 font-bold' : '') + '">' + (lot.expiry_date || '-') + '</td>' +
       '<td class="p-2 font-mono ' + lotNumClass + '">' + (lot.lot_number || '-') + '</td>' +
-      '<td class="p-2 text-right text-purple-600">' + (lot.carry_over > 0 ? formatNumber(lot.carry_over) : '-') + '</td>' +
-      '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-') + '</td>' +
-      '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (lotUsage > 0 ? '-' + formatNumber(lotUsage) : '-') + '</td>' +
-      '<td class="p-2 text-right font-bold">' + formatNumber(lot.closing_qty) + ' <span class="text-gray-400 font-normal">' + (item.unit || '') + '</span></td>' +
+      '<td class="p-2 text-right text-purple-600">' + (lot.carry_over > 0 ? formatWeight(lot.carry_over, item.unit) : '-') + '</td>' +
+      '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (lot.period_inbound > 0 ? '+' + formatWeight(lot.period_inbound, item.unit) : '-') + '</td>' +
+      '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (lotUsage > 0 ? '-' + formatWeight(lotUsage, item.unit) : '-') + '</td>' +
+      '<td class="p-2 text-right font-bold">' + formatWeight(lot.closing_qty, item.unit) + ' <span class="text-gray-400 font-normal">' + (item.unit || '') + '</span></td>' +
       '<td class="p-2 text-center">' + statusBadge + '</td>' +
     '</tr>';
   }
@@ -6446,14 +6473,15 @@ function renderDailyLotDetail(result, date) {
       lotTableHtml = '<div class="p-4 pl-8 text-gray-400 text-xs"><i class="fas fa-info-circle mr-1"></i> LOT 정보 없음 (재고조정으로 등록된 품목)</div>';
     }
     
+    // v2.4.1: formatWeight로 소수점 4자리까지 표시
     return '<tr class="border-b hover:bg-blue-50 cursor-pointer bg-white" onclick="toggleDailyLot(' + idx + ')">' +
       '<td class="p-2 text-center"><i class="fas fa-chevron-right text-gray-400 text-xs transition-transform" id="daily-chevron-' + idx + '"></i></td>' +
       '<td class="p-2"><div class="font-medium">' + item.item_name + '</div><div class="text-xs text-gray-400 font-mono">' + item.item_code + '</div></td>' +
       '<td class="p-2 text-center"><span class="px-2 py-0.5 text-xs rounded ' + categoryClass + '">' + item.category + '</span></td>' +
-      '<td class="p-2 text-right text-purple-600">' + formatNumber(item.summary.carry_over) + '</td>' +
-      '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-') + '</td>' +
-      '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (totalUsage > 0 ? '-' + formatNumber(totalUsage) : '-') + '</td>' +
-      '<td class="p-2 text-right font-bold">' + formatNumber(item.summary.closing_qty) + '</td>' +
+      '<td class="p-2 text-right text-purple-600">' + formatWeight(item.summary.carry_over, item.unit) + '</td>' +
+      '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (item.summary.period_inbound > 0 ? '+' + formatWeight(item.summary.period_inbound, item.unit) : '-') + '</td>' +
+      '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (totalUsage > 0 ? '-' + formatWeight(totalUsage, item.unit) : '-') + '</td>' +
+      '<td class="p-2 text-right font-bold">' + formatWeight(item.summary.closing_qty, item.unit) + '</td>' +
       '<td class="p-2 text-center"><span class="px-2 py-0.5 text-xs rounded ' + (item.lot_count > 0 ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-500') + '">' + item.lot_count + '</span></td>' +
     '</tr>' +
     '<tr id="daily-lot-' + idx + '" class="hidden"><td colspan="8" class="p-0 bg-gray-50">' + lotTableHtml + '</td></tr>';
@@ -6724,17 +6752,18 @@ function printDailyLedger() {
   filteredData.forEach(item => {
     const isJeongjesu = isJeongjesuItem(item);
     // 품목 행 (구분/단위 대신 입고일/소비기한 열에 구분/단위 표시)
+    // v2.4.1: formatWeight로 소수점 4자리까지 표시
     tableHtml += `
       <tr style="background:#f9f9f9; font-weight:bold;">
         <td>${item.item_code}</td>
         <td>${item.item_name}${isJeongjesu ? ' <span style="color:#888;">(사용량만)</span>' : ''}</td>
         <td style="text-align:center;">${item.category || '-'}</td>
         <td style="text-align:center;">${item.unit || '-'}</td>
-        <td style="text-align:right;">${isJeongjesu ? '-' : formatNumber(item.summary?.carry_over || 0)}</td>
-        <td style="text-align:right;">${isJeongjesu ? '-' : (item.summary?.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-')}</td>
-        <td style="text-align:right;">${item.summary?.period_usage > 0 ? '-' + formatNumber(item.summary.period_usage) : '-'}</td>
-        <td style="text-align:right;">${isJeongjesu ? '-' : (item.summary?.period_adjustment !== 0 ? formatNumber(item.summary.period_adjustment) : '-')}</td>
-        <td style="text-align:right;">${isJeongjesu ? '-' : formatNumber(item.summary?.closing_qty || 0)}</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : formatWeight(item.summary?.carry_over || 0, item.unit)}</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : (item.summary?.period_inbound > 0 ? '+' + formatWeight(item.summary.period_inbound, item.unit) : '-')}</td>
+        <td style="text-align:right;">${item.summary?.period_usage > 0 ? '-' + formatWeight(item.summary.period_usage, item.unit) : '-'}</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : (item.summary?.period_adjustment !== 0 ? formatWeight(item.summary.period_adjustment, item.unit) : '-')}</td>
+        <td style="text-align:right;">${isJeongjesu ? '-' : formatWeight(item.summary?.closing_qty || 0, item.unit)}</td>
         <td style="text-align:center;">${isJeongjesu ? '-' : (item.lot_count || 0) + '건'}</td>
       </tr>
     `;
@@ -6746,6 +6775,7 @@ function printDailyLedger() {
       const newLots = item.lots.filter(lot => lot.isNewLot === true);
       // FIFO 순서대로 정렬 (입고일 기준)
       const sortedLots = newLots.slice().sort((a, b) => (a.inbound_date || '').localeCompare(b.inbound_date || ''));
+      // v2.4.1: formatWeight로 소수점 4자리까지 표시
       sortedLots.forEach((lot, idx) => {
         const usage = lot.fifo_usage || lot.period_usage || 0;
         const closing = lot.fifo_closing !== undefined ? lot.fifo_closing : (lot.closing_qty || 0);
@@ -6756,10 +6786,10 @@ function printDailyLedger() {
             <td style="text-align:center;">${lot.inbound_date || '-'}</td>
             <td style="text-align:center;">${lot.expiry_date || '-'}</td>
             <td style="text-align:right;">-</td>
-            <td style="text-align:right;">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
-            <td style="text-align:right;">${usage > 0 ? '-' + formatNumber(usage) : '-'}</td>
-            <td style="text-align:right;">${lot.period_adjustment !== 0 ? formatNumber(lot.period_adjustment) : '-'}</td>
-            <td style="text-align:right;">${formatNumber(closing)}</td>
+            <td style="text-align:right;">${lot.period_inbound > 0 ? '+' + formatWeight(lot.period_inbound, item.unit) : '-'}</td>
+            <td style="text-align:right;">${usage > 0 ? '-' + formatWeight(usage, item.unit) : '-'}</td>
+            <td style="text-align:right;">${lot.period_adjustment !== 0 ? formatWeight(lot.period_adjustment, item.unit) : '-'}</td>
+            <td style="text-align:right;">${formatWeight(closing, item.unit)}</td>
             <td style="text-align:center;">${lot.supplier || '-'}</td>
           </tr>
         `;
@@ -6770,7 +6800,8 @@ function printDailyLedger() {
   tableHtml += '</tbody></table>';
   
   const title = `일별 수불부 (${period.start_date || formatDate(new Date())})`;
-  const info = `<strong>전일:</strong> ${formatNumber(summary.carry_over || 0)} | <strong>입고:</strong> +${formatNumber(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatNumber(summary.period_usage || 0)} | <strong>현재고:</strong> ${formatNumber(summary.closing_qty || 0)} | <strong>품목:</strong> ${filteredData.length}건`;
+  // v2.4.1: formatWeight로 소수점 4자리까지 표시
+  const info = `<strong>전일:</strong> ${formatWeight(summary.carry_over || 0)} | <strong>입고:</strong> +${formatWeight(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatWeight(summary.period_usage || 0)} | <strong>현재고:</strong> ${formatWeight(summary.closing_qty || 0)} | <strong>품목:</strong> ${filteredData.length}건`;
   
   printData(title, tableHtml, info);
 }
@@ -6921,13 +6952,14 @@ function printMonthlyLedger() {
     const totalUsage = (item.summary?.period_usage || 0) + (item.summary?.period_outbound || 0);
     tableHtml += `
       <tr style="background:#f3f4f6; font-weight:bold; border-bottom:2px solid #d1d5db;">
+        // v2.4.1: formatWeight로 소수점 4자리까지 표시
         <td style="text-align:center;">${item.item_code}</td>
         <td><span style="font-size:12px;">${item.item_name}</span>${isJeongjesu ? ' <span style="color:#888; font-size:10px;">(사용량만)</span>' : ''} <span style="color:#666; font-size:9px; margin-left:5px;">[${item.category}/${item.unit}]</span></td>
         <td colspan="2" style="text-align:center; color:#666; font-size:10px;">LOT ${item.lot_count || 0}건</td>
-        <td style="text-align:right; color:#7c3aed;">${isJeongjesu ? '-' : formatNumber(itemAdjustedCarryOver)}</td>
-        <td style="text-align:right; color:#2563eb;">${isJeongjesu ? '-' : (item.summary?.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-')}</td>
-        <td style="text-align:right; color:#ea580c;">${totalUsage > 0 ? '-' + formatNumber(totalUsage) : '-'}</td>
-        <td style="text-align:right; font-weight:bold;">${isJeongjesu ? '-' : formatNumber(item.summary?.closing_qty || 0)}</td>
+        <td style="text-align:right; color:#7c3aed;">${isJeongjesu ? '-' : formatWeight(itemAdjustedCarryOver, item.unit)}</td>
+        <td style="text-align:right; color:#2563eb;">${isJeongjesu ? '-' : (item.summary?.period_inbound > 0 ? '+' + formatWeight(item.summary.period_inbound, item.unit) : '-')}</td>
+        <td style="text-align:right; color:#ea580c;">${totalUsage > 0 ? '-' + formatWeight(totalUsage, item.unit) : '-'}</td>
+        <td style="text-align:right; font-weight:bold;">${isJeongjesu ? '-' : formatWeight(item.summary?.closing_qty || 0, item.unit)}</td>
         <td style="text-align:center; color:#666; font-size:10px;">합계</td>
       </tr>
     `;
@@ -6970,16 +7002,17 @@ function printMonthlyLedger() {
           : (lot.lot_number || '-');
         // FIFO 순서 표시
         const fifoOrder = lot.fifo_order || lot.order || (idx + 1);
+        // v2.4.1: formatWeight로 소수점 4자리까지 표시
         tableHtml += `
           <tr style="${rowStyle} border-bottom:1px solid #e5e7eb;">
             <td style="padding-left:20px; text-align:center;"><span style="display:inline-block; width:18px; height:18px; line-height:18px; border-radius:50%; background:${closing > 0 ? '#6366f1' : '#9ca3af'}; color:white; font-size:9px; font-weight:bold;">${fifoOrder}</span></td>
             <td>${lotLabel}</td>
             <td style="text-align:center;">${lot.inbound_date || '-'}</td>
             <td style="text-align:center;">${lot.expiry_date || '-'}</td>
-            <td style="text-align:right; color:#7c3aed;">${isCarryOver && adjustedCarryOver > 0 ? formatNumber(adjustedCarryOver) : '-'}</td>
-            <td style="text-align:right; color:#2563eb;">${lot.period_inbound > 0 ? '+' + formatNumber(lot.period_inbound) : '-'}</td>
-            <td style="text-align:right; color:#ea580c;">${usage > 0 ? '-' + formatNumber(usage) : '-'}</td>
-            <td style="text-align:right; font-weight:bold;">${formatNumber(closing)}</td>
+            <td style="text-align:right; color:#7c3aed;">${isCarryOver && adjustedCarryOver > 0 ? formatWeight(adjustedCarryOver, item.unit) : '-'}</td>
+            <td style="text-align:right; color:#2563eb;">${lot.period_inbound > 0 ? '+' + formatWeight(lot.period_inbound, item.unit) : '-'}</td>
+            <td style="text-align:right; color:#ea580c;">${usage > 0 ? '-' + formatWeight(usage, item.unit) : '-'}</td>
+            <td style="text-align:right; font-weight:bold;">${formatWeight(closing, item.unit)}</td>
             <td style="text-align:center;">${lot.supplier || '-'}</td>
           </tr>
         `;
@@ -6990,7 +7023,8 @@ function printMonthlyLedger() {
   tableHtml += '</tbody></table>';
   
   const title = `월별 수불부 (${periodLabel})`;
-  const info = `<strong>월초:</strong> ${formatNumber(adjustedSummaryCarryOver)} | <strong>입고:</strong> +${formatNumber(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatNumber(summary.period_usage || 0)} | <strong>월말:</strong> ${formatNumber(summary.closing_qty || 0)} | <strong>품목:</strong> ${filteredData.length}건`;
+  // v2.4.1: formatWeight로 소수점 4자리까지 표시
+  const info = `<strong>월초:</strong> ${formatWeight(adjustedSummaryCarryOver)} | <strong>입고:</strong> +${formatWeight(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatWeight(summary.period_usage || 0)} | <strong>월말:</strong> ${formatWeight(summary.closing_qty || 0)} | <strong>품목:</strong> ${filteredData.length}건`;
   
   printData(title, tableHtml, info);
 }
@@ -7396,11 +7430,12 @@ function renderMonthlySummaryView(result) {
       '<button onclick="toggleCarryOverEditMode()" id="edit-mode-btn" class="ml-2 px-3 py-1 text-xs bg-orange-100 text-orange-700 hover:bg-orange-200 rounded transition"><i class="fas fa-edit mr-1"></i>월초재고 수정</button>' +
       '<span id="edit-mode-indicator" class="hidden text-xs text-orange-600 font-bold"><i class="fas fa-exclamation-circle mr-1"></i>수정모드</span>' +
     '</div>' +
+    // v2.4.1: formatWeight로 소수점 4자리까지 표시
     '<div class="flex items-center gap-4 text-sm">' +
-      '<span class="text-purple-600"><b>월초</b> <span id="summary-carry-over">' + formatNumber(adjustedCarryOver) + '</span></span>' +
-      '<span class="' + terms.inboundColor + '"><b>' + terms.inbound + '</b> +' + formatNumber(summary.period_inbound || 0) + '</span>' +
-      '<span class="' + terms.usageColor + '"><b>' + terms.usage + '</b> -' + formatNumber((summary.period_usage || 0) + (summary.period_outbound || 0)) + '</span>' +
-      '<span class="text-gray-800 font-bold"><b>월말</b> <span id="summary-closing-qty">' + formatNumber(summary.closing_qty || 0) + '</span></span>' +
+      '<span class="text-purple-600"><b>월초</b> <span id="summary-carry-over">' + formatWeight(adjustedCarryOver) + '</span></span>' +
+      '<span class="' + terms.inboundColor + '"><b>' + terms.inbound + '</b> +' + formatWeight(summary.period_inbound || 0) + '</span>' +
+      '<span class="' + terms.usageColor + '"><b>' + terms.usage + '</b> -' + formatWeight((summary.period_usage || 0) + (summary.period_outbound || 0)) + '</span>' +
+      '<span class="text-gray-800 font-bold"><b>월말</b> <span id="summary-closing-qty">' + formatWeight(summary.closing_qty || 0) + '</span></span>' +
     '</div>' +
   '</div>';
   
@@ -7434,18 +7469,19 @@ function renderMonthlySummaryView(result) {
       var calculatedClosing = itemAdjustedCarryOver + (item.summary.period_inbound || 0) - (item.summary.period_usage || 0) - (item.summary.period_outbound || 0);
       var isEdited = editedCarryOver !== undefined;
       
+      // v2.4.1: formatWeight로 소수점 4자리까지 표시
       return '<tr class="border-b hover:bg-purple-50 ' + (calculatedClosing <= 0 ? 'text-gray-400' : '') + '" data-item-code="' + item.item_code + '" data-idx="' + idx + '">' +
         '<td class="p-2 sticky left-0 bg-white"><div class="font-medium">' + item.item_name + '</div><div class="text-xs text-gray-400 font-mono">' + item.item_code + '</div></td>' +
         '<td class="p-2 text-center"><span class="px-2 py-0.5 text-xs rounded ' + categoryClass + '">' + item.category + '</span></td>' +
         '<td class="p-2 text-center text-xs text-gray-500">' + (item.unit || '-') + '</td>' +
         '<td class="p-2 text-right carry-over-cell ' + (isEdited ? 'bg-orange-100' : '') + '">' +
-          '<span class="carry-over-display text-purple-600 ' + (isEdited ? 'font-bold text-orange-600' : '') + '">' + formatNumber(itemAdjustedCarryOver) + '</span>' +
-          '<input type="number" step="0.01" class="carry-over-input hidden w-20 px-1 py-0.5 text-right border border-orange-400 rounded text-sm" value="' + itemAdjustedCarryOver.toFixed(2) + '" data-original="' + originalCarryOver + '" data-item-code="' + item.item_code + '">' +
+          '<span class="carry-over-display text-purple-600 ' + (isEdited ? 'font-bold text-orange-600' : '') + '">' + formatWeight(itemAdjustedCarryOver, item.unit) + '</span>' +
+          '<input type="number" step="0.0001" class="carry-over-input hidden w-24 px-1 py-0.5 text-right border border-orange-400 rounded text-sm" value="' + itemAdjustedCarryOver.toFixed(4) + '" data-original="' + originalCarryOver + '" data-item-code="' + item.item_code + '">' +
         '</td>' +
-        '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (item.summary.period_inbound > 0 ? '+' + formatNumber(item.summary.period_inbound) : '-') + '</td>' +
-        '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (totalUsage > 0 ? '-' + formatNumber(totalUsage) : '-') + '</td>' +
-        (item.category === '제품' ? '' : '<td class="p-2 text-right text-red-600">' + (item.summary.period_outbound > 0 ? '-' + formatNumber(item.summary.period_outbound) : '-') + '</td>') +
-        '<td class="p-2 text-right font-bold bg-yellow-50 closing-qty-cell ' + (isEdited ? 'text-orange-600' : '') + '">' + formatNumber(calculatedClosing) + '</td>' +
+        '<td class="p-2 text-right ' + itemTerms.inboundColor + '">' + (item.summary.period_inbound > 0 ? '+' + formatWeight(item.summary.period_inbound, item.unit) : '-') + '</td>' +
+        '<td class="p-2 text-right ' + itemTerms.usageColor + '">' + (totalUsage > 0 ? '-' + formatWeight(totalUsage, item.unit) : '-') + '</td>' +
+        (item.category === '제품' ? '' : '<td class="p-2 text-right text-red-600">' + (item.summary.period_outbound > 0 ? '-' + formatWeight(item.summary.period_outbound, item.unit) : '-') + '</td>') +
+        '<td class="p-2 text-right font-bold bg-yellow-50 closing-qty-cell ' + (isEdited ? 'text-orange-600' : '') + '">' + formatWeight(calculatedClosing, item.unit) + '</td>' +
         '<td class="p-2 text-center"><span class="text-xs ' + (item.lot_count > 0 ? 'text-indigo-600' : 'text-gray-400') + '">' + item.lot_count + '건</span></td>' +
       '</tr>';
     }).join('');
@@ -21018,7 +21054,7 @@ function showDailyReportModal(reportData) {
                   ${materials_summary.map(mat => `
                     <tr>
                       <td class="px-3 py-2 font-medium">${mat.material_name}</td>
-                      <td class="px-3 py-2 text-right">${formatNumber(mat.total_quantity.toFixed(1))}</td>
+                      <td class="px-3 py-2 text-right">${formatWeight(mat.total_quantity, mat.unit)}</td>
                       <td class="px-3 py-2 text-center">${mat.unit}</td>
                     </tr>
                   `).join('')}
@@ -21324,12 +21360,13 @@ async function printDailyReportById(reportId) {
             ? lots.slice(0, 2).map(l => l.lot_number || '').filter(Boolean).join(', ') + (lots.length > 2 ? ' 외' : '')
             : '-';
           
+          // v2.4.1: formatWeight로 소수점 4자리까지 표시
           materialRows += '<tr>' +
             '<td class="text-center">' + (i + 1) + '</td>' +
             '<td class="text-center">' + (m.material_code || '-') + '</td>' +
             '<td>' + (m.material_name || '-') + '</td>' +
-            '<td class="text-right">' + formatNumber(Math.round(Number(m.total_quantity) || 0)) + '</td>' +
-            '<td class="text-center">' + (m.unit || 'g') + '</td>' +
+            '<td class="text-right">' + formatWeight(Number(m.total_quantity) || 0, m.unit) + '</td>' +
+            '<td class="text-center">' + (m.unit || 'kg') + '</td>' +
             '<td style="font-size:7pt;">' + lotText + '</td>' +
             '</tr>';
         } catch (matError) {
@@ -29897,8 +29934,8 @@ function printProductionPlanReport() {
             ${data.materials_summary.map(m => `
               <tr>
                 <td>${m.material_name}</td>
-                <td class="qty">${formatNumber(m.quantity)} ${m.unit}</td>
-                <td class="qty">${m.quantity_kg ? formatNumber(m.quantity_kg, 2) + ' kg' : '-'}</td>
+                <td class="qty">${formatWeight(m.quantity, m.unit)} ${m.unit}</td>
+                <td class="qty">${m.quantity_kg ? formatWeight(m.quantity_kg) + ' kg' : '-'}</td>
               </tr>
             `).join('')}
           </tbody>

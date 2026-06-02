@@ -178,7 +178,7 @@ dailyReport.post('/items/update-match', async (c) => {
       }
     }
     
-    // 4. 생산일보 원재료 집계 재계산 (BOM 기반) - v2.4.4 수정: box_quantity 포함
+    // 4. 생산일보 원재료 집계 재계산 - v2.4.5: production.ts와 100% 동일한 로직 + kg 통일
     // 해당 생산일보의 모든 품목 조회 (box_quantity 포함)
     const reportItems = await c.env.DB.prepare(`
       SELECT id, production_code, quantity, box_quantity FROM production_daily_items WHERE report_id = ?
@@ -194,31 +194,40 @@ dailyReport.post('/items/update-match', async (c) => {
         WHERE production_code IN (${productionCodes.map(() => '?').join(',')})
       `).bind(...productionCodes).all()
       
-      // 원재료 집계 - v2.4.4: box_quantity 적용하여 실제 생산 개수 계산
+      // ★★★ v2.4.5: production.ts와 100% 동일한 계산 + kg 단위 통일 ★★★
       const materialsMap = new Map<string, { material_code: string, total_quantity: number, unit: string }>()
       
       for (const item of reportItems.results as any[]) {
         const boxQty = item.box_quantity || 1  // 박스 입수량 (기본값 1)
+        // production.ts Line 947과 동일
         const actualCount = (item.quantity || 0) * boxQty  // 실제 생산 개수 = 박스수 × 입수량
         
         const itemBoms = (bomData.results as any[]).filter(b => b.production_code === item.production_code)
         for (const bom of itemBoms) {
-          const key = `${bom.material_code}|${bom.material_name}|${bom.unit}`
-          const existing = materialsMap.get(key) || { material_code: bom.material_code, total_quantity: 0, unit: bom.unit }
-          existing.total_quantity += (bom.quantity || 0) * actualCount  // BOM 수량 × 실제 생산 개수
+          // production.ts Line 960과 동일
+          const reqQty = (bom.quantity || 0) * actualCount
+          
+          // ★★★ 단위 통일: g이면 /1000하여 kg로 변환 ★★★
+          const bomUnit = (bom.unit || 'kg').toLowerCase()
+          const reqKg = bomUnit === 'g' ? reqQty / 1000 : reqQty
+          
+          // 키는 material_code + material_name (단위는 항상 kg)
+          const key = `${bom.material_code}|${bom.material_name}`
+          const existing = materialsMap.get(key) || { material_code: bom.material_code, total_quantity: 0, unit: 'kg' }
+          existing.total_quantity += reqKg
           materialsMap.set(key, existing)
         }
       }
       
-      // 기존 원재료 데이터 삭제 후 재삽입
+      // 기존 원재료 데이터 삭제 후 재삽입 (항상 kg 단위로 저장)
       await c.env.DB.prepare('DELETE FROM production_daily_materials WHERE report_id = ?').bind(report_id).run()
       
       for (const [key, mat] of materialsMap) {
-        const [material_code, material_name, unit] = key.split('|')
+        const [material_code, material_name] = key.split('|')
         await c.env.DB.prepare(`
           INSERT INTO production_daily_materials (report_id, material_code, material_name, required_quantity, unit)
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(report_id, material_code, material_name, mat.total_quantity, unit).run()
+          VALUES (?, ?, ?, ?, 'kg')
+        `).bind(report_id, material_code, material_name, mat.total_quantity).run()
       }
     }
     
@@ -245,8 +254,8 @@ dailyReport.post('/items/update-match', async (c) => {
   }
 })
 
-// ===== v2.4.4: 생산일보 원재료 일괄 재계산 API =====
-// 기존 뻥튀기 데이터를 정리하고 올바른 값으로 재계산
+// ===== v2.4.5: 생산일보 원재료 일괄 재계산 API =====
+// production.ts와 100% 동일한 계산 로직 + kg 단위 통일
 dailyReport.post('/reports/recalculate-materials', async (c) => {
   const body = await c.req.json()
   const { report_id, all_reports } = body  // report_id: 특정 생산일보만, all_reports: true면 전체
@@ -290,31 +299,40 @@ dailyReport.post('/reports/recalculate-materials', async (c) => {
           SELECT production_code, quantity, box_quantity FROM production_daily_items WHERE report_id = ?
         `).bind(rid).all()
         
-        // 원재료 재계산
+        // ★★★ v2.4.5: production.ts와 100% 동일 + kg 단위 통일 ★★★
         const materialsMap = new Map<string, { material_code: string, total_quantity: number, unit: string }>()
         
         for (const item of (items.results as any[])) {
           const boxQty = item.box_quantity || 1
+          // production.ts Line 947과 동일
           const actualCount = (item.quantity || 0) * boxQty
           
           const itemBoms = bomMap.get(item.production_code) || []
           for (const bom of itemBoms) {
-            const key = `${bom.material_code}|${bom.material_name}|${bom.unit}`
-            const existing = materialsMap.get(key) || { material_code: bom.material_code, total_quantity: 0, unit: bom.unit }
-            existing.total_quantity += (bom.quantity || 0) * actualCount
+            // production.ts Line 960과 동일
+            const reqQty = (bom.quantity || 0) * actualCount
+            
+            // ★★★ 단위 통일: g이면 /1000하여 kg로 변환 ★★★
+            const bomUnit = (bom.unit || 'kg').toLowerCase()
+            const reqKg = bomUnit === 'g' ? reqQty / 1000 : reqQty
+            
+            // 키는 material_code + material_name (단위는 항상 kg)
+            const key = `${bom.material_code}|${bom.material_name}`
+            const existing = materialsMap.get(key) || { material_code: bom.material_code, total_quantity: 0, unit: 'kg' }
+            existing.total_quantity += reqKg
             materialsMap.set(key, existing)
           }
         }
         
-        // 기존 데이터 삭제 후 재삽입
+        // 기존 데이터 삭제 후 재삽입 (항상 kg 단위)
         await c.env.DB.prepare('DELETE FROM production_daily_materials WHERE report_id = ?').bind(rid).run()
         
         for (const [key, mat] of materialsMap) {
-          const [material_code, material_name, unit] = key.split('|')
+          const [material_code, material_name] = key.split('|')
           await c.env.DB.prepare(`
             INSERT INTO production_daily_materials (report_id, material_code, material_name, required_quantity, unit)
-            VALUES (?, ?, ?, ?, ?)
-          `).bind(rid, material_code, material_name, mat.total_quantity, unit).run()
+            VALUES (?, ?, ?, ?, 'kg')
+          `).bind(rid, material_code, material_name, mat.total_quantity).run()
         }
         
         successCount++
@@ -1073,16 +1091,27 @@ dailyReport.post('/reports/from-order', async (c) => {
     totalQuantity += item.quantity
     
     // BOM 원재료 집계 (메모리에서, material_code 포함)
-    // box_quantity: 바코드별 입수량 (박스당 개수), 기본값 1 (위에서 선언된 boxQuantity 재사용)
+    // ★★★ v2.4.5: production.ts와 100% 동일한 계산 로직 적용 ★★★
+    // box_quantity: 바코드별 입수량 (박스당 개수), 기본값 1
     const actualItemCount = item.quantity * boxQuantity  // 실제 생산 개수 = 박스수 × 입수량
     for (const bom of bomItems) {
+      // production.ts Line 960-962와 동일: requiredQty = bom.quantity * actualItemCount
+      // BOM.quantity는 production_bom 테이블에 저장된 그대로 사용 (migration 0026에서 kg로 통일됨)
       const requiredQty = (bom.quantity || 0) * actualItemCount
-      const key = `${bom.material_code || ''}|${bom.material_name}|${bom.unit || 'g'}`
+      
+      // ★ 단위 통일: BOM 테이블의 단위(g/kg)에 따라 kg로 환산
+      // migration 0026에서 production_bom은 이미 kg로 통일되어 있어야 하지만,
+      // 혼재 데이터가 있을 수 있으므로 명시적으로 kg 환산 처리
+      const bomUnit = (bom.unit || 'kg').toLowerCase()
+      const requiredKg = bomUnit === 'g' ? requiredQty / 1000 : requiredQty
+      
+      // 키는 material_code와 material_name만으로 구성 (단위는 항상 kg)
+      const key = `${bom.material_code || ''}|${bom.material_name}`
       const existing = allMaterials.get(key)
       if (existing) {
-        existing.quantity += requiredQty
+        existing.quantity += requiredKg
       } else {
-        allMaterials.set(key, { material_code: bom.material_code || '', quantity: requiredQty, unit: bom.unit || 'g' })
+        allMaterials.set(key, { material_code: bom.material_code || '', quantity: requiredKg, unit: 'kg' })
       }
     }
     
@@ -1112,60 +1141,60 @@ dailyReport.post('/reports/from-order', async (c) => {
     WHERE id = ?
   `).bind(newTotalProducts, newTotalQuantity, reportId).run()
   
-  // 6. 원재료 집계 - 병합 시 기존 데이터 포함하여 전체 재계산 (v2.4.4)
-  // ★★★ 핵심 수정: 기존 materials 데이터를 합산하지 않고, production_daily_items 기준으로 전체 재계산 ★★★
-  // 이렇게 해야 중복 누적이 발생하지 않음
+  // 6. 원재료 집계 - v2.4.5: production.ts와 100% 동일한 계산 로직 + kg 단위 통일
+  // ★★★ 핵심: 기존 materials 데이터를 DELETE 후 production_daily_items 기준으로 전체 재계산 ★★★
   
-  // 6-1. 병합인 경우 기존 모든 품목 조회하여 원재료 전체 재계산
+  // 6-1. 항상 기존 데이터 DELETE 후 전체 재계산 (병합 여부와 관계없이)
+  // 이렇게 해야 중복 누적이 절대 발생하지 않음
   let finalMaterialsSummary: { material_code: string, material_name: string, total_quantity: number, unit: string }[] = []
   
-  if (!isNewReport) {
-    // ★ 병합 시: 기존 데이터 DELETE 후 전체 재계산
-    console.log(`[daily-report] 병합 모드: 기존 materials 데이터 삭제 후 전체 재계산 (reportId: ${reportId})`)
+  // 기존 production_daily_materials 삭제 (항상)
+  await c.env.DB.prepare(`DELETE FROM production_daily_materials WHERE report_id = ?`).bind(reportId).run()
+  console.log(`[daily-report] v2.4.5: 기존 materials 데이터 삭제 완료 (reportId: ${reportId})`)
+  
+  // 해당 생산일보의 모든 품목 조회 (신규 포함)
+  const allItems = await c.env.DB.prepare(`
+    SELECT production_code, quantity, box_quantity 
+    FROM production_daily_items 
+    WHERE report_id = ?
+  `).bind(reportId).all()
+  
+  // 전체 품목에 대해 원재료 재계산 - production.ts와 100% 동일한 로직
+  const recalcMaterials = new Map<string, { material_code: string, quantity: number, unit: string }>()
+  
+  for (const item of (allItems.results as any[])) {
+    const itemBomItems = bomMap.get(item.production_code) || []
+    const itemBoxQty = item.box_quantity || 1
+    // production.ts Line 947과 동일: actualItemCount = item.quantity * boxQuantity
+    const itemActualCount = item.quantity * itemBoxQty
     
-    // 기존 production_daily_materials 삭제
-    await c.env.DB.prepare(`DELETE FROM production_daily_materials WHERE report_id = ?`).bind(reportId).run()
-    
-    // 해당 생산일보의 모든 품목 조회 (기존 + 신규)
-    const allItems = await c.env.DB.prepare(`
-      SELECT production_code, quantity, box_quantity 
-      FROM production_daily_items 
-      WHERE report_id = ?
-    `).bind(reportId).all()
-    
-    // 전체 품목에 대해 원재료 재계산
-    const recalcMaterials = new Map<string, { material_code: string, quantity: number, unit: string }>()
-    
-    for (const item of (allItems.results as any[])) {
-      const itemBomItems = bomMap.get(item.production_code) || []
-      const itemBoxQty = item.box_quantity || 1
-      const itemActualCount = item.quantity * itemBoxQty
+    for (const bom of itemBomItems) {
+      // production.ts Line 960과 동일: requiredQty = bom.quantity * actualItemCount
+      const reqQty = (bom.quantity || 0) * itemActualCount
       
-      for (const bom of itemBomItems) {
-        const reqQty = (bom.quantity || 0) * itemActualCount
-        const matKey = `${bom.material_code || ''}|${bom.material_name}|${bom.unit || 'g'}`
-        const existing = recalcMaterials.get(matKey)
-        if (existing) {
-          existing.quantity += reqQty
-        } else {
-          recalcMaterials.set(matKey, { material_code: bom.material_code || '', quantity: reqQty, unit: bom.unit || 'g' })
-        }
+      // ★★★ v2.4.5 핵심: 단위 통일 - BOM 단위가 g이면 /1000 변환하여 kg로 저장 ★★★
+      // production.ts에서는 BOM이 kg로 통일되어 있다고 가정하지만,
+      // 실제 DB에 g 단위 데이터가 남아있을 수 있으므로 명시적 변환
+      const bomUnit = (bom.unit || 'kg').toLowerCase()
+      const reqKg = bomUnit === 'g' ? reqQty / 1000 : reqQty
+      
+      // 키는 material_code + material_name (단위는 항상 kg이므로 제외)
+      const matKey = `${bom.material_code || ''}|${bom.material_name}`
+      const existing = recalcMaterials.get(matKey)
+      if (existing) {
+        existing.quantity += reqKg
+      } else {
+        recalcMaterials.set(matKey, { material_code: bom.material_code || '', quantity: reqKg, unit: 'kg' })
       }
     }
-    
-    finalMaterialsSummary = Array.from(recalcMaterials.entries()).map(([key, val]) => {
-      const [code, name, unit] = key.split('|')
-      return { material_code: code, material_name: name, total_quantity: val.quantity, unit }
-    }).sort((a, b) => a.material_name.localeCompare(b.material_name))
-    
-    console.log(`[daily-report] 전체 재계산 완료: ${finalMaterialsSummary.length}종 원재료`)
-  } else {
-    // ★ 신규 생성: 현재 집계된 값 그대로 사용
-    finalMaterialsSummary = Array.from(allMaterials.entries()).map(([key, val]) => {
-      const [code, name, unit] = key.split('|')
-      return { material_code: code, material_name: name, total_quantity: val.quantity, unit }
-    }).sort((a, b) => a.material_name.localeCompare(b.material_name))
   }
+  
+  finalMaterialsSummary = Array.from(recalcMaterials.entries()).map(([key, val]) => {
+    const [code, name] = key.split('|')
+    return { material_code: code, material_name: name, total_quantity: val.quantity, unit: 'kg' }
+  }).sort((a, b) => a.material_name.localeCompare(b.material_name))
+  
+  console.log(`[daily-report] v2.4.5 전체 재계산 완료: ${finalMaterialsSummary.length}종 원재료 (모든 단위 kg 통일)`)
   
   // 7. 원재료 집계 데이터를 production_daily_materials 테이블에 저장 (material_code 포함)
   if (finalMaterialsSummary.length > 0) {

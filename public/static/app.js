@@ -17483,8 +17483,9 @@ function updateMaterialRequirements() {
   }
 }
 
-// 생산 등록 제출
+// 생산 등록 제출 (v2.3.0 - 비동기 UI 개선)
 async function submitProduction() {
+  const submitBtn = document.getElementById('prod-submit-btn');
   const data = {
     prod_date: document.getElementById('prod-date').value,
     product_code: document.getElementById('prod-product').value,
@@ -17497,10 +17498,18 @@ async function submitProduction() {
     return;
   }
   
-  showLoading('생산 등록 중...');
+  // 버튼 비활성화 및 로딩 표시
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>생산 데이터를 등록 중입니다...';
+  }
+  showLoading('생산 데이터를 등록 중입니다...');
+  
   try {
     const result = await api('/production', 'POST', data);
-    showToast(`생산 등록 완료! LOT: ${result.data?.lot_number}`, 'success');
+    
+    // 성공 메시지 (초록색)
+    showToast(`✅ 생산 등록 완료! LOT: ${result.data?.lot_number}`, 'success');
     
     // 폼 초기화
     document.getElementById('prod-product').value = '';
@@ -17514,9 +17523,22 @@ async function submitProduction() {
     await loadMasterData();
     loadTodayProduction();
   } catch (e) {
-    // Error handled
+    // 실패 메시지 (빨간색) - 상세 에러 표시
+    const errorMsg = e.response?.data?.error || e.message || '생산 등록 중 오류가 발생했습니다.';
+    const errorDetails = e.response?.data?.details;
+    
+    if (errorDetails && Array.isArray(errorDetails)) {
+      showToast(`❌ ${errorMsg}\n${errorDetails.join('\n')}`, 'error');
+    } else {
+      showToast(`❌ ${errorMsg}`, 'error');
+    }
   } finally {
     hideLoading();
+    // 버튼 복원
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '<i class="fas fa-check mr-2"></i>생산 등록';
+    }
   }
 }
 
@@ -21790,6 +21812,7 @@ async function saveBarcodeMapping(count) {
 
 // 일괄 생산 등록 실행 (배치 API 사용으로 속도 개선)
 // 생산일보도 함께 자동 생성
+// v2.3.0 - 비동기 UI 개선
 async function executeOrderProduction() {
   if (!window.orderUploadData) return;
   
@@ -21816,7 +21839,13 @@ async function executeOrderProduction() {
   
   if (!confirm(`${selectedItems.length}개 제품을 일괄 생산 등록하시겠습니까?\n\n※ 생산일보도 함께 생성됩니다.`)) return;
   
-  showToast('생산일보 생성 및 생산 등록 중...', 'info');
+  // 버튼 비활성화 및 로딩 UI
+  const execBtn = document.getElementById('exec-order-production');
+  if (execBtn) {
+    execBtn.disabled = true;
+    execBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>생산 데이터를 등록 중입니다...';
+  }
+  showLoading(`생산 데이터를 등록 중입니다... (${selectedItems.length}개 제품)`);
   
   try {
     // 1단계: 생산일보 먼저 생성
@@ -21865,7 +21894,7 @@ async function executeOrderProduction() {
     
     if (result.success) {
       const { success, fail } = result.data;
-      let message = `생산 등록 완료: ${success}건 성공`;
+      let message = `✅ 생산 등록 완료: ${success}건 성공`;
       if (fail > 0) message += `, ${fail}건 실패`;
       if (reportNo) message += ` (일보: ${reportNo})`;
       
@@ -21874,11 +21903,20 @@ async function executeOrderProduction() {
       await loadMasterData();
       loadTodayProduction();
     } else {
-      showToast(result.error || '생산 등록 실패', 'error');
+      showToast(`❌ ${result.error || '생산 등록 실패'}`, 'error');
     }
   } catch (e) {
     console.error('Batch production failed:', e);
-    showToast('생산 등록 중 오류 발생', 'error');
+    const errorMsg = e.response?.data?.error || e.message || '생산 등록 중 오류가 발생했습니다.';
+    showToast(`❌ ${errorMsg}`, 'error');
+  } finally {
+    hideLoading();
+    // 버튼 복원
+    const execBtn = document.getElementById('exec-order-production');
+    if (execBtn) {
+      execBtn.disabled = false;
+      execBtn.innerHTML = '<i class="fas fa-play mr-1"></i> 일괄 생산 등록';
+    }
   }
 }
 

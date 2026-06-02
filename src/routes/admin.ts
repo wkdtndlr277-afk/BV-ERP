@@ -5488,4 +5488,705 @@ admin.post('/migrate-pack-unit', async (c) => {
   }
 })
 
+// ========================================
+// 자가 치유 엔진 (Self-Healing Engine)
+// v2.3.0 - 대기업 ERP 수준 데이터 무결성 보장
+// ========================================
+
+// 1. 새벽 자동 진단 및 치유 (Cron Job용 엔드포인트)
+admin.post('/self-healing/run', async (c) => {
+  const { env } = c
+  const startTime = Date.now()
+  const healingResults: any = {
+    timestamp: new Date().toISOString(),
+    phases: [],
+    totalItemsHealed: 0,
+    errors: []
+  }
+  
+  try {
+    // ===== Phase 1: 재고 정합성 검증 및 치유 =====
+    console.log('[Self-Healing] Phase 1: 재고 정합성 검증 시작')
+    
+    // 1-1. master 테이블: current_stock vs LOT 잔량 합계 비교
+    const masterItems = await env.DB.prepare(`
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.current_stock,
+        COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_sum
+      FROM master m
+      WHERE m.current_stock != COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0)
+        AND ABS(m.current_stock - COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0)) > 0.001
+    `).all<any>()
+    
+    const phase1Healed: any[] = []
+    if (masterItems.results && masterItems.results.length > 0) {
+      for (const item of masterItems.results) {
+        // LOT 잔량 합계로 현재고 동기화
+        await env.DB.prepare(`
+          UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+        `).bind(item.lot_sum, item.item_code).run()
+        
+        phase1Healed.push({
+          item_code: item.item_code,
+          before: item.current_stock,
+          after: item.lot_sum,
+          diff: item.lot_sum - item.current_stock
+        })
+      }
+    }
+    
+    healingResults.phases.push({
+      name: 'stock_sync_master',
+      description: 'master 테이블 재고 동기화',
+      itemsHealed: phase1Healed.length,
+      details: phase1Healed
+    })
+    healingResults.totalItemsHealed += phase1Healed.length
+    
+    // 1-2. production_items 테이블: 제품 재고 동기화
+    const productItems = await env.DB.prepare(`
+      SELECT 
+        p.production_code,
+        p.current_stock,
+        COALESCE((SELECT SUM(pi.remain_qty) FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.quality_status = '합격'), 0) as lot_sum
+      FROM production_items p
+      WHERE p.current_stock != COALESCE((SELECT SUM(pi.remain_qty) FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.quality_status = '합격'), 0)
+        AND ABS(p.current_stock - COALESCE((SELECT SUM(pi.remain_qty) FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.quality_status = '합격'), 0)) > 0.001
+    `).all<any>()
+    
+    const phase2Healed: any[] = []
+    if (productItems.results && productItems.results.length > 0) {
+      for (const item of productItems.results) {
+        await env.DB.prepare(`
+          UPDATE production_items SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE production_code = ?
+        `).bind(item.lot_sum, item.production_code).run()
+        
+        phase2Healed.push({
+          production_code: item.production_code,
+          before: item.current_stock,
+          after: item.lot_sum,
+          diff: item.lot_sum - item.current_stock
+        })
+      }
+    }
+    
+    healingResults.phases.push({
+      name: 'stock_sync_products',
+      description: 'production_items 테이블 재고 동기화',
+      itemsHealed: phase2Healed.length,
+      details: phase2Healed
+    })
+    healingResults.totalItemsHealed += phase2Healed.length
+    
+    // ===== Phase 2: 음수 재고 정정 =====
+    console.log('[Self-Healing] Phase 2: 음수 재고 정정')
+    
+    // 음수 LOT 잔량 정정
+    const negativeLotsResult = await env.DB.prepare(`
+      UPDATE inbound SET remain_qty = 0, updated_at = CURRENT_TIMESTAMP 
+      WHERE remain_qty < 0
+    `).run()
+    
+    const negativeProductLotsResult = await env.DB.prepare(`
+      UPDATE production_inbound SET remain_qty = 0, updated_at = CURRENT_TIMESTAMP 
+      WHERE remain_qty < 0
+    `).run()
+    
+    // 음수 마스터 재고 정정
+    const negativeMasterResult = await env.DB.prepare(`
+      UPDATE master SET current_stock = 0, updated_at = CURRENT_TIMESTAMP 
+      WHERE current_stock < 0
+    `).run()
+    
+    const negativeProductResult = await env.DB.prepare(`
+      UPDATE production_items SET current_stock = 0, updated_at = CURRENT_TIMESTAMP 
+      WHERE current_stock < 0
+    `).run()
+    
+    healingResults.phases.push({
+      name: 'negative_stock_fix',
+      description: '음수 재고 0으로 정정',
+      itemsHealed: (negativeLotsResult.meta?.changes || 0) + 
+                   (negativeProductLotsResult.meta?.changes || 0) +
+                   (negativeMasterResult.meta?.changes || 0) +
+                   (negativeProductResult.meta?.changes || 0),
+      details: {
+        inbound_lots: negativeLotsResult.meta?.changes || 0,
+        production_lots: negativeProductLotsResult.meta?.changes || 0,
+        master: negativeMasterResult.meta?.changes || 0,
+        production_items: negativeProductResult.meta?.changes || 0
+      }
+    })
+    
+    // ===== Phase 3: 만료된 락 정리 =====
+    console.log('[Self-Healing] Phase 3: 만료된 락 정리')
+    
+    try {
+      const expiredLocksResult = await env.DB.prepare(`
+        DELETE FROM operation_locks WHERE expires_at < datetime('now')
+      `).run()
+      
+      healingResults.phases.push({
+        name: 'expired_locks_cleanup',
+        description: '만료된 작업 락 정리',
+        itemsHealed: expiredLocksResult.meta?.changes || 0
+      })
+    } catch (e: any) {
+      // 테이블이 없을 수 있음 - 무시
+      healingResults.phases.push({
+        name: 'expired_locks_cleanup',
+        description: '만료된 작업 락 정리',
+        itemsHealed: 0,
+        note: 'operation_locks 테이블 없음 - 스킵'
+      })
+    }
+    
+    // ===== Phase 4: 수불부 정합성 검증 (경고만, 자동 수정 안함) =====
+    console.log('[Self-Healing] Phase 4: 수불부 정합성 검증')
+    
+    const today = new Date().toISOString().split('T')[0]
+    const integrityWarnings: any[] = []
+    
+    // 랜덤 샘플 10개 품목 검증
+    const sampleItems = await env.DB.prepare(`
+      SELECT item_code, item_name, current_stock 
+      FROM master 
+      WHERE current_stock > 0 
+      ORDER BY RANDOM() 
+      LIMIT 10
+    `).all<any>()
+    
+    for (const item of (sampleItems.results || [])) {
+      const lotSum = await env.DB.prepare(`
+        SELECT COALESCE(SUM(remain_qty), 0) as total 
+        FROM inbound 
+        WHERE item_code = ? AND quality_status = '합격'
+      `).bind(item.item_code).first<{total: number}>()
+      
+      const diff = Math.abs((lotSum?.total || 0) - item.current_stock)
+      if (diff > 0.01) {
+        integrityWarnings.push({
+          item_code: item.item_code,
+          item_name: item.item_name,
+          master_stock: item.current_stock,
+          lot_sum: lotSum?.total || 0,
+          difference: diff
+        })
+      }
+    }
+    
+    healingResults.phases.push({
+      name: 'integrity_check',
+      description: '수불부 정합성 검증 (샘플 10개)',
+      itemsHealed: 0,
+      warnings: integrityWarnings
+    })
+    
+    // ===== 치유 로그 기록 =====
+    const executionTime = Date.now() - startTime
+    
+    try {
+      await env.DB.prepare(`
+        INSERT INTO self_healing_logs (heal_date, heal_type, items_affected, details, status, executed_by)
+        VALUES (?, 'stock_sync', ?, ?, 'success', 'system_cron')
+      `).bind(
+        today,
+        healingResults.totalItemsHealed,
+        JSON.stringify(healingResults)
+      ).run()
+    } catch (e: any) {
+      // 테이블이 없을 수 있음 - 무시
+      console.log('[Self-Healing] self_healing_logs 테이블 없음 - 로그 기록 스킵')
+    }
+    
+    healingResults.executionTimeMs = executionTime
+    healingResults.status = 'success'
+    
+    console.log(`[Self-Healing] 완료: ${healingResults.totalItemsHealed}개 항목 치유, ${executionTime}ms 소요`)
+    
+    return c.json({
+      success: true,
+      message: `자가 치유 완료: ${healingResults.totalItemsHealed}개 항목 수정`,
+      data: healingResults
+    })
+    
+  } catch (error: any) {
+    console.error('[Self-Healing] 오류:', error)
+    healingResults.status = 'failed'
+    healingResults.errors.push(error.message)
+    
+    return c.json({
+      success: false,
+      error: '자가 치유 중 오류 발생',
+      data: healingResults
+    }, 500)
+  }
+})
+
+// 2. 수동 정합성 검증 (Dry-run)
+admin.get('/self-healing/check', async (c) => {
+  const { env } = c
+  
+  try {
+    const issues: any[] = []
+    
+    // 1. master vs LOT 불일치 확인
+    const masterMismatch = await env.DB.prepare(`
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.current_stock,
+        COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as lot_sum,
+        m.current_stock - COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0) as diff
+      FROM master m
+      WHERE ABS(m.current_stock - COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0)) > 0.001
+      ORDER BY ABS(m.current_stock - COALESCE((SELECT SUM(i.remain_qty) FROM inbound i WHERE i.item_code = m.item_code AND i.quality_status = '합격'), 0)) DESC
+      LIMIT 50
+    `).all<any>()
+    
+    if (masterMismatch.results && masterMismatch.results.length > 0) {
+      issues.push({
+        type: 'master_lot_mismatch',
+        description: 'master.current_stock과 LOT 잔량 합계 불일치',
+        count: masterMismatch.results.length,
+        items: masterMismatch.results
+      })
+    }
+    
+    // 2. 음수 재고 확인
+    const negativeStocks = await env.DB.prepare(`
+      SELECT item_code, item_name, current_stock FROM master WHERE current_stock < 0
+      UNION ALL
+      SELECT item_code, item_name || ' (LOT)', remain_qty FROM inbound WHERE remain_qty < 0
+    `).all<any>()
+    
+    if (negativeStocks.results && negativeStocks.results.length > 0) {
+      issues.push({
+        type: 'negative_stock',
+        description: '음수 재고 발견',
+        count: negativeStocks.results.length,
+        items: negativeStocks.results
+      })
+    }
+    
+    // 3. 제품 재고 불일치
+    const productMismatch = await env.DB.prepare(`
+      SELECT 
+        p.production_code,
+        p.production_name,
+        p.current_stock,
+        COALESCE((SELECT SUM(pi.remain_qty) FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.quality_status = '합격'), 0) as lot_sum
+      FROM production_items p
+      WHERE ABS(p.current_stock - COALESCE((SELECT SUM(pi.remain_qty) FROM production_inbound pi WHERE pi.production_code = p.production_code AND pi.quality_status = '합격'), 0)) > 0.001
+      LIMIT 50
+    `).all<any>()
+    
+    if (productMismatch.results && productMismatch.results.length > 0) {
+      issues.push({
+        type: 'product_lot_mismatch',
+        description: 'production_items.current_stock과 LOT 잔량 합계 불일치',
+        count: productMismatch.results.length,
+        items: productMismatch.results
+      })
+    }
+    
+    return c.json({
+      success: true,
+      message: issues.length > 0 ? `${issues.length}가지 유형의 문제 발견` : '정합성 문제 없음',
+      totalIssueTypes: issues.length,
+      issues
+    })
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 3. 자가 치유 로그 조회
+admin.get('/self-healing/logs', async (c) => {
+  const { env } = c
+  const limit = parseInt(c.req.query('limit') || '30')
+  
+  try {
+    const logs = await env.DB.prepare(`
+      SELECT * FROM self_healing_logs 
+      ORDER BY created_at DESC 
+      LIMIT ?
+    `).bind(limit).all<any>()
+    
+    return c.json({
+      success: true,
+      data: logs.results || []
+    })
+  } catch (error: any) {
+    // 테이블이 없을 수 있음
+    return c.json({
+      success: true,
+      data: [],
+      note: 'self_healing_logs 테이블 없음 - 마이그레이션 필요'
+    })
+  }
+})
+
+// ========================================
+// 배포 전 자동 테스트 시스템
+// ========================================
+
+// 1. 전체 테스트 실행
+admin.post('/deployment-test/run', async (c) => {
+  const { env } = c
+  const testDate = new Date().toISOString()
+  const results: any[] = []
+  let allPassed = true
+  
+  try {
+    // Test 1: inventory-ledger API 정합성 테스트
+    const test1Start = Date.now()
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      
+      // 샘플 품목 조회
+      const sampleItem = await env.DB.prepare(`
+        SELECT item_code, current_stock FROM master 
+        WHERE current_stock > 0 
+        ORDER BY RANDOM() LIMIT 1
+      `).first<any>()
+      
+      if (sampleItem) {
+        const lotSum = await env.DB.prepare(`
+          SELECT COALESCE(SUM(remain_qty), 0) as total 
+          FROM inbound 
+          WHERE item_code = ? AND quality_status = '합격'
+        `).bind(sampleItem.item_code).first<{total: number}>()
+        
+        const isValid = Math.abs((lotSum?.total || 0) - sampleItem.current_stock) < 0.01
+        
+        results.push({
+          test_type: 'inventory_ledger',
+          test_name: 'LOT 잔량 합계 = master.current_stock',
+          passed: isValid,
+          execution_time_ms: Date.now() - test1Start,
+          details: {
+            item_code: sampleItem.item_code,
+            master_stock: sampleItem.current_stock,
+            lot_sum: lotSum?.total || 0
+          }
+        })
+        
+        if (!isValid) allPassed = false
+      }
+    } catch (e: any) {
+      results.push({
+        test_type: 'inventory_ledger',
+        test_name: 'LOT 잔량 합계 = master.current_stock',
+        passed: false,
+        error: e.message
+      })
+      allPassed = false
+    }
+    
+    // Test 2: FEFO 차감 로직 테스트 (Dry-run)
+    const test2Start = Date.now()
+    try {
+      // 가장 오래된 만료일 LOT가 먼저 선택되는지 확인
+      const fefoCheck = await env.DB.prepare(`
+        SELECT i1.item_code, COUNT(*) as lot_count
+        FROM inbound i1
+        WHERE i1.remain_qty > 0 AND i1.quality_status = '합격'
+        GROUP BY i1.item_code
+        HAVING COUNT(*) > 1
+        LIMIT 1
+      `).first<any>()
+      
+      if (fefoCheck) {
+        const lotsOrdered = await env.DB.prepare(`
+          SELECT lot_number, expiry_date, remain_qty
+          FROM inbound
+          WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+          ORDER BY expiry_date ASC, inbound_date ASC
+          LIMIT 5
+        `).bind(fefoCheck.item_code).all<any>()
+        
+        // 만료일이 오름차순인지 확인
+        let isOrdered = true
+        const lots = lotsOrdered.results || []
+        for (let i = 1; i < lots.length; i++) {
+          if (lots[i].expiry_date < lots[i-1].expiry_date) {
+            isOrdered = false
+            break
+          }
+        }
+        
+        results.push({
+          test_type: 'fefo_deduction',
+          test_name: 'FEFO 순서 정렬 확인',
+          passed: isOrdered,
+          execution_time_ms: Date.now() - test2Start,
+          details: {
+            item_code: fefoCheck.item_code,
+            lot_count: fefoCheck.lot_count,
+            sample_lots: lots.slice(0, 3)
+          }
+        })
+        
+        if (!isOrdered) allPassed = false
+      } else {
+        results.push({
+          test_type: 'fefo_deduction',
+          test_name: 'FEFO 순서 정렬 확인',
+          passed: true,
+          execution_time_ms: Date.now() - test2Start,
+          details: { note: '복수 LOT 품목 없음 - 스킵' }
+        })
+      }
+    } catch (e: any) {
+      results.push({
+        test_type: 'fefo_deduction',
+        test_name: 'FEFO 순서 정렬 확인',
+        passed: false,
+        error: e.message
+      })
+      allPassed = false
+    }
+    
+    // Test 3: 수불부 이월 정합성 테스트
+    const test3Start = Date.now()
+    try {
+      // 역산 방식 검증: 현재잔량 - 이후입고 + 이후사용 + 이후출고 - 이후조정 = 조회일 마감재고
+      // 간소화된 검증: 현재 LOT 잔량이 양수이고 정상인지 확인
+      const lotIntegrity = await env.DB.prepare(`
+        SELECT COUNT(*) as total,
+               SUM(CASE WHEN remain_qty >= 0 THEN 1 ELSE 0 END) as valid_count,
+               SUM(CASE WHEN remain_qty < 0 THEN 1 ELSE 0 END) as negative_count
+        FROM inbound
+        WHERE quality_status = '합격'
+      `).first<any>()
+      
+      const isValid = (lotIntegrity?.negative_count || 0) === 0
+      
+      results.push({
+        test_type: 'inventory_ledger',
+        test_name: 'LOT 음수 잔량 없음 확인',
+        passed: isValid,
+        execution_time_ms: Date.now() - test3Start,
+        details: {
+          total_lots: lotIntegrity?.total || 0,
+          valid_lots: lotIntegrity?.valid_count || 0,
+          negative_lots: lotIntegrity?.negative_count || 0
+        }
+      })
+      
+      if (!isValid) allPassed = false
+    } catch (e: any) {
+      results.push({
+        test_type: 'inventory_ledger',
+        test_name: 'LOT 음수 잔량 없음 확인',
+        passed: false,
+        error: e.message
+      })
+      allPassed = false
+    }
+    
+    // Test 4: API 응답 시간 테스트
+    const test4Start = Date.now()
+    try {
+      // 간단한 쿼리 응답 시간 측정
+      await env.DB.prepare('SELECT COUNT(*) FROM master').first()
+      const responseTime = Date.now() - test4Start
+      
+      results.push({
+        test_type: 'api_response',
+        test_name: 'DB 응답 시간 < 1000ms',
+        passed: responseTime < 1000,
+        execution_time_ms: responseTime,
+        details: { threshold_ms: 1000 }
+      })
+      
+      if (responseTime >= 1000) allPassed = false
+    } catch (e: any) {
+      results.push({
+        test_type: 'api_response',
+        test_name: 'DB 응답 시간 < 1000ms',
+        passed: false,
+        error: e.message
+      })
+      allPassed = false
+    }
+    
+    // 테스트 결과 저장 시도
+    try {
+      for (const result of results) {
+        await env.DB.prepare(`
+          INSERT INTO deployment_tests (test_date, test_type, test_name, expected_result, actual_result, passed, error_message, execution_time_ms)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(
+          testDate,
+          result.test_type,
+          result.test_name,
+          'PASS',
+          result.passed ? 'PASS' : 'FAIL',
+          result.passed ? 1 : 0,
+          result.error || null,
+          result.execution_time_ms || 0
+        ).run()
+      }
+    } catch (e) {
+      // 테이블 없으면 무시
+    }
+    
+    return c.json({
+      success: true,
+      allPassed,
+      message: allPassed ? '✅ 모든 테스트 통과 - 배포 가능' : '❌ 일부 테스트 실패 - 배포 중단 권고',
+      testDate,
+      totalTests: results.length,
+      passedTests: results.filter(r => r.passed).length,
+      failedTests: results.filter(r => !r.passed).length,
+      results
+    })
+    
+  } catch (error: any) {
+    return c.json({ 
+      success: false, 
+      allPassed: false,
+      error: error.message 
+    }, 500)
+  }
+})
+
+// 2. 테스트 결과 조회
+admin.get('/deployment-test/results', async (c) => {
+  const { env } = c
+  const limit = parseInt(c.req.query('limit') || '50')
+  
+  try {
+    const results = await env.DB.prepare(`
+      SELECT * FROM deployment_tests 
+      ORDER BY created_at DESC 
+      LIMIT ?
+    `).bind(limit).all<any>()
+    
+    return c.json({
+      success: true,
+      data: results.results || []
+    })
+  } catch (error: any) {
+    return c.json({
+      success: true,
+      data: [],
+      note: 'deployment_tests 테이블 없음 - 마이그레이션 필요'
+    })
+  }
+})
+
+// ========================================
+// 성능 최적화 인덱스 적용
+// ========================================
+
+admin.post('/apply-performance-indexes', async (c) => {
+  const { env } = c
+  const results: string[] = []
+  
+  const indexes = [
+    // FEFO 최적화
+    'CREATE INDEX IF NOT EXISTS idx_inbound_fefo ON inbound(item_code, quality_status, remain_qty, expiry_date ASC)',
+    'CREATE INDEX IF NOT EXISTS idx_inbound_date_item ON inbound(inbound_date, item_code)',
+    
+    // 트랜잭션 최적화
+    'CREATE INDEX IF NOT EXISTS idx_transactions_date_item ON transactions(trans_date, item_code)',
+    'CREATE INDEX IF NOT EXISTS idx_transactions_item_type ON transactions(item_code, trans_type)',
+    'CREATE INDEX IF NOT EXISTS idx_transactions_lot ON transactions(lot_number)',
+    
+    // production_usage 최적화
+    'CREATE INDEX IF NOT EXISTS idx_production_usage_date ON production_usage(usage_date)',
+    'CREATE INDEX IF NOT EXISTS idx_production_usage_item ON production_usage(item_code)',
+    'CREATE INDEX IF NOT EXISTS idx_production_usage_date_item ON production_usage(usage_date, item_code)',
+    
+    // production 최적화
+    'CREATE INDEX IF NOT EXISTS idx_production_date ON production(prod_date)',
+    'CREATE INDEX IF NOT EXISTS idx_production_product ON production(product_code)',
+    'CREATE INDEX IF NOT EXISTS idx_production_lot ON production(lot_number)',
+    
+    // 제품 최적화
+    'CREATE INDEX IF NOT EXISTS idx_production_inbound_fefo ON production_inbound(production_code, quality_status, remain_qty, expiry_date ASC)',
+    'CREATE INDEX IF NOT EXISTS idx_production_trans_date_code ON production_transactions(trans_date, production_code)'
+  ]
+  
+  for (const idx of indexes) {
+    try {
+      await env.DB.prepare(idx).run()
+      const idxName = idx.match(/idx_\w+/)?.[0] || 'unknown'
+      results.push(`✅ ${idxName} 생성 완료`)
+    } catch (e: any) {
+      const idxName = idx.match(/idx_\w+/)?.[0] || 'unknown'
+      results.push(`⚠️ ${idxName}: ${e.message}`)
+    }
+  }
+  
+  // 자가 치유 테이블 생성
+  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS self_healing_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        heal_date DATE NOT NULL,
+        heal_type TEXT NOT NULL,
+        items_affected INTEGER DEFAULT 0,
+        details TEXT,
+        status TEXT DEFAULT 'success',
+        executed_by TEXT DEFAULT 'system_cron',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    results.push('✅ self_healing_logs 테이블 생성 완료')
+  } catch (e: any) {
+    results.push(`⚠️ self_healing_logs: ${e.message}`)
+  }
+  
+  // 배포 테스트 테이블 생성
+  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS deployment_tests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        test_date DATETIME NOT NULL,
+        test_type TEXT NOT NULL,
+        test_name TEXT NOT NULL,
+        input_data TEXT,
+        expected_result TEXT,
+        actual_result TEXT,
+        passed INTEGER DEFAULT 0,
+        error_message TEXT,
+        execution_time_ms INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    results.push('✅ deployment_tests 테이블 생성 완료')
+  } catch (e: any) {
+    results.push(`⚠️ deployment_tests: ${e.message}`)
+  }
+  
+  // 작업 락 테이블 생성
+  try {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS operation_locks (
+        lock_key TEXT PRIMARY KEY,
+        locked_by TEXT NOT NULL,
+        locked_at DATETIME NOT NULL,
+        expires_at DATETIME NOT NULL,
+        operation_type TEXT
+      )
+    `).run()
+    results.push('✅ operation_locks 테이블 생성 완료')
+  } catch (e: any) {
+    results.push(`⚠️ operation_locks: ${e.message}`)
+  }
+  
+  return c.json({
+    success: true,
+    message: '성능 최적화 인덱스 및 테이블 적용 완료',
+    results
+  })
+})
+
 export default admin

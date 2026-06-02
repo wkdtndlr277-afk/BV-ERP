@@ -20423,12 +20423,25 @@ const PRODUCT_ALIAS_MAP = {
 };
 
 // 발주서 상품명 정제 (특수문자, 채널명, 브랜드명 등 제거)
+// v2.4.2: 플랫폼 접두사 완전 제거 강화
 function cleanOrderProductName(name) {
   let cleaned = String(name)
-    // 쿠팡 채널 표시 제거
-    .replace(/\[로켓프레시\]\[실온\]\s*/gi, '')
-    .replace(/\[로켓프레시\]\[냉동\]\s*/gi, '')
+    // ★ v2.4.2: 쿠팡 채널 표시 완전 제거 (모든 조합)
+    .replace(/\[로켓프레시\]\s*\[실온\]\s*/gi, '')
+    .replace(/\[로켓프레시\]\s*\[냉동\]\s*/gi, '')
+    .replace(/\[로켓프레시\]\s*\[냉장\]\s*/gi, '')
     .replace(/\[로켓프레시\]\s*/gi, '')
+    .replace(/\[로켓배송\]\s*/gi, '')
+    .replace(/\[실온\]\s*/gi, '')
+    .replace(/\[냉동\]\s*/gi, '')
+    .replace(/\[냉장\]\s*/gi, '')
+    .replace(/\[단독\]\s*/gi, '')
+    .replace(/\[무료배송\]\s*/gi, '')
+    .replace(/\[쿠팡전용\]\s*/gi, '')
+    // 컬리/오아시스 채널 표시 제거
+    .replace(/\[컬리전용\]\s*/gi, '')
+    .replace(/\[오아시스전용\]\s*/gi, '')
+    .replace(/\[마켓컬리\]\s*/gi, '')
     // 생협/채널 관련 제거
     .replace(/\*생협$/g, '')
     .replace(/\+/g, '')
@@ -20438,16 +20451,21 @@ function cleanOrderProductName(name) {
     .replace(/브로드카세[_\s]*/gi, '')
     .replace(/비블리[_\s]*/gi, '')
     .replace(/프롬위트[_\s]*/gi, '')
+    .replace(/\[본비반트\]\s*/gi, '')
+    .replace(/본비반트[_\s]*/gi, '')
     // 괄호 안 무게 정리: (390g) → , 390g 또는 제거
     .replace(/\s*\((\d+g)\)\s*/gi, ', $1')
     .replace(/\s*\((\d+g)\*?\d*[개입봉알]*\)\s*/gi, ', $1')
     .replace(/\s*\(\d+g×\d+개입\)\s*/gi, '')
+    .replace(/\s*\(\d+g\/[^\)]+\)\s*/gi, '')  // (쿠팡130g/다노110g) 형태
     // 무게/수량 정리
     .replace(/(\d+)g/gi, '$1g')
     .replace(/\s*x\s*\d+$/gi, '')
     .replace(/\s*×\s*\d+개입$/gi, '')
-    // 1개입, 1봉 등 제거
+    // 1개입, 1봉, 총 등 제거
     .replace(/\s*\d+개입\s*/gi, '')
+    .replace(/\s*총\s*\d+g\s*/gi, '')
+    .replace(/\s*\d+봉\s*/gi, '')
     // 공백 정리
     .replace(/\s+/g, ' ')
     .trim();
@@ -20490,7 +20508,7 @@ async function matchProductionItem(searchName) {
   return null;
 }
 
-// 퍼지 매칭 (엄격한 버전 - 핵심 키워드가 모두 일치해야 함)
+// 퍼지 매칭 (v2.4.2 개선 - 90% 유사도 기반 매칭)
 function fuzzyMatchProduct(searchName, products) {
   const searchNorm = normalizeProductName(searchName);
   
@@ -20510,48 +20528,89 @@ function fuzzyMatchProduct(searchName, products) {
       score = 1.0;
     }
     // 2. 한쪽이 다른쪽을 완전히 포함 (길이 차이 적어야 함)
-    else if (pNorm.includes(searchNorm) && searchNorm.length > 8) {
+    else if (pNorm.includes(searchNorm) && searchNorm.length > 5) {
       const ratio = searchNorm.length / pNorm.length;
-      if (ratio > 0.7) score = ratio * 0.95;
+      if (ratio > 0.6) score = ratio * 0.95;
     }
-    else if (searchNorm.includes(pNorm) && pNorm.length > 8) {
+    else if (searchNorm.includes(pNorm) && pNorm.length > 5) {
       const ratio = pNorm.length / searchNorm.length;
-      if (ratio > 0.7) score = ratio * 0.95;
+      if (ratio > 0.6) score = ratio * 0.95;
     }
     
-    // 3. 핵심 키워드 기반 매칭 (엄격한 버전)
-    // 핵심 키워드: 브랜드 제외한 제품 특성 키워드
+    // 3. 핵심 키워드 기반 매칭 (v2.4.2: 더 관대하게)
     if (searchKeywords.length >= 2 && pKeywords.length >= 2) {
       let exactMatches = 0;
-      const matchedKeywords = [];
+      let partialMatches = 0;
       
       for (const sk of searchKeywords) {
         for (const pk of pKeywords) {
-          // 정확한 키워드 일치만 카운트
+          // 정확한 키워드 일치
           if (sk === pk && sk.length >= 2) {
             exactMatches++;
-            matchedKeywords.push(sk);
+            break;
+          }
+          // 부분 포함 (핵심 키워드가 포함된 경우)
+          else if ((sk.includes(pk) || pk.includes(sk)) && sk.length >= 2 && pk.length >= 2) {
+            partialMatches++;
             break;
           }
         }
       }
       
-      // 핵심 키워드의 80% 이상이 일치해야 매칭
-      const matchRatio = exactMatches / Math.min(searchKeywords.length, pKeywords.length);
-      if (matchRatio >= 0.8 && exactMatches >= 2) {
+      // v2.4.2: 핵심 키워드의 50% 이상 일치하면 매칭 시도
+      const totalMatches = exactMatches + (partialMatches * 0.7);
+      const matchRatio = totalMatches / Math.min(searchKeywords.length, pKeywords.length);
+      if (matchRatio >= 0.5 && (exactMatches >= 2 || totalMatches >= 2)) {
         score = Math.max(score, matchRatio * 0.9);
       }
     }
     
-    // 점수가 0.85 이상이어야 매칭으로 인정
-    if (score > bestScore && score >= 0.85) {
+    // 4. 레벤슈타인 거리 기반 유사도 (v2.4.2 추가)
+    if (searchNorm.length > 4 && pNorm.length > 4) {
+      const levenScore = 1 - (levenshteinDistance(searchNorm, pNorm) / Math.max(searchNorm.length, pNorm.length));
+      if (levenScore > 0.7) {
+        score = Math.max(score, levenScore * 0.85);
+      }
+    }
+    
+    // v2.4.2: 점수가 0.5 이상이면 매칭 후보로 (더 관대하게)
+    if (score > bestScore && score >= 0.5) {
       bestScore = score;
       bestMatch = p;
     }
   }
   
-  // 매칭 실패 시 null 반환 (잘못된 매칭보다 미매칭이 나음)
+  // 매칭 성공 시 로그
+  if (bestMatch && bestScore >= 0.5) {
+    console.log(`[Fuzzy] "${searchName}" → "${bestMatch.item_name}" (점수: ${bestScore.toFixed(2)})`);
+  }
+  
   return bestMatch;
+}
+
+// v2.4.2: 레벤슈타인 거리 계산 (문자열 유사도)
+function levenshteinDistance(a, b) {
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= a.length; j++) {
+    matrix[0][j] = j;
+  }
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j] + 1
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
 }
 
 // 핵심 키워드 추출 (제품 특성만 - 브랜드/채널/숫자 제외)
@@ -21002,7 +21061,9 @@ function showDailyReportModal(reportData) {
                       ${item.order_product_name && item.order_product_name !== item.production_name 
                         ? `<div class="text-xs text-gray-500 mt-0.5">${item.order_product_name}</div>` 
                         : ''}
-                      ${item.production_code !== 'UNKNOWN' ? `<span class="text-xs text-gray-400">[${item.production_code}]</span>` : '<span class="text-xs text-red-400">[미매칭]</span>'}
+                      ${item.production_code !== 'UNKNOWN' 
+                        ? `<span class="text-xs text-gray-400">[${item.production_code}]</span>` 
+                        : `<button onclick="openUnknownMatchModal(${item.id}, '${(item.order_product_name || item.production_name).replace(/'/g, "\\'")}', ${reportData.report_id})" class="text-xs text-red-500 hover:text-red-700 underline cursor-pointer">[미매칭 - 클릭하여 매칭]</button>`}
                     </td>
                     <td class="px-3 py-2 text-center font-medium">${formatNumber(item.quantity)}</td>
                     <td class="px-3 py-2 text-center text-sm">
@@ -21096,6 +21157,199 @@ function showDailyReportModal(reportData) {
 
 function closeDailyReportModal() {
   document.getElementById('daily-report-modal')?.remove();
+}
+
+// v2.4.2: UNKNOWN 품목 수동 매칭 모달
+async function openUnknownMatchModal(itemId, orderProductName, reportId) {
+  // 생산명 목록 로드
+  if (!window.productionItemsData || window.productionItemsData.length === 0) {
+    try {
+      const result = await api('/daily-report/production-items');
+      if (result.data) {
+        window.productionItemsData = result.data;
+      }
+    } catch (e) {
+      console.error('생산명 목록 로드 실패:', e);
+    }
+  }
+  
+  const productionItems = window.productionItemsData || [];
+  
+  const modalHtml = `
+    <div id="unknown-match-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+      <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full">
+        <div class="bg-red-600 text-white p-4 flex justify-between items-center">
+          <div>
+            <h2 class="text-lg font-bold"><i class="fas fa-link mr-2"></i>미매칭 품목 수동 매칭</h2>
+            <p class="text-sm opacity-90">발주서 상품명과 생산명을 연결합니다</p>
+          </div>
+          <button onclick="closeUnknownMatchModal()" class="text-white hover:text-gray-200">
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+        
+        <div class="p-4 space-y-4">
+          <!-- 발주서 상품명 표시 -->
+          <div class="bg-gray-100 rounded-lg p-3">
+            <div class="text-sm text-gray-500">발주서 상품명</div>
+            <div class="font-bold text-lg">${orderProductName}</div>
+          </div>
+          
+          <!-- 생산명 검색 및 선택 -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-2">
+              <i class="fas fa-search mr-1"></i> 매칭할 생산명 선택
+            </label>
+            <input type="text" id="production-search" placeholder="생산명 검색..." 
+              class="w-full border rounded-lg px-3 py-2 mb-2"
+              onkeyup="filterProductionItems()">
+            <div id="production-list" class="max-h-60 overflow-y-auto border rounded-lg">
+              ${productionItems.map(pi => `
+                <div class="production-item p-2 hover:bg-blue-50 cursor-pointer border-b"
+                  data-code="${pi.production_code}" 
+                  data-name="${pi.production_name}"
+                  onclick="selectProduction('${pi.production_code}', '${pi.production_name.replace(/'/g, "\\'")}')">
+                  <div class="font-medium">${pi.production_name}</div>
+                  <div class="text-xs text-gray-500">${pi.production_code} ${pi.alias1 ? '| ' + pi.alias1 : ''}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- 선택된 생산명 표시 -->
+          <div id="selected-production" class="hidden bg-green-50 border border-green-200 rounded-lg p-3">
+            <div class="text-sm text-green-600">선택된 생산명</div>
+            <div class="font-bold text-green-700" id="selected-production-name"></div>
+            <div class="text-xs text-gray-500" id="selected-production-code"></div>
+          </div>
+          
+          <!-- 바코드 자동 등록 옵션 -->
+          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+            <label class="flex items-center gap-2">
+              <input type="checkbox" id="auto-register-barcode" checked class="rounded">
+              <span class="text-sm text-yellow-800">
+                <i class="fas fa-barcode mr-1"></i>
+                이 바코드를 자동으로 등록 (다음부터 자동 매칭됨)
+              </span>
+            </label>
+          </div>
+        </div>
+        
+        <div class="border-t p-4 flex justify-end gap-2">
+          <button onclick="closeUnknownMatchModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+          <button onclick="applyUnknownMatch(${itemId}, ${reportId})" id="btn-apply-match" 
+            class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg disabled:opacity-50" disabled>
+            <i class="fas fa-check mr-1"></i> 매칭 적용
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  
+  // 저장할 상태
+  window.unknownMatchState = { itemId, orderProductName, reportId, selectedCode: null, selectedName: null };
+}
+
+function closeUnknownMatchModal() {
+  document.getElementById('unknown-match-modal')?.remove();
+  window.unknownMatchState = null;
+}
+
+function filterProductionItems() {
+  const searchTerm = document.getElementById('production-search').value.toLowerCase();
+  document.querySelectorAll('.production-item').forEach(item => {
+    const name = item.dataset.name.toLowerCase();
+    const code = item.dataset.code.toLowerCase();
+    item.style.display = (name.includes(searchTerm) || code.includes(searchTerm)) ? '' : 'none';
+  });
+}
+
+function selectProduction(code, name) {
+  window.unknownMatchState.selectedCode = code;
+  window.unknownMatchState.selectedName = name;
+  
+  // 선택 표시
+  document.querySelectorAll('.production-item').forEach(item => {
+    item.classList.remove('bg-blue-100', 'border-l-4', 'border-l-blue-500');
+  });
+  const selected = document.querySelector(`.production-item[data-code="${code}"]`);
+  if (selected) {
+    selected.classList.add('bg-blue-100', 'border-l-4', 'border-l-blue-500');
+  }
+  
+  // 선택된 생산명 표시
+  document.getElementById('selected-production').classList.remove('hidden');
+  document.getElementById('selected-production-name').textContent = name;
+  document.getElementById('selected-production-code').textContent = code;
+  
+  // 적용 버튼 활성화
+  document.getElementById('btn-apply-match').disabled = false;
+}
+
+// v2.4.2: 수동 매칭 적용 및 LOT 자동 연동
+async function applyUnknownMatch(itemId, reportId) {
+  const state = window.unknownMatchState;
+  if (!state || !state.selectedCode) {
+    showToast('매칭할 생산명을 선택해주세요', 'warning');
+    return;
+  }
+  
+  const btn = document.getElementById('btn-apply-match');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> 적용 중...';
+  
+  try {
+    // 1. 품목 매칭 업데이트 API 호출
+    const result = await api('/daily-report/items/update-match', 'POST', {
+      item_id: itemId,
+      report_id: reportId,
+      production_code: state.selectedCode,
+      production_name: state.selectedName,
+      order_product_name: state.orderProductName,
+      register_barcode: document.getElementById('auto-register-barcode')?.checked
+    });
+    
+    if (result.success) {
+      showToast(`✅ 매칭 완료: ${state.selectedName}`, 'success');
+      
+      // LOT 정보가 자동 생성되었으면 알림
+      if (result.lot_created) {
+        showToast(`🎫 LOT 번호 자동 생성: ${result.lot_number}`, 'info');
+      }
+      
+      closeUnknownMatchModal();
+      
+      // 생산일보 모달 새로고침
+      closeDailyReportModal();
+      setTimeout(() => showDailyReportDetails(reportId), 500);
+    } else {
+      showToast(result.error || '매칭 적용 실패', 'error');
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-check mr-1"></i> 매칭 적용';
+    }
+  } catch (e) {
+    console.error('매칭 적용 오류:', e);
+    showToast('매칭 적용 중 오류가 발생했습니다', 'error');
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-check mr-1"></i> 매칭 적용';
+  }
+}
+
+// 생산일보 상세 조회 함수
+async function showDailyReportDetails(reportId) {
+  try {
+    const result = await api(`/daily-report/reports/${reportId}`);
+    if (result.data) {
+      showDailyReportModal(result.data);
+    } else {
+      showToast('생산일보 조회 실패', 'error');
+    }
+  } catch (e) {
+    console.error('생산일보 상세 조회 오류:', e);
+    showToast('생산일보 조회 중 오류 발생', 'error');
+  }
 }
 
 function switchReportTab(tab) {

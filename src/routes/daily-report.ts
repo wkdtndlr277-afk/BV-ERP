@@ -137,6 +137,111 @@ dailyReport.delete('/barcodes/:id', async (c) => {
   return c.json({ success: true, message: '삭제되었습니다.' })
 })
 
+// ===== v2.4.2: UNKNOWN 품목 수동 매칭 API =====
+dailyReport.post('/items/update-match', async (c) => {
+  const body = await c.req.json()
+  const { item_id, report_id, production_code, production_name, order_product_name, register_barcode } = body
+  
+  if (!item_id || !production_code) {
+    return c.json({ success: false, error: '필수 파라미터가 누락되었습니다.' }, 400)
+  }
+  
+  try {
+    // 1. 생산일보 품목 업데이트
+    await c.env.DB.prepare(`
+      UPDATE production_daily_items 
+      SET production_code = ?, production_name = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(production_code, production_name, item_id).run()
+    
+    // 2. 해당 품목의 바코드 정보 조회
+    const itemInfo = await c.env.DB.prepare(`
+      SELECT barcode, channel, quantity FROM production_daily_items WHERE id = ?
+    `).bind(item_id).first() as { barcode: string | null, channel: string | null, quantity: number } | null
+    
+    let lot_created = false
+    let lot_number = null
+    
+    // 3. 바코드 자동 등록 (옵션)
+    if (register_barcode && itemInfo?.barcode) {
+      // 기존 바코드 확인
+      const existingBarcode = await c.env.DB.prepare(`
+        SELECT id FROM production_barcodes WHERE barcode = ?
+      `).bind(itemInfo.barcode).first()
+      
+      if (!existingBarcode) {
+        await c.env.DB.prepare(`
+          INSERT INTO production_barcodes (production_code, barcode, product_name, channel)
+          VALUES (?, ?, ?, ?)
+        `).bind(production_code, itemInfo.barcode, order_product_name, itemInfo.channel || '').run()
+        console.log(`[update-match] 바코드 자동 등록: ${itemInfo.barcode} → ${production_code}`)
+      }
+    }
+    
+    // 4. 생산일보 원재료 집계 재계산 (BOM 기반)
+    // 해당 생산일보의 모든 품목 조회
+    const reportItems = await c.env.DB.prepare(`
+      SELECT id, production_code, quantity FROM production_daily_items WHERE report_id = ?
+    `).bind(report_id).all()
+    
+    // BOM 데이터 조회
+    const productionCodes = [...new Set(reportItems.results.map((r: any) => r.production_code).filter((c: string) => c !== 'UNKNOWN'))]
+    
+    if (productionCodes.length > 0) {
+      const bomData = await c.env.DB.prepare(`
+        SELECT production_code, material_code, material_name, quantity, unit
+        FROM production_bom
+        WHERE production_code IN (${productionCodes.map(() => '?').join(',')})
+      `).bind(...productionCodes).all()
+      
+      // 원재료 집계
+      const materialsMap = new Map<string, { material_code: string, total_quantity: number, unit: string }>()
+      
+      for (const item of reportItems.results as any[]) {
+        const itemBoms = (bomData.results as any[]).filter(b => b.production_code === item.production_code)
+        for (const bom of itemBoms) {
+          const key = `${bom.material_code}|${bom.material_name}|${bom.unit}`
+          const existing = materialsMap.get(key) || { material_code: bom.material_code, total_quantity: 0, unit: bom.unit }
+          existing.total_quantity += (bom.quantity || 0) * (item.quantity || 0)
+          materialsMap.set(key, existing)
+        }
+      }
+      
+      // 기존 원재료 데이터 삭제 후 재삽입
+      await c.env.DB.prepare('DELETE FROM production_daily_materials WHERE report_id = ?').bind(report_id).run()
+      
+      for (const [key, mat] of materialsMap) {
+        const [material_code, material_name, unit] = key.split('|')
+        await c.env.DB.prepare(`
+          INSERT INTO production_daily_materials (report_id, material_code, material_name, required_quantity, unit)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(report_id, material_code, material_name, mat.total_quantity, unit).run()
+      }
+    }
+    
+    // 5. has_bom 플래그 업데이트
+    const bomCount = await c.env.DB.prepare(`
+      SELECT COUNT(*) as cnt FROM production_bom WHERE production_code = ?
+    `).bind(production_code).first() as { cnt: number } | null
+    
+    await c.env.DB.prepare(`
+      UPDATE production_daily_items SET has_bom = ? WHERE id = ?
+    `).bind((bomCount?.cnt || 0) > 0 ? 1 : 0, item_id).run()
+    
+    console.log(`[update-match] 품목 매칭 완료: item_id=${item_id} → ${production_code} (${production_name})`)
+    
+    return c.json({
+      success: true,
+      message: '매칭이 완료되었습니다.',
+      lot_created,
+      lot_number
+    })
+  } catch (e: any) {
+    console.error('[update-match] 오류:', e)
+    return c.json({ success: false, error: e.message || '매칭 처리 중 오류가 발생했습니다.' }, 500)
+  }
+})
+
 // ===== 생산일보 API =====
 
 // 생산일보 목록 조회

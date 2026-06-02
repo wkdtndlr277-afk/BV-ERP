@@ -66,8 +66,8 @@ app.route('/api/task', taskRoutes);
 app.route('/api/audit', auditRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '2.2.0';
-const SYSTEM_BUILD_DATE = '2026-06-01';
+const SYSTEM_VERSION = '2.2.6';
+const SYSTEM_BUILD_DATE = '2026-06-02';
 
 // Health check
 app.get('/api/health', (c) => {
@@ -1038,7 +1038,7 @@ app.get('/*', (c) => {
       setInterval(checkTaskNotifications, 30000);
     </script>
     
-    <script src="/static/app.js?v=1776829220?v=${SYSTEM_VERSION}&t=${Date.now()}"></script>
+    <script src="/static/app.js?v=2.2.6&t=${Date.now()}"></script>
 </body>
 </html>
   `);

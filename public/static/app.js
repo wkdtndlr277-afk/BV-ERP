@@ -10162,7 +10162,7 @@ async function parseBOMFromText() {
             item_code: newCode,
             item_name: m.name,
             category: '원료',
-            unit: 'g',
+            unit: 'kg',
             safety_stock: 0,
             expiry_days: 365
           });
@@ -22918,7 +22918,7 @@ async function executeBOMUpload() {
     grouped[item.productCode].push({
       item_code: item.materialCode,
       quantity: Math.round(item.quantity * 100) / 100,  // 소수점 2자리 반올림
-      unit: 'g'
+      unit: 'kg'
     });
   });
   
@@ -23469,7 +23469,7 @@ async function parseQuickBOMPaste() {
             item_code: newCode,
             item_name: m.name,
             category: '원료',
-            unit: 'g',
+            unit: 'kg',
             safety_stock: 0,
             expiry_days: 365
           });
@@ -23534,7 +23534,7 @@ async function saveQuickBOM() {
     const quantity = parseFloat(row.querySelector('.quick-bom-quantity').value);
     
     if (materialCode && quantity > 0) {
-      materials.push({ item_code: materialCode, quantity, unit: 'g' });
+      materials.push({ item_code: materialCode, quantity, unit: 'kg' });
     }
   });
   
@@ -23923,7 +23923,7 @@ async function processBOMImport() {
         materials.push({
           item_code: itemCode,
           quantity: qty,
-          unit: 'g'
+          unit: 'kg'
         });
       }
     }
@@ -25935,10 +25935,10 @@ async function loadProductionManagementData() {
     const barcodes = window.barcodeManagementData.length;
     const totalBom = items.reduce((sum, i) => sum + (i.bom_count || 0), 0);
     
-    document.getElementById('stat-production-count').textContent = items.length;
-    document.getElementById('stat-bom-count').textContent = totalBom;
-    document.getElementById('stat-barcode-count').textContent = barcodes;
-    document.getElementById('stat-nobom-count').textContent = items.length - withBom;
+    const statProdCount = document.getElementById('stat-production-count'); if (statProdCount) statProdCount.textContent = items.length;
+    const statBomCount = document.getElementById('stat-bom-count'); if (statBomCount) statBomCount.textContent = totalBom;
+    const statBarcodeCount = document.getElementById('stat-barcode-count'); if (statBarcodeCount) statBarcodeCount.textContent = barcodes;
+    const statNobomCount = document.getElementById('stat-nobom-count'); if (statNobomCount) statNobomCount.textContent = items.length - withBom;
     
     // 목록 렌더링
     renderProductionList();
@@ -26300,7 +26300,7 @@ async function saveBomMaterials() {
       materials: materials.map(m => ({
         material_name: m.name,
         quantity: m.quantity,
-        unit: 'g'
+        unit: 'kg'
       }))
     });
     

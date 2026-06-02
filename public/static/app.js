@@ -25620,7 +25620,7 @@ function showProductionBomUpload() {
           <li>• <b>유사명칭1</b>: 대체 이름 (선택)</li>
           <li>• <b>유사명칭2</b>: 대체 이름 (선택)</li>
           <li>• <b>원료명</b>: 원재료 이름 (필수)</li>
-          <li>• <b>수량(g)</b>: 투입량 (필수)</li>
+          <li>• <b>수량(kg)</b>: 투입량 - kg 단위 소수점 (필수, 예: 490g → 0.49)</li>
         </ul>
       </div>
       
@@ -26126,7 +26126,7 @@ async function showAddBomModal(productionCode = null) {
     window.materialsList = getMaterialsWithSemiFinished(); // 원료 + 반제품
   }
   
-  showModal('BOM(원료사용량) 등록', `
+  showModal('BOM(원료사용량) 등록 (기준 단위: kg)', `
     <div class="space-y-4">
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">생산명 선택 <span class="text-red-500">*</span></label>
@@ -26137,14 +26137,15 @@ async function showAddBomModal(productionCode = null) {
       </div>
       
       <div class="border-t pt-4">
-        <label class="block text-sm font-medium text-gray-700 mb-2">원료 추가</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">원료 추가</label>
+        <p class="text-xs text-red-600 font-semibold mb-2">※ 모든 원재료는 kg 단위 소수점으로 입력하십시오. (예: 490g → 0.49, 3g → 0.003)</p>
         <div class="flex gap-2 mb-3">
           <div class="flex-1 relative">
             <input type="text" id="bom-material-search" class="w-full border rounded-lg px-4 py-2" 
                    placeholder="원료명 검색..." oninput="searchMaterials(this.value)">
             <div id="material-search-results" class="absolute z-10 left-0 right-0 bg-white border rounded-lg shadow-lg max-h-40 overflow-y-auto hidden mt-1"></div>
           </div>
-          <input type="number" id="bom-material-qty" class="w-32 border rounded-lg px-4 py-2" placeholder="수량(g)" step="0.1">
+          <input type="number" id="bom-material-qty" class="w-32 border rounded-lg px-4 py-2" placeholder="수량(kg)" step="0.001">
           <button onclick="addBomMaterial()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
             <i class="fas fa-plus"></i>
           </button>
@@ -26155,7 +26156,7 @@ async function showAddBomModal(productionCode = null) {
             <thead class="bg-gray-100">
               <tr>
                 <th class="px-3 py-2 text-left">원료명</th>
-                <th class="px-3 py-2 text-right">수량(g)</th>
+                <th class="px-3 py-2 text-right">수량(kg)</th>
                 <th class="px-3 py-2 text-center w-16">삭제</th>
               </tr>
             </thead>

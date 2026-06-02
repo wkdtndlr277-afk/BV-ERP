@@ -408,7 +408,8 @@ productionRoutes.post('/', async (c) => {
   for (const bom of bomItems) {
     const actualItemCode = bom.matched_item_code || bom.item_code;
     const requiredQty = bom.quantity * quantity;
-    const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
+    // v2.3.1: BOM 단위가 kg으로 통일됨 - 변환 로직 제거
+    const requiredKg = requiredQty; // BOM.quantity는 이제 kg 단위
     
     // 정제수는 재고 확인 제외
     const itemName = bom.item_name || '';
@@ -467,7 +468,8 @@ productionRoutes.post('/', async (c) => {
     // 2. BOM 기반 원재료 FEFO 차감 준비
     for (const bom of bomItems) {
       const requiredQty = bom.quantity * quantity;
-      const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
+      // v2.3.1: BOM 단위가 kg으로 통일됨 - 변환 로직 제거
+    const requiredKg = requiredQty; // BOM.quantity는 이제 kg 단위
       const actualItemCode = bom.actualItemCode || bom.matched_item_code || bom.item_code;
       const itemName = bom.item_name || '';
       const isWater = itemName.includes('정제수');
@@ -956,7 +958,8 @@ productionRoutes.post('/batch', async (c) => {
     for (const bom of bomItems) {
       const actualItemCode = bom.matched_item_code || bom.item_code;
       const requiredQty = bom.quantity * actualItemCount;
-      const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
+      // v2.3.1: BOM 단위가 kg으로 통일됨 - 변환 로직 제거
+    const requiredKg = requiredQty; // BOM.quantity는 이제 kg 단위
       
       // FEFO 방식으로 원료 LOT 조회 (잔량이 있고 유통기한이 지나지 않은 가장 오래된 LOT)
       // 유통기한 필터: expiry_date >= 생산일 (생산일 기준으로 유효한 LOT만 선택)
@@ -1390,8 +1393,8 @@ productionRoutes.post('/backfill-usage', async (c) => {
     for (const prod of productions as any[]) {
       const boms = bomMap.get(prod.product_code) || [];
       for (const bom of boms) {
-        // 사용량 = BOM 수량 * 생산수량 / 1000 (g → kg 변환)
-        const usedQty = (bom.bom_qty * prod.quantity) / 1000;
+        // v2.3.1: BOM이 이미 kg 단위 - 변환 불필요
+        const usedQty = bom.bom_qty * prod.quantity; // BOM.bom_qty는 이제 kg 단위
         const key = bom.material_code;
         
         if (usageMap.has(key)) {
@@ -1621,7 +1624,8 @@ productionRoutes.post('/:id/cancel', async (c) => {
     
     for (const mat of materials.results || []) {
       const qty = mat.actual_qty || mat.planned_qty;
-      const qtyKg = mat.unit === 'g' ? qty / 1000 : qty;
+      // v2.3.1: production_materials도 kg 단위로 통일됨
+      const qtyKg = qty; // mat.unit은 이제 항상 'kg'
       
       // 마스터 재고 복구
       await c.env.DB.prepare(`
@@ -1769,7 +1773,8 @@ productionRoutes.post('/simulate', async (c) => {
   
   const materials = (bomResult.results || []).map((bom: any) => {
     const requiredQty = bom.quantity * quantity;
-    const requiredKg = bom.unit === 'g' ? requiredQty / 1000 : requiredQty;
+    // v2.3.1: BOM 단위가 kg으로 통일됨 - 변환 로직 제거
+    const requiredKg = requiredQty; // BOM.quantity는 이제 kg 단위
     const isAvailable = bom.current_stock >= requiredKg;
     const shortage = isAvailable ? 0 : requiredKg - bom.current_stock;
     

@@ -23663,14 +23663,14 @@ function showAddBOMModal() {
       </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">1개당 사용량 <span class="text-red-500">*</span></label>
-          <input type="number" id="bom-quantity" step="0.01" min="0" class="w-full border rounded-lg px-4 py-2" placeholder="예: 50">
+          <label class="block text-sm font-medium text-gray-700 mb-1">1개당 사용량 (kg) <span class="text-red-500">*</span></label><p class="text-xs text-orange-600 mb-1">(주의: g단위는 소수점으로 입력. 예: 490g → 0.49)</p>
+          <input type="number" id="bom-quantity" step="0.001" min="0" class="w-full border rounded-lg px-4 py-2" placeholder="예: 50">
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
           <select id="bom-unit" class="w-full border rounded-lg px-4 py-2">
-            <option value="g">g (그램)</option>
-            <option value="kg">kg (킬로그램)</option>
+            <option value="g">g (그램) - 권장하지 않음</option>
+            <option value="kg" selected>kg (킬로그램) - 기본 단위</option>
             <option value="ml">ml (밀리리터)</option>
             <option value="L">L (리터)</option>
             <option value="ea">ea (개)</option>
@@ -23748,7 +23748,7 @@ async function editBOM(id, itemCode, quantity, unit, bomTable) {
       </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">1개당 사용량 <span class="text-red-500">*</span></label>
+          <label class="block text-sm font-medium text-gray-700 mb-1">1개당 사용량 (kg) <span class="text-red-500">*</span></label><p class="text-xs text-orange-600 mb-1">(주의: g단위는 소수점으로 입력. 예: 490g → 0.49)</p>
           <input type="number" id="edit-bom-quantity" step="0.001" min="0" class="w-full border rounded-lg px-4 py-2" value="${quantity}">
         </div>
         <div>
@@ -23970,8 +23970,8 @@ function showBOMBulkImportModal() {
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
           <select id="bulk-import-unit" class="w-full border rounded-lg px-4 py-2">
-            <option value="g">g (그램)</option>
-            <option value="kg">kg (킬로그램)</option>
+            <option value="g">g (그램) - 권장하지 않음</option>
+            <option value="kg" selected>kg (킬로그램) - 기본 단위</option>
           </select>
         </div>
       </div>

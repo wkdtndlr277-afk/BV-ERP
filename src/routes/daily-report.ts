@@ -786,27 +786,45 @@ dailyReport.get('/reports/:id', async (c) => {
           }
         }
         
-        // 반제품 LOT 조회 - 생산일 기준 유효한 LOT (FEFO)
+        // ★★★ v2.4.8 절대 규칙: SF원료(자체생산)는 [생산일 - 1일] 기준 LOT만 사용 ★★★
+        // 과거 랜덤 날짜 LOT 연동 완전 폐기 - 정확히 하루 전 날짜만 허용
         if (sfCodes.length > 0) {
+          // 생산일 - 1일 계산
+          const reportDateObj = new Date(reportDate + 'T00:00:00')
+          reportDateObj.setDate(reportDateObj.getDate() - 1)
+          const sfLotDate = reportDateObj.toISOString().split('T')[0] // YYYY-MM-DD
+          const sfLotDateCompact = sfLotDate.replace(/-/g, '') // YYYYMMDD
+          
           for (let i = 0; i < sfCodes.length; i += batchSize) {
             const batch = sfCodes.slice(i, i + batchSize)
             try {
-              // semi_finished_lots 테이블에서 생산일 기준 유효한 LOT 조회 (FEFO)
+              // 1순위: semi_finished_lots에서 정확히 (생산일-1일) 날짜의 LOT 조회
               const sfLotData = await c.env.DB.prepare(`
-                SELECT item_code, lot_number, expiry_date, remain_qty
+                SELECT item_code, lot_number, expiry_date, remain_qty, prod_date
                 FROM semi_finished_lots
                 WHERE item_code IN (${batch.map(() => '?').join(',')})
-                  AND prod_date <= ?
-                  AND expiry_date >= ?
-                ORDER BY item_code, expiry_date ASC, prod_date ASC
-              `).bind(...batch, reportDate, reportDate).all()
+                  AND prod_date = ?
+                ORDER BY item_code
+              `).bind(...batch, sfLotDate).all()
               
-              // 각 item_code별 FEFO 기준 1개만 추가
-              const addedCodes = new Set<string>()
+              const foundCodes = new Set<string>()
               for (const row of (sfLotData.results || []) as any[]) {
-                if (!addedCodes.has(row.item_code)) {
+                if (!foundCodes.has(row.item_code)) {
                   materialLots.push(row)
-                  addedCodes.add(row.item_code)
+                  foundCodes.add(row.item_code)
+                }
+              }
+              
+              // 2순위: DB에 없는 SF원료는 자동 LOT 번호 생성 (20260521-SF001-001 형태)
+              for (const code of batch) {
+                if (!foundCodes.has(code)) {
+                  const autoLotNumber = `${sfLotDateCompact}-${code}-001`
+                  materialLots.push({
+                    item_code: code,
+                    lot_number: autoLotNumber,
+                    expiry_date: reportDate, // 생산일까지 유효
+                    remain_qty: 9999 // 자동 생성 LOT는 충분한 재고로 표시
+                  })
                 }
               }
             } catch (e) {

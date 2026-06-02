@@ -36841,6 +36841,20 @@ async function loadSystemManagementTab() {
         </div>
       </div>
       
+      <!-- 데이터 유틸리티 -->
+      <div class="bg-gray-50 rounded-lg p-4 border">
+        <div class="flex items-center justify-between">
+          <div>
+            <h4 class="font-medium text-gray-700"><i class="fas fa-tools mr-2"></i>데이터 유틸리티</h4>
+            <p class="text-sm text-gray-500 mt-1">생산일보의 원재료 데이터를 BOM 기준으로 전체 재계산합니다.</p>
+          </div>
+          <button onclick="recalculateDailyReportMaterials()" id="btn-recalc-materials" class="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors flex items-center gap-2">
+            <i class="fas fa-calculator"></i>
+            <span>원재료 데이터 재계산</span>
+          </button>
+        </div>
+      </div>
+      
       <!-- 서브 탭 -->
       <div class="border-b flex">
         <button onclick="switchSystemMgmtTab('materials')" id="smgmt-tab-materials" class="smgmt-tab px-4 py-2 border-b-2 border-indigo-500 text-indigo-600 font-medium">
@@ -36965,6 +36979,41 @@ window.addBarcode = addBarcode;
 window.deleteBarcode = deleteBarcode;
 window.updateBarcodeCountInTable = updateBarcodeCountInTable;
 window.setButtonLoading = setButtonLoading;
+
+// 생산일보 원재료 전체 재계산
+async function recalculateDailyReportMaterials() {
+  if (!confirm('모든 생산일보의 원재료 데이터를 BOM 기준으로 재계산합니다.\n\n이 작업은 시간이 걸릴 수 있습니다. 계속하시겠습니까?')) {
+    return;
+  }
+  
+  const btn = document.getElementById('btn-recalc-materials');
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>재계산 중...</span>';
+  
+  try {
+    const response = await api('/daily-report/reports/recalculate-materials', {
+      method: 'POST',
+      body: JSON.stringify({ all_reports: true })
+    });
+    
+    const result = response;
+    showToast(`원재료 재계산 완료: ${result.updated || 0}개 일보 처리됨`, 'success');
+    
+    // 결과 상세 표시
+    if (result.details) {
+      console.log('재계산 상세:', result.details);
+    }
+    
+  } catch (e) {
+    console.error('원재료 재계산 실패:', e);
+    showToast('원재료 재계산 실패: ' + (e.message || '오류 발생'), 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
+}
+window.recalculateDailyReportMaterials = recalculateDailyReportMaterials;
 
 // ========== ERP 시스템 설정 관리 ==========
 

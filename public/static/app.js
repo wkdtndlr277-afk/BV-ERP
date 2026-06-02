@@ -36992,12 +36992,9 @@ async function recalculateDailyReportMaterials() {
   btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> <span>재계산 중...</span>';
   
   try {
-    const response = await api('/daily-report/reports/recalculate-materials', {
-      method: 'POST',
-      body: JSON.stringify({ all_reports: true })
-    });
+    // api(endpoint, method, data) 형식으로 호출
+    const result = await api('/daily-report/reports/recalculate-materials', 'POST', { all_reports: true });
     
-    const result = response;
     showToast(`원재료 재계산 완료: ${result.updated || 0}개 일보 처리됨`, 'success');
     
     // 결과 상세 표시

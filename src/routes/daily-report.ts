@@ -641,35 +641,41 @@ dailyReport.get('/reports/:id', async (c) => {
   }
 })
 
-// 발주서 → 생산일보 변환 (최적화 버전)
+// 발주서 → 생산일보 변환 (최적화 버전 v2.4 - 날짜 기반 병합)
 dailyReport.post('/reports/from-order', async (c) => {
   const body = await c.req.json()
-  const { report_date, order_file_name, items, created_by, channel } = body
+  const { report_date, order_file_name, items, created_by, channel, request_id } = body
   
   if (!report_date || !items || items.length === 0) {
     return c.json({ success: false, error: '생산일자와 품목 정보가 필요합니다.' }, 400)
   }
   
-  // ★ 동일 날짜+채널에 기존 생산일보가 있는지 확인
-  // 채널별로 별도의 생산일보를 관리 (오아시스, 컬리, 쿠팡 등)
-  const channelPattern = channel ? `%${channel.replace('_paste', '')}%` : null
-  
+  // ★★★ v2.4: 동일 날짜 생산일보 병합 (Merge/Upsert) 로직 ★★★
+  // 채널에 관계없이 동일 날짜의 기존 생산일보를 찾아서 병합
   let existingReport: { id: number, report_no: string, order_file_name: string | null, total_products: number, total_quantity: number } | null = null
   
-  if (channelPattern) {
-    // 채널이 지정된 경우: 동일 채널의 생산일보 검색
-    existingReport = await c.env.DB.prepare(`
-      SELECT id, report_no, order_file_name, total_products, total_quantity
-      FROM production_daily_report 
-      WHERE report_date = ? AND status IN ('draft', 'confirmed')
-        AND (order_file_name LIKE ? OR order_file_name LIKE ?)
-      ORDER BY created_at DESC
-      LIMIT 1
-    `).bind(report_date, channelPattern, `%${channel}%`).first() as typeof existingReport
-  }
+  // 1단계: 동일 날짜의 생산일보 검색 (채널 무관)
+  existingReport = await c.env.DB.prepare(`
+    SELECT id, report_no, order_file_name, total_products, total_quantity
+    FROM production_daily_report 
+    WHERE report_date = ? AND status IN ('draft', 'confirmed')
+    ORDER BY created_at ASC
+    LIMIT 1
+  `).bind(report_date).first() as typeof existingReport
   
-  // 채널 기반 검색 실패 시 - 새로운 생산일보로 처리
-  // (다른 채널의 생산일보에 합치지 않음)
+  // ★ 중복 업로드 방지: 동일 파일명이 이미 존재하면 차단
+  if (existingReport && order_file_name) {
+    const existingFileNames = existingReport.order_file_name?.split(', ') || []
+    if (existingFileNames.includes(order_file_name)) {
+      console.log(`[daily-report] 중복 업로드 차단: ${order_file_name} (이미 ${existingReport.report_no}에 포함)`)
+      return c.json({ 
+        success: false, 
+        error: `이미 업로드된 파일입니다: ${order_file_name}\n기존 생산일보: ${existingReport.report_no}`,
+        duplicate: true,
+        existing_report_no: existingReport.report_no
+      }, 409)  // 409 Conflict
+    }
+  }
   
   // 1. 모든 필요한 데이터를 한 번에 로드 (최적화)
   const [barcodeData, productionData, bomData, legacyBomData] = await Promise.all([
@@ -737,7 +743,7 @@ dailyReport.post('/reports/from-order', async (c) => {
     }
   }
   
-  // 2. 생산일보 헤더 생성 또는 기존 생산일보에 추가
+  // 2. 생산일보 헤더 생성 또는 기존 생산일보에 추가 (v2.4 병합 로직)
   let reportId: number
   let reportNo: string
   let isNewReport = false
@@ -746,13 +752,25 @@ dailyReport.post('/reports/from-order', async (c) => {
   let existingTotalQuantity = 0
   
   if (existingReport) {
-    // ★ 기존 생산일보가 있으면 해당 생산일보에 추가
+    // ★★★ v2.4: 기존 생산일보에 병합 (채널 무관) ★★★
     reportId = existingReport.id
     reportNo = existingReport.report_no
     existingFileNames = existingReport.order_file_name ? existingReport.order_file_name.split(', ') : []
     existingTotalProducts = existingReport.total_products || 0
     existingTotalQuantity = existingReport.total_quantity || 0
-    console.log(`[daily-report] 기존 생산일보에 추가: ${reportNo} (ID: ${reportId})`)
+    
+    // 파일명 누적 (중복 제거는 위에서 처리됨)
+    if (order_file_name && !existingFileNames.includes(order_file_name)) {
+      existingFileNames.push(order_file_name)
+      // 파일명 업데이트
+      await c.env.DB.prepare(`
+        UPDATE production_daily_report 
+        SET order_file_name = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).bind(existingFileNames.join(', '), reportId).run()
+    }
+    
+    console.log(`[daily-report] ★ 기존 생산일보에 병합: ${reportNo} (ID: ${reportId}) - 파일: ${order_file_name}`)
   } else {
     // ★ 새로운 생산일보 생성
     isNewReport = true
@@ -882,12 +900,15 @@ dailyReport.post('/reports/from-order', async (c) => {
   // 4. 모든 품목 INSERT 완료 대기
   await Promise.all(itemInserts)
   
-  // 5. 헤더 업데이트
+  // 5. 헤더 업데이트 (v2.4: 기존 값에 누적 합산)
+  const newTotalProducts = existingTotalProducts + totalProducts
+  const newTotalQuantity = existingTotalQuantity + totalQuantity
+  
   await c.env.DB.prepare(`
     UPDATE production_daily_report 
-    SET total_products = ?, total_quantity = ?
+    SET total_products = ?, total_quantity = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).bind(totalProducts, totalQuantity, reportId).run()
+  `).bind(newTotalProducts, newTotalQuantity, reportId).run()
   
   // 6. 원재료 집계 결과 및 DB 저장 (material_code 포함)
   const materialsSummary = Array.from(allMaterials.entries()).map(([key, val]) => {
@@ -912,8 +933,11 @@ dailyReport.post('/reports/from-order', async (c) => {
       report_id: reportId,
       report_no: reportNo,
       report_date,
-      total_products: totalProducts,
-      total_quantity: totalQuantity,
+      total_products: newTotalProducts,  // v2.4: 누적 합산된 총 품목수
+      total_quantity: newTotalQuantity,  // v2.4: 누적 합산된 총 수량
+      added_products: totalProducts,     // v2.4: 이번에 추가된 품목수
+      added_quantity: totalQuantity,     // v2.4: 이번에 추가된 수량
+      is_merged: !isNewReport,           // v2.4: 병합 여부
       items: processedItems,
       materials_summary: materialsSummary
     }

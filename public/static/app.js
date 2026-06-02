@@ -17277,9 +17277,9 @@ async function renderProduction() {
                 <button onclick="cancelOrderUpload()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">
                   취소
                 </button>
-                <button onclick="convertToDailyReport()" class="px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600">
-                  <i class="fas fa-clipboard-list mr-1"></i>
-                  생산일보 변환
+                <button onclick="convertToDailyReport()" id="btn-convert-daily-report" class="px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <i class="fas fa-clipboard-list mr-1" id="icon-convert-daily-report"></i>
+                  <span id="text-convert-daily-report">생산일보 변환</span>
                 </button>
                 <button onclick="executeOrderProduction()" id="order-execute-btn" class="px-6 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50">
                   <i class="fas fa-play mr-1"></i>
@@ -20779,8 +20779,17 @@ function cancelOrderUpload() {
 
 // ========== 생산일보 변환 기능 ==========
 
-// 발주서 → 생산일보 변환
+// v2.4: 업로드 중복 방지를 위한 상태 관리
+let isConvertingToDailyReport = false;
+
+// 발주서 → 생산일보 변환 (v2.4: 중복 클릭 방지 추가)
 async function convertToDailyReport() {
+  // ★ 중복 클릭 방지
+  if (isConvertingToDailyReport) {
+    console.log('[daily-report] 이미 변환 중입니다.');
+    return;
+  }
+  
   if (!window.orderUploadData) {
     showToast('먼저 발주서를 업로드하세요', 'warning');
     return;
@@ -20802,6 +20811,16 @@ async function convertToDailyReport() {
     showToast('변환할 품목을 선택해주세요', 'warning');
     return;
   }
+  
+  // ★ 버튼 비활성화 + 로딩 스피너
+  const btn = document.getElementById('btn-convert-daily-report');
+  const icon = document.getElementById('icon-convert-daily-report');
+  const text = document.getElementById('text-convert-daily-report');
+  
+  isConvertingToDailyReport = true;
+  if (btn) btn.disabled = true;
+  if (icon) icon.className = 'fas fa-spinner fa-spin mr-1';
+  if (text) text.textContent = '변환 중...';
   
   // 판매처(channel) 정보
   const channel = window.orderUploadData.channel || 'unknown';
@@ -20828,16 +20847,31 @@ async function convertToDailyReport() {
     });
     
     if (result.success) {
-      showToast(`생산일보 ${result.data.report_no} 생성 완료!`, 'success');
+      // v2.4: 병합 여부에 따른 메시지
+      const msg = result.data.is_merged 
+        ? `기존 생산일보 ${result.data.report_no}에 ${result.data.added_products}건 병합 완료!`
+        : `생산일보 ${result.data.report_no} 생성 완료!`;
+      showToast(msg, 'success');
       
       // 생산일보 상세 모달 표시
       showDailyReportModal(result.data);
     } else {
-      showToast(result.error || '생산일보 생성 실패', 'error');
+      // v2.4: 중복 업로드 에러 처리
+      if (result.duplicate) {
+        showToast(`⚠️ 중복 업로드: ${result.error}`, 'warning');
+      } else {
+        showToast(result.error || '생산일보 생성 실패', 'error');
+      }
     }
   } catch (e) {
     console.error('생산일보 변환 오류:', e);
     showToast('생산일보 변환 중 오류 발생', 'error');
+  } finally {
+    // ★ 버튼 복원
+    isConvertingToDailyReport = false;
+    if (btn) btn.disabled = false;
+    if (icon) icon.className = 'fas fa-clipboard-list mr-1';
+    if (text) text.textContent = '생산일보 변환';
   }
 }
 
@@ -21813,7 +21847,16 @@ async function saveBarcodeMapping(count) {
 // 일괄 생산 등록 실행 (배치 API 사용으로 속도 개선)
 // 생산일보도 함께 자동 생성
 // v2.3.0 - 비동기 UI 개선
+// v2.4 - 중복 클릭 방지 추가
+let isExecutingOrderProduction = false;
+
 async function executeOrderProduction() {
+  // ★ v2.4: 중복 클릭 방지
+  if (isExecutingOrderProduction) {
+    console.log('[production] 이미 등록 중입니다.');
+    return;
+  }
+  
   if (!window.orderUploadData) return;
   
   const prodDate = document.getElementById('order-prod-date').value;
@@ -21839,8 +21882,11 @@ async function executeOrderProduction() {
   
   if (!confirm(`${selectedItems.length}개 제품을 일괄 생산 등록하시겠습니까?\n\n※ 생산일보도 함께 생성됩니다.`)) return;
   
-  // 버튼 비활성화 및 로딩 UI
-  const execBtn = document.getElementById('exec-order-production');
+  // ★ v2.4: 중복 방지 상태 설정 + 버튼 비활성화
+  isExecutingOrderProduction = true;
+  
+  // 버튼 비활성화 및 로딩 UI (올바른 버튼 ID 사용)
+  const execBtn = document.getElementById('order-execute-btn');
   if (execBtn) {
     execBtn.disabled = true;
     execBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>생산 데이터를 등록 중입니다...';
@@ -21911,8 +21957,9 @@ async function executeOrderProduction() {
     showToast(`❌ ${errorMsg}`, 'error');
   } finally {
     hideLoading();
-    // 버튼 복원
-    const execBtn = document.getElementById('exec-order-production');
+    // ★ v2.4: 중복 방지 상태 해제 + 버튼 복원
+    isExecutingOrderProduction = false;
+    const execBtn = document.getElementById('order-execute-btn');
     if (execBtn) {
       execBtn.disabled = false;
       execBtn.innerHTML = '<i class="fas fa-play mr-1"></i> 일괄 생산 등록';
@@ -29896,8 +29943,16 @@ function printProductionPlanReport() {
   printWindow.document.close();
 }
 
-// 바코드 생산계획 → 생산일보 변환 (유지 - 필요시 사용)
+// 바코드 생산계획 → 생산일보 변환 (v2.4: 중복 방지 추가)
+let isConvertingProductionReport = false;
+
 async function convertToProductionReport() {
+  // ★ 중복 클릭 방지
+  if (isConvertingProductionReport) {
+    console.log('[daily-report] 이미 변환 중입니다.');
+    return;
+  }
+  
   const data = window.barcodeProductionPlanData;
   const fileName = window.barcodeProductionPlanFileName;
   
@@ -29926,6 +29981,8 @@ async function convertToProductionReport() {
   
   if (!confirm(confirmMsg)) return;
   
+  // ★ 로딩 상태 설정
+  isConvertingProductionReport = true;
   showToast('생산일보 생성 중...', 'info');
   
   try {
@@ -29945,7 +30002,11 @@ async function convertToProductionReport() {
     });
     
     if (result.success) {
-      showToast(`생산일보 ${result.data.report_no} 생성 완료!`, 'success');
+      // v2.4: 병합 여부에 따른 메시지
+      const msg = result.data.is_merged 
+        ? `기존 생산일보 ${result.data.report_no}에 ${result.data.added_products}건 병합 완료!`
+        : `생산일보 ${result.data.report_no} 생성 완료!`;
+      showToast(msg, 'success');
       
       // 모달 닫기
       closeModal();
@@ -29953,11 +30014,19 @@ async function convertToProductionReport() {
       // 생산일보 상세 모달 표시
       showDailyReportDetailModal(result.data);
     } else {
-      showToast(result.error || '생산일보 생성 실패', 'error');
+      // v2.4: 중복 업로드 에러 처리
+      if (result.duplicate) {
+        showToast(`⚠️ 중복 업로드: ${result.error}`, 'warning');
+      } else {
+        showToast(result.error || '생산일보 생성 실패', 'error');
+      }
     }
   } catch (e) {
     console.error(e);
     showToast('생산일보 생성 오류: ' + e.message, 'error');
+  } finally {
+    // ★ 로딩 상태 해제
+    isConvertingProductionReport = false;
   }
 }
 

@@ -71,6 +71,85 @@ productionRoutes.get('/', async (c) => {
   return c.json({ success: true, data: result.results });
 });
 
+// ★★★ v3.3.0: closing-status를 /:id보다 먼저 정의 (라우터 우선순위) ★★★
+// 당일 생산 마감 현황 통합 조회
+productionRoutes.get('/closing-status', async (c) => {
+  try {
+    const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+    
+    // 1. 당일 생산 현황 - 실제 production 테이블 JOIN
+    const productionData = await c.env.DB.prepare(`
+      SELECT p.id, p.prod_date, p.product_code, p.quantity, p.lot_number, 
+             p.channel, p.expiry_date, p.status, p.created_at,
+             COALESCE(pi.production_name, m.item_name, p.product_code) as product_name,
+             (SELECT COUNT(*) FROM production_materials WHERE production_id = p.id) as material_count
+      FROM production p
+      LEFT JOIN production_items pi ON p.product_code = pi.production_code
+      LEFT JOIN master m ON p.product_code = m.item_code
+      WHERE p.prod_date = ?
+      ORDER BY p.created_at DESC
+    `).bind(date).all<any>();
+    
+    // 2. 당일 원재료 사용량 - 실제 production_materials 테이블 JOIN
+    const materialUsage = await c.env.DB.prepare(`
+      SELECT pm.item_code, 
+             COALESCE(m.item_name, pm.item_code) as item_name,
+             SUM(pm.actual_qty) as total_used,
+             m.unit,
+             m.current_stock
+      FROM production_materials pm
+      JOIN production p ON pm.production_id = p.id
+      LEFT JOIN master m ON pm.item_code = m.item_code
+      WHERE p.prod_date = ?
+      GROUP BY pm.item_code
+      ORDER BY total_used DESC
+    `).bind(date).all<any>();
+    
+    // 3. 당일 입고 현황 - 실제 inbound 테이블
+    const inboundData = await c.env.DB.prepare(`
+      SELECT i.item_code, m.item_name, SUM(i.origin_qty) as total_inbound, m.unit
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.inbound_date = ? AND i.quality_status = '합격'
+      GROUP BY i.item_code
+      ORDER BY total_inbound DESC
+    `).bind(date).all<any>();
+    
+    // 4. 요약 계산 - 실제 DB 결과만 사용
+    const totalProducts = productionData.results?.length || 0;
+    const totalQuantity = (productionData.results || []).reduce((sum: number, p: any) => sum + (p.quantity || 0), 0);
+    const totalMaterialTypes = materialUsage.results?.length || 0;
+    const totalMaterialUsed = (materialUsage.results || []).reduce((sum: number, m: any) => sum + (m.total_used || 0), 0);
+    
+    // 채널별 집계
+    const channelSummary: Record<string, { count: number, quantity: number }> = {};
+    for (const p of productionData.results || []) {
+      const ch = p.channel || '기타';
+      if (!channelSummary[ch]) channelSummary[ch] = { count: 0, quantity: 0 };
+      channelSummary[ch].count++;
+      channelSummary[ch].quantity += p.quantity || 0;
+    }
+    
+    return c.json({
+      success: true,
+      date,
+      production: {
+        items: productionData.results || [],
+        summary: { total_products: totalProducts, total_quantity: totalQuantity, by_channel: channelSummary }
+      },
+      materials: {
+        usage: materialUsage.results || [],
+        inbound: inboundData.results || [],
+        summary: { total_types: totalMaterialTypes, total_used_kg: totalMaterialUsed }
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('[production/closing-status] D1_ERROR:', error);
+    return c.json({ success: false, error: `D1_ERROR: ${error.message}`, errorCode: 'D1_QUERY_ERROR' }, 500);
+  }
+});
+
 // 생산 상세 조회 (사용 원재료 포함)
 productionRoutes.get('/:id', async (c) => {
   const id = c.req.param('id');
@@ -2020,6 +2099,457 @@ productionRoutes.post('/migrate-materials', async (c) => {
   } catch (error: any) {
     console.error('Migration error:', error);
     return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+
+// 2. preview: 생산 등록 프리뷰 - 정식 DB JOIN만 사용, 가상 데이터 절대 금지
+productionRoutes.post('/preview', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { items, prod_date, channel } = body;
+    
+    if (!items || items.length === 0) {
+      return c.json({ success: false, error: '검증할 항목이 없습니다.', errorCode: 'EMPTY_ITEMS' }, 400);
+    }
+    
+    const productionDate = prod_date || new Date().toISOString().split('T')[0];
+    
+    // ===== 1단계: 모든 데이터를 실제 DB에서 JOIN으로 조회 =====
+    
+    // 바코드 → 생산코드 매핑 (실제 DB JOIN)
+    const barcodeData = await c.env.DB.prepare(`
+      SELECT pb.barcode, pb.production_code, pb.box_quantity, pb.expiry_days, pb.channel,
+             pi.production_name, pi.shelf_life_days
+      FROM production_barcodes pb
+      JOIN production_items pi ON pb.production_code = pi.production_code
+    `).all<any>();
+    
+    // 생산 품목 목록 (실제 DB)
+    const productionItemsData = await c.env.DB.prepare(`
+      SELECT production_code, production_name, shelf_life_days FROM production_items
+    `).all<any>();
+    
+    // BOM 데이터 (실제 DB JOIN) - bom 테이블 + master 테이블 JOIN
+    const bomData = await c.env.DB.prepare(`
+      SELECT b.product_code, b.item_code, b.quantity, b.unit,
+             m.item_name, m.current_stock
+      FROM bom b
+      LEFT JOIN master m ON b.item_code = m.item_code
+    `).all<any>();
+    
+    // production_bom (PR 코드용) - 실제 DB
+    const productionBomData = await c.env.DB.prepare(`
+      SELECT production_code as product_code, material_code as item_code, 
+             material_name as item_name, quantity, unit
+      FROM production_bom
+    `).all<any>();
+    
+    // 원재료 재고 - 실제 inbound 테이블 (FEFO 기준 가용재고)
+    const inboundStockData = await c.env.DB.prepare(`
+      SELECT item_code, SUM(remain_qty) as available_stock
+      FROM inbound
+      WHERE quality_status = '합격' AND remain_qty > 0
+      GROUP BY item_code
+    `).all<any>();
+    
+    // 마스터 재고 (inbound에 없는 경우 대비)
+    const masterStockData = await c.env.DB.prepare(`
+      SELECT item_code, item_name, current_stock, unit FROM master
+    `).all<any>();
+    
+    // SF계열 재고 - 실제 semi_finished_lots 테이블 (가상 아님!)
+    const sfStockData = await c.env.DB.prepare(`
+      SELECT sf.item_code, sf.item_name, sf.unit,
+             COALESCE(SUM(sfl.remain_qty), 0) as available_stock
+      FROM semi_finished_items sf
+      LEFT JOIN semi_finished_lots sfl ON sf.item_code = sfl.item_code AND sfl.remain_qty > 0
+      WHERE sf.is_active = 1
+      GROUP BY sf.item_code
+    `).all<any>();
+    
+    // ===== 2단계: 룩업 맵 생성 (실제 DB 데이터만 사용) =====
+    const barcodeMap = new Map<string, any>();
+    for (const row of barcodeData.results || []) {
+      barcodeMap.set(row.barcode, row);
+    }
+    
+    const productionNameMap = new Map<string, any>();
+    for (const row of productionItemsData.results || []) {
+      productionNameMap.set(row.production_code, row);
+      productionNameMap.set(row.production_name, row);
+    }
+    
+    // BOM 맵 (실제 DB 데이터)
+    const bomMap = new Map<string, any[]>();
+    for (const row of bomData.results || []) {
+      if (!bomMap.has(row.product_code)) bomMap.set(row.product_code, []);
+      bomMap.get(row.product_code)!.push(row);
+    }
+    for (const row of productionBomData.results || []) {
+      if (!bomMap.has(row.product_code)) bomMap.set(row.product_code, []);
+      const existing = bomMap.get(row.product_code)!;
+      if (!existing.some(e => e.item_code === row.item_code)) {
+        existing.push(row);
+      }
+    }
+    
+    // 재고 맵 (실제 DB 데이터 - inbound + master + SF)
+    const stockMap = new Map<string, { available: number, source: string, item_name: string, unit: string }>();
+    
+    // 1차: 마스터 재고
+    for (const row of masterStockData.results || []) {
+      stockMap.set(row.item_code, { 
+        available: row.current_stock || 0, 
+        source: 'master', 
+        item_name: row.item_name,
+        unit: row.unit || 'kg'
+      });
+    }
+    
+    // 2차: 입고 가용재고 (우선)
+    for (const row of inboundStockData.results || []) {
+      const existing = stockMap.get(row.item_code);
+      stockMap.set(row.item_code, { 
+        available: row.available_stock || 0, 
+        source: 'inbound',
+        item_name: existing?.item_name || row.item_code,
+        unit: existing?.unit || 'kg'
+      });
+    }
+    
+    // 3차: SF계열 재고 (실제 semi_finished_lots 데이터)
+    for (const row of sfStockData.results || []) {
+      stockMap.set(row.item_code, { 
+        available: row.available_stock || 0, 
+        source: 'semi_finished_lots',
+        item_name: row.item_name,
+        unit: row.unit || 'kg'
+      });
+    }
+    
+    // ===== 3단계: 각 항목 검증 (실제 DB 데이터만 사용) =====
+    const validatedItems: any[] = [];
+    const errors: any[] = [];
+    const warnings: any[] = [];
+    const totalMaterialRequirements = new Map<string, any>();
+    
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const rowIndex = i + 1;
+      
+      let productCode = item.product_code;
+      let productName = item.product_name || '';
+      let matched = false;
+      let hasBom = false;
+      let bomMaterials: any[] = [];
+      let shelfLifeDays = 7;
+      
+      // 바코드 매칭 (실제 DB)
+      if (item.barcode && barcodeMap.has(item.barcode)) {
+        const barcodeInfo = barcodeMap.get(item.barcode);
+        productCode = barcodeInfo.production_code;
+        productName = barcodeInfo.production_name;
+        shelfLifeDays = barcodeInfo.expiry_days || barcodeInfo.shelf_life_days || 7;
+        matched = true;
+      }
+      // 생산코드 매칭 (실제 DB)
+      else if (productCode && productionNameMap.has(productCode)) {
+        const prodInfo = productionNameMap.get(productCode);
+        productName = prodInfo.production_name;
+        shelfLifeDays = prodInfo.shelf_life_days || 7;
+        matched = true;
+      }
+      
+      // BOM 확인 (실제 DB)
+      if (productCode && bomMap.has(productCode)) {
+        bomMaterials = bomMap.get(productCode) || [];
+        hasBom = bomMaterials.length > 0;
+      }
+      
+      // 원재료 소요량 계산 (실제 DB 재고만 사용!)
+      const materialDetails: any[] = [];
+      if (hasBom && item.quantity > 0) {
+        for (const bom of bomMaterials) {
+          const requiredQty = bom.quantity * item.quantity;
+          const itemCode = bom.item_code;
+          const stockInfo = stockMap.get(itemCode);
+          
+          // ★ 가상 데이터 금지: stockInfo가 없으면 0으로 처리하고 경고 발생
+          const availableStock = stockInfo?.available || 0;
+          const itemName = stockInfo?.item_name || bom.item_name || itemCode;
+          const unit = stockInfo?.unit || bom.unit || 'kg';
+          const stockSource = stockInfo?.source || 'NOT_FOUND';
+          
+          // DB에 재고 출처가 없으면 에러 표시
+          if (!stockInfo) {
+            warnings.push({
+              row: rowIndex,
+              type: 'DB_MAPPING_ERROR',
+              message: `[DB오류] ${itemCode}: 재고 테이블에서 매칭되는 데이터 없음`
+            });
+          }
+          
+          const isSufficient = availableStock >= requiredQty;
+          const isSF = itemCode.startsWith('SF');
+          
+          materialDetails.push({
+            item_code: itemCode,
+            item_name: itemName,
+            required_qty: requiredQty,
+            available_stock: availableStock,
+            unit: unit,
+            is_sufficient: isSufficient,
+            is_sf: isSF,
+            stock_source: stockSource  // 재고 출처 명시
+          });
+          
+          // 총 소요량 누적
+          if (totalMaterialRequirements.has(itemCode)) {
+            const existing = totalMaterialRequirements.get(itemCode)!;
+            existing.required += requiredQty;
+          } else {
+            totalMaterialRequirements.set(itemCode, {
+              item_name: itemName,
+              required: requiredQty,
+              available: availableStock,
+              unit: unit,
+              is_sf: isSF,
+              stock_source: stockSource
+            });
+          }
+        }
+      }
+      
+      // 검증 결과 생성
+      const validationResult: any = {
+        row_index: rowIndex,
+        original: item,
+        product_code: productCode,
+        product_name: productName,
+        quantity: item.quantity || 0,
+        channel: item.channel || channel || '',
+        is_matched: matched,
+        has_bom: hasBom,
+        shelf_life_days: shelfLifeDays,
+        materials: materialDetails,
+        material_count: bomMaterials.length,
+        issues: [] as string[],
+        can_proceed: true
+      };
+      
+      // 문제 체크
+      if (!matched) {
+        validationResult.issues.push('UNMATCHED');
+        validationResult.can_proceed = false;
+        errors.push({
+          row: rowIndex,
+          type: 'UNMATCHED',
+          message: `미매칭 제품: ${item.product_name || item.barcode || '알 수 없음'}`
+        });
+      }
+      
+      if (matched && !hasBom) {
+        validationResult.issues.push('NO_BOM');
+        warnings.push({
+          row: rowIndex,
+          type: 'NO_BOM',
+          message: `BOM 미등록: ${productName} (원재료 차감 없이 제품 재고만 증가)`
+        });
+      }
+      
+      // 재고 부족 체크 (실제 DB 데이터 기준!)
+      const insufficientMaterials = materialDetails.filter(m => !m.is_sufficient);
+      if (insufficientMaterials.length > 0) {
+        validationResult.issues.push('STOCK_SHORTAGE');
+        for (const mat of insufficientMaterials) {
+          warnings.push({
+            row: rowIndex,
+            type: 'STOCK_SHORTAGE',
+            message: `재고 부족: ${mat.item_name} (필요: ${mat.required_qty.toFixed(2)}${mat.unit}, 가용: ${mat.available_stock.toFixed(2)}${mat.unit}, 출처: ${mat.stock_source})`
+          });
+        }
+      }
+      
+      validatedItems.push(validationResult);
+    }
+    
+    // ===== 4단계: 총 원재료 소요량 요약 =====
+    const materialSummary = Array.from(totalMaterialRequirements.entries()).map(([code, data]: [string, any]) => ({
+      item_code: code,
+      item_name: data.item_name,
+      total_required: data.required,
+      total_available: data.available,
+      unit: data.unit,
+      is_sufficient: data.available >= data.required,
+      shortage: Math.max(0, data.required - data.available),
+      is_sf: data.is_sf,
+      stock_source: data.stock_source  // 재고 출처 명시
+    })).sort((a, b) => b.shortage - a.shortage);
+    
+    // 결과 요약
+    const matchedCount = validatedItems.filter(v => v.is_matched).length;
+    const unmatchedCount = validatedItems.filter(v => !v.is_matched).length;
+    const withBomCount = validatedItems.filter(v => v.has_bom).length;
+    const stockIssueCount = materialSummary.filter(m => !m.is_sufficient).length;
+    
+    return c.json({
+      success: true,
+      preview: true,
+      production_date: productionDate,
+      summary: {
+        total_items: items.length,
+        matched: matchedCount,
+        unmatched: unmatchedCount,
+        with_bom: withBomCount,
+        without_bom: matchedCount - withBomCount,
+        material_types: totalMaterialRequirements.size,
+        stock_issues: stockIssueCount
+      },
+      items: validatedItems,
+      material_summary: materialSummary,
+      errors,
+      warnings,
+      can_auto_proceed: unmatchedCount === 0,
+      requires_confirmation: stockIssueCount > 0 || unmatchedCount > 0
+    });
+    
+  } catch (error: any) {
+    console.error('[production/preview] D1_TRANSACTION_ERROR:', error);
+    return c.json({ 
+      success: false, 
+      error: `D1_TRANSACTION_ERROR: ${error.message}`,
+      errorCode: 'D1_TRANSACTION_ERROR',
+      hint: 'DB 트랜잭션 오류 - 테이블/컬럼 매핑을 확인하세요.'
+    }, 500);
+  }
+});
+
+// 3. confirm: 생산 등록 확정 - 무결성 검사 후 실제 DB 반영
+productionRoutes.post('/confirm', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { items, prod_date, channel, force_stock_shortage } = body;
+    
+    if (!items || items.length === 0) {
+      return c.json({ success: false, error: '등록할 항목이 없습니다.', errorCode: 'EMPTY_ITEMS' }, 400);
+    }
+    
+    const productionDate = prod_date || new Date().toISOString().split('T')[0];
+    
+    // ===== 무결성 검사: 실제 DB 테이블과 BOM 교차 검증 =====
+    const integrityErrors: string[] = [];
+    
+    for (const item of items) {
+      if (!item.product_code) {
+        integrityErrors.push(`Row ${item.row_index || '?'}: product_code 누락`);
+        continue;
+      }
+      
+      // BOM 존재 확인
+      const bomCheck = await c.env.DB.prepare(`
+        SELECT COUNT(*) as cnt FROM bom WHERE product_code = ?
+        UNION ALL
+        SELECT COUNT(*) as cnt FROM production_bom WHERE production_code = ?
+      `).bind(item.product_code, item.product_code).all<any>();
+      
+      const bomExists = (bomCheck.results || []).some((r: any) => r.cnt > 0);
+      
+      if (item.has_bom && !bomExists) {
+        integrityErrors.push(`${item.product_code}: BOM 데이터 불일치 (프리뷰와 DB 상태가 다름)`);
+      }
+      
+      // 재고 부족 시 force 플래그 없으면 차단
+      if (item.issues?.includes('STOCK_SHORTAGE') && !force_stock_shortage) {
+        integrityErrors.push(`${item.product_code}: 재고 부족 - 강제 승인 필요`);
+      }
+    }
+    
+    // 무결성 검사 실패 시 즉시 중단
+    if (integrityErrors.length > 0) {
+      return c.json({
+        success: false,
+        error: '무결성 검사 실패 - DB 반영 차단',
+        errorCode: 'INTEGRITY_CHECK_FAILED',
+        details: integrityErrors
+      }, 400);
+    }
+    
+    // ===== 실제 DB 반영 (배치 처리) =====
+    let successCount = 0;
+    let failCount = 0;
+    const results: any[] = [];
+    
+    for (const item of items) {
+      try {
+        // LOT 번호 생성
+        const lotDate = productionDate.replace(/-/g, '');
+        const countResult = await c.env.DB.prepare(`
+          SELECT COUNT(*) as cnt FROM production 
+          WHERE prod_date = ? AND product_code = ?
+        `).bind(productionDate, item.product_code).first<any>();
+        const seq = String((countResult?.cnt || 0) + 1).padStart(3, '0');
+        const lotNumber = `${item.product_code}-${lotDate}-${seq}`;
+        
+        // 소비기한 계산
+        const expiryDate = new Date(productionDate);
+        expiryDate.setDate(expiryDate.getDate() + (item.shelf_life_days || 7));
+        const expiryDateStr = expiryDate.toISOString().split('T')[0];
+        
+        // production 테이블에 INSERT
+        const insertResult = await c.env.DB.prepare(`
+          INSERT INTO production (prod_date, product_code, quantity, lot_number, channel, expiry_date, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, '완료', datetime('now'))
+        `).bind(
+          productionDate,
+          item.product_code,
+          item.quantity,
+          lotNumber,
+          item.channel || channel || '',
+          expiryDateStr
+        ).run();
+        
+        const productionId = insertResult.meta?.last_row_id;
+        
+        // BOM 기반 원재료 사용 기록 (production_materials)
+        if (item.materials && item.materials.length > 0 && productionId) {
+          for (const mat of item.materials) {
+            await c.env.DB.prepare(`
+              INSERT INTO production_materials (production_id, item_code, planned_qty, actual_qty, unit)
+              VALUES (?, ?, ?, ?, ?)
+            `).bind(
+              productionId,
+              mat.item_code,
+              mat.required_qty,
+              mat.required_qty,
+              mat.unit || 'kg'
+            ).run();
+          }
+        }
+        
+        successCount++;
+        results.push({ product_code: item.product_code, lot_number: lotNumber, status: 'SUCCESS' });
+        
+      } catch (itemError: any) {
+        failCount++;
+        results.push({ product_code: item.product_code, status: 'FAILED', error: itemError.message });
+      }
+    }
+    
+    return c.json({
+      success: failCount === 0,
+      message: `생산 등록 완료: 성공 ${successCount}건, 실패 ${failCount}건`,
+      results,
+      production_date: productionDate
+    });
+    
+  } catch (error: any) {
+    console.error('[production/confirm] D1_TRANSACTION_ERROR:', error);
+    return c.json({
+      success: false,
+      error: `D1_TRANSACTION_ERROR: ${error.message}`,
+      errorCode: 'D1_TRANSACTION_ERROR'
+    }, 500);
   }
 });
 

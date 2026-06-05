@@ -17309,18 +17309,42 @@ async function renderProduction() {
                 </div>
               </div>
               
-              <div class="bg-gray-50 px-4 py-3 flex justify-end gap-2">
-                <button onclick="cancelOrderUpload()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">
-                  취소
-                </button>
-                <button onclick="convertToDailyReport()" id="btn-convert-daily-report" class="px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed">
-                  <i class="fas fa-clipboard-list mr-1" id="icon-convert-daily-report"></i>
-                  <span id="text-convert-daily-report">생산일보 변환</span>
-                </button>
-                <button onclick="executeOrderProduction()" id="order-execute-btn" class="px-6 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50">
-                  <i class="fas fa-play mr-1"></i>
-                  일괄 생산 등록
-                </button>
+              <!-- v3.3.0: 재고 부족 강제 승인 옵션 -->
+              <div id="force-stock-option" class="hidden bg-yellow-50 border border-yellow-300 rounded-lg p-3 mx-4 mb-3">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" id="force-stock-shortage" class="w-4 h-4 text-yellow-600 border-gray-300 rounded focus:ring-yellow-500">
+                  <span class="text-yellow-800 font-medium">
+                    <i class="fas fa-exclamation-triangle mr-1"></i>
+                    재고 부족 품목 강제 승인 (생산 등록은 진행하되 재고 차감 불가)
+                  </span>
+                </label>
+                <p class="text-xs text-yellow-600 mt-1 ml-6">※ 이 옵션을 체크하면 재고가 부족해도 생산 등록은 진행됩니다. 원재료는 차감되지 않습니다.</p>
+              </div>
+              
+              <div class="bg-gray-50 px-4 py-3 flex justify-between items-center">
+                <!-- v3.3.0: 백엔드 DB 검증 상태 표시 -->
+                <div id="db-validation-status" class="text-sm text-gray-500">
+                  <i class="fas fa-database mr-1"></i> 프론트엔드 미리보기
+                </div>
+                
+                <div class="flex gap-2">
+                  <button onclick="cancelOrderUpload()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">
+                    취소
+                  </button>
+                  <!-- v3.3.0: 백엔드 DB 검증 버튼 추가 -->
+                  <button onclick="validateWithBackendDB()" id="btn-validate-db" class="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600">
+                    <i class="fas fa-database mr-1"></i>
+                    <span>DB 재고 검증</span>
+                  </button>
+                  <button onclick="convertToDailyReport()" id="btn-convert-daily-report" class="px-4 py-2 bg-orange-500 text-white rounded-lg font-medium hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <i class="fas fa-clipboard-list mr-1" id="icon-convert-daily-report"></i>
+                    <span id="text-convert-daily-report">생산일보 변환</span>
+                  </button>
+                  <button onclick="executeOrderProduction()" id="order-execute-btn" class="px-6 py-2 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50">
+                    <i class="fas fa-play mr-1"></i>
+                    일괄 생산 등록
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -20845,6 +20869,217 @@ async function calculateOrderMaterials(items) {
   });
 }
 
+// ========== v3.3.0: 백엔드 DB 정식 검증 기능 ==========
+// 가상 데이터 원천 금지 - 실제 DB JOIN만 사용
+
+// 백엔드 DB 검증 함수 - preview API 호출
+async function validateWithBackendDB() {
+  if (!window.orderUploadData) {
+    showToast('먼저 발주서를 업로드하세요', 'warning');
+    return;
+  }
+  
+  const prodDate = document.getElementById('order-prod-date')?.value || new Date().toISOString().split('T')[0];
+  const channel = window.orderUploadData.channel;
+  const items = window.orderUploadData.items;
+  
+  // 선택된 항목만
+  const selectedItems = items.filter((item, idx) => {
+    const checkbox = document.querySelector(`.order-item-check[data-idx="${idx}"]`);
+    return checkbox && checkbox.checked && item.matchedProduct;
+  });
+  
+  if (selectedItems.length === 0) {
+    showToast('검증할 제품을 선택해주세요', 'warning');
+    return;
+  }
+  
+  // 버튼 상태 변경
+  const validateBtn = document.getElementById('btn-validate-db');
+  if (validateBtn) {
+    validateBtn.disabled = true;
+    validateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> DB 검증 중...';
+  }
+  
+  const statusDiv = document.getElementById('db-validation-status');
+  if (statusDiv) {
+    statusDiv.innerHTML = '<i class="fas fa-spinner fa-spin mr-1 text-blue-500"></i> 백엔드 DB 검증 중...';
+  }
+  
+  try {
+    // preview API 호출 - 정식 DB JOIN 기반 검증
+    const previewPayload = {
+      items: selectedItems.map(item => ({
+        product_code: item.matchedProduct.item_code,
+        product_name: item.matchedProduct.item_name,
+        quantity: item.quantity,
+        barcode: item.barcode || null,
+        expiry_date: item.expiryDate || null
+      })),
+      prod_date: prodDate,
+      channel: channel
+    };
+    
+    console.log('[v3.3.0] preview API 호출:', previewPayload);
+    
+    const result = await api('/production/preview', 'POST', previewPayload);
+    
+    if (result.success) {
+      // 검증 결과 저장
+      window.backendValidationResult = result;
+      
+      // 상태 업데이트
+      const { summary, items: validatedItems, material_summary, errors, warnings } = result;
+      
+      // 상태 표시 업데이트
+      if (statusDiv) {
+        const stockIssues = summary?.stock_issues || 0;
+        const hasErrors = errors?.length > 0;
+        
+        if (hasErrors || stockIssues > 0) {
+          statusDiv.innerHTML = `<i class="fas fa-exclamation-triangle mr-1 text-yellow-500"></i> <span class="text-yellow-600">DB 검증 완료 - 재고 부족 ${stockIssues}건</span>`;
+          document.getElementById('force-stock-option')?.classList.remove('hidden');
+        } else {
+          statusDiv.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i> <span class="text-green-600">DB 검증 통과 - 모든 재고 충분</span>';
+          document.getElementById('force-stock-option')?.classList.add('hidden');
+        }
+      }
+      
+      // 원재료 테이블 업데이트 (백엔드에서 받은 stock_source 포함)
+      updateMaterialTableWithDBResult(material_summary, warnings);
+      
+      // 경고/에러 표시
+      if (errors?.length > 0) {
+        console.warn('[v3.3.0] DB 검증 에러:', errors);
+        showToast(`DB 검증 경고: ${errors.length}건의 문제 발견`, 'warning');
+      }
+      
+      if (warnings?.length > 0) {
+        console.warn('[v3.3.0] DB 검증 경고:', warnings);
+      }
+      
+      showToast(`DB 검증 완료: ${summary?.matched || 0}건 매칭, ${summary?.stock_issues || 0}건 재고 부족`, 'success');
+      
+    } else {
+      // 검증 실패
+      if (statusDiv) {
+        statusDiv.innerHTML = `<i class="fas fa-times-circle mr-1 text-red-500"></i> <span class="text-red-600">DB 검증 실패: ${result.error || '알 수 없는 오류'}</span>`;
+      }
+      
+      // D1_TRANSACTION_ERROR인 경우 상세 표시
+      if (result.errorCode === 'D1_TRANSACTION_ERROR') {
+        showToast(`[D1_TRANSACTION_ERROR] ${result.error}`, 'error');
+        console.error('[v3.3.0] D1_TRANSACTION_ERROR:', result);
+      } else {
+        showToast(result.error || 'DB 검증 실패', 'error');
+      }
+    }
+    
+  } catch (e) {
+    console.error('[v3.3.0] preview API 호출 오류:', e);
+    if (statusDiv) {
+      statusDiv.innerHTML = '<i class="fas fa-times-circle mr-1 text-red-500"></i> <span class="text-red-600">DB 검증 오류</span>';
+    }
+    showToast('DB 검증 중 오류가 발생했습니다', 'error');
+  } finally {
+    if (validateBtn) {
+      validateBtn.disabled = false;
+      validateBtn.innerHTML = '<i class="fas fa-database mr-1"></i> DB 재고 검증';
+    }
+  }
+}
+
+// 원재료 테이블을 백엔드 DB 결과로 업데이트 (stock_source 포함)
+function updateMaterialTableWithDBResult(materialSummary, warnings) {
+  if (!materialSummary || materialSummary.length === 0) {
+    document.getElementById('order-materials-summary')?.classList.add('hidden');
+    return;
+  }
+  
+  const materialsDiv = document.getElementById('order-materials-summary');
+  const materialsTable = document.getElementById('order-materials-table');
+  
+  if (!materialsDiv || !materialsTable) return;
+  
+  // 경고 맵 생성
+  const warningMap = new Map();
+  (warnings || []).forEach(w => {
+    if (w.item_code) {
+      warningMap.set(w.item_code, w);
+    }
+  });
+  
+  let hasShortage = false;
+  const rows = materialSummary.map(mat => {
+    const isAvailable = mat.is_sufficient !== false && mat.available >= mat.total_required;
+    if (!isAvailable) hasShortage = true;
+    
+    const warning = warningMap.get(mat.item_code);
+    const stockSourceBadge = getStockSourceBadge(mat.stock_source);
+    
+    return `
+      <tr class="${isAvailable ? '' : 'bg-red-50'}">
+        <td class="px-3 py-2">
+          <span class="text-gray-500 text-xs">${mat.item_code}</span>
+          <span class="ml-1 font-medium">${mat.item_name || mat.item_code}</span>
+          ${stockSourceBadge}
+          ${warning ? `<div class="text-xs text-yellow-600 mt-0.5"><i class="fas fa-exclamation-triangle mr-1"></i>${warning.message}</div>` : ''}
+        </td>
+        <td class="px-3 py-2 text-right">${formatNumber(mat.total_required, 2)} ${mat.unit || 'kg'}</td>
+        <td class="px-3 py-2 text-right">
+          <span class="${isAvailable ? 'text-green-600' : 'text-red-600'}">${formatNumber(mat.available, 2)} ${mat.unit || 'kg'}</span>
+        </td>
+        <td class="px-3 py-2 text-center">
+          ${isAvailable 
+            ? '<span class="text-green-600"><i class="fas fa-check-circle"></i></span>' 
+            : '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i> 부족</span>'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+  
+  materialsTable.innerHTML = rows;
+  materialsDiv.classList.remove('hidden');
+  
+  // 재고 부족 시 버튼 및 강제 승인 옵션 표시
+  const execBtn = document.getElementById('order-execute-btn');
+  const forceOption = document.getElementById('force-stock-option');
+  
+  if (hasShortage) {
+    if (execBtn) {
+      execBtn.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i> 재고 부족 - 일괄 생산 등록';
+      execBtn.classList.add('bg-yellow-600');
+      execBtn.classList.remove('bg-green-600');
+    }
+    forceOption?.classList.remove('hidden');
+  } else {
+    if (execBtn) {
+      execBtn.innerHTML = '<i class="fas fa-play mr-1"></i> 일괄 생산 등록';
+      execBtn.classList.remove('bg-yellow-600');
+      execBtn.classList.add('bg-green-600');
+    }
+    forceOption?.classList.add('hidden');
+  }
+}
+
+// 재고 출처 배지 생성 (정식 DB 테이블명 표시)
+function getStockSourceBadge(source) {
+  if (!source) return '';
+  
+  const badges = {
+    'inbound': '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-700">입고LOT</span>',
+    'master': '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700">마스터</span>',
+    'semi_finished_lots': '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-purple-100 text-purple-700">SF-LOT</span>',
+    'NOT_FOUND': '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700">DB미매칭</span>'
+  };
+  
+  return badges[source] || `<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-gray-100 text-gray-600">${source}</span>`;
+}
+
+// window에 노출
+window.validateWithBackendDB = validateWithBackendDB;
+window.updateMaterialTableWithDBResult = updateMaterialTableWithDBResult;
+
 // 전체 선택/해제 (매칭된 항목만)
 function toggleOrderSelectAll() {
   const selectAll = document.getElementById('order-select-all').checked;
@@ -22135,9 +22370,8 @@ async function saveBarcodeMapping(count) {
   }
 }
 
-// 일괄 생산 등록 실행 (배치 API 사용으로 속도 개선)
-// 생산일보도 함께 자동 생성
-// v2.3.0 - 비동기 UI 개선
+// 일괄 생산 등록 실행
+// v3.3.0 - confirm API 사용으로 무결성 검사 후 DB 반영
 // v2.4 - 중복 클릭 방지 추가
 let isExecutingOrderProduction = false;
 
@@ -22169,20 +22403,36 @@ async function executeOrderProduction() {
   
   const channel = window.orderUploadData.channel;
   const channelDisplay = channel?.replace('_paste', '').toUpperCase() || 'UNKNOWN';
-  const memo = `발주서 업로드 (${channelDisplay})`;
   
-  if (!confirm(`${selectedItems.length}개 제품을 일괄 생산 등록하시겠습니까?\n\n※ 생산일보도 함께 생성됩니다.`)) return;
+  // v3.3.0: 재고 부족 강제 승인 체크박스 확인
+  const forceStockShortage = document.getElementById('force-stock-shortage')?.checked || false;
+  
+  // v3.3.0: 백엔드 DB 검증 결과가 있으면 재고 부족 여부 확인
+  const hasStockIssues = window.backendValidationResult?.summary?.stock_issues > 0;
+  
+  let confirmMsg = `${selectedItems.length}개 제품을 일괄 생산 등록하시겠습니까?\n\n※ 생산일보도 함께 생성됩니다.`;
+  if (hasStockIssues && !forceStockShortage) {
+    confirmMsg += `\n\n⚠️ 재고 부족 품목이 있습니다. '재고 부족 강제 승인' 옵션을 체크하거나, 재고를 확보 후 다시 시도하세요.`;
+    showToast('재고 부족 품목이 있습니다. 강제 승인 옵션을 체크하거나 재고를 확보하세요.', 'warning');
+    return;
+  }
+  
+  if (forceStockShortage) {
+    confirmMsg += `\n\n⚠️ [강제 승인 모드] 재고가 부족한 원재료는 차감되지 않습니다.`;
+  }
+  
+  if (!confirm(confirmMsg)) return;
   
   // ★ v2.4: 중복 방지 상태 설정 + 버튼 비활성화
   isExecutingOrderProduction = true;
   
-  // 버튼 비활성화 및 로딩 UI (올바른 버튼 ID 사용)
+  // 버튼 비활성화 및 로딩 UI
   const execBtn = document.getElementById('order-execute-btn');
   if (execBtn) {
     execBtn.disabled = true;
-    execBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>생산 데이터를 등록 중입니다...';
+    execBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>무결성 검사 및 생산 등록 중...';
   }
-  showLoading(`생산 데이터를 등록 중입니다... (${selectedItems.length}개 제품)`);
+  showLoading(`무결성 검사 및 생산 데이터를 등록 중입니다... (${selectedItems.length}개 제품)`);
   
   try {
     // 1단계: 생산일보 먼저 생성
@@ -22213,39 +22463,80 @@ async function executeOrderProduction() {
       console.warn('생산일보 생성 실패 (생산 등록은 계속됨):', reportError);
     }
     
-    // 2단계: 배치 API로 생산 등록
-    const batchItems = selectedItems.map(item => ({
-      product_code: item.matchedProduct.item_code,
-      quantity: item.quantity,
-      expiry_date: item.expiryDate || null,
-      barcode: item.barcode || null,
-      channel: channel || 'unknown'
-    }));
+    // v3.3.0: confirm API로 무결성 검사 후 생산 등록
+    // 백엔드 검증 결과가 있으면 해당 데이터 사용, 없으면 프론트엔드 데이터 사용
+    const confirmItems = selectedItems.map(item => {
+      // 백엔드 검증 결과에서 해당 아이템 찾기
+      const validatedItem = window.backendValidationResult?.items?.find(
+        v => v.product_code === item.matchedProduct?.item_code
+      );
+      
+      return {
+        product_code: item.matchedProduct.item_code,
+        product_name: item.matchedProduct.item_name,
+        quantity: item.quantity,
+        expiry_date: item.expiryDate || null,
+        barcode: item.barcode || null,
+        channel: channel || 'unknown',
+        has_bom: validatedItem?.has_bom || item.hasBOM || false,
+        materials: validatedItem?.materials || [],
+        issues: validatedItem?.issues || [],
+        shelf_life_days: validatedItem?.shelf_life_days || 7
+      };
+    });
     
-    const result = await api('/production/batch', 'POST', {
-      items: batchItems,
+    console.log('[v3.3.0] confirm API 호출:', { items: confirmItems, prod_date: prodDate, channel, force_stock_shortage: forceStockShortage });
+    
+    const result = await api('/production/confirm', 'POST', {
+      items: confirmItems,
       prod_date: prodDate,
-      memo: memo,
-      channel: channel
+      channel: channel,
+      force_stock_shortage: forceStockShortage
     });
     
     if (result.success) {
-      const { success, fail } = result.data;
-      let message = `✅ 생산 등록 완료: ${success}건 성공`;
-      if (fail > 0) message += `, ${fail}건 실패`;
+      const successCount = result.results?.filter(r => r.status === 'SUCCESS').length || 0;
+      const failCount = result.results?.filter(r => r.status === 'FAILED').length || 0;
+      
+      let message = `✅ 생산 등록 완료: ${successCount}건 성공`;
+      if (failCount > 0) message += `, ${failCount}건 실패`;
       if (reportNo) message += ` (일보: ${reportNo})`;
       
       showToast(message, 'success');
       cancelOrderUpload();
+      
+      // 백엔드 검증 결과 초기화
+      window.backendValidationResult = null;
+      
       await loadMasterData();
       loadTodayProduction();
     } else {
-      showToast(`❌ ${result.error || '생산 등록 실패'}`, 'error');
+      // v3.3.0: 무결성 검사 실패 시 상세 에러 표시
+      if (result.errorCode === 'INTEGRITY_CHECK_FAILED') {
+        const details = result.details || [];
+        console.error('[v3.3.0] INTEGRITY_CHECK_FAILED:', details);
+        
+        showToast(`무결성 검사 실패: ${details.length}건의 문제 발견`, 'error');
+        
+        // 상세 에러 표시
+        const errorMessages = details.slice(0, 5).join('\n');
+        alert(`[무결성 검사 실패 - DB 반영 차단]\n\n${errorMessages}${details.length > 5 ? `\n...외 ${details.length - 5}건` : ''}`);
+      } else if (result.errorCode === 'D1_TRANSACTION_ERROR') {
+        showToast(`[D1_TRANSACTION_ERROR] ${result.error}`, 'error');
+      } else {
+        showToast(`❌ ${result.error || '생산 등록 실패'}`, 'error');
+      }
     }
   } catch (e) {
-    console.error('Batch production failed:', e);
+    console.error('[v3.3.0] confirm API 오류:', e);
     const errorMsg = e.response?.data?.error || e.message || '생산 등록 중 오류가 발생했습니다.';
-    showToast(`❌ ${errorMsg}`, 'error');
+    
+    // D1_TRANSACTION_ERROR 처리
+    if (errorMsg.includes('D1_TRANSACTION_ERROR')) {
+      showToast(`[D1_TRANSACTION_ERROR] ${errorMsg}`, 'error');
+    } else {
+      showToast(`❌ ${errorMsg}`, 'error');
+    }
   } finally {
     hideLoading();
     // ★ v2.4: 중복 방지 상태 해제 + 버튼 복원

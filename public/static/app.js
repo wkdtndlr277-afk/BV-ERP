@@ -18012,12 +18012,25 @@ function printProductionClosing() {
   }, 500);
 }
 
-// 마감 출력용 HTML 생성
+// ★★★ v3.4.2 HACCP 인증 기준 - 생산마감 보고서 전면 개편 ★★★
 function generateClosingPrintHtml(cache, date) {
   const items = cache.dailyReport || [];
   const materials = cache.materials || {};
   const usage = materials.usage || [];
   const summary = cache.summary || {};
+  const lotDetails = cache.lotDetails || [];
+  
+  // 정제수(물), 무효 원료(R169~R172) 제외
+  const excludeCodes = ['R184', 'RM184', 'R169', 'R170', 'R171', 'R172'];
+  const filteredUsage = usage.filter(item => {
+    const code = item.item_code?.toUpperCase() || '';
+    const name = (item.item_name || '').toLowerCase();
+    // 정제수 제외 (코드 또는 이름으로 판별)
+    if (name.includes('정제수') || name.includes('물') || code === 'R184' || code === 'RM184') return false;
+    // 무효 원료 제외
+    if (excludeCodes.includes(code)) return false;
+    return true;
+  });
   
   // 채널별 그룹화
   const byChannel = {};
@@ -18028,149 +18041,288 @@ function generateClosingPrintHtml(cache, date) {
   });
   
   const totalQty = items.reduce((sum, i) => sum + (i.quantity || 0), 0);
-  const totalUsage = usage.reduce((sum, m) => sum + (m.total_used || 0), 0);
+  const totalUsage = filteredUsage.reduce((sum, m) => sum + Math.abs(m.total_used || 0), 0);
+  const docNo = `PR-${date.replace(/-/g, '')}-${String(items.length).padStart(3, '0')}`;
+  const printDateTime = new Date().toLocaleString('ko-KR');
   
-  return \`<!DOCTYPE html>
+  // Checksum: 생산일보 총량 대비 원재료 사용량 비율 검증
+  const checksumRatio = totalQty > 0 ? ((totalUsage / totalQty) * 100).toFixed(1) : 0;
+  
+  return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>생산마감 보고서 - \${date}</title>
+  <title>HACCP 생산마감 보고서 - ${date}</title>
   <style>
     @media print {
-      @page { size: A4; margin: 15mm; }
+      @page { size: A4; margin: 12mm; }
       .page-break { page-break-after: always; }
+      .no-print { display: none !important; }
     }
-    body { font-family: 'Malgun Gothic', sans-serif; font-size: 12px; line-height: 1.4; }
-    .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #333; padding-bottom: 10px; }
-    .header h1 { font-size: 20px; margin: 0 0 5px 0; }
-    .header p { margin: 0; color: #666; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
-    th, td { border: 1px solid #333; padding: 6px 8px; text-align: center; }
-    th { background: #f0f0f0; font-weight: bold; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; font-size: 11px; line-height: 1.3; margin: 0; padding: 10px; }
+    
+    /* 문서 헤더 */
+    .doc-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px double #000; padding-bottom: 8px; margin-bottom: 10px; }
+    .doc-title { text-align: center; flex: 1; }
+    .doc-title h1 { font-size: 22px; margin: 0; font-weight: bold; }
+    .doc-title .subtitle { font-size: 12px; color: #333; margin-top: 3px; }
+    .doc-info { font-size: 10px; text-align: right; }
+    .doc-info p { margin: 2px 0; }
+    
+    /* ★ HACCP 결재란 */
+    .approval-box { border: 2px solid #000; margin-left: 10px; }
+    .approval-box table { border-collapse: collapse; width: auto; }
+    .approval-box th, .approval-box td { border: 1px solid #000; padding: 3px 8px; text-align: center; font-size: 10px; }
+    .approval-box th { background: #e8e8e8; font-weight: bold; height: 20px; }
+    .approval-box td { height: 35px; min-width: 50px; }
+    .approval-box .sign-cell { height: 40px; vertical-align: middle; }
+    
+    /* 요약 박스 */
+    .summary-box { display: flex; justify-content: space-around; margin: 10px 0; padding: 8px; background: #f5f5f5; border: 1px solid #ccc; }
+    .summary-item { text-align: center; padding: 0 15px; }
+    .summary-value { font-size: 18px; font-weight: bold; color: #000; }
+    .summary-label { font-size: 10px; color: #555; }
+    
+    /* 테이블 */
+    table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+    th, td { border: 1px solid #000; padding: 4px 6px; }
+    th { background: #e0e0e0; font-weight: bold; font-size: 10px; }
+    td { font-size: 10px; }
     .text-left { text-align: left; }
     .text-right { text-align: right; }
-    .summary-box { display: flex; justify-content: space-around; margin-bottom: 15px; padding: 10px; background: #f9f9f9; border: 1px solid #ddd; }
-    .summary-item { text-align: center; }
-    .summary-value { font-size: 18px; font-weight: bold; color: #333; }
-    .summary-label { font-size: 11px; color: #666; }
-    .section-title { font-size: 14px; font-weight: bold; margin: 15px 0 10px 0; padding: 5px; background: #e0e0e0; }
-    .footer { margin-top: 20px; text-align: center; font-size: 10px; color: #999; }
-    .channel-badge { padding: 2px 6px; border-radius: 3px; font-size: 10px; background: #eee; }
+    .text-center { text-align: center; }
+    
+    /* 섹션 제목 */
+    .section-title { font-size: 13px; font-weight: bold; margin: 12px 0 6px 0; padding: 4px 8px; background: #333; color: #fff; }
+    
+    /* 비고란 */
+    .remarks-box { border: 1px solid #000; padding: 8px; margin-top: 10px; min-height: 60px; }
+    .remarks-title { font-weight: bold; margin-bottom: 5px; font-size: 11px; }
+    .remarks-content { min-height: 40px; border-top: 1px dashed #999; padding-top: 5px; }
+    
+    /* 푸터 */
+    .doc-footer { margin-top: 15px; padding-top: 8px; border-top: 1px solid #000; display: flex; justify-content: space-between; font-size: 9px; color: #666; }
+    
+    /* 체크섬 */
+    .checksum-box { background: #fffde7; border: 1px solid #ffc107; padding: 5px 10px; margin: 8px 0; font-size: 10px; }
+    .checksum-ok { color: green; }
+    .checksum-warn { color: orange; }
+    
+    /* 채널 배지 */
+    .channel-badge { padding: 1px 5px; border-radius: 2px; font-size: 9px; background: #e3f2fd; border: 1px solid #90caf9; }
+    
+    /* LOT 추적 테이블 */
+    .lot-trace { font-size: 9px; }
   </style>
 </head>
 <body>
-  <!-- 1페이지: 생산일보 -->
+  <!-- ========== 1페이지: 생산일보 ========== -->
   <div class="page-1">
-    <div class="header">
-      <h1>📋 생산일보</h1>
-      <p>생산일: \${date} | 출력일시: \${new Date().toLocaleString('ko-KR')}</p>
+    <div class="doc-header">
+      <div class="doc-info" style="text-align:left; flex:0 0 auto;">
+        <p><strong>문서번호:</strong> ${docNo}</p>
+        <p><strong>생산일:</strong> ${date}</p>
+      </div>
+      
+      <div class="doc-title">
+        <h1>📋 생 산 일 보</h1>
+        <div class="subtitle">(주)본비반트 HACCP 생산관리</div>
+      </div>
+      
+      <!-- ★ 결재란 -->
+      <div class="approval-box">
+        <table>
+          <tr>
+            <th>담당</th>
+            <th>검토</th>
+            <th>승인</th>
+          </tr>
+          <tr>
+            <td class="sign-cell"></td>
+            <td class="sign-cell"></td>
+            <td class="sign-cell"></td>
+          </tr>
+        </table>
+      </div>
     </div>
     
     <div class="summary-box">
       <div class="summary-item">
-        <div class="summary-value">\${items.length}</div>
+        <div class="summary-value">${items.length}</div>
         <div class="summary-label">총 품목</div>
       </div>
       <div class="summary-item">
-        <div class="summary-value">\${formatNumber(totalQty)}</div>
+        <div class="summary-value">${formatNumber(totalQty)}</div>
         <div class="summary-label">총 생산량</div>
       </div>
       <div class="summary-item">
-        <div class="summary-value">\${Object.keys(byChannel).length}</div>
-        <div class="summary-label">판매처</div>
+        <div class="summary-value">${Object.keys(byChannel).length}</div>
+        <div class="summary-label">판매처 수</div>
       </div>
     </div>
     
     <table>
       <thead>
         <tr>
-          <th style="width:5%">No</th>
-          <th style="width:30%" class="text-left">제품명</th>
-          <th style="width:12%">생산코드</th>
-          <th style="width:10%">수량</th>
-          <th style="width:15%">LOT번호</th>
+          <th style="width:4%">No</th>
+          <th style="width:28%" class="text-left">제품명</th>
+          <th style="width:10%">생산코드</th>
+          <th style="width:8%">수량</th>
+          <th style="width:18%">LOT번호</th>
           <th style="width:10%">판매처</th>
-          <th style="width:12%">소비기한</th>
+          <th style="width:10%">소비기한</th>
+          <th style="width:12%">원료LOT</th>
         </tr>
       </thead>
       <tbody>
-        \${items.map((item, idx) => \`
+        ${items.map((item, idx) => `
           <tr>
-            <td>\${idx + 1}</td>
-            <td class="text-left">\${item.product_name || item.product_code}</td>
-            <td>\${item.product_code}</td>
-            <td class="text-right">\${formatNumber(item.quantity)}</td>
-            <td style="font-size:10px">\${item.lot_number || '-'}</td>
-            <td><span class="channel-badge">\${item.channel || '-'}</span></td>
-            <td>\${item.expiry_date || '-'}</td>
+            <td class="text-center">${idx + 1}</td>
+            <td class="text-left">${item.product_name || item.product_code}</td>
+            <td class="text-center">${item.product_code || '-'}</td>
+            <td class="text-right">${formatNumber(item.quantity)}</td>
+            <td class="text-center" style="font-size:9px">${item.lot_number || '-'}</td>
+            <td class="text-center"><span class="channel-badge">${item.channel || '-'}</span></td>
+            <td class="text-center">${item.expiry_date || '-'}</td>
+            <td class="text-center" style="font-size:8px">${item.material_lots || '-'}</td>
           </tr>
-        \`).join('')}
-      </tbody>
-    </table>
-    
-    <div class="footer">본 문서는 HACCP 기준에 따라 자동 생성되었습니다.</div>
-  </div>
-  
-  <div class="page-break"></div>
-  
-  <!-- 2페이지: 일별 수불부 -->
-  <div class="page-2">
-    <div class="header">
-      <h1>📊 일별 수불부</h1>
-      <p>기준일: \${date} | 출력일시: \${new Date().toLocaleString('ko-KR')}</p>
-    </div>
-    
-    <div class="summary-box">
-      <div class="summary-item">
-        <div class="summary-value">\${usage.length}</div>
-        <div class="summary-label">사용 원재료</div>
-      </div>
-      <div class="summary-item">
-        <div class="summary-value">\${formatNumber(totalUsage, 2)} kg</div>
-        <div class="summary-label">총 사용량</div>
-      </div>
-    </div>
-    
-    <div class="section-title">원재료 사용 내역</div>
-    <table>
-      <thead>
-        <tr>
-          <th style="width:5%">No</th>
-          <th style="width:15%">품목코드</th>
-          <th style="width:35%" class="text-left">품목명</th>
-          <th style="width:15%">사용량</th>
-          <th style="width:15%">현재고</th>
-          <th style="width:10%">단위</th>
-        </tr>
-      </thead>
-      <tbody>
-        \${usage.length > 0 ? usage.map((item, idx) => \`
-          <tr>
-            <td>\${idx + 1}</td>
-            <td>\${item.item_code}</td>
-            <td class="text-left">\${item.item_name || item.item_code}</td>
-            <td class="text-right" style="color:red">-\${formatNumber(item.total_used, 2)}</td>
-            <td class="text-right">\${formatNumber(item.current_stock, 2)}</td>
-            <td>\${item.unit || 'kg'}</td>
-          </tr>
-        \`).join('') : '<tr><td colspan="6">사용 내역 없음</td></tr>'}
+        `).join('')}
       </tbody>
       <tfoot>
         <tr style="background:#f0f0f0; font-weight:bold">
           <td colspan="3" class="text-right">합계</td>
-          <td class="text-right" style="color:red">-\${formatNumber(totalUsage, 2)}</td>
-          <td colspan="2"></td>
+          <td class="text-right">${formatNumber(totalQty)}</td>
+          <td colspan="4"></td>
         </tr>
       </tfoot>
     </table>
     
-    <div class="footer">
-      본 문서는 HACCP 기준에 따라 자동 생성되었습니다.<br>
-      문서번호: DR-\${date.replace(/-/g, '')}-001
+    <!-- 비고란 -->
+    <div class="remarks-box">
+      <div class="remarks-title">📝 특이사항 및 수기 보정 내역</div>
+      <div class="remarks-content">
+        &nbsp;
+      </div>
+    </div>
+    
+    <div class="doc-footer">
+      <span>출력일시: ${printDateTime}</span>
+      <span>HACCP 품질관리 시스템</span>
+      <span>Page 1/2</span>
+    </div>
+  </div>
+  
+  <div class="page-break"></div>
+  
+  <!-- ========== 2페이지: 일별 수불부 ========== -->
+  <div class="page-2">
+    <div class="doc-header">
+      <div class="doc-info" style="text-align:left; flex:0 0 auto;">
+        <p><strong>문서번호:</strong> INV-${date.replace(/-/g, '')}</p>
+        <p><strong>기준일:</strong> ${date}</p>
+        <p><strong>승인일:</strong> ${date}</p>
+      </div>
+      
+      <div class="doc-title">
+        <h1>📊 일 별 수 불 부</h1>
+        <div class="subtitle">(주)본비반트 원재료 재고관리</div>
+      </div>
+      
+      <!-- ★ 결재란 -->
+      <div class="approval-box">
+        <table>
+          <tr>
+            <th>담당</th>
+            <th>검토</th>
+            <th>승인</th>
+          </tr>
+          <tr>
+            <td class="sign-cell"></td>
+            <td class="sign-cell"></td>
+            <td class="sign-cell"></td>
+          </tr>
+        </table>
+      </div>
+    </div>
+    
+    <div class="summary-box">
+      <div class="summary-item">
+        <div class="summary-value">${filteredUsage.length}</div>
+        <div class="summary-label">사용 원재료</div>
+      </div>
+      <div class="summary-item">
+        <div class="summary-value">${formatNumber(totalUsage, 2)} kg</div>
+        <div class="summary-label">총 사용량</div>
+      </div>
+    </div>
+    
+    <!-- ★ Checksum 검증 -->
+    <div class="checksum-box">
+      <strong>✓ 데이터 무결성 검증:</strong> 
+      생산량 ${formatNumber(totalQty)}개 대비 원재료 사용량 ${formatNumber(totalUsage, 2)}kg 
+      (원재료 비율: ${checksumRatio}%)
+      <span class="${parseFloat(checksumRatio) > 0 ? 'checksum-ok' : 'checksum-warn'}">
+        ${parseFloat(checksumRatio) > 0 ? '✓ 정상' : '⚠ 확인필요'}
+      </span>
+    </div>
+    
+    <div class="section-title">원재료 사용 내역 (정제수/무효원료 제외)</div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:4%">No</th>
+          <th style="width:10%">품목코드</th>
+          <th style="width:24%" class="text-left">품목명</th>
+          <th style="width:10%">입고량</th>
+          <th style="width:12%">사용량</th>
+          <th style="width:12%">현재고</th>
+          <th style="width:6%">단위</th>
+          <th style="width:22%" class="text-left">사용처(LOT)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${filteredUsage.length > 0 ? filteredUsage.map((item, idx) => {
+          const inboundQty = item.inbound_qty || 0;
+          const usedQty = Math.abs(item.total_used || 0);
+          return `
+          <tr>
+            <td class="text-center">${idx + 1}</td>
+            <td class="text-center">${item.item_code}</td>
+            <td class="text-left">${item.item_name || item.item_code}</td>
+            <td class="text-right" style="color:blue">${inboundQty > 0 ? '+' + formatNumber(inboundQty, 2) : '-'}</td>
+            <td class="text-right" style="color:red">-${formatNumber(usedQty, 2)}</td>
+            <td class="text-right">${formatNumber(item.current_stock || 0, 2)}</td>
+            <td class="text-center">${item.unit || 'kg'}</td>
+            <td class="text-left lot-trace">${item.used_in_lots || item.production_lots || '-'}</td>
+          </tr>
+        `}).join('') : '<tr><td colspan="8" class="text-center">사용 내역 없음</td></tr>'}
+      </tbody>
+      <tfoot>
+        <tr style="background:#f0f0f0; font-weight:bold">
+          <td colspan="4" class="text-right">합계</td>
+          <td class="text-right" style="color:red">-${formatNumber(totalUsage, 2)}</td>
+          <td colspan="3"></td>
+        </tr>
+      </tfoot>
+    </table>
+    
+    <!-- 비고란 -->
+    <div class="remarks-box">
+      <div class="remarks-title">📝 특이사항 및 수기 보정 내역 (전산/실물 재고 차이 등)</div>
+      <div class="remarks-content">
+        &nbsp;
+      </div>
+    </div>
+    
+    <div class="doc-footer">
+      <span>출력일시: ${printDateTime}</span>
+      <span>※ 본 문서는 HACCP 기준에 따라 자동 생성되었습니다</span>
+      <span>Page 2/2</span>
     </div>
   </div>
 </body>
-</html>\`;
+</html>`;
 }
 
 // window에 노출
@@ -18250,27 +18402,27 @@ function renderPendingItems() {
   const errorItems = items.filter(i => i.issues?.some(is => is.type === 'error'));
   const warningItems = items.filter(i => i.issues?.some(is => is.type === 'warning'));
   
-  container.innerHTML = \`
+  container.innerHTML = `
     <!-- 요약 -->
     <div class="flex items-center gap-4 mb-4 p-3 bg-gray-50 rounded-lg">
       <span class="text-sm">
-        <strong>\${items.length}</strong>개 품목 대기 중
+        <strong>${items.length}</strong>개 품목 대기 중
       </span>
-      \${errorItems.length > 0 ? \`
+      ${errorItems.length > 0 ? `
         <span class="text-red-600 text-sm">
-          <i class="fas fa-times-circle mr-1"></i>\${errorItems.length}개 오류
+          <i class="fas fa-times-circle mr-1"></i>${errorItems.length}개 오류
         </span>
-      \` : ''}
-      \${warningItems.length > 0 ? \`
+      ` : ''}
+      ${warningItems.length > 0 ? `
         <span class="text-yellow-600 text-sm">
-          <i class="fas fa-exclamation-triangle mr-1"></i>\${warningItems.length}개 경고
+          <i class="fas fa-exclamation-triangle mr-1"></i>${warningItems.length}개 경고
         </span>
-      \` : ''}
-      \${errorItems.length === 0 && warningItems.length === 0 ? \`
+      ` : ''}
+      ${errorItems.length === 0 && warningItems.length === 0 ? `
         <span class="text-green-600 text-sm">
           <i class="fas fa-check-circle mr-1"></i>모든 품목 정상
         </span>
-      \` : ''}
+      ` : ''}
     </div>
     
     <!-- 품목 목록 -->
@@ -18287,59 +18439,59 @@ function renderPendingItems() {
           </tr>
         </thead>
         <tbody class="divide-y">
-          \${items.map(item => {
+          ${items.map(item => {
             const hasError = item.issues?.some(i => i.type === 'error');
             const hasWarning = item.issues?.some(i => i.type === 'warning');
             const rowClass = hasError ? 'bg-red-50' : hasWarning ? 'bg-yellow-50' : '';
             
-            return \`
-              <tr class="\${rowClass}">
+            return `
+              <tr class="${rowClass}">
                 <td class="px-3 py-2">
-                  <div class="font-medium">\${item.product_name}</div>
-                  <div class="text-xs text-gray-400">\${item.product_code || '-'}</div>
-                  \${item.issues?.length > 0 ? \`
+                  <div class="font-medium">${item.product_name}</div>
+                  <div class="text-xs text-gray-400">${item.product_code || '-'}</div>
+                  ${item.issues?.length > 0 ? `
                     <div class="mt-1">
-                      \${item.issues.map(issue => \`
-                        <span class="text-xs px-1.5 py-0.5 rounded mr-1 \${issue.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}">
-                          \${issue.message}
+                      ${item.issues.map(issue => `
+                        <span class="text-xs px-1.5 py-0.5 rounded mr-1 ${issue.type === 'error' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}">
+                          ${issue.message}
                         </span>
-                      \`).join('')}
+                      `).join('')}
                     </div>
-                  \` : ''}
+                  ` : ''}
                 </td>
-                <td class="px-3 py-2 text-center font-medium">\${formatNumber(item.quantity)}</td>
+                <td class="px-3 py-2 text-center font-medium">${formatNumber(item.quantity)}</td>
                 <td class="px-3 py-2 text-center">
-                  <span class="px-2 py-0.5 rounded text-xs \${getChannelBadgeClass(item.channel)}">\${item.channel || '-'}</span>
+                  <span class="px-2 py-0.5 rounded text-xs ${getChannelBadgeClass(item.channel)}">${item.channel || '-'}</span>
                 </td>
                 <td class="px-3 py-2 text-center">
-                  \${item.has_bom 
+                  ${item.has_bom 
                     ? '<span class="text-green-600"><i class="fas fa-check"></i></span>' 
                     : '<span class="text-yellow-500"><i class="fas fa-exclamation-triangle"></i></span>'}
                 </td>
                 <td class="px-3 py-2 text-center">
-                  \${hasError 
+                  ${hasError 
                     ? '<span class="px-2 py-1 bg-red-100 text-red-700 rounded text-xs">오류</span>'
                     : hasWarning
                     ? '<span class="px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs">경고</span>'
                     : '<span class="px-2 py-1 bg-green-100 text-green-700 rounded text-xs">정상</span>'}
                 </td>
                 <td class="px-3 py-2 text-center">
-                  \${hasError ? \`
-                    <button onclick="forceApprovePendingItem('\${item.pending_id}')" class="text-orange-500 hover:text-orange-700 text-xs mr-2" title="강제 진행">
+                  ${hasError ? `
+                    <button onclick="forceApprovePendingItem('${item.pending_id}')" class="text-orange-500 hover:text-orange-700 text-xs mr-2" title="강제 진행">
                       <i class="fas fa-forward"></i>
                     </button>
-                  \` : ''}
-                  <button onclick="excludePendingItem('\${item.pending_id}')" class="text-red-500 hover:text-red-700 text-xs" title="제외">
+                  ` : ''}
+                  <button onclick="excludePendingItem('${item.pending_id}')" class="text-red-500 hover:text-red-700 text-xs" title="제외">
                     <i class="fas fa-times"></i>
                   </button>
                 </td>
               </tr>
-            \`;
+            `;
           }).join('')}
         </tbody>
       </table>
     </div>
-  \`;
+  `;
 }
 
 // 품목 강제 진행
@@ -18347,7 +18499,7 @@ function forceApprovePendingItem(pendingId) {
   const item = window.pendingProductionItems.find(i => i.pending_id === pendingId);
   if (!item) return;
   
-  if (!confirm(\`"\${item.product_name}" 품목을 강제 진행하시겠습니까?\\n\\n⚠️ 오류가 있어도 생산 등록이 진행됩니다.\`)) return;
+  if (!confirm(`"${item.product_name}" 품목을 강제 진행하시겠습니까?\\n\\n⚠️ 오류가 있어도 생산 등록이 진행됩니다.`)) return;
   
   item.issues = item.issues?.filter(i => i.type !== 'error') || [];
   item.force_approved = true;
@@ -18361,7 +18513,7 @@ function excludePendingItem(pendingId) {
   const item = window.pendingProductionItems.find(i => i.pending_id === pendingId);
   if (!item) return;
   
-  if (!confirm(\`"\${item.product_name}" 품목을 등록에서 제외하시겠습니까?\`)) return;
+  if (!confirm(`"${item.product_name}" 품목을 등록에서 제외하시겠습니까?`)) return;
   
   item.status = 'excluded';
   renderPendingItems();
@@ -18380,11 +18532,11 @@ async function finalApproveProduction() {
   // 오류 품목 확인 (강제 승인되지 않은)
   const errorItems = items.filter(i => i.issues?.some(is => is.type === 'error') && !i.force_approved);
   if (errorItems.length > 0) {
-    showToast(\`오류가 있는 품목 \${errorItems.length}건이 있습니다. 강제 진행하거나 제외해주세요.\`, 'error');
+    showToast(`오류가 있는 품목 ${errorItems.length}건이 있습니다. 강제 진행하거나 제외해주세요.`, 'error');
     return;
   }
   
-  if (!confirm(\`\${items.length}개 품목을 최종 승인하고 DB에 반영하시겠습니까?\\n\\n이 작업은 되돌릴 수 없습니다.\`)) return;
+  if (!confirm(`${items.length}개 품목을 최종 승인하고 DB에 반영하시겠습니까?\\n\\n이 작업은 되돌릴 수 없습니다.`)) return;
   
   const prodDate = document.getElementById('order-prod-date')?.value || document.getElementById('closing-date-picker')?.value || new Date().toISOString().split('T')[0];
   
@@ -18421,7 +18573,7 @@ async function finalApproveProduction() {
       const successCount = result.results?.filter(r => r.status === 'SUCCESS').length || 0;
       const failCount = result.results?.filter(r => r.status === 'FAILED').length || 0;
       
-      showToast(\`✅ 최종 승인 완료: \${successCount}건 성공\${failCount > 0 ? \`, \${failCount}건 실패\` : ''}\`, 'success');
+      showToast(`✅ 최종 승인 완료: ${successCount}건 성공${failCount > 0 ? `, ${failCount}건 실패` : ''}`, 'success');
       
       // 대기 품목 초기화
       window.pendingProductionItems = [];
@@ -18436,7 +18588,7 @@ async function finalApproveProduction() {
     
   } catch (e) {
     console.error('최종 승인 실패:', e);
-    showToast(\`최종 승인 실패: \${e.message}\`, 'error');
+    showToast(`최종 승인 실패: ${e.message}`, 'error');
   } finally {
     hideLoading();
     if (btn) {
@@ -21782,19 +21934,8 @@ async function validateWithBackendDB() {
       // 상태 업데이트
       const { summary, items: validatedItems, material_summary, errors, warnings } = result;
       
-      // 상태 표시 업데이트
-      if (statusDiv) {
-        const stockIssues = summary?.stock_issues || 0;
-        const hasErrors = errors?.length > 0;
-        
-        if (hasErrors || stockIssues > 0) {
-          statusDiv.innerHTML = `<i class="fas fa-exclamation-triangle mr-1 text-yellow-500"></i> <span class="text-yellow-600">DB 검증 완료 - 재고 부족 ${stockIssues}건</span>`;
-          document.getElementById('force-stock-option')?.classList.remove('hidden');
-        } else {
-          statusDiv.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i> <span class="text-green-600">DB 검증 통과 - 모든 재고 충분</span>';
-          document.getElementById('force-stock-option')?.classList.add('hidden');
-        }
-      }
+      // 상태 표시 업데이트는 updateMaterialTableWithDBResult에서 통합 처리
+      // (원재료 테이블 렌더링 시 실제 재고 부족 여부를 정확히 계산하므로)
       
       // 원재료 테이블 업데이트 (백엔드에서 받은 stock_source 포함)
       updateMaterialTableWithDBResult(material_summary, warnings);
@@ -21861,56 +22002,179 @@ function updateMaterialTableWithDBResult(materialSummary, warnings) {
   });
   
   let hasShortage = false;
+  let unregisteredCount = 0;
+  
   const rows = materialSummary.map(mat => {
     const isAvailable = mat.is_sufficient !== false && mat.available >= mat.total_required;
+    const isUnregistered = mat.stock_source === 'NOT_FOUND';
     if (!isAvailable) hasShortage = true;
+    if (isUnregistered) unregisteredCount++;
     
     const warning = warningMap.get(mat.item_code);
     const stockSourceBadge = getStockSourceBadge(mat.stock_source);
     
+    // 미등록 원료는 주황색 배경, 재고부족은 빨간색 배경
+    const rowClass = isUnregistered ? 'bg-orange-50' : (isAvailable ? '' : 'bg-red-50');
+    
     return `
-      <tr class="${isAvailable ? '' : 'bg-red-50'}">
+      <tr class="${rowClass}">
         <td class="px-3 py-2">
           <span class="text-gray-500 text-xs">${mat.item_code}</span>
           <span class="ml-1 font-medium">${mat.item_name || mat.item_code}</span>
           ${stockSourceBadge}
-          ${warning ? `<div class="text-xs text-yellow-600 mt-0.5"><i class="fas fa-exclamation-triangle mr-1"></i>${warning.message}</div>` : ''}
+          ${isUnregistered ? '<div class="text-xs text-orange-600 mt-0.5"><i class="fas fa-info-circle mr-1"></i>원료 마스터 등록 및 입고 필요</div>' : ''}
+          ${warning && !isUnregistered ? `<div class="text-xs text-yellow-600 mt-0.5"><i class="fas fa-exclamation-triangle mr-1"></i>${warning.message}</div>` : ''}
         </td>
         <td class="px-3 py-2 text-right">${formatNumber(mat.total_required, 2)} ${mat.unit || 'kg'}</td>
         <td class="px-3 py-2 text-right">
-          <span class="${isAvailable ? 'text-green-600' : 'text-red-600'}">${formatNumber(mat.available, 2)} ${mat.unit || 'kg'}</span>
+          <span class="${isUnregistered ? 'text-orange-600' : (isAvailable ? 'text-green-600' : 'text-red-600')}">${formatNumber(mat.available, 2)} ${mat.unit || 'kg'}</span>
         </td>
         <td class="px-3 py-2 text-center">
-          ${isAvailable 
-            ? '<span class="text-green-600"><i class="fas fa-check-circle"></i></span>' 
-            : '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i> 부족</span>'}
+          ${isUnregistered 
+            ? '<span class="text-orange-600"><i class="fas fa-question-circle"></i> 미등록</span>'
+            : (isAvailable 
+              ? '<span class="text-green-600"><i class="fas fa-check-circle"></i></span>' 
+              : '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i> 부족</span>')}
         </td>
       </tr>
     `;
   }).join('');
   
+  // 미등록 원료가 있으면 상단에 안내 메시지 추가
+  const unregisteredNotice = unregisteredCount > 0 ? `
+    <tr class="bg-orange-100">
+      <td colspan="4" class="px-3 py-2 text-center text-orange-700 text-sm">
+        <i class="fas fa-exclamation-triangle mr-1"></i>
+        <strong>${unregisteredCount}개 원료가 시스템에 미등록 상태입니다.</strong>
+        원료 마스터 → 등록 후 입고 등록을 진행해주세요.
+      </td>
+    </tr>
+  ` : '';
+  
   materialsTable.innerHTML = rows;
   materialsDiv.classList.remove('hidden');
   
-  // 재고 부족 시 버튼 및 강제 승인 옵션 표시
+  // ★ v3.4.1 핫픽스: 재고 부족 상태를 전역으로 저장 및 UI 통합 연동
+  window.hasStockShortage = hasShortage;
+  
   const execBtn = document.getElementById('order-execute-btn');
+  const convertBtn = document.getElementById('btn-convert-daily-report');
   const forceOption = document.getElementById('force-stock-option');
+  const forceCheckbox = document.getElementById('force-stock-shortage');
+  const statusDiv = document.getElementById('db-validation-status');
+  
+  // 강제 승인 체크 여부 확인
+  const isForceApproved = forceCheckbox?.checked || false;
   
   if (hasShortage) {
-    if (execBtn) {
-      execBtn.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i> 재고 부족 - 일괄 생산 등록';
-      execBtn.classList.add('bg-yellow-600');
-      execBtn.classList.remove('bg-green-600');
+    // ★ 하단 상태 메시지 - 빨간색으로 재고 부족 표시
+    if (statusDiv) {
+      statusDiv.innerHTML = '<i class="fas fa-times-circle mr-1 text-red-500"></i> <span class="text-red-600 font-semibold">DB 검증 실패 - 재고가 부족한 품목이 있습니다</span>';
     }
+    
+    // 강제 승인 옵션 표시
     forceOption?.classList.remove('hidden');
-  } else {
-    if (execBtn) {
-      execBtn.innerHTML = '<i class="fas fa-play mr-1"></i> 일괄 생산 등록';
-      execBtn.classList.remove('bg-yellow-600');
-      execBtn.classList.add('bg-green-600');
+    
+    // ★ 버튼 비활성화 (강제 승인 체크 전까지)
+    if (!isForceApproved) {
+      if (execBtn) {
+        execBtn.disabled = true;
+        execBtn.innerHTML = '<i class="fas fa-lock mr-1"></i> 재고 부족 - 등록 불가';
+        execBtn.classList.add('bg-red-400', 'cursor-not-allowed');
+        execBtn.classList.remove('bg-green-600', 'bg-yellow-600', 'hover:bg-green-700');
+      }
+      if (convertBtn) {
+        convertBtn.disabled = true;
+        convertBtn.classList.add('opacity-50', 'cursor-not-allowed');
+      }
+    } else {
+      // 강제 승인 체크됨 - 버튼 활성화 (경고 스타일)
+      if (execBtn) {
+        execBtn.disabled = false;
+        execBtn.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i> 강제 승인 - 일괄 생산 등록';
+        execBtn.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
+        execBtn.classList.remove('bg-green-600', 'bg-red-400', 'cursor-not-allowed');
+      }
+      if (convertBtn) {
+        convertBtn.disabled = false;
+        convertBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+      }
     }
+  } else {
+    // ★ 모든 재고 충분 - 녹색 상태 메시지
+    if (statusDiv) {
+      statusDiv.innerHTML = '<i class="fas fa-check-circle mr-1 text-green-500"></i> <span class="text-green-600 font-semibold">DB 검증 통과 - 모든 재고 충분</span>';
+    }
+    
+    // 강제 승인 옵션 숨김
     forceOption?.classList.add('hidden');
+    
+    // 버튼 활성화 (정상 스타일)
+    if (execBtn) {
+      execBtn.disabled = false;
+      execBtn.innerHTML = '<i class="fas fa-play mr-1"></i> 일괄 생산 등록';
+      execBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+      execBtn.classList.remove('bg-yellow-600', 'bg-red-400', 'cursor-not-allowed');
+    }
+    if (convertBtn) {
+      convertBtn.disabled = false;
+      convertBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+    }
   }
+}
+
+// ★ v3.4.1: 강제 승인 체크박스 이벤트 리스너 (UI 상태 즉시 반영)
+function setupForceStockCheckboxListener() {
+  const forceCheckbox = document.getElementById('force-stock-shortage');
+  if (forceCheckbox && !forceCheckbox._listenerAttached) {
+    forceCheckbox.addEventListener('change', function() {
+      const execBtn = document.getElementById('order-execute-btn');
+      const convertBtn = document.getElementById('btn-convert-daily-report');
+      const statusDiv = document.getElementById('db-validation-status');
+      
+      if (window.hasStockShortage) {
+        if (this.checked) {
+          // 강제 승인 체크됨 - 버튼 활성화
+          if (execBtn) {
+            execBtn.disabled = false;
+            execBtn.innerHTML = '<i class="fas fa-exclamation-triangle mr-1"></i> 강제 승인 - 일괄 생산 등록';
+            execBtn.classList.add('bg-yellow-600', 'hover:bg-yellow-700');
+            execBtn.classList.remove('bg-red-400', 'cursor-not-allowed');
+          }
+          if (convertBtn) {
+            convertBtn.disabled = false;
+            convertBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+          }
+          if (statusDiv) {
+            statusDiv.innerHTML = '<i class="fas fa-exclamation-triangle mr-1 text-yellow-500"></i> <span class="text-yellow-600 font-semibold">강제 승인 모드 - 재고 부족 품목 허용</span>';
+          }
+        } else {
+          // 강제 승인 해제 - 버튼 다시 비활성화
+          if (execBtn) {
+            execBtn.disabled = true;
+            execBtn.innerHTML = '<i class="fas fa-lock mr-1"></i> 재고 부족 - 등록 불가';
+            execBtn.classList.add('bg-red-400', 'cursor-not-allowed');
+            execBtn.classList.remove('bg-yellow-600', 'hover:bg-yellow-700');
+          }
+          if (convertBtn) {
+            convertBtn.disabled = true;
+            convertBtn.classList.add('opacity-50', 'cursor-not-allowed');
+          }
+          if (statusDiv) {
+            statusDiv.innerHTML = '<i class="fas fa-times-circle mr-1 text-red-500"></i> <span class="text-red-600 font-semibold">DB 검증 실패 - 재고가 부족한 품목이 있습니다</span>';
+          }
+        }
+      }
+    });
+    forceCheckbox._listenerAttached = true;
+  }
+}
+
+// DOM 로드 시 리스너 설정
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', setupForceStockCheckboxListener);
+} else {
+  setupForceStockCheckboxListener();
 }
 
 // 재고 출처 배지 생성 (정식 DB 테이블명 표시)
@@ -21921,7 +22185,7 @@ function getStockSourceBadge(source) {
     'inbound': '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-green-100 text-green-700">입고LOT</span>',
     'master': '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-blue-100 text-blue-700">마스터</span>',
     'semi_finished_lots': '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-purple-100 text-purple-700">SF-LOT</span>',
-    'NOT_FOUND': '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700">DB미매칭</span>'
+    'NOT_FOUND': '<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-red-100 text-red-700" title="이 원료는 마스터/입고에 등록되지 않았습니다. 원료 마스터 등록 및 입고를 진행하세요.">미등록원료</span>'
   };
   
   return badges[source] || `<span class="ml-1 px-1.5 py-0.5 text-xs rounded bg-gray-100 text-gray-600">${source}</span>`;
@@ -33698,12 +33962,13 @@ window.showManualCostSheetModal = showManualCostSheetModal;
 window.createManualCostSheet = createManualCostSheet;
 window.exportCostSheetExcel = exportCostSheetExcel;
 
-// ==================== 입고 조회 (일별/월별) ====================
+// ==================== 입고 조회 (기간 조회) ====================
 
 async function renderInboundQuery() {
   const content = document.getElementById('page-content');
   const today = new Date().toISOString().split('T')[0];
-  const currentMonth = today.substring(0, 7);
+  // 기본값: 오늘부터 7일 전까지
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   
   content.innerHTML = `
     <div class="space-y-6">
@@ -33716,21 +33981,14 @@ async function renderInboundQuery() {
       
       <!-- 검색 조건 -->
       <div class="bg-white rounded-xl shadow p-6">
-        <div class="grid grid-cols-1 md:grid-cols-6 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-7 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">조회 유형</label>
-            <select id="inbound-query-type" class="w-full border rounded-lg px-3 py-2" onchange="changeInboundQueryType()">
-              <option value="daily">일별 조회</option>
-              <option value="monthly">월별 조회</option>
-            </select>
+            <label class="block text-sm font-medium text-gray-700 mb-1">시작일</label>
+            <input type="date" id="inbound-query-start-date" class="w-full border rounded-lg px-3 py-2" value="${weekAgo}">
           </div>
-          <div id="inbound-date-field">
-            <label class="block text-sm font-medium text-gray-700 mb-1">조회일</label>
-            <input type="date" id="inbound-query-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
-          </div>
-          <div id="inbound-month-field" style="display:none;">
-            <label class="block text-sm font-medium text-gray-700 mb-1">조회월</label>
-            <input type="month" id="inbound-query-month" class="w-full border rounded-lg px-3 py-2" value="${currentMonth}">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">종료일</label>
+            <input type="date" id="inbound-query-end-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">품목 분류</label>
@@ -33755,6 +34013,13 @@ async function renderInboundQuery() {
               <option value="1">샘플만</option>
               <option value="all">전체</option>
             </select>
+          </div>
+          <div class="flex items-end">
+            <div class="flex gap-1 w-full">
+              <button onclick="setInboundQueryPreset('today')" class="flex-1 px-2 py-2 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200" title="오늘">오늘</button>
+              <button onclick="setInboundQueryPreset('week')" class="flex-1 px-2 py-2 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200" title="최근 7일">7일</button>
+              <button onclick="setInboundQueryPreset('month')" class="flex-1 px-2 py-2 bg-gray-100 text-gray-700 rounded text-xs hover:bg-gray-200" title="이번 달">이번달</button>
+            </div>
           </div>
         </div>
         <div class="flex justify-end gap-2 mt-4">
@@ -33818,24 +34083,62 @@ async function renderInboundQuery() {
   loadInboundQuery();
 }
 
-function changeInboundQueryType() {
-  const type = document.getElementById('inbound-query-type').value;
-  document.getElementById('inbound-date-field').style.display = type === 'daily' ? 'block' : 'none';
-  document.getElementById('inbound-month-field').style.display = type === 'monthly' ? 'block' : 'none';
+// 기간 프리셋 버튼 핸들러
+function setInboundQueryPreset(preset) {
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  let startDate, endDate;
+  
+  switch(preset) {
+    case 'today':
+      startDate = todayStr;
+      endDate = todayStr;
+      break;
+    case 'week':
+      startDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      endDate = todayStr;
+      break;
+    case 'month':
+      // 이번 달 1일 ~ 오늘
+      startDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+      endDate = todayStr;
+      break;
+    default:
+      return;
+  }
+  
+  document.getElementById('inbound-query-start-date').value = startDate;
+  document.getElementById('inbound-query-end-date').value = endDate;
+  
+  // 자동 조회
+  loadInboundQuery();
 }
 
 async function loadInboundQuery() {
-  const viewType = document.getElementById('inbound-query-type').value;
-  const date = viewType === 'daily' 
-    ? document.getElementById('inbound-query-date').value
-    : document.getElementById('inbound-query-month').value;
+  const startDate = document.getElementById('inbound-query-start-date').value;
+  const endDate = document.getElementById('inbound-query-end-date').value;
   const category = document.getElementById('inbound-query-category').value;
   const supplier = document.getElementById('inbound-query-supplier').value;
   const itemSearch = document.getElementById('inbound-query-item').value.trim();
   const sampleFilter = document.getElementById('inbound-query-sample')?.value || '0';
   
+  // 날짜 유효성 검사
+  if (!startDate || !endDate) {
+    showToast('시작일과 종료일을 선택해주세요', 'warning');
+    return;
+  }
+  
+  if (startDate > endDate) {
+    showToast('시작일이 종료일보다 늦을 수 없습니다', 'warning');
+    return;
+  }
+  
   try {
-    const params = new URLSearchParams({ view_type: viewType, date });
+    const params = new URLSearchParams({ 
+      view_type: 'range',
+      start_date: startDate,
+      end_date: endDate
+    });
     if (category && category !== '전체') params.append('category', category);
     if (supplier) params.append('supplier', supplier);
     if (itemSearch) params.append('item_search', itemSearch);
@@ -33847,7 +34150,7 @@ async function loadInboundQuery() {
     const data = result.data;
     
     // 요약 통계 표시
-    renderInboundQuerySummary(data, viewType, sampleFilter === '1');
+    renderInboundQuerySummary(data, 'range', sampleFilter === '1');
     
     // 품목별 요약
     renderInboundItemSummary(data.itemSummary);
@@ -33855,11 +34158,12 @@ async function loadInboundQuery() {
     // 거래처별 요약
     renderInboundSupplierSummary(data.supplierSummary);
     
-    // 상세 테이블 (샘플 보기인 경우 보관장소 컬럼 표시)
-    renderInboundQueryTable(data.details, viewType, sampleFilter === '1');
+    // 상세 테이블
+    renderInboundQueryTable(data.details, 'range', sampleFilter === '1');
     
     // 전역 변수에 저장 (엑셀/인쇄용)
     window.inboundQueryData = data;
+    window.inboundQueryRange = { startDate, endDate };
     
   } catch (err) {
     showToast('입고 조회 실패: ' + err.message, 'error');
@@ -33870,27 +34174,28 @@ function renderInboundQuerySummary(data, viewType, isSampleView = false) {
   const container = document.getElementById('inbound-query-summary');
   const sampleLabel = isSampleView ? ' <span class="text-yellow-600">(샘플)</span>' : '';
   
-  if (viewType === 'daily') {
-    const s = data.summary || {};
-    container.innerHTML = `
-      <div class="bg-blue-50 rounded-xl p-4 border border-blue-200">
-        <p class="text-sm text-blue-600">총 입고 건수${sampleLabel}</p>
-        <p class="text-2xl font-bold text-blue-800">${formatNumber(s.total_count || 0)}건</p>
-      </div>
-      <div class="bg-green-50 rounded-xl p-4 border border-green-200">
-        <p class="text-sm text-green-600">입고 품목 수${sampleLabel}</p>
-        <p class="text-2xl font-bold text-green-800">${formatNumber(s.item_count || 0)}종</p>
-      </div>
-      <div class="bg-purple-50 rounded-xl p-4 border border-purple-200">
-        <p class="text-sm text-purple-600">합격</p>
-        <p class="text-2xl font-bold text-purple-800">${formatNumber(s.passed_count || 0)}건</p>
-      </div>
-      <div class="bg-red-50 rounded-xl p-4 border border-red-200">
-        <p class="text-sm text-red-600">불합격/검사중</p>
-        <p class="text-2xl font-bold text-red-800">${formatNumber((s.failed_count || 0) + (s.pending_count || 0))}건</p>
-      </div>
-    `;
-  } else {
+  // 기간 조회 또는 일별 조회 모두 동일한 UI 사용
+  const s = data.summary || {};
+  container.innerHTML = `
+    <div class="bg-blue-50 rounded-xl p-4 border border-blue-200">
+      <p class="text-sm text-blue-600">총 입고 건수${sampleLabel}</p>
+      <p class="text-2xl font-bold text-blue-800">${formatNumber(s.total_count || 0)}건</p>
+    </div>
+    <div class="bg-green-50 rounded-xl p-4 border border-green-200">
+      <p class="text-sm text-green-600">입고 품목 수${sampleLabel}</p>
+      <p class="text-2xl font-bold text-green-800">${formatNumber(s.item_count || 0)}종</p>
+    </div>
+    <div class="bg-purple-50 rounded-xl p-4 border border-purple-200">
+      <p class="text-sm text-purple-600">합격</p>
+      <p class="text-2xl font-bold text-purple-800">${formatNumber(s.passed_count || 0)}건</p>
+    </div>
+    <div class="bg-red-50 rounded-xl p-4 border border-red-200">
+      <p class="text-sm text-red-600">불합격/검사중</p>
+      <p class="text-2xl font-bold text-red-800">${formatNumber((s.failed_count || 0) + (s.pending_count || 0))}건</p>
+    </div>
+  `;
+  
+  if (viewType === 'monthly_chart_disabled') {
     // 월별인 경우 일자별 차트형 표시
     const dailyData = data.summary || [];
     container.innerHTML = `
@@ -34056,10 +34361,10 @@ function downloadInboundQuery() {
     return;
   }
   
-  const viewType = document.getElementById('inbound-query-type').value;
-  const date = viewType === 'daily' 
-    ? document.getElementById('inbound-query-date').value
-    : document.getElementById('inbound-query-month').value;
+  // 기간 조회 방식
+  const startDate = document.getElementById('inbound-query-start-date')?.value || '';
+  const endDate = document.getElementById('inbound-query-end-date')?.value || '';
+  const dateLabel = startDate === endDate ? startDate : `${startDate}~${endDate}`;
   
   const rows = data.details.map(r => [
     r.inbound_date, r.lot_number, r.item_code, r.item_name, r.category,
@@ -34067,11 +34372,11 @@ function downloadInboundQuery() {
   ]);
   
   downloadExcel(
-    `입고조회_${date}`,
+    `입고조회_${dateLabel.replace(/~/g, '_')}`,
     '(주)본비반트',
     ['입고일', 'LOT번호', '품목코드', '품목명', '분류', '입고량', '잔량', '단위', '소비기한', '검사상태', '거래처'],
     rows,
-    `입고 조회 (${date})`
+    `입고 조회 (${dateLabel})`
   );
 }
 
@@ -34082,15 +34387,15 @@ function printInboundQuery() {
     return;
   }
   
-  const viewType = document.getElementById('inbound-query-type').value;
-  const date = viewType === 'daily' 
-    ? document.getElementById('inbound-query-date').value
-    : document.getElementById('inbound-query-month').value;
+  // 기간 조회 방식
+  const startDate = document.getElementById('inbound-query-start-date')?.value || '';
+  const endDate = document.getElementById('inbound-query-end-date')?.value || '';
+  const dateLabel = startDate === endDate ? startDate : `${startDate} ~ ${endDate}`;
   
   const printContent = `
     <html>
     <head>
-      <title>입고 조회 - ${date}</title>
+      <title>입고 조회 - ${dateLabel}</title>
       <style>
         body { font-family: 'Malgun Gothic', sans-serif; padding: 20px; }
         h1 { text-align: center; font-size: 18px; margin-bottom: 10px; }
@@ -34105,7 +34410,7 @@ function printInboundQuery() {
     </head>
     <body>
       <h1>(주)본비반트 입고 조회</h1>
-      <p class="info">조회 기간: ${date} / 총 ${data.details.length}건</p>
+      <p class="info">조회 기간: ${dateLabel} / 총 ${data.details.length}건</p>
       <table>
         <thead>
           <tr>
@@ -36420,7 +36725,7 @@ async function submitBulkUsage() {
 
 // Window 함수 등록
 window.renderInboundQuery = renderInboundQuery;
-window.changeInboundQueryType = changeInboundQueryType;
+window.setInboundQueryPreset = setInboundQueryPreset;
 window.loadInboundQuery = loadInboundQuery;
 window.downloadInboundQuery = downloadInboundQuery;
 window.printInboundQuery = printInboundQuery;

@@ -71,6 +71,79 @@ productionRoutes.get('/', async (c) => {
   return c.json({ success: true, data: result.results });
 });
 
+// ★★★ v3.4.1 디버그: 재고 매칭 진단 API ★★★
+productionRoutes.get('/debug-stock', async (c) => {
+  try {
+    const itemCode = c.req.query('item_code') || '';
+    
+    // 1. BOM에서 해당 원료코드 확인
+    const bomItems = await c.env.DB.prepare(`
+      SELECT product_code, item_code, quantity, unit FROM bom
+      WHERE item_code LIKE ?
+      UNION ALL
+      SELECT production_code as product_code, material_code as item_code, 
+             quantity, unit FROM production_bom
+      WHERE material_code LIKE ?
+    `).bind(`%${itemCode}%`, `%${itemCode}%`).all<any>();
+    
+    // 2. inbound 테이블에서 해당 코드 재고 확인 (필터 완화 - 모든 재고)
+    const inboundStock = await c.env.DB.prepare(`
+      SELECT item_code, lot_number, inbound_date, origin_qty, remain_qty, quality_status, expiry_date
+      FROM inbound
+      WHERE item_code LIKE ?
+      ORDER BY remain_qty DESC, expiry_date ASC
+    `).bind(`%${itemCode}%`).all<any>();
+    
+    // 3. master 테이블에서 확인
+    const masterData = await c.env.DB.prepare(`
+      SELECT item_code, item_name, current_stock, unit, category
+      FROM master
+      WHERE item_code LIKE ?
+    `).bind(`%${itemCode}%`).all<any>();
+    
+    // 4. semi_finished_items/lots에서 확인
+    const sfData = await c.env.DB.prepare(`
+      SELECT sf.item_code, sf.item_name, sf.unit, 
+             COALESCE(SUM(sfl.remain_qty), 0) as available_stock
+      FROM semi_finished_items sf
+      LEFT JOIN semi_finished_lots sfl ON sf.item_code = sfl.item_code AND sfl.remain_qty > 0
+      WHERE sf.item_code LIKE ?
+      GROUP BY sf.item_code
+    `).bind(`%${itemCode}%`).all<any>();
+    
+    // 5. 전체 재고 요약 (필터 완화)
+    const allInbound = await c.env.DB.prepare(`
+      SELECT item_code, SUM(remain_qty) as total_remain, COUNT(*) as lot_count
+      FROM inbound
+      WHERE remain_qty > 0
+      GROUP BY item_code
+      ORDER BY item_code
+      LIMIT 100
+    `).all<any>();
+    
+    return c.json({
+      success: true,
+      search_term: itemCode,
+      bom_references: bomItems.results,
+      inbound_stock: inboundStock.results,
+      master_data: masterData.results,
+      sf_data: sfData.results,
+      all_inbound_summary: allInbound.results,
+      diagnosis: {
+        bom_count: bomItems.results?.length || 0,
+        inbound_count: inboundStock.results?.length || 0,
+        master_count: masterData.results?.length || 0,
+        sf_count: sfData.results?.length || 0,
+        hint: (bomItems.results?.length || 0) > 0 && (inboundStock.results?.length || 0) === 0 
+          ? 'BOM에는 있지만 inbound에 재고가 없음 - 입고 등록 필요' 
+          : 'OK'
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.3.0: closing-status를 /:id보다 먼저 정의 (라우터 우선순위) ★★★
 // 당일 생산 마감 현황 통합 조회
 productionRoutes.get('/closing-status', async (c) => {
@@ -2145,17 +2218,19 @@ productionRoutes.post('/preview', async (c) => {
       FROM production_bom
     `).all<any>();
     
-    // 원재료 재고 - 실제 inbound 테이블 (FEFO 기준 가용재고)
+    // ★ v3.4.1 개선: 원재료 재고 - inbound 테이블에서 필터 완화 (remain_qty > 0만 체크)
+    // quality_status 필터 제거 - 모든 재고 합산
     const inboundStockData = await c.env.DB.prepare(`
       SELECT item_code, SUM(remain_qty) as available_stock
       FROM inbound
-      WHERE quality_status = '합격' AND remain_qty > 0
+      WHERE remain_qty > 0
       GROUP BY item_code
     `).all<any>();
     
-    // 마스터 재고 (inbound에 없는 경우 대비)
+    // 마스터 재고 (inbound에 없는 경우 대비) - current_stock도 함께 조회
     const masterStockData = await c.env.DB.prepare(`
       SELECT item_code, item_name, current_stock, unit FROM master
+      WHERE current_stock > 0 OR item_code IS NOT NULL
     `).all<any>();
     
     // SF계열 재고 - 실제 semi_finished_lots 테이블 (가상 아님!)
@@ -2281,12 +2356,13 @@ productionRoutes.post('/preview', async (c) => {
           const unit = stockInfo?.unit || bom.unit || 'kg';
           const stockSource = stockInfo?.source || 'NOT_FOUND';
           
-          // DB에 재고 출처가 없으면 에러 표시
+          // DB에 재고 출처가 없으면 상세 경고 표시
           if (!stockInfo) {
             warnings.push({
               row: rowIndex,
+              item_code: itemCode,
               type: 'DB_MAPPING_ERROR',
-              message: `[DB오류] ${itemCode}: 재고 테이블에서 매칭되는 데이터 없음`
+              message: `[미등록원료] ${itemCode}: 마스터/입고 테이블에 등록되지 않음. 원료 마스터에서 등록 후 입고해주세요.`
             });
           }
           

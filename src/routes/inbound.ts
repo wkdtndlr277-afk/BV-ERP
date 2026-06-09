@@ -25,10 +25,12 @@ inboundRoutes.get('/debug-table', async (c) => {
   });
 });
 
-// 입고 일별/월별 조회 (통계 포함)
+// 입고 일별/월별/기간 조회 (통계 포함)
 inboundRoutes.get('/query', async (c) => {
-  const view_type = c.req.query('view_type') || 'daily'; // daily, monthly
+  const view_type = c.req.query('view_type') || 'daily'; // daily, monthly, range
   const date = c.req.query('date'); // YYYY-MM-DD (daily) or YYYY-MM (monthly)
+  const start_date = c.req.query('start_date'); // 기간 조회용 시작일
+  const end_date = c.req.query('end_date'); // 기간 조회용 종료일
   const item_code = c.req.query('item_code');
   const supplier = c.req.query('supplier');
   const category = c.req.query('category'); // 원료, 부자재, 전체
@@ -39,7 +41,12 @@ inboundRoutes.get('/query', async (c) => {
   let dateFilter = '';
   const params: any[] = [];
   
-  if (view_type === 'daily' && date) {
+  if (view_type === 'range' && start_date && end_date) {
+    // 기간 조회: 시작일 ~ 종료일
+    dateFilter = 'AND i.inbound_date >= ? AND i.inbound_date <= ?';
+    params.push(start_date);
+    params.push(end_date);
+  } else if (view_type === 'daily' && date) {
     dateFilter = 'AND i.inbound_date = ?';
     params.push(date);
   } else if (view_type === 'monthly' && date) {
@@ -157,7 +164,8 @@ inboundRoutes.get('/query', async (c) => {
   
   // 통계 조회 (샘플 필터 적용)
   let summaryQuery = '';
-  if (view_type === 'daily') {
+  if (view_type === 'daily' || view_type === 'range') {
+    // 일별 또는 기간 조회: 전체 합계
     summaryQuery = `
       SELECT 
         COUNT(*) as total_count,
@@ -232,11 +240,13 @@ inboundRoutes.get('/query', async (c) => {
     success: true, 
     data: {
       details: detailResult.results,
-      summary: view_type === 'daily' ? (summaryResult.results[0] || {}) : summaryResult.results,
+      summary: (view_type === 'daily' || view_type === 'range') ? (summaryResult.results[0] || {}) : summaryResult.results,
       itemSummary: itemSummaryResult.results,
       supplierSummary: supplierSummaryResult.results,
       view_type,
-      date
+      date,
+      start_date,
+      end_date
     }
   });
 });

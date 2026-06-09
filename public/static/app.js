@@ -18012,7 +18012,7 @@ function printProductionClosing() {
   }, 500);
 }
 
-// ★★★ v3.4.3 HACCP 인증 기준 - 스크린샷 기준 서식 전면 개편 ★★★
+// ★★★ v3.4.4 HACCP - DOM 분리 및 결재란 레이아웃 고정 ★★★
 function generateClosingPrintHtml(cache, date) {
   const items = cache.dailyReport || [];
   const materials = cache.materials || {};
@@ -18028,14 +18028,6 @@ function generateClosingPrintHtml(cache, date) {
     if (name.includes('정제수') || name.includes('물') || code === 'R184' || code === 'RM184') return false;
     if (excludeCodes.includes(code)) return false;
     return true;
-  });
-  
-  // 채널별 그룹화 (판매처별)
-  const byChannel = {};
-  items.forEach(item => {
-    const ch = item.channel || '기타';
-    if (!byChannel[ch]) byChannel[ch] = [];
-    byChannel[ch].push(item);
   });
   
   const totalQty = items.reduce((sum, i) => sum + (i.quantity || 0), 0);
@@ -18063,304 +18055,430 @@ function generateClosingPrintHtml(cache, date) {
   <meta charset="UTF-8">
   <title>HACCP 생산마감 보고서 - ${date}</title>
   <style>
+    /* ===== 기본 리셋 ===== */
     @media print {
       @page { size: A4; margin: 10mm; }
       .page-break { page-break-after: always; }
-      .no-print { display: none !important; }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Malgun Gothic', '맑은 고딕', sans-serif; font-size: 10px; line-height: 1.2; padding: 15px; color: #333; }
+    body { font-family: 'Malgun Gothic', sans-serif; font-size: 10px; line-height: 1.3; padding: 0; color: #333; }
     
-    /* 문서 헤더 - 스크린샷 기준 */
-    .doc-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; padding-bottom: 10px; border-bottom: 2px solid #333; }
-    .doc-title { text-align: center; flex: 1; }
-    .doc-title h1 { font-size: 24px; font-weight: bold; letter-spacing: 8px; margin: 0; }
-    .doc-title .subtitle { font-size: 11px; color: #666; margin-top: 3px; }
+    /* ===== 페이지 컨테이너 ===== */
+    .report-page {
+      position: relative;
+      width: 100%;
+      min-height: 100vh;
+      padding: 20px;
+    }
     
-    /* 결재란 - 우측 상단 */
-    .approval-box { border: 1px solid #333; }
-    .approval-box table { border-collapse: collapse; }
-    .approval-box th, .approval-box td { border: 1px solid #333; padding: 2px 12px; text-align: center; font-size: 10px; }
-    .approval-box th { background: #f0f0f0; font-weight: normal; height: 22px; }
-    .approval-box td { height: 45px; min-width: 55px; vertical-align: middle; }
+    /* ===== 결재란 - 절대 위치 고정 (우측 상단) ===== */
+    .approval-container {
+      position: absolute;
+      top: 15px;
+      right: 15px;
+      width: 180px;
+      z-index: 100;
+    }
+    .approval-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 2px solid #000;
+      background: #fff;
+    }
+    .approval-table th,
+    .approval-table td {
+      border: 1px solid #000;
+      text-align: center;
+      font-size: 10px;
+      padding: 0;
+    }
+    .approval-table th {
+      background: #f5f5f5;
+      font-weight: normal;
+      height: 22px;
+      width: 60px;
+    }
+    .approval-table td {
+      height: 50px;
+      vertical-align: middle;
+    }
     
-    /* 생산일 표시 */
-    .date-info { margin: 10px 0; font-size: 11px; }
-    .date-info strong { font-weight: bold; }
+    /* ===== 문서 헤더 (결재란 영역 확보) ===== */
+    .doc-header-container {
+      position: relative;
+      width: 100%;
+      min-height: 80px;
+      margin-bottom: 15px;
+      padding-right: 200px;
+      border-bottom: 2px solid #333;
+      padding-bottom: 10px;
+    }
+    .doc-title-area {
+      text-align: center;
+      padding-top: 10px;
+    }
+    .doc-title-area h1 {
+      font-size: 26px;
+      font-weight: bold;
+      letter-spacing: 12px;
+      margin: 0;
+    }
+    .doc-title-area .subtitle {
+      font-size: 11px;
+      color: #666;
+      margin-top: 5px;
+    }
     
-    /* 섹션 제목 */
-    .section-title { font-size: 12px; font-weight: bold; margin: 15px 0 8px 0; padding: 5px 0; border-bottom: 1px solid #333; }
-    .section-title span { font-weight: normal; color: #666; }
+    /* ===== 본문 컨테이너 (결재란과 완전 분리) ===== */
+    .main-content {
+      margin-top: 10px;
+      width: 100%;
+    }
     
-    /* 테이블 공통 */
-    table { width: 100%; border-collapse: collapse; margin-bottom: 15px; font-size: 10px; }
-    th, td { border: 1px solid #ccc; padding: 5px 4px; }
-    th { background: #f8f8f8; font-weight: normal; text-align: center; }
-    td { text-align: center; }
-    .text-left { text-align: left !important; }
-    .text-right { text-align: right !important; }
+    /* ===== 날짜/정보 영역 ===== */
+    .info-row {
+      font-size: 11px;
+      margin-bottom: 12px;
+    }
     
-    /* 생산일보 테이블 */
-    .production-table th { background: #e8e8e8; }
-    .production-table td { vertical-align: middle; }
-    .product-desc { font-size: 9px; color: #666; margin-top: 2px; }
+    /* ===== 섹션 제목 ===== */
+    .section-header {
+      font-size: 12px;
+      font-weight: bold;
+      margin: 15px 0 8px 0;
+      padding-bottom: 5px;
+      border-bottom: 1px solid #333;
+    }
+    .section-header span {
+      font-weight: normal;
+      color: #666;
+    }
     
-    /* 판매처 배지 */
-    .channel-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9px; }
-    .channel-coupang { background: #ffeee6; color: #e65100; }
-    .channel-kurly { background: #f3e5f5; color: #7b1fa2; }
-    .channel-default { background: #e3f2fd; color: #1565c0; }
+    /* ===== 메인 데이터 테이블 ===== */
+    .main-report-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 15px;
+      font-size: 10px;
+    }
+    .main-report-table th,
+    .main-report-table td {
+      border: 1px solid #bbb;
+      padding: 5px 4px;
+      text-align: center;
+    }
+    .main-report-table th {
+      background: #e8e8e8;
+      font-weight: normal;
+    }
+    .main-report-table .text-left { text-align: left; }
+    .main-report-table .text-right { text-align: right; }
+    .main-report-table tfoot tr {
+      background: #f5f5f5;
+      font-weight: bold;
+    }
     
-    /* 수불부 요약 박스 */
-    .inventory-summary { background: #f5f5f5; padding: 8px 12px; margin-bottom: 10px; font-size: 11px; border: 1px solid #ddd; }
-    .inventory-summary span { margin-right: 15px; }
-    .inventory-summary strong { color: #000; }
+    /* ===== 부가 정보 테이블 ===== */
+    .sub-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 12px;
+      font-size: 9px;
+    }
+    .sub-table th,
+    .sub-table td {
+      border: 1px solid #ccc;
+      padding: 4px 3px;
+      text-align: center;
+    }
+    .sub-table th {
+      background: #f0f0f0;
+    }
+    .sub-table .text-left { text-align: left; }
+    .sub-table .text-right { text-align: right; }
     
-    /* 수불부 테이블 */
-    .inventory-table th { background: #e0f2f1; font-size: 9px; }
-    .inventory-table td { font-size: 9px; padding: 3px 2px; }
-    .inventory-table .lot-cell { font-size: 8px; color: #555; max-width: 150px; word-break: break-all; }
+    /* ===== 수불부 전용 ===== */
+    .inventory-summary-bar {
+      background: #f8f8f8;
+      border: 1px solid #ddd;
+      padding: 8px 15px;
+      margin-bottom: 12px;
+      font-size: 11px;
+    }
+    .inventory-summary-bar span {
+      margin-right: 20px;
+    }
+    .inventory-table th { background: #e0f2f1; }
+    .inventory-table .lot-info { font-size: 8px; color: #666; }
     
-    /* 요약 박스 */
-    .summary-row { background: #fafafa; border-top: 2px solid #333; }
-    .summary-row td { font-weight: bold; padding: 6px 4px; }
+    /* ===== 비고란 ===== */
+    .remarks-area {
+      margin-top: 15px;
+    }
+    .remarks-box {
+      border: 1px solid #333;
+      padding: 10px;
+      min-height: 65px;
+      margin-bottom: 10px;
+    }
+    .remarks-box-title {
+      font-weight: bold;
+      font-size: 11px;
+      margin-bottom: 6px;
+    }
+    .remarks-line {
+      color: #666;
+      font-size: 10px;
+      margin-bottom: 2px;
+    }
     
-    /* 비고란 */
-    .remarks-section { margin-top: 15px; }
-    .remarks-box { border: 1px solid #333; padding: 10px; min-height: 70px; }
-    .remarks-title { font-weight: bold; margin-bottom: 8px; font-size: 11px; }
-    .remarks-item { margin-bottom: 3px; color: #666; font-size: 10px; }
+    /* ===== 푸터 ===== */
+    .doc-footer {
+      margin-top: 20px;
+      padding-top: 8px;
+      border-top: 1px solid #999;
+      text-align: center;
+      font-size: 9px;
+      color: #666;
+    }
     
-    /* 푸터 */
-    .doc-footer { margin-top: 20px; padding-top: 8px; border-top: 1px solid #999; text-align: center; font-size: 9px; color: #666; }
-    
-    /* 유틸리티 */
-    .highlight-red { color: #d32f2f; }
-    .highlight-blue { color: #1976d2; }
-    .highlight-green { color: #388e3c; }
-    .small-text { font-size: 8px; }
+    /* ===== 유틸리티 클래스 ===== */
+    .color-blue { color: #1976d2; }
+    .color-red { color: #d32f2f; }
+    .color-green { color: #388e3c; }
+    .font-small { font-size: 8px; }
+    .channel-badge {
+      display: inline-block;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 9px;
+    }
+    .ch-coupang { background: #fff3e0; color: #e65100; }
+    .ch-kurly { background: #f3e5f5; color: #7b1fa2; }
+    .ch-default { background: #e3f2fd; color: #1565c0; }
+    .product-detail { font-size: 9px; color: #666; margin-top: 2px; }
   </style>
 </head>
 <body>
-  <!-- ========== 1페이지: 생산일보 ========== -->
-  <div class="page-1">
-    <div class="doc-header">
-      <div style="flex: 0 0 auto;"></div>
-      <div class="doc-title">
+  <!-- ==================== 1페이지: 생산일보 ==================== -->
+  <div class="report-page">
+    
+    <!-- 결재란 컨테이너 (본문과 완전 분리) -->
+    <div class="approval-container">
+      <table class="approval-table">
+        <tr>
+          <th>담당</th>
+          <th>검토</th>
+          <th>승인</th>
+        </tr>
+        <tr>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>
+      </table>
+    </div>
+    
+    <!-- 문서 헤더 -->
+    <div class="doc-header-container">
+      <div class="doc-title-area">
         <h1>생 산 일 보</h1>
         <div class="subtitle">(주)본비반트 HACCP</div>
       </div>
-      <div class="approval-box">
-        <table>
-          <tr>
-            <th>담당</th>
-            <th>검토</th>
-            <th>승인</th>
-          </tr>
-          <tr>
-            <td></td>
-            <td></td>
-            <td></td>
-          </tr>
-        </table>
+    </div>
+    
+    <!-- 본문 컨테이너 -->
+    <div class="main-content">
+      <div class="info-row">
+        <strong>생산일:</strong> ${date}
       </div>
-    </div>
-    
-    <div class="date-info">
-      <strong>생산일:</strong> ${date}
-    </div>
-    
-    <div class="section-title">1. 생산 현황 <span>(총 ${items.length}건)</span></div>
-    
-    <table class="production-table">
-      <thead>
-        <tr>
-          <th style="width:4%">No</th>
-          <th style="width:10%">소비기한</th>
-          <th style="width:9%">제품코드</th>
-          <th style="width:35%" class="text-left">생산명/제품명</th>
-          <th style="width:6%">수량</th>
-          <th style="width:22%">제품LOT</th>
-          <th style="width:7%">판매처</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${items.map((item, idx) => {
-          const ch = item.channel || '';
-          const chKor = channelKorean[ch] || ch || '-';
-          const chClass = ch === 'coupang' ? 'channel-coupang' : (ch === 'kurly' ? 'channel-kurly' : 'channel-default');
-          const lotNo = item.lot_number || `PRD-${date.replace(/-/g, '')}-${item.product_code}-${String(idx+1).padStart(4,'0')}`;
-          return `
+      
+      <div class="section-header">1. 생산 현황 <span>(총 ${items.length}건)</span></div>
+      
+      <table class="main-report-table">
+        <thead>
           <tr>
-            <td>${idx + 1}</td>
-            <td>${item.expiry_date || '-'}</td>
-            <td>${item.product_code || '-'}</td>
-            <td class="text-left">
-              ${item.product_name || '-'}
-              ${item.spec ? `<div class="product-desc">[${item.recipe_name || '로켓프레시'}][${item.facility || '실온'}] ${item.spec}</div>` : ''}
-            </td>
-            <td class="text-right">${formatNumber(item.quantity)}개</td>
-            <td class="small-text">${lotNo}</td>
-            <td><span class="channel-badge ${chClass}">${chKor}</span></td>
+            <th style="width:4%">No</th>
+            <th style="width:10%">소비기한</th>
+            <th style="width:9%">제품코드</th>
+            <th style="width:34%" class="text-left">생산명/제품명</th>
+            <th style="width:7%">수량</th>
+            <th style="width:22%">제품LOT</th>
+            <th style="width:7%">판매처</th>
           </tr>
-        `}).join('')}
-      </tbody>
-      <tfoot>
-        <tr class="summary-row">
-          <td colspan="4" class="text-right">총 생산건수: ${items.length}건</td>
-          <td class="text-right">${formatNumber(totalQty)}개</td>
-          <td colspan="2"></td>
-        </tr>
-      </tfoot>
-    </table>
-    
-    <!-- 2. 원재료 사용 현황 (간략) -->
-    <div class="section-title">2. 원재료 사용 현황 <span>(총 ${filteredUsage.length}종)</span></div>
-    
-    <table>
-      <thead>
-        <tr>
-          <th style="width:5%">No</th>
-          <th style="width:10%">품목코드</th>
-          <th style="width:30%" class="text-left">원재료명</th>
-          <th style="width:12%">총사용량</th>
-          <th style="width:8%">단위</th>
-          <th style="width:35%" class="text-left">원료LOT</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${filteredUsage.slice(0, 20).map((item, idx) => `
+        </thead>
+        <tbody>
+          ${items.map((item, idx) => {
+            const ch = item.channel || '';
+            const chKor = channelKorean[ch] || ch || '-';
+            const chClass = ch === 'coupang' ? 'ch-coupang' : (ch === 'kurly' ? 'ch-kurly' : 'ch-default');
+            const lotNo = item.lot_number || 'PRD-' + date.replace(/-/g, '') + '-' + item.product_code + '-' + String(idx+1).padStart(4,'0');
+            return '<tr>' +
+              '<td>' + (idx + 1) + '</td>' +
+              '<td>' + (item.expiry_date || '-') + '</td>' +
+              '<td>' + (item.product_code || '-') + '</td>' +
+              '<td class="text-left">' + (item.product_name || '-') +
+                (item.spec ? '<div class="product-detail">[' + (item.recipe_name || '로켓프레시') + '][' + (item.facility || '실온') + '] ' + item.spec + '</div>' : '') +
+              '</td>' +
+              '<td class="text-right">' + formatNumber(item.quantity) + '개</td>' +
+              '<td class="font-small">' + lotNo + '</td>' +
+              '<td><span class="channel-badge ' + chClass + '">' + chKor + '</span></td>' +
+            '</tr>';
+          }).join('')}
+        </tbody>
+        <tfoot>
           <tr>
-            <td>${idx + 1}</td>
-            <td>${item.item_code}</td>
-            <td class="text-left">${item.item_name || item.item_code}</td>
-            <td class="text-right">${formatNumber(Math.abs(item.total_used || 0), 4)}</td>
-            <td>${item.unit || 'kg'}</td>
-            <td class="text-left small-text">${item.lot_numbers || item.used_lots || '-'}</td>
+            <td colspan="4" class="text-right">총 생산건수: ${items.length}건</td>
+            <td class="text-right">${formatNumber(totalQty)}개</td>
+            <td colspan="2"></td>
           </tr>
-        `).join('')}
-        ${filteredUsage.length > 20 ? `<tr><td colspan="6" class="text-center">... 외 ${filteredUsage.length - 20}건 (상세는 일별 수불부 참조)</td></tr>` : ''}
-      </tbody>
-    </table>
-    
-    <!-- 비고란 -->
-    <div class="remarks-section">
-      <div class="remarks-box">
-        <div class="remarks-title">■ 이상 여부:</div>
-        <div class="remarks-item">(이상 발생 시)</div>
-        <div class="remarks-item">- 제품:</div>
-        <div class="remarks-item">- LOT:</div>
-        <div class="remarks-item">- 내용:</div>
-        <div class="remarks-item">- 조치사항:</div>
+        </tfoot>
+      </table>
+      
+      <div class="section-header">2. 원재료 사용 현황 <span>(총 ${filteredUsage.length}종)</span></div>
+      
+      <table class="sub-table">
+        <thead>
+          <tr>
+            <th style="width:5%">No</th>
+            <th style="width:10%">품목코드</th>
+            <th style="width:30%" class="text-left">원재료명</th>
+            <th style="width:12%">총사용량</th>
+            <th style="width:8%">단위</th>
+            <th style="width:35%" class="text-left">원료LOT</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filteredUsage.slice(0, 20).map((item, idx) => 
+            '<tr>' +
+              '<td>' + (idx + 1) + '</td>' +
+              '<td>' + item.item_code + '</td>' +
+              '<td class="text-left">' + (item.item_name || item.item_code) + '</td>' +
+              '<td class="text-right">' + formatNumber(Math.abs(item.total_used || 0), 4) + '</td>' +
+              '<td>' + (item.unit || 'kg') + '</td>' +
+              '<td class="text-left font-small">' + (item.lot_numbers || item.used_lots || '-') + '</td>' +
+            '</tr>'
+          ).join('')}
+          ${filteredUsage.length > 20 ? '<tr><td colspan="6" style="text-align:center">... 외 ' + (filteredUsage.length - 20) + '건 (상세는 수불부 참조)</td></tr>' : ''}
+        </tbody>
+      </table>
+      
+      <div class="remarks-area">
+        <div class="remarks-box">
+          <div class="remarks-box-title">■ 이상 여부:</div>
+          <div class="remarks-line">(이상 발생 시)</div>
+          <div class="remarks-line">- 제품:</div>
+          <div class="remarks-line">- LOT:</div>
+          <div class="remarks-line">- 내용:</div>
+          <div class="remarks-line">- 조치사항:</div>
+        </div>
+        <div class="remarks-box" style="min-height:45px;">
+          <div class="remarks-box-title">■ 비고</div>
+        </div>
       </div>
-    </div>
-    
-    <div class="remarks-section" style="margin-top:10px;">
-      <div class="remarks-box" style="min-height:50px;">
-        <div class="remarks-title">■ 비고</div>
+      
+      <div class="doc-footer">
+        본 문서는 HACCP 통합관리시스템에서 출력되었습니다. | 문서번호: ${docNo}
       </div>
-    </div>
-    
-    <div class="doc-footer">
-      본 문서는 HACCP 통합관리시스템에서 출력되었습니다. | 문서번호: ${docNo}
     </div>
   </div>
   
   <div class="page-break"></div>
   
-  <!-- ========== 2페이지: 일별 수불부 ========== -->
-  <div class="page-2">
-    <div class="doc-header">
-      <div style="flex: 0 0 auto;"></div>
-      <div class="doc-title">
+  <!-- ==================== 2페이지: 일별 수불부 ==================== -->
+  <div class="report-page">
+    
+    <!-- 결재란 컨테이너 -->
+    <div class="approval-container">
+      <table class="approval-table">
+        <tr>
+          <th>담당</th>
+          <th>검토</th>
+          <th>승인</th>
+        </tr>
+        <tr>
+          <td></td>
+          <td></td>
+          <td></td>
+        </tr>
+      </table>
+    </div>
+    
+    <!-- 문서 헤더 -->
+    <div class="doc-header-container">
+      <div class="doc-title-area">
         <h1>일 별 수 불 부</h1>
         <div class="subtitle">(주)본비반트 (${date})</div>
       </div>
-      <div class="approval-box">
-        <table>
-          <tr>
-            <th>담당</th>
-            <th>검토</th>
-            <th>승인</th>
-          </tr>
-          <tr>
-            <td></td>
-            <td></td>
-            <td></td>
-          </tr>
-        </table>
+    </div>
+    
+    <!-- 본문 컨테이너 -->
+    <div class="main-content">
+      <div class="inventory-summary-bar">
+        <span><strong>전일:</strong> ${formatNumber(totalPrevStock, 2)}</span>
+        <span><strong>입고:</strong> <span class="color-blue">+${formatNumber(totalInbound, 2)}</span></span>
+        <span><strong>사용:</strong> <span class="color-red">-${formatNumber(totalUsage, 2)}</span></span>
+        <span><strong>현재고:</strong> ${formatNumber(totalCurrentStock, 2)}</span>
+        <span><strong>품목:</strong> ${filteredUsage.length}건</span>
       </div>
-    </div>
-    
-    <!-- 요약 정보 -->
-    <div class="inventory-summary">
-      <span><strong>전일:</strong> ${formatNumber(totalPrevStock, 2)}</span>
-      <span><strong>입고:</strong> +${formatNumber(totalInbound, 2)}</span>
-      <span><strong>사용:</strong> -${formatNumber(totalUsage, 2)}</span>
-      <span><strong>현재고:</strong> ${formatNumber(totalCurrentStock, 2)}</span>
-      <span><strong>품목:</strong> ${filteredUsage.length}건</span>
-    </div>
-    
-    <table class="inventory-table">
-      <thead>
-        <tr>
-          <th style="width:7%">품목코드</th>
-          <th style="width:18%" class="text-left">품목명/LOT</th>
-          <th style="width:8%">입고일</th>
-          <th style="width:8%">소비기한</th>
-          <th style="width:8%">전일</th>
-          <th style="width:7%">입고</th>
-          <th style="width:7%">사용</th>
-          <th style="width:7%">조정</th>
-          <th style="width:8%">현재고</th>
-          <th style="width:7%">거래처</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${filteredUsage.map((item, idx) => {
-          const prevStock = item.prev_stock || 0;
-          const inboundQty = item.inbound_qty || 0;
-          const usedQty = Math.abs(item.total_used || 0);
-          const adjustment = item.adjustment || 0;
-          const currentStock = item.current_stock || 0;
-          const lotInfo = item.lot_numbers || item.lot_number || '-';
-          const inboundDate = item.inbound_date || '부자재';
-          const expiryDate = item.expiry_date || '부자재';
-          const supplier = item.supplier || '-';
-          
-          return `
+      
+      <table class="main-report-table inventory-table">
+        <thead>
           <tr>
-            <td>${item.item_code}</td>
-            <td class="text-left">
-              ${item.item_name || item.item_code}
-              <div class="lot-cell">${lotInfo}</div>
-            </td>
-            <td>${inboundDate}</td>
-            <td>${expiryDate}</td>
-            <td class="text-right">${formatNumber(prevStock, 2)}</td>
-            <td class="text-right highlight-blue">${inboundQty > 0 ? '+' + formatNumber(inboundQty, 2) : '-'}</td>
-            <td class="text-right highlight-red">${usedQty > 0 ? '-' + formatNumber(usedQty, 2) : '-'}</td>
-            <td class="text-right">${adjustment !== 0 ? formatNumber(adjustment, 2) : '-'}</td>
-            <td class="text-right highlight-green">${formatNumber(currentStock, 2)}</td>
-            <td>${supplier}</td>
+            <th style="width:7%">품목코드</th>
+            <th style="width:17%" class="text-left">품목명/LOT</th>
+            <th style="width:8%">입고일</th>
+            <th style="width:8%">소비기한</th>
+            <th style="width:9%">전일</th>
+            <th style="width:8%">입고</th>
+            <th style="width:8%">사용</th>
+            <th style="width:7%">조정</th>
+            <th style="width:9%">현재고</th>
+            <th style="width:9%">거래처</th>
           </tr>
-        `}).join('')}
-      </tbody>
-      <tfoot>
-        <tr class="summary-row">
-          <td colspan="4" class="text-right">합계</td>
-          <td class="text-right">${formatNumber(totalPrevStock, 2)}</td>
-          <td class="text-right highlight-blue">+${formatNumber(totalInbound, 2)}</td>
-          <td class="text-right highlight-red">-${formatNumber(totalUsage, 2)}</td>
-          <td>-</td>
-          <td class="text-right highlight-green">${formatNumber(totalCurrentStock, 2)}</td>
-          <td></td>
-        </tr>
-      </tfoot>
-    </table>
-    
-    <div class="doc-footer">
-      본 문서는 HACCP 통합관리시스템에서 출력되었습니다. | 문서번호: ${docNo}
+        </thead>
+        <tbody>
+          ${filteredUsage.map((item, idx) => {
+            const prevStock = item.prev_stock || 0;
+            const inboundQty = item.inbound_qty || 0;
+            const usedQty = Math.abs(item.total_used || 0);
+            const adjustment = item.adjustment || 0;
+            const currentStock = item.current_stock || 0;
+            const lotInfo = item.lot_numbers || item.lot_number || '-';
+            const inboundDate = item.inbound_date || '부자재';
+            const expiryDate = item.expiry_date || '부자재';
+            const supplier = item.supplier || '-';
+            
+            return '<tr>' +
+              '<td>' + item.item_code + '</td>' +
+              '<td class="text-left">' + (item.item_name || item.item_code) + '<div class="lot-info">' + lotInfo + '</div></td>' +
+              '<td>' + inboundDate + '</td>' +
+              '<td>' + expiryDate + '</td>' +
+              '<td class="text-right">' + formatNumber(prevStock, 2) + '</td>' +
+              '<td class="text-right color-blue">' + (inboundQty > 0 ? '+' + formatNumber(inboundQty, 2) : '-') + '</td>' +
+              '<td class="text-right color-red">' + (usedQty > 0 ? '-' + formatNumber(usedQty, 2) : '-') + '</td>' +
+              '<td class="text-right">' + (adjustment !== 0 ? formatNumber(adjustment, 2) : '-') + '</td>' +
+              '<td class="text-right color-green">' + formatNumber(currentStock, 2) + '</td>' +
+              '<td>' + supplier + '</td>' +
+            '</tr>';
+          }).join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4" class="text-right">합계</td>
+            <td class="text-right">${formatNumber(totalPrevStock, 2)}</td>
+            <td class="text-right color-blue">+${formatNumber(totalInbound, 2)}</td>
+            <td class="text-right color-red">-${formatNumber(totalUsage, 2)}</td>
+            <td>-</td>
+            <td class="text-right color-green">${formatNumber(totalCurrentStock, 2)}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
+      
+      <div class="doc-footer">
+        본 문서는 HACCP 통합관리시스템에서 출력되었습니다. | 문서번호: ${docNo}
+      </div>
     </div>
   </div>
 </body>

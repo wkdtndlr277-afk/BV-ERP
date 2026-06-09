@@ -522,6 +522,84 @@ function closeModal() {
   document.getElementById('modal-container').innerHTML = '';
 }
 
+// ★★★ v3.4.5: 재고 부족 상세 사유 모달 ★★★
+function showStockErrorModal(productCode, messageForUser, details) {
+  const detailRows = (details || []).map(d => `
+    <tr class="border-b hover:bg-red-50">
+      <td class="px-3 py-2 text-sm">${d.item_code || '-'}</td>
+      <td class="px-3 py-2 text-sm">${d.item_name || '-'}</td>
+      <td class="px-3 py-2 text-sm text-right text-red-600 font-medium">${d.available || '0kg'}</td>
+      <td class="px-3 py-2 text-sm text-right text-blue-600 font-medium">${d.required || '-'}</td>
+      <td class="px-3 py-2 text-sm text-right text-orange-600">${d.shortage || '-'}</td>
+      <td class="px-3 py-2 text-sm text-gray-600">${d.reason || '재고 부족'}</td>
+    </tr>
+  `).join('');
+
+  const content = `
+    <div class="space-y-4">
+      <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+        <div class="flex items-start">
+          <div class="flex-shrink-0">
+            <i class="fas fa-exclamation-triangle text-red-500 text-2xl"></i>
+          </div>
+          <div class="ml-3">
+            <h4 class="text-red-800 font-bold">재고 부족으로 생산이 차단되었습니다</h4>
+            <p class="text-red-700 text-sm mt-1">
+              아래 원재료의 재고가 부족하여 생산을 진행할 수 없습니다.<br>
+              입고 등록 후 다시 시도해주세요.
+            </p>
+            ${productCode ? `<p class="text-red-600 text-xs mt-2">제품코드: ${productCode}</p>` : ''}
+          </div>
+        </div>
+      </div>
+      
+      ${messageForUser ? `
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+          <h5 class="font-semibold text-yellow-800 mb-2"><i class="fas fa-info-circle mr-1"></i> 상세 내역</h5>
+          <pre class="text-sm text-yellow-900 whitespace-pre-wrap font-mono">${messageForUser}</pre>
+        </div>
+      ` : ''}
+      
+      ${details && details.length > 0 ? `
+        <div class="overflow-x-auto">
+          <table class="w-full border border-gray-200 rounded-lg overflow-hidden">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-600">품목코드</th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-600">품목명</th>
+                <th class="px-3 py-2 text-right text-xs font-medium text-gray-600">현재고</th>
+                <th class="px-3 py-2 text-right text-xs font-medium text-gray-600">필요량</th>
+                <th class="px-3 py-2 text-right text-xs font-medium text-gray-600">부족분</th>
+                <th class="px-3 py-2 text-left text-xs font-medium text-gray-600">사유</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${detailRows}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
+      
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+        <i class="fas fa-lightbulb mr-1"></i>
+        <strong>해결 방법:</strong> 
+        [입고 관리] 메뉴에서 부족한 원재료를 입고 등록한 후 다시 시도하세요.
+      </div>
+    </div>
+  `;
+  
+  const actions = `
+    <button onclick="closeModal()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+      <i class="fas fa-times mr-1"></i> 닫기
+    </button>
+    <button onclick="navigateToPage('inbound'); closeModal();" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+      <i class="fas fa-arrow-right mr-1"></i> 입고 등록으로 이동
+    </button>
+  `;
+  
+  showModal('🚫 재고 부족 - 생산 차단', content, actions, 'max-w-2xl');
+}
+
 // ========== 엑셀 다운로드 / 출력 유틸리티 ==========
 
 // 엑셀 다운로드 (실제 Excel XML 형식 - A4 용지 설정 포함)
@@ -17640,11 +17718,19 @@ async function submitProduction() {
     await loadMasterData();
     loadTodayProduction();
   } catch (e) {
-    // 실패 메시지 (빨간색) - 상세 에러 표시
+    // ★★★ v3.4.5: 재고 부족 등 상세 사유 모달 표시 ★★★
+    const errorCode = e.response?.data?.errorCode || '';
     const errorMsg = e.response?.data?.error || e.message || '생산 등록 중 오류가 발생했습니다.';
     const errorDetails = e.response?.data?.details;
+    const messageForUser = e.response?.data?.message_for_user || '';
+    const productCode = e.response?.data?.product_code || data.product_code;
     
-    if (errorDetails && Array.isArray(errorDetails)) {
+    if (errorCode === 'INSUFFICIENT_STOCK') {
+      // 재고 부족: 상세 모달 표시
+      console.error('[v3.4.5] INSUFFICIENT_STOCK:', { errorDetails, messageForUser });
+      showStockErrorModal(productCode, messageForUser, errorDetails);
+      showToast('재고 부족으로 생산이 차단되었습니다.', 'error');
+    } else if (errorDetails && Array.isArray(errorDetails)) {
       showToast(`❌ ${errorMsg}\n${errorDetails.join('\n')}`, 'error');
     } else {
       showToast(`❌ ${errorMsg}`, 'error');
@@ -18422,59 +18508,80 @@ function generateClosingPrintHtml(cache, date) {
         <span><strong>품목:</strong> ${filteredUsage.length}건</span>
       </div>
       
+      <!-- ★★★ v3.4.5: 수불부 7컬럼 (입고일/소비기한/거래처 삭제) ★★★ -->
       <table class="main-report-table inventory-table">
         <thead>
           <tr>
-            <th style="width:7%">품목코드</th>
-            <th style="width:17%" class="text-left">품목명/LOT</th>
-            <th style="width:8%">입고일</th>
-            <th style="width:8%">소비기한</th>
-            <th style="width:9%">전일</th>
-            <th style="width:8%">입고</th>
-            <th style="width:8%">사용</th>
-            <th style="width:7%">조정</th>
-            <th style="width:9%">현재고</th>
-            <th style="width:9%">거래처</th>
+            <th style="width:10%">품목코드</th>
+            <th style="width:28%" class="text-left">품목명</th>
+            <th style="width:12%">전일재고</th>
+            <th style="width:12%">입고량</th>
+            <th style="width:12%">사용량</th>
+            <th style="width:10%">조정</th>
+            <th style="width:12%">현재고</th>
           </tr>
         </thead>
         <tbody>
           ${filteredUsage.map((item, idx) => {
-            const prevStock = item.prev_stock || 0;
-            const inboundQty = item.inbound_qty || 0;
-            const usedQty = Math.abs(item.total_used || 0);
-            const adjustment = item.adjustment || 0;
-            const currentStock = item.current_stock || 0;
-            const lotInfo = item.lot_numbers || item.lot_number || '-';
-            const inboundDate = item.inbound_date || '부자재';
-            const expiryDate = item.expiry_date || '부자재';
-            const supplier = item.supplier || '-';
+            const prevStock = parseFloat(item.prev_stock) || 0;
+            const inboundQty = parseFloat(item.inbound_qty) || 0;
+            const usedQty = Math.abs(parseFloat(item.total_used) || 0);
+            const adjustment = parseFloat(item.adjustment) || 0;
+            const currentStock = parseFloat(item.current_stock) || 0;
             
-            return '<tr>' +
+            // ★★★ 데이터 무결성 검증: 전일+입고-사용+조정=현재고 ★★★
+            const calculatedStock = prevStock + inboundQty - usedQty + adjustment;
+            const difference = Math.abs(calculatedStock - currentStock);
+            const isValid = difference < 0.01; // 0.01kg 이내 허용
+            const rowClass = isValid ? '' : 'style="background:#fff3e0;"'; // 오차 시 노란색 배경
+            
+            return '<tr ' + rowClass + '>' +
               '<td>' + item.item_code + '</td>' +
-              '<td class="text-left">' + (item.item_name || item.item_code) + '<div class="lot-info">' + lotInfo + '</div></td>' +
-              '<td>' + inboundDate + '</td>' +
-              '<td>' + expiryDate + '</td>' +
+              '<td class="text-left">' + (item.item_name || item.item_code) + '</td>' +
               '<td class="text-right">' + formatNumber(prevStock, 2) + '</td>' +
               '<td class="text-right color-blue">' + (inboundQty > 0 ? '+' + formatNumber(inboundQty, 2) : '-') + '</td>' +
               '<td class="text-right color-red">' + (usedQty > 0 ? '-' + formatNumber(usedQty, 2) : '-') + '</td>' +
               '<td class="text-right">' + (adjustment !== 0 ? formatNumber(adjustment, 2) : '-') + '</td>' +
-              '<td class="text-right color-green">' + formatNumber(currentStock, 2) + '</td>' +
-              '<td>' + supplier + '</td>' +
+              '<td class="text-right color-green">' + formatNumber(currentStock, 2) + 
+                (!isValid ? ' <span style="color:orange;font-size:8px;">⚠</span>' : '') + '</td>' +
             '</tr>';
           }).join('')}
         </tbody>
         <tfoot>
           <tr>
-            <td colspan="4" class="text-right">합계</td>
-            <td class="text-right">${formatNumber(totalPrevStock, 2)}</td>
-            <td class="text-right color-blue">+${formatNumber(totalInbound, 2)}</td>
-            <td class="text-right color-red">-${formatNumber(totalUsage, 2)}</td>
-            <td>-</td>
-            <td class="text-right color-green">${formatNumber(totalCurrentStock, 2)}</td>
-            <td></td>
+            <td colspan="2" class="text-right"><strong>합계</strong></td>
+            <td class="text-right"><strong>${formatNumber(totalPrevStock, 2)}</strong></td>
+            <td class="text-right color-blue"><strong>+${formatNumber(totalInbound, 2)}</strong></td>
+            <td class="text-right color-red"><strong>-${formatNumber(totalUsage, 2)}</strong></td>
+            <td class="text-right">-</td>
+            <td class="text-right color-green"><strong>${formatNumber(totalCurrentStock, 2)}</strong></td>
           </tr>
         </tfoot>
       </table>
+      
+      <!-- ★★★ 데이터 무결성 검증 결과 ★★★ -->
+      ${(() => {
+        let errorCount = 0;
+        filteredUsage.forEach(item => {
+          const prev = parseFloat(item.prev_stock) || 0;
+          const inb = parseFloat(item.inbound_qty) || 0;
+          const used = Math.abs(parseFloat(item.total_used) || 0);
+          const adj = parseFloat(item.adjustment) || 0;
+          const curr = parseFloat(item.current_stock) || 0;
+          const calc = prev + inb - used + adj;
+          if (Math.abs(calc - curr) >= 0.01) errorCount++;
+        });
+        
+        if (errorCount === 0) {
+          return '<div style="margin:10px 0; padding:8px; background:#e8f5e9; border:1px solid #4caf50; font-size:11px;">' +
+            '<strong>✓ 데이터 무결성 검증 통과</strong> - 모든 품목의 수불 계산식이 일치합니다. (전일+입고-사용+조정=현재고)' +
+          '</div>';
+        } else {
+          return '<div style="margin:10px 0; padding:8px; background:#fff3e0; border:1px solid #ff9800; font-size:11px;">' +
+            '<strong>⚠ 데이터 무결성 검증 경고</strong> - ' + errorCount + '개 품목의 수불 계산이 불일치합니다. (노란색 표시 항목 확인)' +
+          '</div>';
+        }
+      })()}
       
       <div class="doc-footer">
         본 문서는 HACCP 통합관리시스템에서 출력되었습니다. | 문서번호: ${docNo}
@@ -18743,12 +18850,40 @@ async function finalApproveProduction() {
       loadClosingStatus();
       
     } else {
-      throw new Error(result.error || '승인 실패');
+      // ★★★ v3.4.5: 재고 부족 등 상세 사유 표시 ★★★
+      const errorCode = result.errorCode || '';
+      const details = result.details || [];
+      const messageForUser = result.message_for_user || '';
+      
+      if (errorCode === 'INSUFFICIENT_STOCK') {
+        // 재고 부족 상세 사유 표시
+        console.error('[v3.4.5] INSUFFICIENT_STOCK:', { details, messageForUser });
+        
+        let detailText = messageForUser || details.map(d => 
+          `⚠️ ${d.item_name || d.item_code}: 현재고 ${d.available}, 필요량 ${d.required} (${d.reason || '재고 부족'})`
+        ).join('\n');
+        
+        // 모달 형식으로 상세 사유 표시
+        showStockErrorModal(result.product_code || '', detailText, details);
+        throw new Error('재고 부족으로 생산 등록이 차단되었습니다.');
+      } else if (errorCode === 'INTEGRITY_CHECK_FAILED') {
+        // 무결성 검사 실패
+        const errorMessages = details.slice(0, 5).join('\n');
+        alert(`[무결성 검사 실패 - DB 반영 차단]\n\n${errorMessages}${details.length > 5 ? `\n...외 ${details.length - 5}건` : ''}`);
+        throw new Error('무결성 검사 실패');
+      } else {
+        throw new Error(result.error || '승인 실패');
+      }
     }
     
   } catch (e) {
     console.error('최종 승인 실패:', e);
-    showToast(`최종 승인 실패: ${e.message}`, 'error');
+    // ★ 이미 상세 표시한 경우 토스트는 간단하게
+    if (!e.message?.includes('재고 부족') && !e.message?.includes('무결성 검사')) {
+      showToast(`최종 승인 실패: ${e.message}`, 'error');
+    } else {
+      showToast(e.message, 'error');
+    }
   } finally {
     hideLoading();
     if (btn) {

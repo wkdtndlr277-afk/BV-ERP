@@ -18435,16 +18435,20 @@ function generateClosingPrintHtml(cache, date) {
           </tr>
         </thead>
         <tbody>
-          ${filteredUsage.slice(0, 20).map((item, idx) => 
-            '<tr>' +
+          ${filteredUsage.slice(0, 20).map((item, idx) => {
+            // ★★★ v3.4.6: LOT 정보 표시 개선 - null, undefined, 빈문자열 처리 ★★★
+            const lotDisplay = (item.lot_numbers && item.lot_numbers.trim() && item.lot_numbers !== 'null') 
+              ? item.lot_numbers 
+              : (item.used_lots || '-');
+            return '<tr>' +
               '<td>' + (idx + 1) + '</td>' +
               '<td>' + item.item_code + '</td>' +
               '<td class="text-left">' + (item.item_name || item.item_code) + '</td>' +
               '<td class="text-right">' + formatNumber(Math.abs(item.total_used || 0), 4) + '</td>' +
               '<td>' + (item.unit || 'kg') + '</td>' +
-              '<td class="text-left font-small">' + (item.lot_numbers || item.used_lots || '-') + '</td>' +
-            '</tr>'
-          ).join('')}
+              '<td class="text-left font-small">' + lotDisplay + '</td>' +
+            '</tr>';
+          }).join('')}
           ${filteredUsage.length > 20 ? '<tr><td colspan="6" style="text-align:center">... 외 ' + (filteredUsage.length - 20) + '건 (상세는 수불부 참조)</td></tr>' : ''}
         </tbody>
       </table>

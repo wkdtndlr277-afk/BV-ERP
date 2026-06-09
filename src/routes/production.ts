@@ -169,11 +169,13 @@ productionRoutes.get('/closing-status', async (c) => {
     
     // 2. 당일 원재료 사용량 - LOT별 remain_qty SUM 기반 실시간 재고
     // ★ Master 테이블 요약값 대신 Inbound LOT 실시간 집계
+    // ★★★ v3.4.6: lot_number 정보 추가 (GROUP_CONCAT으로 사용 LOT 수집) ★★★
     const materialUsage = await c.env.DB.prepare(`
       SELECT pm.item_code, 
              COALESCE(m.item_name, pm.item_code) as item_name,
              SUM(pm.actual_qty) as total_used,
              COALESCE(m.unit, 'kg') as unit,
+             GROUP_CONCAT(DISTINCT pm.lot_number) as lot_numbers,
              COALESCE(
                (SELECT SUM(remain_qty) FROM inbound WHERE item_code = pm.item_code AND remain_qty > 0),
                0

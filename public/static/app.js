@@ -17316,9 +17316,14 @@ async function renderProduction() {
                   <span class="font-medium" id="order-file-name">파일명.xlsx</span>
                   <span class="text-sm text-gray-500 ml-2" id="order-item-count">0개 제품</span>
                 </div>
-                <button onclick="cancelOrderUpload()" class="text-gray-500 hover:text-red-500">
-                  <i class="fas fa-times"></i>
-                </button>
+                <div class="flex items-center gap-2">
+                  <button onclick="printOrderPreview()" class="px-3 py-1 bg-blue-500 text-white rounded text-sm hover:bg-blue-600">
+                    <i class="fas fa-print mr-1"></i> 인쇄
+                  </button>
+                  <button onclick="cancelOrderUpload()" class="text-gray-500 hover:text-red-500">
+                    <i class="fas fa-times"></i>
+                  </button>
+                </div>
               </div>
               <div class="p-4">
                 <div id="order-summary" class="mb-4 grid grid-cols-3 gap-4 text-center">
@@ -40214,6 +40219,9 @@ async function renderBarcodeInventory() {
               <button onclick="loadMaterialInventory()" class="px-3 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm">
                 <i class="fas fa-sync-alt mr-1"></i> 새로고침
               </button>
+              <button onclick="printMaterialInventory()" class="px-3 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm">
+                <i class="fas fa-print mr-1"></i> 인쇄
+              </button>
             </div>
           </div>
         </div>
@@ -40858,6 +40866,8 @@ async function loadTodayTransactions() {
     const response = await axios.get(`${API_BASE}/barcode/today-transactions?date=${targetDate}`);
     const result = response.data;
     
+    console.log('[loadTodayTransactions] API Response:', result);  // 디버깅용
+    
     if (result.success) {
       const transactions = result.data || [];
       
@@ -40870,10 +40880,13 @@ async function loadTodayTransactions() {
           </tr>
         `;
       } else {
-        tbody.innerHTML = transactions.map((t) => {
+        tbody.innerHTML = transactions.map((t, idx) => {
           const time = t.created_at ? new Date(t.created_at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute:'2-digit'}) : '-';
           const absQty = Math.abs(parseFloat(t.quantity) || 0);
           const unit = t.unit || 'kg';
+          const transId = t.id;  // ID 확인
+          
+          console.log(`[loadTodayTransactions] Row ${idx}: id=${transId}, item_code=${t.item_code}`);  // 디버깅용
           
           // 유형별 색상
           const typeColor = t.trans_type === '출고' ? 'bg-purple-100 text-purple-700' : 'bg-red-100 text-red-700';
@@ -40890,10 +40903,14 @@ async function loadTodayTransactions() {
               <td class="px-3 py-2 text-gray-500 text-xs font-mono">${t.lot_number || '-'}</td>
               <td class="px-3 py-2 text-gray-500 text-xs">${t.memo || '-'}</td>
               <td class="px-3 py-2 text-center">
-                <button onclick="deleteTransaction(${t.id}, '${t.item_code}', ${absQty}, '${t.item_name?.replace(/'/g, "\\'") || ''}')" 
-                        class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600">
-                  <i class="fas fa-trash"></i>
-                </button>
+                ${transId ? `
+                  <button onclick="deleteTransaction(${transId}, '${t.item_code}', ${absQty}, '${(t.item_name || '').replace(/'/g, "\\'")}')" 
+                          class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600">
+                    <i class="fas fa-trash"></i>
+                  </button>
+                ` : `
+                  <span class="text-gray-400 text-xs">ID없음</span>
+                `}
               </td>
             </tr>
           `;

@@ -1827,3 +1827,63 @@ barcodeRoutes.get('/today-transactions', async (c) => {
     return c.json({ success: false, error: error.message }, 500);
   }
 });
+
+// ★★★ v3.4.10: 디버깅용 - 특정 품목의 당일 transactions 확인 ★★★
+barcodeRoutes.get('/debug-transactions', async (c) => {
+  try {
+    const item_code = c.req.query('item_code') || 'R001';
+    const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+    
+    // 1. transactions 테이블에서 해당 품목/날짜 전체 조회
+    const allTrans = await c.env.DB.prepare(`
+      SELECT * FROM transactions 
+      WHERE item_code = ? AND trans_date = ?
+      ORDER BY created_at DESC
+    `).bind(item_code, date).all();
+    
+    // 2. 사용/출고 타입만 조회
+    const usageTrans = await c.env.DB.prepare(`
+      SELECT * FROM transactions 
+      WHERE item_code = ? AND trans_date = ?
+        AND trans_type IN ('사용', '출고', '바코드사용', '바코드조정(-)')
+      ORDER BY created_at DESC
+    `).bind(item_code, date).all();
+    
+    // 3. 당일사용 SUM 계산
+    const usageSum = await c.env.DB.prepare(`
+      SELECT 
+        SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END) as negative_sum,
+        SUM(ABS(quantity)) as total_abs_sum,
+        SUM(quantity) as raw_sum,
+        COUNT(*) as count
+      FROM transactions 
+      WHERE item_code = ? AND trans_date = ?
+        AND trans_type IN ('사용', '출고', '바코드사용', '바코드조정(-)')
+    `).bind(item_code, date).first();
+    
+    // 4. master 테이블 정보
+    const masterInfo = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, current_stock FROM master WHERE item_code = ?
+    `).bind(item_code).first();
+    
+    // 5. inbound 테이블 정보
+    const inboundInfo = await c.env.DB.prepare(`
+      SELECT SUM(remain_qty) as total_remain, SUM(origin_qty) as total_origin
+      FROM inbound WHERE item_code = ? AND remain_qty > 0
+    `).bind(item_code).first();
+    
+    return c.json({
+      success: true,
+      item_code,
+      date,
+      master_info: masterInfo,
+      inbound_summary: inboundInfo,
+      usage_summary: usageSum,
+      all_transactions: allTrans.results,
+      usage_transactions: usageTrans.results
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});

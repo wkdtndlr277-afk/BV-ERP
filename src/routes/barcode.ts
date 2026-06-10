@@ -177,32 +177,33 @@ barcodeRoutes.get('/scan', async (c) => {
       lots = lotResult.results || [];
     }
     
-    // ★★★ v3.4.19: 원료 재고 현황과 동일한 재고 계산 (prev_stock) ★★★
-    // 원료의 경우: prev_stock(전일재고) = inbound.remain_qty SUM - 당일입고 + 당일사용
-    // current_stock = inbound.remain_qty SUM (실시간 잔량)
+    // ★★★ v3.4.20: 원료 재고 현황과 동일한 재고 계산 (transactions 기반) ★★★
+    // 전일재고 = 현재고 - 당일입고(transactions) + 당일사용(transactions)
     if (item.category === '원료' && (source === 'master' || source === 'barcode_mapping')) {
       const today = getKSTDate();
       
-      // 실시간 재고: inbound remain_qty SUM
+      // 현재고: inbound remain_qty SUM (0인 LOT도 포함)
       const inboundStock = await c.env.DB.prepare(`
         SELECT COALESCE(SUM(remain_qty), 0) as total 
-        FROM inbound WHERE item_code = ? AND remain_qty > 0
+        FROM inbound WHERE item_code = ?
       `).bind(item.item_code).first<{total: number}>();
       const currentStock = inboundStock?.total || 0;
       
-      // 당일 입고량
+      // 당일 입고량 (transactions 기반)
       const todayInbound = await c.env.DB.prepare(`
-        SELECT COALESCE(SUM(origin_qty), 0) as total 
-        FROM inbound WHERE item_code = ? AND inbound_date = ?
+        SELECT COALESCE(SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END), 0) as total
+        FROM transactions 
+        WHERE item_code = ? AND trans_date = ? 
+          AND trans_type IN ('입고', '바코드입고', '바코드조정(+)', '전일조정(+)')
       `).bind(item.item_code, today).first<{total: number}>();
       const todayInboundQty = todayInbound?.total || 0;
       
-      // 당일 사용량 (음수값의 절대값)
+      // 당일 사용량 (transactions 기반)
       const todayUsage = await c.env.DB.prepare(`
         SELECT COALESCE(SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END), 0) as total
         FROM transactions 
         WHERE item_code = ? AND trans_date = ? 
-          AND trans_type IN ('사용', '출고', '바코드사용', '바코드조정(-)')
+          AND trans_type IN ('사용', '출고', '바코드사용', '바코드조정(-)', '전일조정(-)')
       `).bind(item.item_code, today).first<{total: number}>();
       const todayUsageQty = todayUsage?.total || 0;
       
@@ -1498,14 +1499,18 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         m.item_name,
         m.unit,
         m.barcode,
-        -- 현재고: inbound 테이블의 remain_qty SUM (실시간)
+        -- ★★★ v3.4.20: 재고 계산 로직 수정 ★★★
+        -- 현재고: inbound 테이블의 remain_qty SUM (실시간) - remain_qty > 0 조건 제거하여 0인 LOT도 포함
         COALESCE(
-          (SELECT SUM(remain_qty) FROM inbound WHERE item_code = m.item_code AND remain_qty > 0),
+          (SELECT SUM(remain_qty) FROM inbound WHERE item_code = m.item_code),
           0
         ) as current_stock,
-        -- 당일입고: 선택 날짜에 입고된 origin_qty SUM
+        -- 당일입고: 선택 날짜의 transactions에서 입고량 SUM (양수값)
         COALESCE(
-          (SELECT SUM(origin_qty) FROM inbound WHERE item_code = m.item_code AND inbound_date = ?),
+          (SELECT SUM(CASE WHEN quantity > 0 THEN quantity ELSE 0 END) 
+           FROM transactions 
+           WHERE item_code = m.item_code AND trans_date = ? 
+             AND trans_type IN ('입고', '바코드입고', '바코드조정(+)', '전일조정(+)')),
           0
         ) as today_inbound,
         -- 당일사용: 선택 날짜의 transactions에서 사용량 SUM (음수값의 절대값)
@@ -1513,7 +1518,7 @@ barcodeRoutes.get('/material-inventory', async (c) => {
           (SELECT SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END) 
            FROM transactions 
            WHERE item_code = m.item_code AND trans_date = ? 
-             AND trans_type IN ('사용', '출고', '바코드사용', '바코드조정(-)')),
+             AND trans_type IN ('사용', '출고', '바코드사용', '바코드조정(-)', '전일조정(-)')),
           0
         ) as today_usage
       FROM master m

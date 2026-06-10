@@ -40278,7 +40278,7 @@ async function renderBarcodeInventory() {
         </div>
       </div>
       
-      <!-- ★★★ v3.4.10: 당일 사용/출고 내역 (삭제 가능) ★★★ -->
+      <!-- ★★★ v3.4.15: 당일 사용/출고 내역 (전체삭제/선택삭제) ★★★ -->
       <div class="bg-white rounded-xl shadow-lg overflow-hidden">
         <div class="bg-gradient-to-r from-red-500 to-rose-500 p-4">
           <div class="flex items-center justify-between flex-wrap gap-3">
@@ -40292,6 +40292,12 @@ async function renderBarcodeInventory() {
               </div>
             </div>
             <div class="flex items-center gap-2">
+              <button onclick="deleteSelectedTransactions()" id="btn-delete-selected" class="hidden px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 text-sm">
+                <i class="fas fa-check-square mr-1"></i> 선택 삭제
+              </button>
+              <button onclick="deleteAllTodayTransactions()" class="px-3 py-2 bg-red-700 text-white rounded-lg hover:bg-red-800 text-sm">
+                <i class="fas fa-trash-alt mr-1"></i> 전체 삭제
+              </button>
               <button onclick="loadTodayTransactions()" class="px-3 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm">
                 <i class="fas fa-sync-alt mr-1"></i> 새로고침
               </button>
@@ -40304,6 +40310,9 @@ async function renderBarcodeInventory() {
           <table class="w-full text-sm">
             <thead class="bg-gray-100 sticky top-0">
               <tr>
+                <th class="px-2 py-2 text-center w-10">
+                  <input type="checkbox" id="trans-select-all" onchange="toggleTransSelectAll(this.checked)" class="w-4 h-4">
+                </th>
                 <th class="px-3 py-2 text-left">시간</th>
                 <th class="px-3 py-2 text-left">품목코드</th>
                 <th class="px-3 py-2 text-left">원료명</th>
@@ -40316,7 +40325,7 @@ async function renderBarcodeInventory() {
             </thead>
             <tbody id="today-transactions-tbody">
               <tr>
-                <td colspan="8" class="text-center py-6 text-gray-400">
+                <td colspan="9" class="text-center py-6 text-gray-400">
                   <i class="fas fa-spinner fa-spin mr-2"></i> 데이터를 불러오는 중...
                 </td>
               </tr>
@@ -40892,10 +40901,16 @@ function showMaterialDetailModal(item, lots, transactions, date) {
       
       <!-- 하단 버튼 -->
       <div class="p-4 bg-gray-50 border-t flex justify-between">
-        <button onclick="openBarcodeDeductFromDetail('${item.item_code}')" 
-                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
-          <i class="fas fa-barcode mr-2"></i> 바코드 차감
-        </button>
+        <div class="flex gap-2">
+          <button onclick="openBarcodeDeductFromDetail('${item.item_code}')" 
+                  class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+            <i class="fas fa-barcode mr-2"></i> 바코드 차감
+          </button>
+          <button onclick="openStockAdjustFromDetail('${item.item_code}', '${(item.item_name || '').replace(/'/g, "\\'")}', ${item.current_stock || 0}, '${item.unit || 'kg'}')" 
+                  class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <i class="fas fa-edit mr-2"></i> 재고 수정
+          </button>
+        </div>
         <button onclick="document.getElementById('material-detail-modal').remove()" 
                 class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
           닫기
@@ -40918,9 +40933,16 @@ function openBarcodeDeductFromDetail(itemCode) {
   }
 }
 
+// 세부내역 모달에서 재고 수정으로 이동
+function openStockAdjustFromDetail(itemCode, itemName, currentStock, unit) {
+  document.getElementById('material-detail-modal')?.remove();
+  openStockAdjustModal(itemCode, itemName, currentStock, unit);
+}
+
 window.selectMaterialForBarcode = selectMaterialForBarcode;
 window.showMaterialDetailModal = showMaterialDetailModal;
 window.openBarcodeDeductFromDetail = openBarcodeDeductFromDetail;
+window.openStockAdjustFromDetail = openStockAdjustFromDetail;
 
 // ★★★ v3.4.7: 재고 수정 모달 ★★★
 function openStockAdjustModal(itemCode, itemName, currentStock, unit) {
@@ -41046,18 +41068,25 @@ window.openStockAdjustModal = openStockAdjustModal;
 window.closeStockAdjustModal = closeStockAdjustModal;
 window.submitStockAdjust = submitStockAdjust;
 
-// ★★★ v3.4.10: 당일 사용/출고 내역 로드 ★★★
+// ★★★ v3.4.15: 당일 사용/출고 내역 로드 (체크박스 추가) ★★★
+let todayTransactionsData = [];  // 거래 데이터 저장
+
 async function loadTodayTransactions() {
   const tbody = document.getElementById('today-transactions-tbody');
   if (!tbody) return;
   
   tbody.innerHTML = `
     <tr>
-      <td colspan="8" class="text-center py-6 text-gray-400">
+      <td colspan="9" class="text-center py-6 text-gray-400">
         <i class="fas fa-spinner fa-spin mr-2"></i> 데이터를 불러오는 중...
       </td>
     </tr>
   `;
+  
+  // 전체선택 체크박스 초기화
+  const selectAllCb = document.getElementById('trans-select-all');
+  if (selectAllCb) selectAllCb.checked = false;
+  updateDeleteSelectedBtn();
   
   try {
     // 원료 재고 현황의 날짜와 동일하게 사용
@@ -41067,15 +41096,14 @@ async function loadTodayTransactions() {
     const response = await axios.get(`${API_BASE}/barcode/today-transactions?date=${targetDate}`);
     const result = response.data;
     
-    console.log('[loadTodayTransactions] API Response:', result);  // 디버깅용
-    
     if (result.success) {
       const transactions = result.data || [];
+      todayTransactionsData = transactions;  // 데이터 저장
       
       if (transactions.length === 0) {
         tbody.innerHTML = `
           <tr>
-            <td colspan="8" class="text-center py-6 text-gray-400">
+            <td colspan="9" class="text-center py-6 text-gray-400">
               <i class="fas fa-inbox mr-2"></i> ${targetDate} 사용/출고 내역이 없습니다.
             </td>
           </tr>
@@ -41085,15 +41113,18 @@ async function loadTodayTransactions() {
           const time = t.created_at ? new Date(t.created_at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute:'2-digit'}) : '-';
           const absQty = Math.abs(parseFloat(t.quantity) || 0);
           const unit = t.unit || 'kg';
-          const transId = t.id;  // ID 확인
-          
-          console.log(`[loadTodayTransactions] Row ${idx}: id=${transId}, item_code=${t.item_code}`);  // 디버깅용
+          const transId = t.id;
           
           // 유형별 색상
           const typeColor = t.trans_type === '출고' ? 'bg-purple-100 text-purple-700' : 'bg-red-100 text-red-700';
           
           return `
-            <tr class="hover:bg-gray-50 border-b">
+            <tr class="hover:bg-gray-50 border-b" data-trans-id="${transId}">
+              <td class="px-2 py-2 text-center">
+                ${transId ? `
+                  <input type="checkbox" class="trans-checkbox w-4 h-4" value="${transId}" onchange="updateDeleteSelectedBtn()">
+                ` : ''}
+              </td>
               <td class="px-3 py-2 text-gray-500 text-xs">${time}</td>
               <td class="px-3 py-2 font-mono text-blue-600 text-xs">${t.item_code}</td>
               <td class="px-3 py-2 font-medium">${t.item_name || '-'}</td>
@@ -41124,12 +41155,126 @@ async function loadTodayTransactions() {
     console.error('[loadTodayTransactions] Error:', error);
     tbody.innerHTML = `
       <tr>
-        <td colspan="8" class="text-center py-6 text-red-400">
+        <td colspan="9" class="text-center py-6 text-red-400">
           <i class="fas fa-exclamation-triangle mr-2"></i> 데이터 로드 실패: ${error.message}
         </td>
       </tr>
     `;
   }
+}
+
+// ★★★ v3.4.15: 전체 선택 토글 ★★★
+function toggleTransSelectAll(checked) {
+  const checkboxes = document.querySelectorAll('.trans-checkbox');
+  checkboxes.forEach(cb => cb.checked = checked);
+  updateDeleteSelectedBtn();
+}
+
+// ★★★ v3.4.15: 선택 삭제 버튼 표시/숨김 ★★★
+function updateDeleteSelectedBtn() {
+  const checkboxes = document.querySelectorAll('.trans-checkbox:checked');
+  const btn = document.getElementById('btn-delete-selected');
+  if (btn) {
+    if (checkboxes.length > 0) {
+      btn.classList.remove('hidden');
+      btn.innerHTML = `<i class="fas fa-check-square mr-1"></i> 선택 삭제 (${checkboxes.length})`;
+    } else {
+      btn.classList.add('hidden');
+    }
+  }
+}
+
+// ★★★ v3.4.15: 선택 삭제 ★★★
+async function deleteSelectedTransactions() {
+  const checkboxes = document.querySelectorAll('.trans-checkbox:checked');
+  const ids = Array.from(checkboxes).map(cb => parseInt(cb.value)).filter(id => !isNaN(id));
+  
+  if (ids.length === 0) {
+    showToast('삭제할 항목을 선택하세요.', 'warning');
+    return;
+  }
+  
+  if (!confirm(`선택한 ${ids.length}건의 내역을 삭제하시겠습니까?\n\n삭제 시 해당 수량만큼 재고가 복원됩니다.`)) {
+    return;
+  }
+  
+  showLoading(`${ids.length}건 삭제 중...`);
+  
+  let successCount = 0;
+  let failCount = 0;
+  
+  for (const id of ids) {
+    try {
+      const response = await axios.delete(`${API_BASE}/barcode/transaction/${id}`);
+      if (response.data.success) {
+        successCount++;
+      } else {
+        failCount++;
+      }
+    } catch (error) {
+      console.error(`[deleteSelectedTransactions] ID ${id} Error:`, error);
+      failCount++;
+    }
+  }
+  
+  hideLoading();
+  
+  if (successCount > 0) {
+    showToast(`✅ ${successCount}건 삭제 완료${failCount > 0 ? `, ${failCount}건 실패` : ''}`, successCount > 0 ? 'success' : 'warning');
+    loadTodayTransactions();
+    loadMaterialInventory();
+  } else {
+    showToast(`❌ 삭제 실패 (${failCount}건)`, 'error');
+  }
+}
+
+// ★★★ v3.4.15: 전체 삭제 ★★★
+async function deleteAllTodayTransactions() {
+  if (!todayTransactionsData || todayTransactionsData.length === 0) {
+    showToast('삭제할 내역이 없습니다.', 'warning');
+    return;
+  }
+  
+  const validIds = todayTransactionsData.filter(t => t.id).map(t => t.id);
+  
+  if (validIds.length === 0) {
+    showToast('삭제 가능한 내역이 없습니다.', 'warning');
+    return;
+  }
+  
+  if (!confirm(`⚠️ 경고: 오늘의 모든 사용/출고 내역(${validIds.length}건)을 삭제하시겠습니까?\n\n삭제된 수량만큼 재고가 복원됩니다.\n이 작업은 되돌릴 수 없습니다!`)) {
+    return;
+  }
+  
+  // 2차 확인
+  if (!confirm(`정말로 ${validIds.length}건을 모두 삭제하시겠습니까?`)) {
+    return;
+  }
+  
+  showLoading(`전체 ${validIds.length}건 삭제 중...`);
+  
+  let successCount = 0;
+  let failCount = 0;
+  
+  for (const id of validIds) {
+    try {
+      const response = await axios.delete(`${API_BASE}/barcode/transaction/${id}`);
+      if (response.data.success) {
+        successCount++;
+      } else {
+        failCount++;
+      }
+    } catch (error) {
+      console.error(`[deleteAllTodayTransactions] ID ${id} Error:`, error);
+      failCount++;
+    }
+  }
+  
+  hideLoading();
+  
+  showToast(`✅ 전체 삭제 완료: ${successCount}건 성공${failCount > 0 ? `, ${failCount}건 실패` : ''}`, successCount > 0 ? 'success' : 'error');
+  loadTodayTransactions();
+  loadMaterialInventory();
 }
 
 // ★★★ v3.4.10: 거래 삭제 (재고 복원) ★★★
@@ -41163,6 +41308,10 @@ async function deleteTransaction(transactionId, itemCode, quantity, itemName) {
 // 전역 함수 노출
 window.loadTodayTransactions = loadTodayTransactions;
 window.deleteTransaction = deleteTransaction;
+window.toggleTransSelectAll = toggleTransSelectAll;
+window.updateDeleteSelectedBtn = updateDeleteSelectedBtn;
+window.deleteSelectedTransactions = deleteSelectedTransactions;
+window.deleteAllTodayTransactions = deleteAllTodayTransactions;
 
 // ★★★ v3.4.12: 발주서 미리보기 인쇄 ★★★
 function printOrderPreview() {

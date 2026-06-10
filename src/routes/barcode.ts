@@ -1422,4 +1422,226 @@ barcodeRoutes.delete('/mapping/:id', async (c) => {
   }
 });
 
+// ★★★ v3.4.7: 원료 재고 현황 (바코드 재고관리 전용) ★★★
+// 일별/월별 수불부와 완전 분리 - inbound 테이블 기반 독립 계산
+barcodeRoutes.get('/material-inventory', async (c) => {
+  try {
+    const search = c.req.query('search') || '';
+    const today = new Date().toISOString().split('T')[0];
+    
+    // 어제 날짜 계산
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    // R169-R172 구형 코드 제외
+    const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172'];
+    const excludePlaceholders = EXCLUDE_CODES.map(() => '?').join(',');
+    
+    // 원료만 조회 (category='원료')
+    let query = `
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.unit,
+        m.barcode,
+        -- 현재고: inbound 테이블의 remain_qty SUM
+        COALESCE(
+          (SELECT SUM(remain_qty) FROM inbound WHERE item_code = m.item_code AND remain_qty > 0),
+          0
+        ) as current_stock,
+        -- 전일재고: 어제까지 입고분 중 현재 남은 양 (어제 기준 remain_qty 추정)
+        COALESCE(
+          (SELECT SUM(remain_qty) FROM inbound 
+           WHERE item_code = m.item_code AND remain_qty > 0 AND inbound_date <= ?),
+          0
+        ) + COALESCE(
+          (SELECT SUM(ABS(quantity)) FROM transactions 
+           WHERE item_code = m.item_code AND trans_date = ? AND trans_type IN ('사용', '출고')),
+          0
+        ) - COALESCE(
+          (SELECT SUM(origin_qty) FROM inbound 
+           WHERE item_code = m.item_code AND inbound_date = ?),
+          0
+        ) as prev_stock,
+        -- 당일입고: 오늘 입고된 origin_qty SUM
+        COALESCE(
+          (SELECT SUM(origin_qty) FROM inbound WHERE item_code = m.item_code AND inbound_date = ?),
+          0
+        ) as today_inbound,
+        -- 당일사용: 오늘 transactions에서 사용/출고량 SUM
+        COALESCE(
+          (SELECT SUM(ABS(quantity)) FROM transactions 
+           WHERE item_code = m.item_code AND trans_date = ? AND trans_type IN ('사용', '출고', '바코드사용')),
+          0
+        ) as today_usage
+      FROM master m
+      WHERE m.category = '원료'
+        AND m.item_code NOT IN (${excludePlaceholders})
+    `;
+    
+    const params: any[] = [yesterdayStr, today, today, today, today, ...EXCLUDE_CODES];
+    
+    if (search) {
+      query += ` AND (m.item_code LIKE ? OR m.item_name LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    
+    query += ` ORDER BY m.item_name`;
+    
+    const result = await c.env.DB.prepare(query).bind(...params).all<any>();
+    
+    // 데이터 후처리 (전일재고 보정)
+    const materials = (result.results || []).map((item: any) => {
+      const currentStock = parseFloat(item.current_stock) || 0;
+      const todayInbound = parseFloat(item.today_inbound) || 0;
+      const todayUsage = parseFloat(item.today_usage) || 0;
+      
+      // 전일재고 = 현재고 - 당일입고 + 당일사용
+      const prevStock = currentStock - todayInbound + todayUsage;
+      
+      return {
+        item_code: item.item_code,
+        item_name: item.item_name,
+        unit: item.unit || 'kg',
+        barcode: item.barcode,
+        prev_stock: Math.max(0, prevStock),
+        today_inbound: todayInbound,
+        today_usage: todayUsage,
+        current_stock: currentStock
+      };
+    });
+    
+    return c.json({
+      success: true,
+      date: today,
+      data: materials,
+      count: materials.length,
+      summary: {
+        total_items: materials.length,
+        total_prev_stock: materials.reduce((sum, m) => sum + m.prev_stock, 0),
+        total_inbound: materials.reduce((sum, m) => sum + m.today_inbound, 0),
+        total_usage: materials.reduce((sum, m) => sum + m.today_usage, 0),
+        total_current_stock: materials.reduce((sum, m) => sum + m.current_stock, 0)
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('[barcode/material-inventory] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.4.7: 원료 재고 직접 수정 (바코드 재고관리 전용) ★★★
+// 일별/월별 수불부에 영향 없음 - inbound 테이블만 조정
+barcodeRoutes.post('/adjust-stock', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { item_code, new_stock, reason, memo } = body;
+    
+    if (!item_code || new_stock === undefined || new_stock === null) {
+      return c.json({ success: false, error: '품목코드와 수정할 재고량을 입력해주세요.' }, 400);
+    }
+    
+    if (new_stock < 0) {
+      return c.json({ success: false, error: '재고량은 0 이상이어야 합니다.' }, 400);
+    }
+    
+    const today = new Date().toISOString().split('T')[0];
+    const timestamp = new Date().toISOString();
+    
+    // 품목 정보 확인 (원료만)
+    const itemInfo = await c.env.DB.prepare(`
+      SELECT item_code, item_name, unit FROM master WHERE item_code = ? AND category = '원료'
+    `).bind(item_code).first<any>();
+    
+    if (!itemInfo) {
+      return c.json({ success: false, error: '원료 품목을 찾을 수 없습니다.' }, 404);
+    }
+    
+    // 현재 재고 계산 (inbound remain_qty SUM)
+    const stockResult = await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(remain_qty), 0) as current_stock FROM inbound WHERE item_code = ? AND remain_qty > 0
+    `).bind(item_code).first<any>();
+    
+    const currentStock = parseFloat(stockResult?.current_stock) || 0;
+    const adjustQty = new_stock - currentStock;
+    
+    if (Math.abs(adjustQty) < 0.001) {
+      return c.json({ success: true, message: '재고 변동이 없습니다.', adjusted: false });
+    }
+    
+    // 조정 사유 텍스트
+    const reasonText = reason || '바코드 재고관리 조정';
+    const fullMemo = memo ? `${reasonText}: ${memo}` : reasonText;
+    
+    if (adjustQty > 0) {
+      // 재고 증가: 새 LOT으로 입고 처리
+      const lotNumber = `ADJ-${today.replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
+      
+      await c.env.DB.prepare(`
+        INSERT INTO inbound (lot_number, item_code, inbound_date, origin_qty, remain_qty, quality_status, storage_location, created_at)
+        VALUES (?, ?, ?, ?, ?, '합격', ?, datetime('now'))
+      `).bind(lotNumber, item_code, today, adjustQty, adjustQty, fullMemo).run();
+      
+      // 조정 거래 기록 (바코드 전용 - 수불부에 영향 없음)
+      await c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
+        VALUES (?, ?, '바코드조정(+)', ?, ?, ?, datetime('now'))
+      `).bind(today, item_code, adjustQty, lotNumber, fullMemo).run();
+      
+    } else {
+      // 재고 감소: 기존 LOT에서 FIFO 차감
+      let remainingDeduct = Math.abs(adjustQty);
+      
+      const lots = await c.env.DB.prepare(`
+        SELECT id, lot_number, remain_qty FROM inbound 
+        WHERE item_code = ? AND remain_qty > 0 
+        ORDER BY expiry_date ASC, inbound_date ASC
+      `).bind(item_code).all<any>();
+      
+      for (const lot of lots.results || []) {
+        if (remainingDeduct <= 0) break;
+        
+        const deductQty = Math.min(remainingDeduct, lot.remain_qty);
+        
+        await c.env.DB.prepare(`
+          UPDATE inbound SET remain_qty = remain_qty - ?, updated_at = datetime('now') WHERE id = ?
+        `).bind(deductQty, lot.id).run();
+        
+        remainingDeduct -= deductQty;
+      }
+      
+      // 조정 거래 기록 (바코드 전용 - 수불부에 영향 없음)
+      await c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo, created_at)
+        VALUES (?, ?, '바코드조정(-)', ?, ?, datetime('now'))
+      `).bind(today, item_code, adjustQty, fullMemo).run();
+    }
+    
+    // master 테이블 current_stock도 업데이트 (동기화)
+    await c.env.DB.prepare(`
+      UPDATE master SET current_stock = ?, updated_at = datetime('now') WHERE item_code = ?
+    `).bind(new_stock, item_code).run();
+    
+    return c.json({
+      success: true,
+      message: `${itemInfo.item_name} 재고가 ${currentStock.toFixed(2)} → ${new_stock.toFixed(2)} ${itemInfo.unit}로 조정되었습니다.`,
+      data: {
+        item_code,
+        item_name: itemInfo.item_name,
+        previous_stock: currentStock,
+        new_stock: new_stock,
+        adjusted_qty: adjustQty,
+        reason: reasonText,
+        adjusted_at: timestamp
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('[barcode/adjust-stock] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default barcodeRoutes;

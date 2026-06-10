@@ -40163,6 +40163,9 @@ function formatDateTime(dateStr) {
 
 // ========== 바코드 재고관리 ==========
 
+// 원료 재고 현황 데이터 캐시 (바코드 전용)
+window.barcodeInventoryData = [];
+
 // 바코드 재고관리 페이지 렌더링
 async function renderBarcodeInventory() {
   const content = document.getElementById('page-content');
@@ -40181,6 +40184,83 @@ async function renderBarcodeInventory() {
           <a href="/barcode.html" target="_blank" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm">
             <i class="fas fa-mobile-alt mr-1"></i> 모바일 전용
           </a>
+        </div>
+      </div>
+      
+      <!-- ★★★ v3.4.7: 원료 재고 현황 (바코드 전용 - 수불부와 완전 분리) ★★★ -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-to-r from-emerald-600 to-green-600 p-4">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
+                <i class="fas fa-boxes text-white text-xl"></i>
+              </div>
+              <div>
+                <h3 class="text-lg font-bold text-white">원료 재고 현황</h3>
+                <p class="text-emerald-100 text-xs">바코드 재고관리 전용 (일별/월별 수불부와 별개)</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="text" id="material-inventory-search" 
+                     class="px-3 py-2 rounded-lg text-sm w-48" 
+                     placeholder="품목코드/원료명 검색..."
+                     onkeypress="if(event.key==='Enter') loadMaterialInventory()">
+              <button onclick="loadMaterialInventory()" class="px-3 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm">
+                <i class="fas fa-sync-alt mr-1"></i> 새로고침
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 요약 정보 -->
+        <div id="material-inventory-summary" class="grid grid-cols-4 gap-4 p-4 bg-gray-50 border-b">
+          <div class="text-center">
+            <p class="text-xs text-gray-500">총 원료</p>
+            <p class="text-lg font-bold text-gray-800">-</p>
+          </div>
+          <div class="text-center">
+            <p class="text-xs text-gray-500">전일재고 합계</p>
+            <p class="text-lg font-bold text-blue-600">-</p>
+          </div>
+          <div class="text-center">
+            <p class="text-xs text-gray-500">당일입고 합계</p>
+            <p class="text-lg font-bold text-green-600">-</p>
+          </div>
+          <div class="text-center">
+            <p class="text-xs text-gray-500">현재고 합계</p>
+            <p class="text-lg font-bold text-emerald-600">-</p>
+          </div>
+        </div>
+        
+        <!-- 테이블 -->
+        <div class="overflow-x-auto" style="max-height: 400px; overflow-y: auto;">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100 sticky top-0">
+              <tr>
+                <th class="px-3 py-2 text-left">No</th>
+                <th class="px-3 py-2 text-left">품목코드</th>
+                <th class="px-3 py-2 text-left">원료명</th>
+                <th class="px-3 py-2 text-right">전일재고</th>
+                <th class="px-3 py-2 text-right">당일입고</th>
+                <th class="px-3 py-2 text-right">당일사용</th>
+                <th class="px-3 py-2 text-right">현재고</th>
+                <th class="px-3 py-2 text-center">단위</th>
+                <th class="px-3 py-2 text-center">수정</th>
+              </tr>
+            </thead>
+            <tbody id="material-inventory-tbody">
+              <tr>
+                <td colspan="9" class="text-center py-8 text-gray-400">
+                  <i class="fas fa-spinner fa-spin mr-2"></i> 데이터를 불러오는 중...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <div class="p-3 bg-gray-50 border-t text-xs text-gray-500">
+          <i class="fas fa-info-circle mr-1"></i>
+          이 데이터는 바코드 재고관리 전용입니다. 일별/월별 수불부 숫자에 영향을 주지 않습니다.
         </div>
       </div>
       
@@ -40449,7 +40529,245 @@ async function renderBarcodeInventory() {
   
   // 자동차감 설정 복원
   setTimeout(() => restoreAutoDeductSetting(), 100);
+  
+  // ★★★ v3.4.7: 원료 재고 현황 자동 로드 ★★★
+  loadMaterialInventory();
 }
+
+// ★★★ v3.4.7: 원료 재고 현황 로드 (바코드 전용 - 수불부와 완전 분리) ★★★
+async function loadMaterialInventory() {
+  const tbody = document.getElementById('material-inventory-tbody');
+  const summaryDiv = document.getElementById('material-inventory-summary');
+  const searchInput = document.getElementById('material-inventory-search');
+  const search = searchInput?.value?.trim() || '';
+  
+  if (!tbody) return;
+  
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="9" class="text-center py-8 text-gray-400">
+        <i class="fas fa-spinner fa-spin mr-2"></i> 데이터를 불러오는 중...
+      </td>
+    </tr>
+  `;
+  
+  try {
+    const response = await axios.get(`${API_BASE}/barcode/material-inventory?search=${encodeURIComponent(search)}`);
+    const result = response.data;
+    
+    if (result.success) {
+      window.barcodeInventoryData = result.data || [];
+      const summary = result.summary || {};
+      
+      // 요약 정보 업데이트
+      if (summaryDiv) {
+        summaryDiv.innerHTML = `
+          <div class="text-center">
+            <p class="text-xs text-gray-500">총 원료</p>
+            <p class="text-lg font-bold text-gray-800">${summary.total_items || 0}종</p>
+          </div>
+          <div class="text-center">
+            <p class="text-xs text-gray-500">전일재고 합계</p>
+            <p class="text-lg font-bold text-blue-600">${formatNumber(summary.total_prev_stock || 0, 2)} kg</p>
+          </div>
+          <div class="text-center">
+            <p class="text-xs text-gray-500">당일입고 합계</p>
+            <p class="text-lg font-bold text-green-600">${formatNumber(summary.total_inbound || 0, 2)} kg</p>
+          </div>
+          <div class="text-center">
+            <p class="text-xs text-gray-500">현재고 합계</p>
+            <p class="text-lg font-bold text-emerald-600">${formatNumber(summary.total_current_stock || 0, 2)} kg</p>
+          </div>
+        `;
+      }
+      
+      // 테이블 렌더링
+      if (window.barcodeInventoryData.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="9" class="text-center py-8 text-gray-400">
+              <i class="fas fa-box-open mr-2"></i> ${search ? '검색 결과가 없습니다.' : '등록된 원료가 없습니다.'}
+            </td>
+          </tr>
+        `;
+      } else {
+        tbody.innerHTML = window.barcodeInventoryData.map((item, idx) => {
+          const prevStock = parseFloat(item.prev_stock) || 0;
+          const todayInbound = parseFloat(item.today_inbound) || 0;
+          const todayUsage = parseFloat(item.today_usage) || 0;
+          const currentStock = parseFloat(item.current_stock) || 0;
+          
+          // 재고 상태에 따른 색상
+          const stockColor = currentStock <= 0 ? 'text-red-600 font-bold' : 
+                            currentStock < prevStock * 0.3 ? 'text-orange-600' : 'text-emerald-600';
+          
+          return `
+            <tr class="hover:bg-gray-50 border-b cursor-pointer" onclick="selectMaterialForBarcode('${item.item_code}')">
+              <td class="px-3 py-2 text-gray-500">${idx + 1}</td>
+              <td class="px-3 py-2 font-mono text-blue-600">${item.item_code}</td>
+              <td class="px-3 py-2 font-medium">${item.item_name || '-'}</td>
+              <td class="px-3 py-2 text-right text-blue-600">${formatNumber(prevStock, 2)}</td>
+              <td class="px-3 py-2 text-right ${todayInbound > 0 ? 'text-green-600 font-medium' : 'text-gray-400'}">${todayInbound > 0 ? '+' + formatNumber(todayInbound, 2) : '-'}</td>
+              <td class="px-3 py-2 text-right ${todayUsage > 0 ? 'text-red-600 font-medium' : 'text-gray-400'}">${todayUsage > 0 ? '-' + formatNumber(todayUsage, 2) : '-'}</td>
+              <td class="px-3 py-2 text-right ${stockColor}">${formatNumber(currentStock, 2)}</td>
+              <td class="px-3 py-2 text-center text-gray-500">${item.unit || 'kg'}</td>
+              <td class="px-3 py-2 text-center">
+                <button onclick="event.stopPropagation(); openStockAdjustModal('${item.item_code}', '${(item.item_name || '').replace(/'/g, "\\'")}', ${currentStock}, '${item.unit || 'kg'}')" 
+                        class="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs hover:bg-blue-200">
+                  <i class="fas fa-edit"></i>
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+    } else {
+      throw new Error(result.error || '데이터 로드 실패');
+    }
+  } catch (error) {
+    console.error('[loadMaterialInventory] Error:', error);
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="9" class="text-center py-8 text-red-400">
+          <i class="fas fa-exclamation-triangle mr-2"></i> 데이터 로드 실패: ${error.message}
+        </td>
+      </tr>
+    `;
+  }
+}
+
+// 원료 선택 시 바코드 스캔 입력창에 품목코드 입력
+function selectMaterialForBarcode(itemCode) {
+  const input = document.getElementById('barcode-scan-input');
+  if (input) {
+    input.value = itemCode;
+    scanBarcode();
+  }
+}
+
+// ★★★ v3.4.7: 재고 수정 모달 ★★★
+function openStockAdjustModal(itemCode, itemName, currentStock, unit) {
+  const modal = document.createElement('div');
+  modal.id = 'stock-adjust-modal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-md">
+      <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 rounded-t-xl">
+        <h3 class="text-lg font-bold text-white">
+          <i class="fas fa-edit mr-2"></i> 재고 수정
+        </h3>
+        <p class="text-blue-100 text-sm">${itemName} (${itemCode})</p>
+      </div>
+      
+      <div class="p-6 space-y-4">
+        <div class="bg-gray-50 p-4 rounded-lg">
+          <p class="text-sm text-gray-500 mb-1">현재 시스템 재고</p>
+          <p class="text-2xl font-bold text-gray-800">${formatNumber(currentStock, 2)} <span class="text-lg text-gray-500">${unit}</span></p>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">수정할 재고량</label>
+          <div class="flex items-center gap-2">
+            <input type="number" id="adjust-new-stock" 
+                   class="flex-1 p-3 border-2 border-blue-300 rounded-lg text-xl font-bold text-center"
+                   value="${currentStock.toFixed(2)}" step="0.01" min="0">
+            <span class="text-gray-500 font-medium">${unit}</span>
+          </div>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">조정 사유</label>
+          <select id="adjust-reason" class="w-full p-3 border rounded-lg">
+            <option value="실사 조정">실사 조정</option>
+            <option value="오류 정정">오류 정정</option>
+            <option value="손실 처리">손실 처리</option>
+            <option value="샘플 사용">샘플 사용</option>
+            <option value="기타">기타</option>
+          </select>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">메모 (선택)</label>
+          <input type="text" id="adjust-memo" class="w-full p-3 border rounded-lg" placeholder="추가 메모 입력">
+        </div>
+        
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+          <i class="fas fa-info-circle mr-1"></i>
+          이 조정은 바코드 재고관리 전용이며, 일별/월별 수불부에 영향을 주지 않습니다.
+        </div>
+      </div>
+      
+      <div class="flex gap-3 p-4 border-t bg-gray-50 rounded-b-xl">
+        <button onclick="closeStockAdjustModal()" class="flex-1 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium">
+          취소
+        </button>
+        <button onclick="submitStockAdjust('${itemCode}')" class="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
+          <i class="fas fa-save mr-1"></i> 저장
+        </button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // 입력 필드에 포커스
+  setTimeout(() => {
+    const input = document.getElementById('adjust-new-stock');
+    if (input) {
+      input.focus();
+      input.select();
+    }
+  }, 100);
+}
+
+function closeStockAdjustModal() {
+  const modal = document.getElementById('stock-adjust-modal');
+  if (modal) modal.remove();
+}
+
+async function submitStockAdjust(itemCode) {
+  const newStock = parseFloat(document.getElementById('adjust-new-stock')?.value);
+  const reason = document.getElementById('adjust-reason')?.value || '실사 조정';
+  const memo = document.getElementById('adjust-memo')?.value || '';
+  
+  if (isNaN(newStock) || newStock < 0) {
+    showToast('올바른 재고량을 입력해주세요.', 'warning');
+    return;
+  }
+  
+  showLoading('재고 수정 중...');
+  
+  try {
+    const response = await axios.post(`${API_BASE}/barcode/adjust-stock`, {
+      item_code: itemCode,
+      new_stock: newStock,
+      reason: reason,
+      memo: memo
+    });
+    
+    if (response.data.success) {
+      showToast(response.data.message || '재고가 수정되었습니다.', 'success');
+      closeStockAdjustModal();
+      
+      // 테이블 새로고침
+      loadMaterialInventory();
+    } else {
+      throw new Error(response.data.error || '재고 수정 실패');
+    }
+  } catch (error) {
+    console.error('[submitStockAdjust] Error:', error);
+    showToast('재고 수정 실패: ' + (error.response?.data?.error || error.message), 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// 전역 함수 노출
+window.loadMaterialInventory = loadMaterialInventory;
+window.selectMaterialForBarcode = selectMaterialForBarcode;
+window.openStockAdjustModal = openStockAdjustModal;
+window.closeStockAdjustModal = closeStockAdjustModal;
+window.submitStockAdjust = submitStockAdjust;
 
 // 바코드 관련 상태
 let barcodeCurrentItem = null;

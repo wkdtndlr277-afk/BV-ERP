@@ -18509,25 +18509,16 @@ function generateClosingPrintHtml(cache, date) {
     
     <!-- 본문 컨테이너 -->
     <div class="main-content">
-      <div class="inventory-summary-bar">
-        <span><strong>전일:</strong> ${formatNumber(totalPrevStock, 2)}</span>
-        <span><strong>입고:</strong> <span class="color-blue">+${formatNumber(totalInbound, 2)}</span></span>
-        <span><strong>사용:</strong> <span class="color-red">-${formatNumber(totalUsage, 2)}</span></span>
-        <span><strong>현재고:</strong> ${formatNumber(totalCurrentStock, 2)}</span>
-        <span><strong>품목:</strong> ${filteredUsage.length}건</span>
-      </div>
-      
-      <!-- ★★★ v3.4.5: 수불부 7컬럼 (입고일/소비기한/거래처 삭제) ★★★ -->
+      <!-- ★★★ v3.4.22: 상단 집계 정보 삭제 + 조정 컬럼 삭제 ★★★ -->
       <table class="main-report-table inventory-table">
         <thead>
           <tr>
-            <th style="width:10%">품목코드</th>
-            <th style="width:28%" class="text-left">품목명</th>
-            <th style="width:12%">전일재고</th>
-            <th style="width:12%">입고량</th>
-            <th style="width:12%">사용량</th>
-            <th style="width:10%">조정</th>
-            <th style="width:12%">현재고</th>
+            <th style="width:12%">품목코드</th>
+            <th style="width:32%" class="text-left">품목명</th>
+            <th style="width:14%">전일재고</th>
+            <th style="width:14%">입고량</th>
+            <th style="width:14%">사용량</th>
+            <th style="width:14%">현재고</th>
           </tr>
         </thead>
         <tbody>
@@ -18535,17 +18526,14 @@ function generateClosingPrintHtml(cache, date) {
             const prevStock = parseFloat(item.prev_stock) || 0;
             const inboundQty = parseFloat(item.inbound_qty) || 0;
             const usedQty = Math.abs(parseFloat(item.total_used) || 0);
-            const adjustment = parseFloat(item.adjustment) || 0;
             const currentStock = parseFloat(item.current_stock) || 0;
             
-            // ★★★ v3.4.21: 무결성 검증 표시 제거 (내부용 - 외부 문서에 표시 안함) ★★★
             return '<tr>' +
               '<td>' + item.item_code + '</td>' +
               '<td class="text-left">' + (item.item_name || item.item_code) + '</td>' +
               '<td class="text-right">' + formatNumber(prevStock, 2) + '</td>' +
               '<td class="text-right color-blue">' + (inboundQty > 0 ? '+' + formatNumber(inboundQty, 2) : '-') + '</td>' +
               '<td class="text-right color-red">' + (usedQty > 0 ? '-' + formatNumber(usedQty, 2) : '-') + '</td>' +
-              '<td class="text-right">' + (adjustment !== 0 ? formatNumber(adjustment, 2) : '-') + '</td>' +
               '<td class="text-right color-green">' + formatNumber(currentStock, 2) + '</td>' +
             '</tr>';
           }).join('')}
@@ -18556,7 +18544,6 @@ function generateClosingPrintHtml(cache, date) {
             <td class="text-right"><strong>${formatNumber(totalPrevStock, 2)}</strong></td>
             <td class="text-right color-blue"><strong>+${formatNumber(totalInbound, 2)}</strong></td>
             <td class="text-right color-red"><strong>-${formatNumber(totalUsage, 2)}</strong></td>
-            <td class="text-right">-</td>
             <td class="text-right color-green"><strong>${formatNumber(totalCurrentStock, 2)}</strong></td>
           </tr>
         </tfoot>

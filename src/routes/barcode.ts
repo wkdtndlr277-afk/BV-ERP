@@ -423,9 +423,10 @@ barcodeRoutes.post('/inbound', async (c) => {
       
     } else {
       // 원료/부자재 입고 - inbound
+      // ★★★ v3.4.6 Fix: inbound 테이블에 memo 컬럼 없음 - storage_location에 메모 저장 ★★★
       await c.env.DB.prepare(`
         INSERT INTO inbound 
-        (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, memo, created_at)
+        (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, storage_location, created_at)
         VALUES (?, ?, ?, ?, ?, ?, '합격', ?, datetime('now'))
       `).bind(lotNumber, item_code, today, calculatedExpiry, quantity, quantity, memo || '바코드 스캔 입고').run();
       

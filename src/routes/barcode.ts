@@ -1635,3 +1635,195 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
 });
 
 export default barcodeRoutes;
+
+// ★★★ v3.4.10: 바코드 사용/출고 거래 삭제 (재고 복원) ★★★
+barcodeRoutes.delete('/transaction/:id', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  
+  if (!id || isNaN(id)) {
+    return c.json({ success: false, error: '유효한 거래 ID가 필요합니다.' }, 400);
+  }
+  
+  try {
+    // 1. 거래 정보 조회
+    const transaction: any = await c.env.DB.prepare(`
+      SELECT id, trans_date, item_code, trans_type, quantity, lot_number, memo
+      FROM transactions WHERE id = ?
+    `).bind(id).first();
+    
+    if (!transaction) {
+      return c.json({ success: false, error: '거래 내역을 찾을 수 없습니다.' }, 404);
+    }
+    
+    const { item_code, trans_type, quantity, lot_number } = transaction;
+    const absQty = Math.abs(quantity);
+    
+    // 2. 사용/출고 거래만 삭제 가능 (입고는 별도 처리 필요)
+    if (!['사용', '출고', '바코드사용', '바코드조정(-)'].includes(trans_type)) {
+      return c.json({ 
+        success: false, 
+        error: `'${trans_type}' 타입의 거래는 이 기능으로 삭제할 수 없습니다. 사용/출고 거래만 삭제 가능합니다.` 
+      }, 400);
+    }
+    
+    // 3. 해당 LOT의 inbound 찾아서 remain_qty 복원
+    if (lot_number) {
+      const inbound: any = await c.env.DB.prepare(`
+        SELECT id, remain_qty, origin_qty FROM inbound 
+        WHERE item_code = ? AND lot_number = ?
+      `).bind(item_code, lot_number).first();
+      
+      if (inbound) {
+        // remain_qty 복원 (origin_qty 초과하지 않도록)
+        const newRemainQty = Math.min(inbound.remain_qty + absQty, inbound.origin_qty);
+        await c.env.DB.prepare(`
+          UPDATE inbound SET remain_qty = ? WHERE id = ?
+        `).bind(newRemainQty, inbound.id).run();
+      }
+    }
+    
+    // 4. master 테이블의 current_stock 복원
+    await c.env.DB.prepare(`
+      UPDATE master SET current_stock = COALESCE(current_stock, 0) + ? WHERE item_code = ?
+    `).bind(absQty, item_code).run();
+    
+    // 5. 거래 레코드 삭제
+    await c.env.DB.prepare(`DELETE FROM transactions WHERE id = ?`).bind(id).run();
+    
+    // 6. 복원 후 현재 재고 조회
+    const updatedStock: any = await c.env.DB.prepare(`
+      SELECT current_stock FROM master WHERE item_code = ?
+    `).bind(item_code).first();
+    
+    return c.json({
+      success: true,
+      message: `거래 삭제 완료. ${absQty} 재고가 복원되었습니다.`,
+      data: {
+        deleted_transaction: transaction,
+        restored_qty: absQty,
+        current_stock: updatedStock?.current_stock || 0
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('[barcode/transaction DELETE] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.4.10: 제품 거래 삭제 (production_transactions) ★★★
+barcodeRoutes.delete('/product-transaction/:id', async (c) => {
+  const id = parseInt(c.req.param('id'));
+  
+  if (!id || isNaN(id)) {
+    return c.json({ success: false, error: '유효한 거래 ID가 필요합니다.' }, 400);
+  }
+  
+  try {
+    // 1. 거래 정보 조회
+    const transaction: any = await c.env.DB.prepare(`
+      SELECT id, trans_date, production_code, trans_type, quantity, lot_number, memo
+      FROM production_transactions WHERE id = ?
+    `).bind(id).first();
+    
+    if (!transaction) {
+      return c.json({ success: false, error: '거래 내역을 찾을 수 없습니다.' }, 404);
+    }
+    
+    const { production_code, trans_type, quantity, lot_number } = transaction;
+    const absQty = Math.abs(quantity);
+    
+    // 2. 출고 거래만 삭제 가능
+    if (!['출고', '바코드출고'].includes(trans_type)) {
+      return c.json({ 
+        success: false, 
+        error: `'${trans_type}' 타입의 거래는 삭제할 수 없습니다.` 
+      }, 400);
+    }
+    
+    // 3. 해당 LOT의 production_inbound 찾아서 remain_qty 복원
+    if (lot_number) {
+      const inbound: any = await c.env.DB.prepare(`
+        SELECT id, remain_qty, origin_qty FROM production_inbound 
+        WHERE production_code = ? AND lot_number = ?
+      `).bind(production_code, lot_number).first();
+      
+      if (inbound) {
+        const newRemainQty = Math.min(inbound.remain_qty + absQty, inbound.origin_qty);
+        await c.env.DB.prepare(`
+          UPDATE production_inbound SET remain_qty = ? WHERE id = ?
+        `).bind(newRemainQty, inbound.id).run();
+      }
+    }
+    
+    // 4. production_items의 current_stock 복원
+    await c.env.DB.prepare(`
+      UPDATE production_items SET current_stock = COALESCE(current_stock, 0) + ? WHERE production_code = ?
+    `).bind(absQty, production_code).run();
+    
+    // 5. 거래 레코드 삭제
+    await c.env.DB.prepare(`DELETE FROM production_transactions WHERE id = ?`).bind(id).run();
+    
+    return c.json({
+      success: true,
+      message: `거래 삭제 완료. ${absQty} 재고가 복원되었습니다.`,
+      data: {
+        deleted_transaction: transaction,
+        restored_qty: absQty
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('[barcode/product-transaction DELETE] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.4.10: 오늘 날짜의 사용/출고 내역 조회 (삭제용) ★★★
+barcodeRoutes.get('/today-transactions', async (c) => {
+  try {
+    const dateParam = c.req.query('date');
+    const targetDate = dateParam || new Date().toISOString().split('T')[0];
+    const item_code = c.req.query('item_code');
+    
+    let query = `
+      SELECT 
+        t.id,
+        t.trans_date,
+        t.item_code,
+        COALESCE(m.item_name, t.item_code) as item_name,
+        t.trans_type,
+        t.quantity,
+        t.lot_number,
+        t.memo,
+        t.created_at,
+        m.unit
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE t.trans_date = ?
+        AND t.trans_type IN ('사용', '출고', '바코드사용', '바코드조정(-)')
+    `;
+    
+    const params: any[] = [targetDate];
+    
+    if (item_code) {
+      query += ` AND t.item_code = ?`;
+      params.push(item_code);
+    }
+    
+    query += ` ORDER BY t.created_at DESC, t.id DESC LIMIT 100`;
+    
+    const result = await c.env.DB.prepare(query).bind(...params).all<any>();
+    
+    return c.json({
+      success: true,
+      date: targetDate,
+      data: result.results || [],
+      count: result.results?.length || 0
+    });
+    
+  } catch (error: any) {
+    console.error('[barcode/today-transactions] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});

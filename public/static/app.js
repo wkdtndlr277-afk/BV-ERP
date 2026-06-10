@@ -40205,7 +40205,7 @@ async function renderBarcodeInventory() {
                 <i class="fas fa-calendar text-white/70 text-sm"></i>
                 <input type="date" id="material-inventory-date" 
                        class="px-2 py-1 rounded text-sm bg-white text-gray-800"
-                       onchange="loadMaterialInventory()">
+                       onchange="loadMaterialInventory(); loadTodayTransactions();">
               </div>
               <input type="text" id="material-inventory-search" 
                      class="px-3 py-2 rounded-lg text-sm w-40" 
@@ -40267,6 +40267,58 @@ async function renderBarcodeInventory() {
         <div class="p-3 bg-gray-50 border-t text-xs text-gray-500">
           <i class="fas fa-info-circle mr-1"></i>
           이 데이터는 바코드 재고관리 전용입니다. 일별/월별 수불부 숫자에 영향을 주지 않습니다.
+        </div>
+      </div>
+      
+      <!-- ★★★ v3.4.10: 당일 사용/출고 내역 (삭제 가능) ★★★ -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-to-r from-red-500 to-rose-500 p-4">
+          <div class="flex items-center justify-between flex-wrap gap-3">
+            <div class="flex items-center gap-3">
+              <div class="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center">
+                <i class="fas fa-history text-white text-xl"></i>
+              </div>
+              <div>
+                <h3 class="text-lg font-bold text-white">당일 사용/출고 내역</h3>
+                <p class="text-rose-100 text-xs">잘못 차감된 내역을 삭제하여 재고 복원</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="loadTodayTransactions()" class="px-3 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm">
+                <i class="fas fa-sync-alt mr-1"></i> 새로고침
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 테이블 -->
+        <div class="overflow-x-auto" style="max-height: 300px; overflow-y: auto;">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100 sticky top-0">
+              <tr>
+                <th class="px-3 py-2 text-left">시간</th>
+                <th class="px-3 py-2 text-left">품목코드</th>
+                <th class="px-3 py-2 text-left">원료명</th>
+                <th class="px-3 py-2 text-center">유형</th>
+                <th class="px-3 py-2 text-right">수량</th>
+                <th class="px-3 py-2 text-left">LOT번호</th>
+                <th class="px-3 py-2 text-left">메모</th>
+                <th class="px-3 py-2 text-center">삭제</th>
+              </tr>
+            </thead>
+            <tbody id="today-transactions-tbody">
+              <tr>
+                <td colspan="8" class="text-center py-6 text-gray-400">
+                  <i class="fas fa-spinner fa-spin mr-2"></i> 데이터를 불러오는 중...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        
+        <div class="p-3 bg-red-50 border-t text-xs text-red-600">
+          <i class="fas fa-exclamation-triangle mr-1"></i>
+          <strong>주의:</strong> 내역 삭제 시 해당 수량만큼 재고가 복원됩니다. 신중하게 삭제하세요.
         </div>
       </div>
       
@@ -40538,6 +40590,9 @@ async function renderBarcodeInventory() {
   
   // ★★★ v3.4.7: 원료 재고 현황 자동 로드 ★★★
   loadMaterialInventory();
+  
+  // ★★★ v3.4.10: 당일 사용/출고 내역 자동 로드 ★★★
+  loadTodayTransactions();
 }
 
 // ★★★ v3.4.7: 원료 재고 현황 로드 (바코드 전용 - 수불부와 완전 분리) ★★★
@@ -40781,6 +40836,116 @@ window.selectMaterialForBarcode = selectMaterialForBarcode;
 window.openStockAdjustModal = openStockAdjustModal;
 window.closeStockAdjustModal = closeStockAdjustModal;
 window.submitStockAdjust = submitStockAdjust;
+
+// ★★★ v3.4.10: 당일 사용/출고 내역 로드 ★★★
+async function loadTodayTransactions() {
+  const tbody = document.getElementById('today-transactions-tbody');
+  if (!tbody) return;
+  
+  tbody.innerHTML = `
+    <tr>
+      <td colspan="8" class="text-center py-6 text-gray-400">
+        <i class="fas fa-spinner fa-spin mr-2"></i> 데이터를 불러오는 중...
+      </td>
+    </tr>
+  `;
+  
+  try {
+    // 원료 재고 현황의 날짜와 동일하게 사용
+    const dateInput = document.getElementById('material-inventory-date');
+    const targetDate = dateInput?.value || new Date().toISOString().split('T')[0];
+    
+    const response = await axios.get(`${API_BASE}/barcode/today-transactions?date=${targetDate}`);
+    const result = response.data;
+    
+    if (result.success) {
+      const transactions = result.data || [];
+      
+      if (transactions.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="8" class="text-center py-6 text-gray-400">
+              <i class="fas fa-inbox mr-2"></i> ${targetDate} 사용/출고 내역이 없습니다.
+            </td>
+          </tr>
+        `;
+      } else {
+        tbody.innerHTML = transactions.map((t) => {
+          const time = t.created_at ? new Date(t.created_at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute:'2-digit'}) : '-';
+          const absQty = Math.abs(parseFloat(t.quantity) || 0);
+          const unit = t.unit || 'kg';
+          
+          // 유형별 색상
+          const typeColor = t.trans_type === '출고' ? 'bg-purple-100 text-purple-700' : 'bg-red-100 text-red-700';
+          
+          return `
+            <tr class="hover:bg-gray-50 border-b">
+              <td class="px-3 py-2 text-gray-500 text-xs">${time}</td>
+              <td class="px-3 py-2 font-mono text-blue-600 text-xs">${t.item_code}</td>
+              <td class="px-3 py-2 font-medium">${t.item_name || '-'}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="px-2 py-0.5 rounded text-xs ${typeColor}">${t.trans_type}</span>
+              </td>
+              <td class="px-3 py-2 text-right text-red-600 font-medium">-${formatNumber(absQty, 2)} ${unit}</td>
+              <td class="px-3 py-2 text-gray-500 text-xs font-mono">${t.lot_number || '-'}</td>
+              <td class="px-3 py-2 text-gray-500 text-xs">${t.memo || '-'}</td>
+              <td class="px-3 py-2 text-center">
+                <button onclick="deleteTransaction(${t.id}, '${t.item_code}', ${absQty}, '${t.item_name?.replace(/'/g, "\\'") || ''}')" 
+                        class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      }
+    } else {
+      throw new Error(result.error || '데이터 로드 실패');
+    }
+  } catch (error) {
+    console.error('[loadTodayTransactions] Error:', error);
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="8" class="text-center py-6 text-red-400">
+          <i class="fas fa-exclamation-triangle mr-2"></i> 데이터 로드 실패: ${error.message}
+        </td>
+      </tr>
+    `;
+  }
+}
+
+// ★★★ v3.4.10: 거래 삭제 (재고 복원) ★★★
+async function deleteTransaction(transactionId, itemCode, quantity, itemName) {
+  const confirmMsg = `정말로 이 내역을 삭제하시겠습니까?\n\n품목: ${itemName || itemCode}\n수량: ${quantity}\n\n삭제 시 해당 수량만큼 재고가 복원됩니다.`;
+  
+  if (!confirm(confirmMsg)) return;
+  
+  showLoading('거래 삭제 중...');
+  
+  try {
+    const response = await axios.delete(`${API_BASE}/barcode/transaction/${transactionId}`);
+    
+    if (response.data.success) {
+      showToast(`✅ ${response.data.message}`, 'success');
+      
+      // 테이블 새로고침
+      loadTodayTransactions();
+      loadMaterialInventory();
+    } else {
+      showToast(response.data.error || '삭제 실패', 'error');
+    }
+  } catch (error) {
+    console.error('[deleteTransaction] Error:', error);
+    showToast('삭제 실패: ' + (error.response?.data?.error || error.message), 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// 전역 함수 노출
+window.loadTodayTransactions = loadTodayTransactions;
+window.deleteTransaction = deleteTransaction;
+
 
 // 바코드 관련 상태
 let barcodeCurrentItem = null;

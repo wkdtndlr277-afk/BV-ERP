@@ -41586,7 +41586,9 @@ function displayAutoDeductResult(item, qty, packUnitName, result) {
   resultDiv.classList.remove('hidden');
   lotListDiv.classList.add('hidden');
   
-  const prevStock = item.current_stock || 0;
+  // ★★★ v3.4.19: 원료 재고 현황 기준 전일재고 사용 ★★★
+  // prev_stock이 있으면 사용, 없으면 current_stock 사용 (하위 호환)
+  const prevStock = item.prev_stock !== undefined ? item.prev_stock : (item.current_stock || 0);
   const newStock = prevStock - qty;
   const usedLots = result.used_lots || [];
   

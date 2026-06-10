@@ -177,6 +177,45 @@ barcodeRoutes.get('/scan', async (c) => {
       lots = lotResult.results || [];
     }
     
+    // ★★★ v3.4.19: 원료 재고 현황과 동일한 재고 계산 (prev_stock) ★★★
+    // 원료의 경우: prev_stock(전일재고) = inbound.remain_qty SUM - 당일입고 + 당일사용
+    // current_stock = inbound.remain_qty SUM (실시간 잔량)
+    if (item.category === '원료' && (source === 'master' || source === 'barcode_mapping')) {
+      const today = getKSTDate();
+      
+      // 실시간 재고: inbound remain_qty SUM
+      const inboundStock = await c.env.DB.prepare(`
+        SELECT COALESCE(SUM(remain_qty), 0) as total 
+        FROM inbound WHERE item_code = ? AND remain_qty > 0
+      `).bind(item.item_code).first<{total: number}>();
+      const currentStock = inboundStock?.total || 0;
+      
+      // 당일 입고량
+      const todayInbound = await c.env.DB.prepare(`
+        SELECT COALESCE(SUM(origin_qty), 0) as total 
+        FROM inbound WHERE item_code = ? AND inbound_date = ?
+      `).bind(item.item_code, today).first<{total: number}>();
+      const todayInboundQty = todayInbound?.total || 0;
+      
+      // 당일 사용량 (음수값의 절대값)
+      const todayUsage = await c.env.DB.prepare(`
+        SELECT COALESCE(SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END), 0) as total
+        FROM transactions 
+        WHERE item_code = ? AND trans_date = ? 
+          AND trans_type IN ('사용', '출고', '바코드사용', '바코드조정(-)')
+      `).bind(item.item_code, today).first<{total: number}>();
+      const todayUsageQty = todayUsage?.total || 0;
+      
+      // 전일재고 = 현재고 - 당일입고 + 당일사용
+      const prevStock = currentStock - todayInboundQty + todayUsageQty;
+      
+      // 아이템에 계산된 재고 정보 추가
+      item.current_stock = currentStock;
+      item.prev_stock = Math.max(0, prevStock);
+      item.today_inbound = todayInboundQty;
+      item.today_usage = todayUsageQty;
+    }
+    
     return c.json({
       success: true,
       data: {

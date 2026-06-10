@@ -40957,52 +40957,55 @@ function openStockAdjustModal(itemCode, itemName, currentStock, unit) {
   modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
   modal.innerHTML = `
     <div class="bg-white rounded-xl shadow-2xl w-full max-w-md">
-      <div class="bg-gradient-to-r from-orange-500 to-amber-500 p-4 rounded-t-xl">
+      <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-4 rounded-t-xl">
         <h3 class="text-lg font-bold text-white">
-          <i class="fas fa-edit mr-2"></i> 전일재고 수정
+          <i class="fas fa-edit mr-2"></i> 재고 수정
         </h3>
-        <p class="text-orange-100 text-sm">${itemName} (${itemCode})</p>
+        <p class="text-blue-100 text-sm">${itemName} (${itemCode})</p>
       </div>
       
       <div class="p-6 space-y-4">
-        <!-- 재고 구조 설명 -->
-        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
-          <i class="fas fa-info-circle mr-1"></i>
-          <strong>재고 계산:</strong> 현재재고 = 전일재고 - 당일사용<br>
-          <span class="text-xs">※ 재고 수정은 <strong>전일재고</strong>를 변경합니다.</span>
+        <div class="bg-gray-50 p-4 rounded-lg">
+          <p class="text-sm text-gray-500 mb-1">현재 시스템 재고</p>
+          <p class="text-2xl font-bold text-gray-800">${formatNumber(currentStock, 2)} <span class="text-lg text-gray-500">${unit}</span></p>
         </div>
         
-        <div class="bg-gray-50 p-4 rounded-lg">
-          <div class="grid grid-cols-2 gap-4 text-center">
-            <div>
-              <p class="text-xs text-gray-500 mb-1">현재 시스템 재고</p>
-              <p class="text-xl font-bold text-gray-800">${formatNumber(currentStock, 2)} <span class="text-sm text-gray-500">${unit}</span></p>
-            </div>
-            <div>
-              <p class="text-xs text-gray-500 mb-1">조정 기준일</p>
-              <p class="text-xl font-bold text-orange-600">${yesterdayStr}</p>
-            </div>
+        <!-- ★★★ v3.4.17: 조정 유형 선택 ★★★ -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">조정 유형</label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center p-3 border-2 rounded-lg cursor-pointer hover:bg-blue-50 has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50">
+              <input type="radio" name="adjust-type" value="current" checked class="mr-2">
+              <div>
+                <div class="font-medium text-gray-800">현재재고 수정</div>
+                <div class="text-xs text-gray-500">오늘 기준 조정</div>
+              </div>
+            </label>
+            <label class="flex items-center p-3 border-2 rounded-lg cursor-pointer hover:bg-orange-50 has-[:checked]:border-orange-500 has-[:checked]:bg-orange-50">
+              <input type="radio" name="adjust-type" value="previous" class="mr-2">
+              <div>
+                <div class="font-medium text-gray-800">전일재고 수정</div>
+                <div class="text-xs text-gray-500">어제(${yesterdayStr}) 기준</div>
+              </div>
+            </label>
           </div>
         </div>
         
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-2">
-            <i class="fas fa-boxes text-orange-500 mr-1"></i> 수정할 전일재고
-          </label>
+          <label class="block text-sm font-medium text-gray-700 mb-2">수정할 재고량</label>
           <div class="flex items-center gap-2">
             <input type="number" id="adjust-new-stock" 
-                   class="flex-1 p-3 border-2 border-orange-300 rounded-lg text-xl font-bold text-center focus:border-orange-500 focus:ring-2 focus:ring-orange-200"
+                   class="flex-1 p-3 border-2 border-blue-300 rounded-lg text-xl font-bold text-center"
                    value="${currentStock.toFixed(2)}" step="0.01" min="0">
             <span class="text-gray-500 font-medium">${unit}</span>
           </div>
-          <p class="text-xs text-gray-500 mt-1">※ 이 값이 어제(${yesterdayStr}) 마감 재고로 설정됩니다.</p>
         </div>
         
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-2">조정 사유</label>
           <select id="adjust-reason" class="w-full p-3 border rounded-lg">
-            <option value="전일재고 정정">전일재고 정정</option>
             <option value="실사 조정">실사 조정</option>
+            <option value="전일재고 정정">전일재고 정정</option>
             <option value="오류 정정">오류 정정</option>
             <option value="손실 처리">손실 처리</option>
             <option value="샘플 사용">샘플 사용</option>
@@ -41014,14 +41017,19 @@ function openStockAdjustModal(itemCode, itemName, currentStock, unit) {
           <label class="block text-sm font-medium text-gray-700 mb-2">메모 (선택)</label>
           <input type="text" id="adjust-memo" class="w-full p-3 border rounded-lg" placeholder="추가 메모 입력">
         </div>
+        
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+          <i class="fas fa-info-circle mr-1"></i>
+          <strong>전일재고 수정</strong>: 어제 날짜로 조정 기록이 생성되어 전일재고가 변경됩니다.
+        </div>
       </div>
       
       <div class="flex gap-3 p-4 border-t bg-gray-50 rounded-b-xl">
         <button onclick="closeStockAdjustModal()" class="flex-1 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium">
           취소
         </button>
-        <button onclick="submitStockAdjust('${itemCode}')" class="flex-1 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium">
-          <i class="fas fa-save mr-1"></i> 전일재고 수정
+        <button onclick="submitStockAdjust('${itemCode}')" class="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
+          <i class="fas fa-save mr-1"></i> 저장
         </button>
       </div>
     </div>
@@ -41046,15 +41054,18 @@ function closeStockAdjustModal() {
 
 async function submitStockAdjust(itemCode) {
   const newStock = parseFloat(document.getElementById('adjust-new-stock')?.value);
-  const reason = document.getElementById('adjust-reason')?.value || '전일재고 정정';
+  const reason = document.getElementById('adjust-reason')?.value || '실사 조정';
   const memo = document.getElementById('adjust-memo')?.value || '';
+  
+  // ★★★ v3.4.17: 조정 유형 (현재재고/전일재고) ★★★
+  const adjustType = document.querySelector('input[name="adjust-type"]:checked')?.value || 'current';
   
   if (isNaN(newStock) || newStock < 0) {
     showToast('올바른 재고량을 입력해주세요.', 'warning');
     return;
   }
   
-  showLoading('전일재고 수정 중...');
+  showLoading('재고 수정 중...');
   
   try {
     const response = await axios.post(`${API_BASE}/barcode/adjust-stock`, {
@@ -41062,21 +41073,21 @@ async function submitStockAdjust(itemCode) {
       new_stock: newStock,
       reason: reason,
       memo: memo,
-      adjust_type: 'previous'  // ★★★ v3.4.18: 항상 전일재고 수정 ★★★
+      adjust_type: adjustType  // 'current' 또는 'previous'
     });
     
     if (response.data.success) {
-      showToast(response.data.message || '전일재고가 수정되었습니다.', 'success');
+      showToast(response.data.message || '재고가 수정되었습니다.', 'success');
       closeStockAdjustModal();
       
       // 테이블 새로고침
       loadMaterialInventory();
     } else {
-      throw new Error(response.data.error || '전일재고 수정 실패');
+      throw new Error(response.data.error || '재고 수정 실패');
     }
   } catch (error) {
     console.error('[submitStockAdjust] Error:', error);
-    showToast('전일재고 수정 실패: ' + (error.response?.data?.error || error.message), 'error');
+    showToast('재고 수정 실패: ' + (error.response?.data?.error || error.message), 'error');
   } finally {
     hideLoading();
   }
@@ -41086,7 +41097,6 @@ async function submitStockAdjust(itemCode) {
 window.loadMaterialInventory = loadMaterialInventory;
 window.selectMaterialForBarcode = selectMaterialForBarcode;
 window.openStockAdjustModal = openStockAdjustModal;
-window.closeStockAdjustModal = closeStockAdjustModal;
 window.closeStockAdjustModal = closeStockAdjustModal;
 window.submitStockAdjust = submitStockAdjust;
 

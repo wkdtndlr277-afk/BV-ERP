@@ -40712,14 +40712,215 @@ async function loadMaterialInventory() {
   }
 }
 
-// 원료 선택 시 바코드 스캔 입력창에 품목코드 입력
-function selectMaterialForBarcode(itemCode) {
+// ★★★ v3.4.13: 원료 선택 시 세부내역 조회 모달 (차감 없음) ★★★
+async function selectMaterialForBarcode(itemCode) {
+  showLoading('세부내역 조회 중...');
+  
+  try {
+    // 1. 품목 정보 조회 (LOT 목록 포함)
+    const scanRes = await axios.get(`${API_BASE}/barcode/scan?barcode=${encodeURIComponent(itemCode)}`);
+    
+    if (!scanRes.data.success || !scanRes.data.data) {
+      showToast('품목 정보를 찾을 수 없습니다.', 'error');
+      return;
+    }
+    
+    const item = scanRes.data.data;
+    const lots = item.lots || [];
+    
+    // 2. 최근 거래 내역 조회 (최근 10건)
+    const selectedDate = document.getElementById('material-inventory-date')?.value || getLocalDateString();
+    const transRes = await axios.get(`${API_BASE}/barcode/today-transactions?date=${selectedDate}&item_code=${itemCode}`);
+    const transactions = transRes.data.success ? (transRes.data.data || []) : [];
+    
+    // 3. 모달 표시
+    showMaterialDetailModal(item, lots, transactions, selectedDate);
+    
+  } catch (error) {
+    console.error('[selectMaterialForBarcode] Error:', error);
+    showToast('세부내역 조회 실패: ' + error.message, 'error');
+  } finally {
+    hideLoading();
+  }
+}
+
+// 원료 세부내역 모달 표시
+function showMaterialDetailModal(item, lots, transactions, date) {
+  // 기존 모달 제거
+  document.getElementById('material-detail-modal')?.remove();
+  
+  const totalRemain = lots.reduce((sum, lot) => sum + (parseFloat(lot.remain_qty) || 0), 0);
+  
+  const modal = document.createElement('div');
+  modal.id = 'material-detail-modal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
+      <!-- 헤더 -->
+      <div class="bg-gradient-to-r from-blue-600 to-indigo-600 p-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-bold text-white">
+              <i class="fas fa-box-open mr-2"></i> ${item.item_name || item.item_code}
+            </h3>
+            <p class="text-blue-100 text-sm">${item.item_code} | ${item.category || '원료'}</p>
+          </div>
+          <button onclick="document.getElementById('material-detail-modal').remove()" 
+                  class="text-white/80 hover:text-white text-xl">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+      
+      <!-- 재고 요약 -->
+      <div class="p-4 bg-gray-50 border-b">
+        <div class="grid grid-cols-3 gap-4 text-center">
+          <div>
+            <p class="text-2xl font-bold text-blue-600">${formatNumber(item.current_stock || 0, 2)}</p>
+            <p class="text-xs text-gray-500">현재고 (${item.unit || 'kg'})</p>
+          </div>
+          <div>
+            <p class="text-2xl font-bold text-green-600">${formatNumber(totalRemain, 2)}</p>
+            <p class="text-xs text-gray-500">LOT별 잔량 합계</p>
+          </div>
+          <div>
+            <p class="text-2xl font-bold text-purple-600">${lots.length}</p>
+            <p class="text-xs text-gray-500">보유 LOT 수</p>
+          </div>
+        </div>
+      </div>
+      
+      <div class="overflow-y-auto" style="max-height: calc(90vh - 200px)">
+        <!-- LOT별 재고 -->
+        <div class="p-4 border-b">
+          <h4 class="font-bold text-gray-800 mb-3">
+            <i class="fas fa-layer-group mr-2 text-blue-500"></i> LOT별 재고 현황
+          </h4>
+          ${lots.length > 0 ? `
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-100">
+                  <tr>
+                    <th class="px-3 py-2 text-left">LOT번호</th>
+                    <th class="px-3 py-2 text-center">입고일</th>
+                    <th class="px-3 py-2 text-center">유통기한</th>
+                    <th class="px-3 py-2 text-right">잔량</th>
+                    <th class="px-3 py-2 text-center">상태</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${lots.map(lot => {
+                    const remain = parseFloat(lot.remain_qty) || 0;
+                    const expiry = lot.expiry_date ? new Date(lot.expiry_date) : null;
+                    const today = new Date();
+                    const daysLeft = expiry ? Math.ceil((expiry - today) / (1000*60*60*24)) : null;
+                    
+                    let statusBadge = '';
+                    if (remain <= 0) {
+                      statusBadge = '<span class="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-xs">소진</span>';
+                    } else if (daysLeft !== null && daysLeft <= 0) {
+                      statusBadge = '<span class="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">만료</span>';
+                    } else if (daysLeft !== null && daysLeft <= 7) {
+                      statusBadge = '<span class="px-2 py-0.5 bg-orange-100 text-orange-700 rounded text-xs">임박</span>';
+                    } else {
+                      statusBadge = '<span class="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs">정상</span>';
+                    }
+                    
+                    return `
+                      <tr class="border-b hover:bg-gray-50">
+                        <td class="px-3 py-2 font-mono text-xs">${lot.lot_number || '-'}</td>
+                        <td class="px-3 py-2 text-center text-xs">${lot.inbound_date || '-'}</td>
+                        <td class="px-3 py-2 text-center text-xs">${lot.expiry_date || '-'}</td>
+                        <td class="px-3 py-2 text-right font-medium ${remain > 0 ? 'text-green-600' : 'text-gray-400'}">${formatNumber(remain, 2)}</td>
+                        <td class="px-3 py-2 text-center">${statusBadge}</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `
+            <p class="text-gray-400 text-center py-4"><i class="fas fa-inbox mr-2"></i>등록된 LOT가 없습니다.</p>
+          `}
+        </div>
+        
+        <!-- 당일 거래 내역 -->
+        <div class="p-4">
+          <h4 class="font-bold text-gray-800 mb-3">
+            <i class="fas fa-history mr-2 text-orange-500"></i> ${date} 거래 내역
+          </h4>
+          ${transactions.length > 0 ? `
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-gray-100">
+                  <tr>
+                    <th class="px-3 py-2 text-left">시간</th>
+                    <th class="px-3 py-2 text-center">유형</th>
+                    <th class="px-3 py-2 text-right">수량</th>
+                    <th class="px-3 py-2 text-left">LOT</th>
+                    <th class="px-3 py-2 text-left">메모</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${transactions.map(t => {
+                    const time = t.created_at ? new Date(t.created_at).toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'}) : '-';
+                    const qty = parseFloat(t.quantity) || 0;
+                    const typeColor = t.trans_type.includes('출고') ? 'bg-purple-100 text-purple-700' : 'bg-red-100 text-red-700';
+                    
+                    return `
+                      <tr class="border-b hover:bg-gray-50">
+                        <td class="px-3 py-2 text-xs">${time}</td>
+                        <td class="px-3 py-2 text-center">
+                          <span class="px-2 py-0.5 rounded text-xs ${typeColor}">${t.trans_type}</span>
+                        </td>
+                        <td class="px-3 py-2 text-right text-red-600 font-medium">-${formatNumber(Math.abs(qty), 2)}</td>
+                        <td class="px-3 py-2 font-mono text-xs">${t.lot_number || '-'}</td>
+                        <td class="px-3 py-2 text-xs text-gray-500">${t.memo || '-'}</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          ` : `
+            <p class="text-gray-400 text-center py-4"><i class="fas fa-inbox mr-2"></i>${date} 거래 내역이 없습니다.</p>
+          `}
+        </div>
+      </div>
+      
+      <!-- 하단 버튼 -->
+      <div class="p-4 bg-gray-50 border-t flex justify-between">
+        <button onclick="openBarcodeDeductFromDetail('${item.item_code}')" 
+                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+          <i class="fas fa-barcode mr-2"></i> 바코드 차감
+        </button>
+        <button onclick="document.getElementById('material-detail-modal').remove()" 
+                class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+          닫기
+        </button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+}
+
+// 세부내역 모달에서 바코드 차감으로 이동
+function openBarcodeDeductFromDetail(itemCode) {
+  document.getElementById('material-detail-modal')?.remove();
+  
   const input = document.getElementById('barcode-scan-input');
   if (input) {
     input.value = itemCode;
-    scanBarcode();
+    scanBarcode();  // 이때만 스캔 실행
   }
 }
+
+window.selectMaterialForBarcode = selectMaterialForBarcode;
+window.showMaterialDetailModal = showMaterialDetailModal;
+window.openBarcodeDeductFromDetail = openBarcodeDeductFromDetail;
 
 // ★★★ v3.4.7: 재고 수정 모달 ★★★
 function openStockAdjustModal(itemCode, itemName, currentStock, unit) {

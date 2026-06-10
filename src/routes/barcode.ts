@@ -4,6 +4,20 @@ import type { Bindings } from '../types';
 
 const barcodeRoutes = new Hono<{ Bindings: Bindings }>();
 
+// ★★★ v3.4.17: 한국 시간(KST) 헬퍼 함수 ★★★
+function getKSTDateTime(): string {
+  const now = new Date();
+  // UTC+9 시간 추가
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().replace('T', ' ').substring(0, 19);
+}
+
+function getKSTDate(): string {
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().split('T')[0];
+}
+
 // 바코드 스캔 - 품목 검색
 // 바코드 또는 품목코드로 검색, LOT 목록 포함 (FIFO 순서)
 barcodeRoutes.get('/scan', async (c) => {
@@ -258,7 +272,7 @@ barcodeRoutes.post('/usage', async (c) => {
         await c.env.DB.prepare(`
           INSERT INTO production_transactions 
           (trans_date, production_code, trans_type, quantity, lot_number, memo, created_at)
-          VALUES (?, ?, '출고', ?, ?, ?, datetime('now'))
+          VALUES (?, ?, '출고', ?, ?, ?, '${getKSTDateTime()}')
         `).bind(today, item_code, -useQty, lot.lot_number, memo || '바코드 스캔 사용등록').run();
         
         usedLots.push({ lot_number: lot.lot_number, used_qty: useQty });
@@ -305,7 +319,7 @@ barcodeRoutes.post('/usage', async (c) => {
         await c.env.DB.prepare(`
           INSERT INTO transactions 
           (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
-          VALUES (?, ?, '사용', ?, ?, ?, datetime('now'))
+          VALUES (?, ?, '사용', ?, ?, ?, '${getKSTDateTime()}')
         `).bind(today, item_code, -useQty, lot.lot_number, memo || '바코드 스캔 사용등록').run();
         
         usedLots.push({ lot_number: lot.lot_number, used_qty: useQty });
@@ -406,14 +420,14 @@ barcodeRoutes.post('/inbound', async (c) => {
       await c.env.DB.prepare(`
         INSERT INTO production_inbound 
         (lot_number, production_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, memo, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, '합격', ?, datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, '합격', ?, '${getKSTDateTime()}')
       `).bind(lotNumber, item_code, today, calculatedExpiry, quantity, quantity, memo || '바코드 스캔 입고').run();
       
       // 트랜잭션 기록
       await c.env.DB.prepare(`
         INSERT INTO production_transactions 
         (trans_date, production_code, trans_type, quantity, lot_number, memo, created_at)
-        VALUES (?, ?, '생산입고', ?, ?, ?, datetime('now'))
+        VALUES (?, ?, '생산입고', ?, ?, ?, '${getKSTDateTime()}')
       `).bind(today, item_code, quantity, lotNumber, memo || '바코드 스캔 입고').run();
       
       // current_stock 업데이트
@@ -427,14 +441,14 @@ barcodeRoutes.post('/inbound', async (c) => {
       await c.env.DB.prepare(`
         INSERT INTO inbound 
         (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, storage_location, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, '합격', ?, datetime('now'))
+        VALUES (?, ?, ?, ?, ?, ?, '합격', ?, '${getKSTDateTime()}')
       `).bind(lotNumber, item_code, today, calculatedExpiry, quantity, quantity, memo || '바코드 스캔 입고').run();
       
       // 트랜잭션 기록
       await c.env.DB.prepare(`
         INSERT INTO transactions 
         (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
-        VALUES (?, ?, '입고', ?, ?, ?, datetime('now'))
+        VALUES (?, ?, '입고', ?, ?, ?, '${getKSTDateTime()}')
       `).bind(today, item_code, quantity, lotNumber, memo || '바코드 스캔 입고').run();
       
       // current_stock 업데이트
@@ -1390,7 +1404,7 @@ barcodeRoutes.put('/mapping/:id', async (c) => {
     
     await c.env.DB.prepare(`
       UPDATE barcode_mapping 
-      SET supplier = ?, pack_unit = ?, pack_unit_name = ?, memo = ?, is_active = ?, updated_at = datetime('now')
+      SET supplier = ?, pack_unit = ?, pack_unit_name = ?, memo = ?, is_active = ?, updated_at = '${getKSTDateTime()}'
       WHERE id = ?
     `).bind(
       supplier || null, 
@@ -1413,7 +1427,7 @@ barcodeRoutes.delete('/mapping/:id', async (c) => {
   
   try {
     await c.env.DB.prepare(`
-      UPDATE barcode_mapping SET is_active = 0, updated_at = datetime('now') WHERE id = ?
+      UPDATE barcode_mapping SET is_active = 0, updated_at = '${getKSTDateTime()}' WHERE id = ?
     `).bind(id).run();
     
     return c.json({ success: true, message: '바코드가 삭제되었습니다.' });
@@ -1527,7 +1541,7 @@ barcodeRoutes.get('/material-inventory', async (c) => {
 barcodeRoutes.post('/adjust-stock', async (c) => {
   try {
     const body = await c.req.json();
-    const { item_code, new_stock, reason, memo } = body;
+    const { item_code, new_stock, reason, memo, adjust_type } = body;
     
     if (!item_code || new_stock === undefined || new_stock === null) {
       return c.json({ success: false, error: '품목코드와 수정할 재고량을 입력해주세요.' }, 400);
@@ -1537,8 +1551,17 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
       return c.json({ success: false, error: '재고량은 0 이상이어야 합니다.' }, 400);
     }
     
-    const today = new Date().toISOString().split('T')[0];
-    const timestamp = new Date().toISOString();
+    // ★★★ v3.4.17: 한국 시간 기준 오늘/어제 계산 ★★★
+    const today = getKSTDate();
+    const timestamp = getKSTDateTime();
+    
+    // 전일재고 수정 시 어제 날짜 사용
+    const yesterday = new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    // 조정 유형에 따라 적용 날짜 결정
+    const adjustDate = adjust_type === 'previous' ? yesterdayStr : today;
     
     // 품목 정보 확인 (원료만)
     const itemInfo = await c.env.DB.prepare(`
@@ -1565,20 +1588,25 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
     const reasonText = reason || '바코드 재고관리 조정';
     const fullMemo = memo ? `${reasonText}: ${memo}` : reasonText;
     
+    // ★★★ v3.4.17: 전일재고/현재재고에 따라 다른 trans_type 사용 ★★★
+    const transType = adjust_type === 'previous' 
+      ? (adjustQty > 0 ? '전일조정(+)' : '전일조정(-)') 
+      : (adjustQty > 0 ? '바코드조정(+)' : '바코드조정(-)');
+    
     if (adjustQty > 0) {
       // 재고 증가: 새 LOT으로 입고 처리
-      const lotNumber = `ADJ-${today.replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
+      const lotNumber = `ADJ-${adjustDate.replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
       
       await c.env.DB.prepare(`
         INSERT INTO inbound (lot_number, item_code, inbound_date, origin_qty, remain_qty, quality_status, storage_location, created_at)
-        VALUES (?, ?, ?, ?, ?, '합격', ?, datetime('now'))
-      `).bind(lotNumber, item_code, today, adjustQty, adjustQty, fullMemo).run();
+        VALUES (?, ?, ?, ?, ?, '합격', ?, '${getKSTDateTime()}')
+      `).bind(lotNumber, item_code, adjustDate, adjustQty, adjustQty, fullMemo).run();
       
-      // 조정 거래 기록 (바코드 전용 - 수불부에 영향 없음)
+      // 조정 거래 기록
       await c.env.DB.prepare(`
         INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
-        VALUES (?, ?, '바코드조정(+)', ?, ?, ?, datetime('now'))
-      `).bind(today, item_code, adjustQty, lotNumber, fullMemo).run();
+        VALUES (?, ?, ?, ?, ?, ?, '${getKSTDateTime()}')
+      `).bind(adjustDate, item_code, transType, adjustQty, lotNumber, fullMemo).run();
       
     } else {
       // 재고 감소: 기존 LOT에서 FIFO 차감
@@ -1596,33 +1624,38 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
         const deductQty = Math.min(remainingDeduct, lot.remain_qty);
         
         await c.env.DB.prepare(`
-          UPDATE inbound SET remain_qty = remain_qty - ?, updated_at = datetime('now') WHERE id = ?
+          UPDATE inbound SET remain_qty = remain_qty - ?, updated_at = '${getKSTDateTime()}' WHERE id = ?
         `).bind(deductQty, lot.id).run();
         
         remainingDeduct -= deductQty;
       }
       
-      // 조정 거래 기록 (바코드 전용 - 수불부에 영향 없음)
+      // 조정 거래 기록
       await c.env.DB.prepare(`
         INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo, created_at)
-        VALUES (?, ?, '바코드조정(-)', ?, ?, datetime('now'))
-      `).bind(today, item_code, adjustQty, fullMemo).run();
+        VALUES (?, ?, ?, ?, ?, '${getKSTDateTime()}')
+      `).bind(adjustDate, item_code, transType, adjustQty, fullMemo).run();
     }
     
     // master 테이블 current_stock도 업데이트 (동기화)
     await c.env.DB.prepare(`
-      UPDATE master SET current_stock = ?, updated_at = datetime('now') WHERE item_code = ?
+      UPDATE master SET current_stock = ?, updated_at = '${getKSTDateTime()}' WHERE item_code = ?
     `).bind(new_stock, item_code).run();
+    
+    // ★★★ v3.4.17: 조정 유형에 따른 메시지 ★★★
+    const adjustTypeText = adjust_type === 'previous' ? '전일재고' : '현재재고';
     
     return c.json({
       success: true,
-      message: `${itemInfo.item_name} 재고가 ${currentStock.toFixed(2)} → ${new_stock.toFixed(2)} ${itemInfo.unit}로 조정되었습니다.`,
+      message: `${itemInfo.item_name} ${adjustTypeText}가 ${currentStock.toFixed(2)} → ${new_stock.toFixed(2)} ${itemInfo.unit}로 조정되었습니다. (${adjustDate})`,
       data: {
         item_code,
         item_name: itemInfo.item_name,
         previous_stock: currentStock,
         new_stock: new_stock,
         adjusted_qty: adjustQty,
+        adjust_type: adjust_type || 'current',
+        adjust_date: adjustDate,
         reason: reasonText,
         adjusted_at: timestamp
       }

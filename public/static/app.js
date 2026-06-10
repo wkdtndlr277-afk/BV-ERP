@@ -40944,8 +40944,14 @@ window.showMaterialDetailModal = showMaterialDetailModal;
 window.openBarcodeDeductFromDetail = openBarcodeDeductFromDetail;
 window.openStockAdjustFromDetail = openStockAdjustFromDetail;
 
-// ★★★ v3.4.7: 재고 수정 모달 ★★★
+// ★★★ v3.4.17: 재고 수정 모달 - 전일재고/현재재고 선택 ★★★
 function openStockAdjustModal(itemCode, itemName, currentStock, unit) {
+  // 어제 날짜 계산
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split('T')[0];
+  
   const modal = document.createElement('div');
   modal.id = 'stock-adjust-modal';
   modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
@@ -40964,6 +40970,27 @@ function openStockAdjustModal(itemCode, itemName, currentStock, unit) {
           <p class="text-2xl font-bold text-gray-800">${formatNumber(currentStock, 2)} <span class="text-lg text-gray-500">${unit}</span></p>
         </div>
         
+        <!-- ★★★ v3.4.17: 조정 유형 선택 ★★★ -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">조정 유형</label>
+          <div class="grid grid-cols-2 gap-2">
+            <label class="flex items-center p-3 border-2 rounded-lg cursor-pointer hover:bg-blue-50 has-[:checked]:border-blue-500 has-[:checked]:bg-blue-50">
+              <input type="radio" name="adjust-type" value="current" checked class="mr-2">
+              <div>
+                <div class="font-medium text-gray-800">현재재고 수정</div>
+                <div class="text-xs text-gray-500">오늘 기준 조정</div>
+              </div>
+            </label>
+            <label class="flex items-center p-3 border-2 rounded-lg cursor-pointer hover:bg-orange-50 has-[:checked]:border-orange-500 has-[:checked]:bg-orange-50">
+              <input type="radio" name="adjust-type" value="previous" class="mr-2">
+              <div>
+                <div class="font-medium text-gray-800">전일재고 수정</div>
+                <div class="text-xs text-gray-500">어제(${yesterdayStr}) 기준</div>
+              </div>
+            </label>
+          </div>
+        </div>
+        
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-2">수정할 재고량</label>
           <div class="flex items-center gap-2">
@@ -40978,6 +41005,7 @@ function openStockAdjustModal(itemCode, itemName, currentStock, unit) {
           <label class="block text-sm font-medium text-gray-700 mb-2">조정 사유</label>
           <select id="adjust-reason" class="w-full p-3 border rounded-lg">
             <option value="실사 조정">실사 조정</option>
+            <option value="전일재고 정정">전일재고 정정</option>
             <option value="오류 정정">오류 정정</option>
             <option value="손실 처리">손실 처리</option>
             <option value="샘플 사용">샘플 사용</option>
@@ -40992,7 +41020,7 @@ function openStockAdjustModal(itemCode, itemName, currentStock, unit) {
         
         <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
           <i class="fas fa-info-circle mr-1"></i>
-          이 조정은 바코드 재고관리 전용이며, 일별/월별 수불부에 영향을 주지 않습니다.
+          <strong>전일재고 수정</strong>: 어제 날짜로 조정 기록이 생성되어 전일재고가 변경됩니다.
         </div>
       </div>
       
@@ -41029,6 +41057,9 @@ async function submitStockAdjust(itemCode) {
   const reason = document.getElementById('adjust-reason')?.value || '실사 조정';
   const memo = document.getElementById('adjust-memo')?.value || '';
   
+  // ★★★ v3.4.17: 조정 유형 (현재재고/전일재고) ★★★
+  const adjustType = document.querySelector('input[name="adjust-type"]:checked')?.value || 'current';
+  
   if (isNaN(newStock) || newStock < 0) {
     showToast('올바른 재고량을 입력해주세요.', 'warning');
     return;
@@ -41041,7 +41072,8 @@ async function submitStockAdjust(itemCode) {
       item_code: itemCode,
       new_stock: newStock,
       reason: reason,
-      memo: memo
+      memo: memo,
+      adjust_type: adjustType  // 'current' 또는 'previous'
     });
     
     if (response.data.success) {

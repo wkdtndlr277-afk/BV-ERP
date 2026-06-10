@@ -40963,6 +40963,150 @@ async function deleteTransaction(transactionId, itemCode, quantity, itemName) {
 window.loadTodayTransactions = loadTodayTransactions;
 window.deleteTransaction = deleteTransaction;
 
+// ★★★ v3.4.12: 발주서 미리보기 인쇄 ★★★
+function printOrderPreview() {
+  const data = window.orderUploadData;
+  if (!data || !data.items || data.items.length === 0) {
+    showToast('인쇄할 발주서 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const today = getLocalDateString();
+  const items = data.items;
+  
+  // 테이블 생성
+  let tableHtml = `
+    <table>
+      <thead>
+        <tr>
+          <th style="width:40px">No</th>
+          <th>발주서 상품명</th>
+          <th style="width:60px">수량</th>
+          <th>매칭 제품</th>
+          <th style="width:100px">제품코드</th>
+          <th style="width:60px">BOM</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+  
+  let matchedCount = 0;
+  let unmatchedCount = 0;
+  
+  items.forEach((item, idx) => {
+    const isMatched = item.matched && item.matched.item_code;
+    if (isMatched) matchedCount++;
+    else unmatchedCount++;
+    
+    tableHtml += `
+      <tr>
+        <td class="center">${idx + 1}</td>
+        <td>${item.original_name || '-'}</td>
+        <td class="number">${item.quantity || 0}</td>
+        <td>${isMatched ? item.matched.item_name : '<span style="color:red">미등록</span>'}</td>
+        <td class="center">${isMatched ? item.matched.item_code : '-'}</td>
+        <td class="center">${item.has_bom ? '✓' : '-'}</td>
+      </tr>
+    `;
+  });
+  
+  tableHtml += '</tbody></table>';
+  
+  const summaryHtml = `
+    <strong>파일:</strong> ${data.fileName || '-'} | 
+    <strong>총 제품:</strong> ${items.length}개 | 
+    <strong>매칭 성공:</strong> ${matchedCount}개 | 
+    <strong>미등록:</strong> ${unmatchedCount}개
+  `;
+  
+  printData(`발주서 미리보기 (${today})`, tableHtml, summaryHtml);
+}
+
+// ★★★ v3.4.12: 원료 재고 현황 인쇄 ★★★
+function printMaterialInventory() {
+  const data = window.barcodeInventoryData;
+  if (!data || data.length === 0) {
+    showToast('인쇄할 재고 데이터가 없습니다.', 'warning');
+    return;
+  }
+  
+  const selectedDate = document.getElementById('material-inventory-date')?.value || getLocalDateString();
+  
+  // 합계 계산
+  let totalPrevStock = 0;
+  let totalInbound = 0;
+  let totalUsage = 0;
+  let totalCurrent = 0;
+  
+  // 테이블 생성
+  let tableHtml = `
+    <table>
+      <thead>
+        <tr>
+          <th style="width:40px">No</th>
+          <th style="width:80px">품목코드</th>
+          <th>원료명</th>
+          <th style="width:80px">전일재고</th>
+          <th style="width:80px">당일입고</th>
+          <th style="width:80px">당일사용</th>
+          <th style="width:80px">현재고</th>
+          <th style="width:50px">단위</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+  
+  data.forEach((item, idx) => {
+    const prevStock = parseFloat(item.prev_stock) || 0;
+    const inbound = parseFloat(item.today_inbound) || 0;
+    const usage = Math.abs(parseFloat(item.today_usage) || 0);
+    const current = parseFloat(item.current_stock) || 0;
+    
+    totalPrevStock += prevStock;
+    totalInbound += inbound;
+    totalUsage += usage;
+    totalCurrent += current;
+    
+    tableHtml += `
+      <tr>
+        <td class="center">${idx + 1}</td>
+        <td class="center">${item.item_code}</td>
+        <td>${item.item_name || '-'}</td>
+        <td class="number">${formatNumber(prevStock, 2)}</td>
+        <td class="number" style="${inbound > 0 ? 'color:green' : ''}">${inbound > 0 ? '+' + formatNumber(inbound, 2) : '-'}</td>
+        <td class="number" style="${usage > 0 ? 'color:red' : ''}">${usage > 0 ? '-' + formatNumber(usage, 2) : '-'}</td>
+        <td class="number" style="font-weight:bold">${formatNumber(current, 2)}</td>
+        <td class="center">${item.unit || 'kg'}</td>
+      </tr>
+    `;
+  });
+  
+  // 합계 행
+  tableHtml += `
+      <tr style="background:#f0f0f0; font-weight:bold">
+        <td colspan="3" class="center">합 계</td>
+        <td class="number">${formatNumber(totalPrevStock, 2)}</td>
+        <td class="number" style="color:green">+${formatNumber(totalInbound, 2)}</td>
+        <td class="number" style="color:red">-${formatNumber(totalUsage, 2)}</td>
+        <td class="number">${formatNumber(totalCurrent, 2)}</td>
+        <td class="center">kg</td>
+      </tr>
+    </tbody></table>
+  `;
+  
+  const summaryHtml = `
+    <strong>조회일:</strong> ${selectedDate} | 
+    <strong>총 원료:</strong> ${data.length}종 | 
+    <strong>전일재고 합계:</strong> ${formatNumber(totalPrevStock, 2)} kg | 
+    <strong>현재고 합계:</strong> ${formatNumber(totalCurrent, 2)} kg
+  `;
+  
+  printData(`원료 재고 현황 (${selectedDate})`, tableHtml, summaryHtml);
+}
+
+// 전역 함수 노출
+window.printOrderPreview = printOrderPreview;
+window.printMaterialInventory = printMaterialInventory;
 
 // 바코드 관련 상태
 let barcodeCurrentItem = null;
@@ -42694,7 +42838,10 @@ async function loadAdminSummary() {
       pendingCoops = coopRes.data.success ? coopRes.data.data.items.length : 0;
     } catch {}
     
-    document.getElementById('admin-summary-cards').innerHTML = `
+    const summaryCardsEl = document.getElementById('admin-summary-cards');
+    if (!summaryCardsEl) return;  // 요소가 없으면 종료
+    
+    summaryCardsEl.innerHTML = `
       <div class="bg-white/20 backdrop-blur rounded-lg p-2 lg:p-4 text-center">
         <div class="text-xl lg:text-3xl font-bold">${totalTasks}</div>
         <div class="text-xs lg:text-sm text-indigo-200">업무지시</div>

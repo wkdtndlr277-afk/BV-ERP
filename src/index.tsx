@@ -66,7 +66,7 @@ app.route('/api/task', taskRoutes);
 app.route('/api/audit', auditRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '3.4.20';
+const SYSTEM_VERSION = '3.4.21';
 const SYSTEM_BUILD_DATE = '2026-06-02';
 
 // Health check

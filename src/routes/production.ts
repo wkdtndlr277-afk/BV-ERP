@@ -170,36 +170,42 @@ productionRoutes.get('/closing-status', async (c) => {
     // 2. 당일 원재료 사용량 - LOT별 remain_qty SUM 기반 실시간 재고
     // ★ Master 테이블 요약값 대신 Inbound LOT 실시간 집계
     // ★★★ v3.4.6: lot_number 정보 추가 (GROUP_CONCAT으로 사용 LOT 수집) ★★★
+    // ★★★ v3.4.21: SF원료는 semi_finished_items/lots에서 정보 가져오기 ★★★
     const materialUsage = await c.env.DB.prepare(`
       SELECT pm.item_code, 
-             COALESCE(m.item_name, pm.item_code) as item_name,
+             COALESCE(m.item_name, sf.item_name, pm.item_code) as item_name,
              SUM(pm.actual_qty) as total_used,
-             COALESCE(m.unit, 'kg') as unit,
+             COALESCE(m.unit, sf.unit, 'kg') as unit,
              GROUP_CONCAT(DISTINCT pm.lot_number) as lot_numbers,
-             COALESCE(
-               (SELECT SUM(remain_qty) FROM inbound WHERE item_code = pm.item_code AND remain_qty > 0),
-               0
-             ) as current_stock,
-             COALESCE(
-               (SELECT SUM(remain_qty) FROM inbound 
-                WHERE item_code = pm.item_code AND remain_qty > 0 
-                AND inbound_date < ?),
-               0
-             ) as prev_stock,
-             COALESCE(
-               (SELECT SUM(origin_qty) FROM inbound 
-                WHERE item_code = pm.item_code AND inbound_date = ?),
-               0
-             ) as inbound_qty
+             -- 현재 재고: 원료는 inbound, SF는 semi_finished_lots
+             CASE 
+               WHEN pm.item_code LIKE 'SF%' THEN 
+                 COALESCE((SELECT SUM(remain_qty) FROM semi_finished_lots WHERE item_code = pm.item_code AND remain_qty > 0), 0)
+               ELSE 
+                 COALESCE((SELECT SUM(remain_qty) FROM inbound WHERE item_code = pm.item_code AND remain_qty > 0), 0)
+             END as current_stock,
+             -- 전일 재고
+             CASE 
+               WHEN pm.item_code LIKE 'SF%' THEN 
+                 COALESCE((SELECT SUM(remain_qty) FROM semi_finished_lots WHERE item_code = pm.item_code AND remain_qty > 0 AND prod_date < ?), 0)
+               ELSE 
+                 COALESCE((SELECT SUM(remain_qty) FROM inbound WHERE item_code = pm.item_code AND remain_qty > 0 AND inbound_date < ?), 0)
+             END as prev_stock,
+             -- 당일 입고
+             CASE 
+               WHEN pm.item_code LIKE 'SF%' THEN 0
+               ELSE COALESCE((SELECT SUM(origin_qty) FROM inbound WHERE item_code = pm.item_code AND inbound_date = ?), 0)
+             END as inbound_qty
       FROM production_materials pm
       JOIN production p ON pm.production_id = p.id
       LEFT JOIN master m ON pm.item_code = m.item_code
+      LEFT JOIN semi_finished_items sf ON pm.item_code = sf.item_code
       WHERE p.prod_date = ?
         AND pm.item_code NOT IN (${excludeClause})
-        AND LOWER(COALESCE(m.item_name, '')) NOT LIKE '%정제수%'
+        AND LOWER(COALESCE(m.item_name, sf.item_name, '')) NOT LIKE '%정제수%'
       GROUP BY pm.item_code
       ORDER BY total_used DESC
-    `).bind(date, date, date, ...EXCLUDE_CODES).all<any>();
+    `).bind(date, date, date, date, ...EXCLUDE_CODES).all<any>();
     
     // 3. 당일 입고 현황 - LOT별 상세
     const inboundData = await c.env.DB.prepare(`
@@ -215,21 +221,33 @@ productionRoutes.get('/closing-status', async (c) => {
       ORDER BY total_inbound DESC
     `).bind(date, ...EXCLUDE_CODES).all<any>();
     
-    // 4. 수불부 데이터 무결성 검증 (전일+입고-사용+조정=현재고)
+    // 4. 수불부 데이터 처리 + SF원료 LOT 자동 생성 (전날 기준)
+    // ★★★ v3.4.21: SF원료는 [생산일 - 1일] 기준 LOT 번호 자동 생성 ★★★
+    const yesterdayDate = new Date(date + 'T00:00:00');
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterdayStr = yesterdayDate.toISOString().split('T')[0].replace(/-/g, ''); // YYYYMMDD
+    
     const usageWithIntegrity = (materialUsage.results || []).map((item: any) => {
       const prevStock = parseFloat(item.prev_stock) || 0;
       const inboundQty = parseFloat(item.inbound_qty) || 0;
       const usedQty = parseFloat(item.total_used) || 0;
       const currentStock = parseFloat(item.current_stock) || 0;
-      const adjustment = 0; // 조정량 (수동 입력 필요시 별도 테이블)
+      const adjustment = 0;
+      
+      // ★★★ SF원료: lot_numbers가 없으면 전날 기준 LOT 자동 생성 ★★★
+      let lotNumbers = item.lot_numbers;
+      if (item.item_code.startsWith('SF') && (!lotNumbers || lotNumbers === 'null' || lotNumbers.trim() === '')) {
+        lotNumbers = `${yesterdayStr}-${item.item_code}-001`;
+      }
       
       // 계산식: 전일 + 입고 - 사용 + 조정 = 현재고(예상)
       const calculatedStock = prevStock + inboundQty - usedQty + adjustment;
       const difference = Math.abs(calculatedStock - currentStock);
-      const isValid = difference < 0.01; // 0.01kg 이내 허용
+      const isValid = difference < 0.01;
       
       return {
         ...item,
+        lot_numbers: lotNumbers,
         prev_stock: prevStock,
         inbound_qty: inboundQty,
         adjustment: adjustment,

@@ -18538,21 +18538,15 @@ function generateClosingPrintHtml(cache, date) {
             const adjustment = parseFloat(item.adjustment) || 0;
             const currentStock = parseFloat(item.current_stock) || 0;
             
-            // ★★★ 데이터 무결성 검증: 전일+입고-사용+조정=현재고 ★★★
-            const calculatedStock = prevStock + inboundQty - usedQty + adjustment;
-            const difference = Math.abs(calculatedStock - currentStock);
-            const isValid = difference < 0.01; // 0.01kg 이내 허용
-            const rowClass = isValid ? '' : 'style="background:#fff3e0;"'; // 오차 시 노란색 배경
-            
-            return '<tr ' + rowClass + '>' +
+            // ★★★ v3.4.21: 무결성 검증 표시 제거 (내부용 - 외부 문서에 표시 안함) ★★★
+            return '<tr>' +
               '<td>' + item.item_code + '</td>' +
               '<td class="text-left">' + (item.item_name || item.item_code) + '</td>' +
               '<td class="text-right">' + formatNumber(prevStock, 2) + '</td>' +
               '<td class="text-right color-blue">' + (inboundQty > 0 ? '+' + formatNumber(inboundQty, 2) : '-') + '</td>' +
               '<td class="text-right color-red">' + (usedQty > 0 ? '-' + formatNumber(usedQty, 2) : '-') + '</td>' +
               '<td class="text-right">' + (adjustment !== 0 ? formatNumber(adjustment, 2) : '-') + '</td>' +
-              '<td class="text-right color-green">' + formatNumber(currentStock, 2) + 
-                (!isValid ? ' <span style="color:orange;font-size:8px;">⚠</span>' : '') + '</td>' +
+              '<td class="text-right color-green">' + formatNumber(currentStock, 2) + '</td>' +
             '</tr>';
           }).join('')}
         </tbody>
@@ -18567,30 +18561,6 @@ function generateClosingPrintHtml(cache, date) {
           </tr>
         </tfoot>
       </table>
-      
-      <!-- ★★★ 데이터 무결성 검증 결과 ★★★ -->
-      ${(() => {
-        let errorCount = 0;
-        filteredUsage.forEach(item => {
-          const prev = parseFloat(item.prev_stock) || 0;
-          const inb = parseFloat(item.inbound_qty) || 0;
-          const used = Math.abs(parseFloat(item.total_used) || 0);
-          const adj = parseFloat(item.adjustment) || 0;
-          const curr = parseFloat(item.current_stock) || 0;
-          const calc = prev + inb - used + adj;
-          if (Math.abs(calc - curr) >= 0.01) errorCount++;
-        });
-        
-        if (errorCount === 0) {
-          return '<div style="margin:10px 0; padding:8px; background:#e8f5e9; border:1px solid #4caf50; font-size:11px;">' +
-            '<strong>✓ 데이터 무결성 검증 통과</strong> - 모든 품목의 수불 계산식이 일치합니다. (전일+입고-사용+조정=현재고)' +
-          '</div>';
-        } else {
-          return '<div style="margin:10px 0; padding:8px; background:#fff3e0; border:1px solid #ff9800; font-size:11px;">' +
-            '<strong>⚠ 데이터 무결성 검증 경고</strong> - ' + errorCount + '개 품목의 수불 계산이 불일치합니다. (노란색 표시 항목 확인)' +
-          '</div>';
-        }
-      })()}
       
       <div class="doc-footer">
         본 문서는 HACCP 통합관리시스템에서 출력되었습니다. | 문서번호: ${docNo}

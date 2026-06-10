@@ -1636,7 +1636,7 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
 
 export default barcodeRoutes;
 
-// ★★★ v3.4.10: 바코드 사용/출고 거래 삭제 (재고 복원) ★★★
+// ★★★ v3.4.14: 바코드 사용/출고 거래 삭제 (재고 복원) - rowid 사용 ★★★
 barcodeRoutes.delete('/transaction/:id', async (c) => {
   const id = parseInt(c.req.param('id'));
   
@@ -1645,10 +1645,10 @@ barcodeRoutes.delete('/transaction/:id', async (c) => {
   }
   
   try {
-    // 1. 거래 정보 조회
+    // 1. 거래 정보 조회 (rowid 사용)
     const transaction: any = await c.env.DB.prepare(`
-      SELECT id, trans_date, item_code, trans_type, quantity, lot_number, memo
-      FROM transactions WHERE id = ?
+      SELECT rowid as id, trans_date, item_code, trans_type, quantity, lot_number, memo
+      FROM transactions WHERE rowid = ?
     `).bind(id).first();
     
     if (!transaction) {
@@ -1687,8 +1687,8 @@ barcodeRoutes.delete('/transaction/:id', async (c) => {
       UPDATE master SET current_stock = COALESCE(current_stock, 0) + ? WHERE item_code = ?
     `).bind(absQty, item_code).run();
     
-    // 5. 거래 레코드 삭제
-    await c.env.DB.prepare(`DELETE FROM transactions WHERE id = ?`).bind(id).run();
+    // 5. 거래 레코드 삭제 (rowid 사용)
+    await c.env.DB.prepare(`DELETE FROM transactions WHERE rowid = ?`).bind(id).run();
     
     // 6. 복원 후 현재 재고 조회
     const updatedStock: any = await c.env.DB.prepare(`
@@ -1786,9 +1786,10 @@ barcodeRoutes.get('/today-transactions', async (c) => {
     const targetDate = dateParam || new Date().toISOString().split('T')[0];
     const item_code = c.req.query('item_code');
     
+    // ★★★ v3.4.14: rowid를 명시적으로 가져옴 (D1 호환성) ★★★
     let query = `
       SELECT 
-        t.id,
+        t.rowid as id,
         t.trans_date,
         t.item_code,
         COALESCE(m.item_name, t.item_code) as item_name,
@@ -1811,7 +1812,7 @@ barcodeRoutes.get('/today-transactions', async (c) => {
       params.push(item_code);
     }
     
-    query += ` ORDER BY t.created_at DESC, t.id DESC LIMIT 100`;
+    query += ` ORDER BY t.created_at DESC, t.rowid DESC LIMIT 100`;
     
     const result = await c.env.DB.prepare(query).bind(...params).all<any>();
     

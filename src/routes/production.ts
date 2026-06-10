@@ -2411,15 +2411,24 @@ productionRoutes.post('/preview', async (c) => {
       });
     }
     
-    // 2차: 입고 가용재고 (우선)
+    // ★★★ v3.4.16 수정: 입고 가용재고 - 마스터 재고와 비교하여 큰 값 사용 ★★★
+    // 문제: inbound에 LOT가 없거나 remain_qty=0이면 마스터 재고가 있어도 0으로 덮어씀
+    // 해결: inbound 재고가 0보다 클 때만 덮어씀, 또는 둘 중 큰 값 사용
     for (const row of inboundStockData.results || []) {
       const existing = stockMap.get(row.item_code);
-      stockMap.set(row.item_code, { 
-        available: row.available_stock || 0, 
-        source: 'inbound',
-        item_name: existing?.item_name || row.item_code,
-        unit: existing?.unit || 'kg'
-      });
+      const inboundStock = row.available_stock || 0;
+      const masterStock = existing?.available || 0;
+      
+      // 입고 재고가 있으면 입고 재고 사용, 없으면 마스터 재고 유지
+      if (inboundStock > 0) {
+        stockMap.set(row.item_code, { 
+          available: inboundStock, 
+          source: 'inbound',
+          item_name: existing?.item_name || row.item_code,
+          unit: existing?.unit || 'kg'
+        });
+      }
+      // inboundStock이 0이면 기존 마스터 재고 유지 (덮어쓰지 않음)
     }
     
     // 3차: SF계열 재고 (실제 semi_finished_lots 데이터)

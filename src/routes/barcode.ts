@@ -1427,12 +1427,16 @@ barcodeRoutes.delete('/mapping/:id', async (c) => {
 barcodeRoutes.get('/material-inventory', async (c) => {
   try {
     const search = c.req.query('search') || '';
-    const today = new Date().toISOString().split('T')[0];
     
-    // 어제 날짜 계산
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    // ★★★ v3.4.8: 날짜 파라미터 지원 ★★★
+    // date 파라미터가 있으면 해당 날짜 기준, 없으면 오늘 기준
+    const dateParam = c.req.query('date');
+    const today = dateParam || new Date().toISOString().split('T')[0];
+    
+    // 선택된 날짜의 전날 계산
+    const selectedDate = new Date(today + 'T00:00:00');
+    selectedDate.setDate(selectedDate.getDate() - 1);
+    const yesterdayStr = selectedDate.toISOString().split('T')[0];
     
     // R169-R172 구형 코드 제외
     const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172'];
@@ -1515,6 +1519,7 @@ barcodeRoutes.get('/material-inventory', async (c) => {
     return c.json({
       success: true,
       date: today,
+      isHistorical: !!dateParam && dateParam !== new Date().toISOString().split('T')[0],
       data: materials,
       count: materials.length,
       summary: {

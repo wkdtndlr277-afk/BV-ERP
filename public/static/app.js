@@ -40200,10 +40200,16 @@ async function renderBarcodeInventory() {
                 <p class="text-emerald-100 text-xs">바코드 재고관리 전용 (일별/월별 수불부와 별개)</p>
               </div>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
+              <div class="flex items-center gap-1 bg-white/10 rounded-lg px-2 py-1">
+                <i class="fas fa-calendar text-white/70 text-sm"></i>
+                <input type="date" id="material-inventory-date" 
+                       class="px-2 py-1 rounded text-sm bg-white text-gray-800"
+                       onchange="loadMaterialInventory()">
+              </div>
               <input type="text" id="material-inventory-search" 
-                     class="px-3 py-2 rounded-lg text-sm w-48" 
-                     placeholder="품목코드/원료명 검색..."
+                     class="px-3 py-2 rounded-lg text-sm w-40" 
+                     placeholder="검색..."
                      onkeypress="if(event.key==='Enter') loadMaterialInventory()">
               <button onclick="loadMaterialInventory()" class="px-3 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm">
                 <i class="fas fa-sync-alt mr-1"></i> 새로고침
@@ -40539,7 +40545,14 @@ async function loadMaterialInventory() {
   const tbody = document.getElementById('material-inventory-tbody');
   const summaryDiv = document.getElementById('material-inventory-summary');
   const searchInput = document.getElementById('material-inventory-search');
+  const dateInput = document.getElementById('material-inventory-date');
   const search = searchInput?.value?.trim() || '';
+  
+  // 날짜 기본값 설정 (오늘)
+  if (dateInput && !dateInput.value) {
+    dateInput.value = new Date().toISOString().split('T')[0];
+  }
+  const selectedDate = dateInput?.value || new Date().toISOString().split('T')[0];
   
   if (!tbody) return;
   
@@ -40552,7 +40565,7 @@ async function loadMaterialInventory() {
   `;
   
   try {
-    const response = await axios.get(`${API_BASE}/barcode/material-inventory?search=${encodeURIComponent(search)}`);
+    const response = await axios.get(`${API_BASE}/barcode/material-inventory?search=${encodeURIComponent(search)}&date=${selectedDate}`);
     const result = response.data;
     
     if (result.success) {
@@ -40875,76 +40888,94 @@ function displayAutoDeductResult(item, qty, packUnitName, result) {
   resultDiv.classList.remove('hidden');
   lotListDiv.classList.add('hidden');
   
-  const newStock = (item.current_stock || 0) - qty;
+  const prevStock = item.current_stock || 0;
+  const newStock = prevStock - qty;
   const usedLots = result.used_lots || [];
   
+  // ★★★ v3.4.8: 스크린샷 기반 직관적 UI 개선 ★★★
   resultDiv.innerHTML = `
-    <div class="bg-white rounded-xl shadow-lg p-6">
-      <!-- 성공 표시 -->
-      <div class="text-center mb-4">
-        <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-          <i class="fas fa-check text-3xl text-green-600"></i>
-        </div>
-        <h3 class="text-xl font-bold text-green-700">차감 완료!</h3>
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+      <!-- 성공 헤더 -->
+      <div class="bg-gradient-to-r from-green-500 to-emerald-500 text-white text-center py-4">
+        <i class="fas fa-check-circle text-3xl mb-1"></i>
+        <h3 class="text-lg font-bold">차감 완료!</h3>
       </div>
       
-      <!-- 품목 정보 -->
-      <div class="bg-gray-50 rounded-lg p-4 mb-4">
-        <div class="flex justify-between items-center">
+      <!-- 품목 정보 & 차감량 -->
+      <div class="p-4 border-b">
+        <div class="flex justify-between items-start">
           <div>
-            <span class="inline-block px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs mb-1">${item.category || '원료'}</span>
-            <h4 class="font-bold text-lg">${item.item_name}</h4>
-            <p class="text-gray-500 text-sm">${item.item_code}</p>
+            <span class="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">${item.category || '원료'}</span>
+            <h4 class="font-bold text-lg mt-1">${item.item_name}</h4>
+            <p class="text-gray-400 text-sm">${item.item_code}</p>
           </div>
           <div class="text-right">
-            <p class="text-sm text-gray-500">차감량</p>
-            <p class="text-2xl font-bold text-red-600">-${qty}${item.unit}</p>
+            <p class="text-xs text-gray-500">차감량</p>
+            <p class="text-2xl font-bold text-red-500">-${qty}${item.unit}</p>
             <p class="text-xs text-gray-400">(1${packUnitName})</p>
           </div>
         </div>
       </div>
       
-      <!-- 재고 변화 -->
-      <div class="flex items-center justify-center gap-4 mb-4">
-        <div class="text-center">
-          <p class="text-sm text-gray-500">이전 재고</p>
-          <p class="text-xl font-medium">${formatNumber(item.current_stock || 0)}</p>
-        </div>
-        <i class="fas fa-arrow-right text-gray-400"></i>
-        <div class="text-center">
-          <p class="text-sm text-gray-500">현재 재고</p>
-          <p class="text-xl font-bold text-blue-600">${formatNumber(newStock)}</p>
+      <!-- 재고 변화 (중앙 강조) -->
+      <div class="p-5 bg-gray-50">
+        <div class="flex items-center justify-center gap-3">
+          <div class="text-center">
+            <p class="text-xs text-gray-500 mb-1">이전 재고</p>
+            <p class="text-2xl font-semibold text-gray-700">${formatNumber(prevStock)}</p>
+          </div>
+          <div class="flex items-center justify-center w-8 h-8 bg-gray-200 rounded-full">
+            <i class="fas fa-arrow-right text-gray-500"></i>
+          </div>
+          <div class="text-center">
+            <p class="text-xs text-gray-500 mb-1">현재 재고</p>
+            <p class="text-2xl font-bold ${newStock < 0 ? 'text-red-500' : 'text-blue-600'}">${formatNumber(newStock)}</p>
+          </div>
         </div>
       </div>
       
-      <!-- 사용된 LOT -->
+      <!-- 사용된 LOT 정보 -->
       ${usedLots.length > 0 ? `
-        <div class="text-xs text-gray-500 text-center mb-4">
-          사용 LOT: ${usedLots.map(l => l.lot_number).join(', ')}
+        <div class="px-4 py-3 border-t bg-white">
+          <p class="text-xs text-gray-500 text-center">
+            사용 LOT: ${usedLots.map(l => l.lot_number).join(', ')}
+          </p>
         </div>
       ` : ''}
       
-      <!-- 취소 버튼 -->
-      <div class="flex gap-2">
-        <button onclick="undoLastDeduct('${item.item_code}', ${qty})" 
-                class="flex-1 py-3 bg-yellow-500 text-white rounded-lg font-medium hover:bg-yellow-600">
-          <i class="fas fa-undo mr-1"></i> 취소 (되돌리기)
-        </button>
-        <button onclick="document.getElementById('barcode-scan-input').focus()" 
-                class="flex-1 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700">
-          <i class="fas fa-barcode mr-1"></i> 다음 스캔
-        </button>
-      </div>
-      
-      <!-- 수동 모드 전환 -->
-      <div class="mt-4 text-center">
-        <button onclick="displayBarcodeItem(barcodeCurrentItem)" class="text-sm text-gray-500 hover:text-gray-700">
-          <i class="fas fa-edit mr-1"></i> 상세 화면 보기
-        </button>
+      <!-- 액션 버튼 -->
+      <div class="p-4 bg-white border-t">
+        <div class="grid grid-cols-2 gap-3">
+          <button onclick="undoLastDeduct('${item.item_code}', ${qty})" 
+                  class="py-3 bg-yellow-400 hover:bg-yellow-500 text-white rounded-lg font-bold flex items-center justify-center gap-2 transition-colors">
+            <i class="fas fa-undo"></i> 취소 (되돌리기)
+          </button>
+          <button onclick="resetBarcodeScanForNext()" 
+                  class="py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-bold flex items-center justify-center gap-2 transition-colors">
+            <i class="fas fa-barcode"></i> 다음 스캔
+          </button>
+        </div>
+        <div class="mt-3 text-center">
+          <button onclick="displayBarcodeItem(barcodeCurrentItem)" class="text-sm text-gray-400 hover:text-gray-600">
+            <i class="fas fa-search mr-1"></i> 상세 화면 보기
+          </button>
+        </div>
       </div>
     </div>
   `;
 }
+
+// v3.4.8: 다음 스캔을 위한 화면 리셋
+function resetBarcodeScanForNext() {
+  document.getElementById('barcode-scan-result').classList.add('hidden');
+  document.getElementById('barcode-lot-list').classList.add('hidden');
+  const input = document.getElementById('barcode-scan-input');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+}
+
 
 // 마지막 차감 취소 (되돌리기)
 async function undoLastDeduct(itemCode, qty) {

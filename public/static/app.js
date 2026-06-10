@@ -40607,7 +40607,7 @@ async function loadMaterialInventory() {
         tbody.innerHTML = window.barcodeInventoryData.map((item, idx) => {
           const prevStock = parseFloat(item.prev_stock) || 0;
           const todayInbound = parseFloat(item.today_inbound) || 0;
-          const todayUsage = parseFloat(item.today_usage) || 0;
+          const todayUsage = Math.abs(parseFloat(item.today_usage) || 0);  // v3.4.9: 항상 양수로
           const currentStock = parseFloat(item.current_stock) || 0;
           
           // 재고 상태에 따른 색상

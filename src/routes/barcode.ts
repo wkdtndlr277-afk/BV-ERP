@@ -1428,15 +1428,11 @@ barcodeRoutes.get('/material-inventory', async (c) => {
   try {
     const search = c.req.query('search') || '';
     
-    // ★★★ v3.4.8: 날짜 파라미터 지원 ★★★
-    // date 파라미터가 있으면 해당 날짜 기준, 없으면 오늘 기준
+    // ★★★ v3.4.9: 날짜 파라미터 지원 및 계산 로직 수정 ★★★
     const dateParam = c.req.query('date');
-    const today = dateParam || new Date().toISOString().split('T')[0];
-    
-    // 선택된 날짜의 전날 계산
-    const selectedDate = new Date(today + 'T00:00:00');
-    selectedDate.setDate(selectedDate.getDate() - 1);
-    const yesterdayStr = selectedDate.toISOString().split('T')[0];
+    const targetDate = dateParam || new Date().toISOString().split('T')[0];
+    const realToday = new Date().toISOString().split('T')[0];
+    const isHistorical = targetDate !== realToday;
     
     // R169-R172 구형 코드 제외
     const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172'];
@@ -1449,34 +1445,22 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         m.item_name,
         m.unit,
         m.barcode,
-        -- 현재고: inbound 테이블의 remain_qty SUM
+        -- 현재고: inbound 테이블의 remain_qty SUM (실시간)
         COALESCE(
           (SELECT SUM(remain_qty) FROM inbound WHERE item_code = m.item_code AND remain_qty > 0),
           0
         ) as current_stock,
-        -- 전일재고: 어제까지 입고분 중 현재 남은 양 (어제 기준 remain_qty 추정)
-        COALESCE(
-          (SELECT SUM(remain_qty) FROM inbound 
-           WHERE item_code = m.item_code AND remain_qty > 0 AND inbound_date <= ?),
-          0
-        ) + COALESCE(
-          (SELECT SUM(ABS(quantity)) FROM transactions 
-           WHERE item_code = m.item_code AND trans_date = ? AND trans_type IN ('사용', '출고')),
-          0
-        ) - COALESCE(
-          (SELECT SUM(origin_qty) FROM inbound 
-           WHERE item_code = m.item_code AND inbound_date = ?),
-          0
-        ) as prev_stock,
-        -- 당일입고: 오늘 입고된 origin_qty SUM
+        -- 당일입고: 선택 날짜에 입고된 origin_qty SUM
         COALESCE(
           (SELECT SUM(origin_qty) FROM inbound WHERE item_code = m.item_code AND inbound_date = ?),
           0
         ) as today_inbound,
-        -- 당일사용: 오늘 transactions에서 사용/출고량 SUM
+        -- 당일사용: 선택 날짜의 transactions에서 사용량 SUM (음수값의 절대값)
         COALESCE(
-          (SELECT SUM(ABS(quantity)) FROM transactions 
-           WHERE item_code = m.item_code AND trans_date = ? AND trans_type IN ('사용', '출고', '바코드사용')),
+          (SELECT SUM(CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END) 
+           FROM transactions 
+           WHERE item_code = m.item_code AND trans_date = ? 
+             AND trans_type IN ('사용', '출고', '바코드사용', '바코드조정(-)')),
           0
         ) as today_usage
       FROM master m
@@ -1484,7 +1468,7 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         AND m.item_code NOT IN (${excludePlaceholders})
     `;
     
-    const params: any[] = [yesterdayStr, today, today, today, today, ...EXCLUDE_CODES];
+    const params: any[] = [targetDate, targetDate, ...EXCLUDE_CODES];
     
     if (search) {
       query += ` AND (m.item_code LIKE ? OR m.item_name LIKE ?)`;
@@ -1495,13 +1479,14 @@ barcodeRoutes.get('/material-inventory', async (c) => {
     
     const result = await c.env.DB.prepare(query).bind(...params).all<any>();
     
-    // 데이터 후처리 (전일재고 보정)
+    // 데이터 후처리
     const materials = (result.results || []).map((item: any) => {
       const currentStock = parseFloat(item.current_stock) || 0;
       const todayInbound = parseFloat(item.today_inbound) || 0;
-      const todayUsage = parseFloat(item.today_usage) || 0;
+      const todayUsage = Math.abs(parseFloat(item.today_usage) || 0);  // 항상 양수로 변환
       
       // 전일재고 = 현재고 - 당일입고 + 당일사용
+      // (현재고에서 오늘 입고를 빼고, 오늘 사용한 양을 더하면 어제 마감 재고)
       const prevStock = currentStock - todayInbound + todayUsage;
       
       return {
@@ -1511,15 +1496,15 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         barcode: item.barcode,
         prev_stock: Math.max(0, prevStock),
         today_inbound: todayInbound,
-        today_usage: todayUsage,
+        today_usage: todayUsage,  // 양수값
         current_stock: currentStock
       };
     });
     
     return c.json({
       success: true,
-      date: today,
-      isHistorical: !!dateParam && dateParam !== new Date().toISOString().split('T')[0],
+      date: targetDate,
+      isHistorical,
       data: materials,
       count: materials.length,
       summary: {

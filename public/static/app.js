@@ -45895,6 +45895,8 @@ async function showCoopTab(tab) {
   
   if (tab === 'new') {
     content.innerHTML = renderCoopNewForm();
+    // ★ v3.4.25: 사용자 목록 로드
+    loadCoopReceiverOptions();
     return;
   }
   
@@ -45980,7 +45982,10 @@ function renderCoopNewForm() {
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">담당자 <span class="text-red-500">*</span></label>
-          <input type="text" id="coop-receiver" class="w-full px-3 py-2 border rounded-lg" placeholder="협조 받을 담당자 이름">
+          <select id="coop-receiver" class="w-full px-3 py-2 border rounded-lg">
+            <option value="">담당자 선택...</option>
+          </select>
+          <p class="text-xs text-gray-500 mt-1">협조 요청을 받을 담당자를 선택하세요</p>
         </div>
       </div>
       
@@ -46015,12 +46020,41 @@ function renderCoopNewForm() {
   `;
 }
 
+// ★ v3.4.25: 협조 요청 담당자 목록 로드
+async function loadCoopReceiverOptions() {
+  const select = document.getElementById('coop-receiver');
+  if (!select) return;
+  
+  try {
+    const res = await axios.get('/api/auth/users');
+    if (res.data.success && res.data.data) {
+      const users = res.data.data;
+      // 승인된 사용자만 필터링
+      const approvedUsers = users.filter(u => u.status === 'approved');
+      
+      select.innerHTML = '<option value="">담당자 선택...</option>' + 
+        approvedUsers.map(u => `<option value="${u.user_name}">${u.user_name}${u.role ? ' (' + getRoleName(u.role) + ')' : ''}</option>`).join('');
+    }
+  } catch (e) {
+    console.error('사용자 목록 로드 실패:', e);
+    // 실패 시 수동 입력으로 대체
+    select.outerHTML = '<input type="text" id="coop-receiver" class="w-full px-3 py-2 border rounded-lg" placeholder="담당자 이름 직접 입력">';
+  }
+}
+
+// 역할명 변환 헬퍼
+function getRoleName(role) {
+  const roleNames = { admin: '관리자', manager: '매니저', user: '사용자' };
+  return roleNames[role] || role;
+}
+
 async function submitCooperation() {
   const title = document.getElementById('coop-title').value.trim();
   const from_dept = document.getElementById('coop-from-dept').value;
   const to_dept = document.getElementById('coop-to-dept').value;
   const requester = document.getElementById('coop-requester').value.trim();
-  const receiver = document.getElementById('coop-receiver').value.trim();  // ★ v3.4.25: 담당자 추가
+  const receiverEl = document.getElementById('coop-receiver');
+  const receiver = receiverEl ? (receiverEl.value || '').trim() : '';  // ★ v3.4.25: 담당자 추가
   const priority = document.getElementById('coop-priority').value;
   const due_date = document.getElementById('coop-due-date').value;
   const content = document.getElementById('coop-content').value.trim();
@@ -46032,7 +46066,7 @@ async function submitCooperation() {
   
   // ★ v3.4.25: 담당자 필수 체크
   if (!receiver) {
-    showToast('담당자를 입력해주세요', 'warning');
+    showToast('담당자를 선택해주세요', 'warning');
     return;
   }
   

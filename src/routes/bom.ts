@@ -1,8 +1,28 @@
 // BOM (배합표) 관리 API
+// v3.4.23: 버전 관리 시스템 + 소수점 3자리 표시 (4자리 반올림 저장)
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
 
 const bomRoutes = new Hono<{ Bindings: Bindings }>();
+
+// ★ v3.4.23: 소수점 정밀도 헬퍼 함수
+// DB 저장: 4자리 반올림, 화면 표시: 3자리
+function roundForStorage(value: number): number {
+  return Math.round(value * 10000) / 10000; // 4자리 반올림
+}
+
+// ★ v3.4.23: KST 날짜 헬퍼
+function getKSTDate(): string {
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().split('T')[0];
+}
+
+function getKSTDateTime(): string {
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().replace('T', ' ').substring(0, 19);
+}
 
 // production_bom 동기화 헬퍼 함수
 async function syncToProductionBom(db: any, productCode: string) {
@@ -353,7 +373,7 @@ bomRoutes.get('/product/:product_code', async (c) => {
   });
 });
 
-// BOM 등록 (개별)
+// BOM 등록 (개별) - ★ v3.4.23: 버전 관리 적용
 bomRoutes.post('/', async (c) => {
   const body = await c.req.json();
   const { product_code, item_code, quantity, unit, sort_order, memo } = body;
@@ -379,18 +399,60 @@ bomRoutes.post('/', async (c) => {
     return c.json({ success: false, error: '원재료를 찾을 수 없습니다.' }, 404);
   }
   
+  // ★ v3.4.23: 4자리 반올림 저장
+  const roundedQuantity = roundForStorage(quantity);
+  
   try {
-    await c.env.DB.prepare(`
-      INSERT INTO bom (product_code, item_code, quantity, unit, sort_order, memo)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(
-      product_code,
-      item_code,
-      quantity,
-      unit || 'g',
-      sort_order || 0,
-      memo || null
-    ).run();
+    // bom_versioned 테이블이 있는지 확인
+    const tableExists = await c.env.DB.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='bom_versioned'
+    `).first();
+    
+    if (tableExists) {
+      // ★ v3.4.23: 버전 관리 테이블에 등록
+      const today = getKSTDate();
+      const now = getKSTDateTime();
+      
+      // 기존 active 버전이 있는지 확인
+      const existing = await c.env.DB.prepare(`
+        SELECT id, version FROM bom_versioned 
+        WHERE product_code = ? AND item_code = ? AND status = 'active'
+      `).bind(product_code, item_code).first<any>();
+      
+      if (existing) {
+        return c.json({ success: false, error: '이미 등록된 원재료입니다. 수정 기능을 사용해주세요.' }, 400);
+      }
+      
+      await c.env.DB.prepare(`
+        INSERT INTO bom_versioned (
+          product_code, item_code, quantity, unit, sort_order, memo,
+          version, status, effective_date, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, 'active', ?, ?, ?)
+      `).bind(
+        product_code,
+        item_code,
+        roundedQuantity,
+        unit || 'g',
+        sort_order || 0,
+        memo || null,
+        today,
+        now,
+        now
+      ).run();
+    } else {
+      // 기존 bom 테이블에 등록 (마이그레이션 전)
+      await c.env.DB.prepare(`
+        INSERT INTO bom (product_code, item_code, quantity, unit, sort_order, memo)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).bind(
+        product_code,
+        item_code,
+        roundedQuantity,
+        unit || 'g',
+        sort_order || 0,
+        memo || null
+      ).run();
+    }
     
     // production_bom 동기화
     await syncToProductionBom(c.env.DB, product_code);
@@ -659,7 +721,122 @@ bomRoutes.get('/sync-status', async (c) => {
   }
 });
 
-// BOM 수정
+// ★ v3.4.23: BOM 이력 조회 API
+bomRoutes.get('/history', async (c) => {
+  const productCode = c.req.query('product_code');
+  const itemCode = c.req.query('item_code');
+  
+  if (!productCode) {
+    return c.json({ success: false, error: 'product_code는 필수입니다.' }, 400);
+  }
+  
+  try {
+    // bom_versioned 테이블이 있는지 확인
+    const tableExists = await c.env.DB.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='bom_versioned'
+    `).first();
+    
+    if (!tableExists) {
+      return c.json({ success: true, data: [], message: '버전 관리 테이블이 아직 생성되지 않았습니다.' });
+    }
+    
+    let query = `
+      SELECT bv.*, 
+             COALESCE(m.item_name, sf.item_name) as item_name,
+             p.item_name as product_name
+      FROM bom_versioned bv
+      LEFT JOIN master m ON bv.item_code = m.item_code
+      LEFT JOIN semi_finished_items sf ON bv.item_code = sf.item_code
+      LEFT JOIN master p ON bv.product_code = p.item_code
+      WHERE bv.product_code = ?
+    `;
+    const params: any[] = [productCode];
+    
+    if (itemCode) {
+      query += ' AND bv.item_code = ?';
+      params.push(itemCode);
+    }
+    
+    query += ' ORDER BY bv.item_code, bv.version DESC';
+    
+    const result = await c.env.DB.prepare(query).bind(...params).all();
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★ v3.4.23: 특정 버전의 BOM 조회
+bomRoutes.get('/version/:version', async (c) => {
+  const productCode = c.req.query('product_code');
+  const version = parseInt(c.req.param('version'));
+  
+  if (!productCode || isNaN(version)) {
+    return c.json({ success: false, error: 'product_code와 version은 필수입니다.' }, 400);
+  }
+  
+  try {
+    const tableExists = await c.env.DB.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='bom_versioned'
+    `).first();
+    
+    if (!tableExists) {
+      // 버전 테이블 없으면 기존 bom에서 조회
+      const result = await c.env.DB.prepare(`
+        SELECT b.*, COALESCE(m.item_name, sf.item_name) as item_name
+        FROM bom b
+        LEFT JOIN master m ON b.item_code = m.item_code
+        LEFT JOIN semi_finished_items sf ON b.item_code = sf.item_code
+        WHERE b.product_code = ?
+      `).bind(productCode).all();
+      return c.json({ success: true, data: result.results, version: 1 });
+    }
+    
+    const result = await c.env.DB.prepare(`
+      SELECT bv.*, COALESCE(m.item_name, sf.item_name) as item_name
+      FROM bom_versioned bv
+      LEFT JOIN master m ON bv.item_code = m.item_code
+      LEFT JOIN semi_finished_items sf ON bv.item_code = sf.item_code
+      WHERE bv.product_code = ? AND bv.version = ?
+    `).bind(productCode, version).all();
+    
+    return c.json({ success: true, data: result.results, version });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★ v3.4.23: 현재 활성 버전 번호 조회
+bomRoutes.get('/current-version/:product_code', async (c) => {
+  const productCode = c.req.param('product_code');
+  
+  try {
+    const tableExists = await c.env.DB.prepare(`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='bom_versioned'
+    `).first();
+    
+    if (!tableExists) {
+      return c.json({ success: true, version: 1, effective_date: null });
+    }
+    
+    const result = await c.env.DB.prepare(`
+      SELECT MAX(version) as current_version, effective_date
+      FROM bom_versioned
+      WHERE product_code = ? AND status = 'active'
+      GROUP BY product_code
+    `).bind(productCode).first<any>();
+    
+    return c.json({ 
+      success: true, 
+      version: result?.current_version || 1,
+      effective_date: result?.effective_date || null
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// BOM 수정 (★ v3.4.23: 버전 관리 적용)
 bomRoutes.put('/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
@@ -667,33 +844,107 @@ bomRoutes.put('/:id', async (c) => {
   
   // 기존 BOM 정보 가져오기 (product_code 필요)
   const existingBom = await c.env.DB.prepare(`
-    SELECT product_code FROM bom WHERE id = ?
+    SELECT product_code, item_code, quantity FROM bom WHERE id = ?
   `).bind(id).first() as any;
   
   if (!existingBom) {
     return c.json({ success: false, error: 'BOM을 찾을 수 없습니다.' }, 404);
   }
   
+  // ★ v3.4.23: 수량 변경 시 버전 관리 (bom_versioned 테이블이 있는 경우)
+  const tableExists = await c.env.DB.prepare(`
+    SELECT name FROM sqlite_master WHERE type='table' AND name='bom_versioned'
+  `).first();
+  
+  const safeQuantity = quantity !== undefined ? roundForStorage(quantity) : null;
+  
+  if (tableExists && safeQuantity !== null && safeQuantity !== existingBom.quantity) {
+    // 버전 관리: 기존 버전 archived, 새 버전 생성
+    const today = getKSTDate();
+    const now = getKSTDateTime();
+    
+    // 현재 active 버전 정보 가져오기
+    const activeVersion = await c.env.DB.prepare(`
+      SELECT id, version FROM bom_versioned 
+      WHERE product_code = ? AND item_code = ? AND status = 'active'
+    `).bind(existingBom.product_code, existingBom.item_code).first<any>();
+    
+    if (activeVersion) {
+      const newVersion = (activeVersion.version || 1) + 1;
+      
+      // 기존 버전 archived 처리
+      await c.env.DB.prepare(`
+        UPDATE bom_versioned 
+        SET status = 'archived', archived_at = ?
+        WHERE id = ?
+      `).bind(now, activeVersion.id).run();
+      
+      // 새 버전 생성
+      await c.env.DB.prepare(`
+        INSERT INTO bom_versioned (
+          product_code, item_code, quantity, unit, sort_order, memo,
+          version, status, effective_date, created_at, updated_at
+        )
+        SELECT 
+          product_code, item_code, ?, 
+          COALESCE(?, unit), COALESCE(?, sort_order), COALESCE(?, memo),
+          ?, 'active', ?, ?, ?
+        FROM bom_versioned WHERE id = ?
+      `).bind(
+        safeQuantity,
+        unit || null,
+        sort_order !== undefined ? sort_order : null,
+        memo !== undefined ? memo : null,
+        newVersion,
+        today,
+        now,
+        now,
+        activeVersion.id
+      ).run();
+      
+      console.log(`BOM versioned: ${existingBom.product_code}/${existingBom.item_code} v${activeVersion.version} -> v${newVersion}`);
+    }
+  }
+  
+  // 기존 bom 뷰 업데이트 (호환성 유지)
   // undefined 값을 null로 변환
   const safeItemCode = item_code !== undefined ? item_code : null;
-  const safeQuantity = quantity !== undefined ? quantity : null;
   const safeUnit = unit !== undefined ? unit : null;
   const safeSortOrder = sort_order !== undefined ? sort_order : null;
   const safeMemo = memo !== undefined ? memo : null;
   
-  const result = await c.env.DB.prepare(`
-    UPDATE bom 
-    SET item_code = COALESCE(?, item_code),
-        quantity = COALESCE(?, quantity),
-        unit = COALESCE(?, unit),
-        sort_order = COALESCE(?, sort_order),
-        memo = COALESCE(?, memo),
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).bind(safeItemCode, safeQuantity, safeUnit, safeSortOrder, safeMemo, id).run();
-  
-  if (result.meta.changes === 0) {
-    return c.json({ success: false, error: 'BOM 수정에 실패했습니다.' }, 500);
+  // bom_versioned가 있으면 거기서 업데이트, 없으면 기존 bom 테이블
+  if (tableExists) {
+    const result = await c.env.DB.prepare(`
+      UPDATE bom_versioned 
+      SET item_code = COALESCE(?, item_code),
+          quantity = COALESCE(?, quantity),
+          unit = COALESCE(?, unit),
+          sort_order = COALESCE(?, sort_order),
+          memo = COALESCE(?, memo),
+          updated_at = ?
+      WHERE product_code = ? AND item_code = ? AND status = 'active'
+    `).bind(
+      safeItemCode, 
+      safeQuantity, 
+      safeUnit, 
+      safeSortOrder, 
+      safeMemo,
+      getKSTDateTime(),
+      existingBom.product_code,
+      existingBom.item_code
+    ).run();
+  } else {
+    await c.env.DB.prepare(`
+      UPDATE bom 
+      SET item_code = COALESCE(?, item_code),
+          quantity = COALESCE(?, quantity),
+          unit = COALESCE(?, unit),
+          sort_order = COALESCE(?, sort_order),
+          memo = COALESCE(?, memo),
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(safeItemCode, safeQuantity, safeUnit, safeSortOrder, safeMemo, id).run();
   }
   
   // production_bom 동기화

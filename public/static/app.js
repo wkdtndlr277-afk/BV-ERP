@@ -429,6 +429,14 @@ function formatNumber(num, decimals = 2) {
   return n.toLocaleString('ko-KR', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
 }
 
+// ★ v3.4.23: BOM 수량 표시용 포맷 (소수점 3자리 고정)
+// BOM 배합비 표시에 사용 - 항상 3자리로 표시
+function formatBOMQuantity(num) {
+  const n = Number(num || 0);
+  if (n === 0) return '0.000';
+  return n.toFixed(3);
+}
+
 // v2.4.1: kg 단위 중량 데이터 포맷 (소수점 4자리 고정)
 // 수불부, 생산일보 원재료 사용량 등 미량 데이터 표시용
 function formatWeight(num, unit = 'kg') {
@@ -24837,7 +24845,7 @@ function showBOMUploadPreview(data) {
       const matStatus = m.materialCode 
         ? '<span class="text-green-600"><i class="fas fa-check"></i></span>' 
         : '<span class="text-red-500" title="미등록 원재료"><i class="fas fa-times"></i></span>';
-      html += `<tr class="border-b"><td class="px-3 py-1 pl-6 text-gray-500">└</td><td class="px-3 py-1">${m.materialName}</td><td class="px-3 py-1 text-right">${(Math.round(m.quantity * 100) / 100).toFixed(2)}g</td><td class="px-3 py-1 text-center">${matStatus}</td></tr>`;
+      html += `<tr class="border-b"><td class="px-3 py-1 pl-6 text-gray-500">└</td><td class="px-3 py-1">${m.materialName}</td><td class="px-3 py-1 text-right">${formatBOMQuantity(m.quantity)}g</td><td class="px-3 py-1 text-center">${matStatus}</td></tr>`;
     });
   }
   
@@ -25765,7 +25773,7 @@ async function loadBOMForProduct(productCodeParam) {
           ${materials.map(m => `
             <tr class="hover:bg-gray-50">
               <td class="px-4 py-2">${m.item_name || m.item_code}</td>
-              <td class="px-4 py-2 text-center font-medium">${m.quantity}</td>
+              <td class="px-4 py-2 text-center font-medium">${formatBOMQuantity(m.quantity)}</td>
               <td class="px-4 py-2 text-center">${m.unit}</td>
               <td class="px-4 py-2 text-center">${formatNumber(m.current_stock || 0)} ${m.item_unit || 'kg'}</td>
               <td class="px-4 py-2 text-center">
@@ -28412,7 +28420,7 @@ function renderBomMaterialsList() {
   tbody.innerHTML = materials.map((m, idx) => `
     <tr>
       <td class="px-3 py-2">${m.name}</td>
-      <td class="px-3 py-2 text-right">${m.quantity}</td>
+      <td class="px-3 py-2 text-right">${formatBOMQuantity(m.quantity)}</td>
       <td class="px-3 py-2 text-center">
         <button onclick="removeBomMaterial(${idx})" class="text-red-500 hover:text-red-700">
           <i class="fas fa-times"></i>

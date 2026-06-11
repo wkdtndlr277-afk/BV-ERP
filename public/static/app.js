@@ -46069,10 +46069,11 @@ async function submitCooperation() {
     return;
   }
   
-  if (from_dept === to_dept) {
-    showToast('요청 부서와 협조 부서가 같을 수 없습니다', 'warning');
-    return;
-  }
+  // ★ v3.4.25: 같은 부서 간 협조 요청 허용 (부서 내 업무 지시 이행 점검용)
+  // if (from_dept === to_dept) {
+  //   showToast('요청 부서와 협조 부서가 같을 수 없습니다', 'warning');
+  //   return;
+  // }
   
   try {
     const res = await axios.post('/api/task/cooperations', {

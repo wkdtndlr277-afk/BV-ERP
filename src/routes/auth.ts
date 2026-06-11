@@ -205,6 +205,24 @@ app.post('/change-password', async (c) => {
   return c.json({ success: true, message: '비밀번호가 변경되었습니다.' })
 })
 
+// ========== 협조 요청용 사용자 목록 (권한 불필요) ==========
+
+// ★ v3.4.25: 협조 요청 담당자 선택용 - 승인된 사용자 이름 목록만 반환
+app.get('/users/names', async (c) => {
+  try {
+    const result = await c.env.DB.prepare(`
+      SELECT id, user_name, role, department
+      FROM Users 
+      WHERE status = 'approved'
+      ORDER BY user_name ASC
+    `).all()
+    
+    return c.json({ success: true, data: result.results })
+  } catch (e) {
+    return c.json({ success: false, error: '사용자 목록 조회 실패' }, 500)
+  }
+})
+
 // ========== 관리자 전용 API ==========
 
 // 사용자 목록 조회

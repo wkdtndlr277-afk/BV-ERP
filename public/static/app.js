@@ -46026,14 +46026,13 @@ async function loadCoopReceiverOptions() {
   if (!select) return;
   
   try {
-    const res = await axios.get('/api/auth/users');
+    // ★ 권한 필요 없는 API 사용
+    const res = await axios.get('/api/auth/users/names');
     if (res.data.success && res.data.data) {
       const users = res.data.data;
-      // 승인된 사용자만 필터링
-      const approvedUsers = users.filter(u => u.status === 'approved');
       
       select.innerHTML = '<option value="">담당자 선택...</option>' + 
-        approvedUsers.map(u => `<option value="${u.user_name}">${u.user_name}${u.role ? ' (' + getRoleName(u.role) + ')' : ''}</option>`).join('');
+        users.map(u => `<option value="${u.user_name}">${u.user_name}${u.department ? ' - ' + u.department : ''}${u.role ? ' (' + getRoleName(u.role) + ')' : ''}</option>`).join('');
     }
   } catch (e) {
     console.error('사용자 목록 로드 실패:', e);

@@ -1,11 +1,12 @@
-// 업무/공지 알림 시스템
-// Version: 1.1.0 - 로그인 체크 추가
+// 업무/공지/협조 알림 시스템
+// Version: 1.2.0 - 협조 요청 알림 추가 (v3.4.25)
 
 (function() {
   'use strict';
   
   const NOTIFICATION_CHECK_INTERVAL = 30000; // 30초마다 체크
   const LAST_CHECK_KEY = 'task_notification_last_check';
+  const COOP_LAST_CHECK_KEY = 'coop_notification_last_check';
   
   let notificationSound = null;
   let checkIntervalId = null;
@@ -73,6 +74,55 @@
     } catch (e) {
       console.error('알림 체크 실패:', e);
     }
+    
+    // ★ v3.4.25: 협조 요청 알림 체크
+    await checkCooperationNotifications();
+  }
+  
+  // ★ v3.4.25: 협조 요청 알림 체크
+  async function checkCooperationNotifications() {
+    try {
+      // 현재 로그인된 사용자 정보 가져오기
+      const userInfo = localStorage.getItem('user_info');
+      if (!userInfo) return;
+      
+      const user = JSON.parse(userInfo);
+      const userName = user.name || user.username;
+      if (!userName) return;
+      
+      const token = localStorage.getItem('erp_auth_token');
+      const response = await fetch(`/api/task/cooperation-notifications?receiver_name=${encodeURIComponent(userName)}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const result = await response.json();
+      
+      if (result.success && result.data && result.data.length > 0) {
+        // 읽지 않은 협조 요청 알림이 있음
+        for (const notif of result.data) {
+          // 이미 표시한 알림인지 확인
+          const shownKey = `coop_notif_shown_${notif.id}`;
+          if (localStorage.getItem(shownKey)) continue;
+          
+          notificationQueue.push({
+            id: notif.cooperation_id,
+            type: 'cooperation',
+            title: notif.title || '협조 요청',
+            message: notif.message,
+            requester: notif.requester_name,
+            from_department: notif.from_department,
+            priority: notif.priority,
+            created_at: notif.created_at,
+            notification_id: notif.id
+          });
+          
+          // 표시 완료 표시
+          localStorage.setItem(shownKey, 'true');
+        }
+        processNotificationQueue();
+      }
+    } catch (e) {
+      console.error('협조 알림 체크 실패:', e);
+    }
   }
   
   // 알림 큐 처리
@@ -92,10 +142,49 @@
       try { notificationSound.play(); } catch (e) {}
     }
     
+    // ★ v3.4.25: 협조 요청 타입 추가
     const isNotice = task.type === 'notice';
-    const typeText = isNotice ? '📢 공지사항' : '📋 업무지시';
-    const typeColor = isNotice ? '#3B82F6' : '#EF4444';
-    const typeBg = isNotice ? 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)' : 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)';
+    const isCooperation = task.type === 'cooperation';
+    let typeText, typeBg, typeIcon;
+    
+    if (isCooperation) {
+      typeText = '🤝 협조 요청';
+      typeBg = 'linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%)';
+      typeIcon = '🤝';
+    } else if (isNotice) {
+      typeText = '📢 공지사항';
+      typeBg = 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)';
+      typeIcon = '📢';
+    } else {
+      typeText = '📋 업무지시';
+      typeBg = 'linear-gradient(135deg, #EF4444 0%, #DC2626 100%)';
+      typeIcon = '📋';
+    }
+    
+    // ★ v3.4.25: 협조 요청일 경우 다른 내용 표시
+    let bodyContent;
+    if (isCooperation) {
+      bodyContent = `
+        <div class="tn-icon">${typeIcon}</div>
+        <h3 class="tn-title">${escapeHtml(task.title)}</h3>
+        <p class="tn-content">${escapeHtml(task.message || '')}</p>
+        <div class="tn-meta">
+          <span><i class="fas fa-user"></i> ${task.requester || '알 수 없음'}</span>
+          <span><i class="fas fa-building"></i> ${task.from_department || ''}</span>
+          ${task.priority === 'urgent' ? '<span style="color:#EF4444;font-weight:bold;"><i class="fas fa-exclamation-circle"></i> 긴급</span>' : ''}
+        </div>
+      `;
+    } else {
+      bodyContent = `
+        <div class="tn-icon">${typeIcon}</div>
+        <h3 class="tn-title">${escapeHtml(task.title)}</h3>
+        ${task.content ? `<p class="tn-content">${escapeHtml(task.content).substring(0, 200)}${task.content.length > 200 ? '...' : ''}</p>` : ''}
+        <div class="tn-meta">
+          <span><i class="fas fa-calendar"></i> ${task.due_date || '날짜 미정'}</span>
+          <span><i class="fas fa-clock"></i> ${formatTime(task.created_at)}</span>
+        </div>
+      `;
+    }
     
     const popup = document.createElement('div');
     popup.id = 'task-notification-popup';
@@ -107,19 +196,13 @@
             <button class="tn-close" onclick="window.TaskNotification.closePopup()">&times;</button>
           </div>
           <div class="tn-body">
-            <div class="tn-icon">${isNotice ? '📢' : '📋'}</div>
-            <h3 class="tn-title">${escapeHtml(task.title)}</h3>
-            ${task.content ? `<p class="tn-content">${escapeHtml(task.content).substring(0, 200)}${task.content.length > 200 ? '...' : ''}</p>` : ''}
-            <div class="tn-meta">
-              <span><i class="fas fa-calendar"></i> ${task.due_date || '날짜 미정'}</span>
-              <span><i class="fas fa-clock"></i> ${formatTime(task.created_at)}</span>
-            </div>
+            ${bodyContent}
           </div>
           <div class="tn-footer">
             <button class="tn-btn tn-btn-secondary" onclick="window.TaskNotification.closePopup()">
               나중에 보기
             </button>
-            <button class="tn-btn tn-btn-primary" onclick="window.TaskNotification.viewTask(${task.id})">
+            <button class="tn-btn tn-btn-primary" onclick="window.TaskNotification.viewTask(${task.id}, '${task.type}'${task.notification_id ? ', ' + task.notification_id : ''})">
               <i class="fas fa-eye"></i> 상세보기
             </button>
           </div>
@@ -302,8 +385,31 @@
   }
   
   // 업무 상세보기
-  function viewTask(taskId) {
+  // ★ v3.4.25: type, notificationId 파라미터 추가
+  function viewTask(taskId, type, notificationId) {
     closePopup();
+    
+    // ★ v3.4.25: 협조 요청일 경우 협조 요청 탭으로 이동
+    if (type === 'cooperation') {
+      // 알림 읽음 처리
+      if (notificationId) {
+        markCooperationNotificationRead(notificationId);
+      }
+      // 업무 협조 탭으로 이동
+      if (typeof window.showSection === 'function') {
+        window.showSection('task-management');
+        setTimeout(() => {
+          // 협조 탭 클릭
+          const coopTab = document.querySelector('[onclick*="showCoopTab"]') || 
+                          document.querySelector('[data-tab="cooperation"]');
+          if (coopTab) coopTab.click();
+        }, 300);
+      } else {
+        window.location.hash = 'task-management';
+      }
+      return;
+    }
+    
     // ERP의 업무관리 페이지로 이동 또는 모달 열기
     if (typeof window.showTaskDetailModal === 'function') {
       window.showTaskDetailModal(taskId);
@@ -317,6 +423,19 @@
     } else {
       // 직접 팝업으로 상세 표시
       showTaskDetailPopup(taskId);
+    }
+  }
+  
+  // ★ v3.4.25: 협조 알림 읽음 처리
+  async function markCooperationNotificationRead(notificationId) {
+    try {
+      const token = localStorage.getItem('erp_auth_token');
+      await fetch(`/api/task/cooperation-notifications/${notificationId}/read`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+    } catch (e) {
+      console.error('협조 알림 읽음 처리 실패:', e);
     }
   }
   

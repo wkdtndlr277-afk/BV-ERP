@@ -158,6 +158,11 @@ function setUserInfo(user) {
   localStorage.setItem('user_info', JSON.stringify(user));
   state.user = user;
   state.isLoggedIn = true;
+  
+  // ★ v3.4.25: 자동 로그아웃 타이머 시작
+  if (typeof startAutoLogoutTimer === 'function') {
+    startAutoLogoutTimer();
+  }
 }
 
 // 사용자 정보 가져오기
@@ -375,9 +380,177 @@ async function handleRegister(e) {
   }
 }
 
+// ★ v3.4.25: 자동 로그아웃 시스템
+const AUTO_LOGOUT_TIME = 30 * 60 * 1000; // 30분 (밀리초)
+const AUTO_LOGOUT_WARNING_TIME = 5 * 60 * 1000; // 5분 전 경고
+let autoLogoutTimer = null;
+let autoLogoutWarningTimer = null;
+let lastActivityTime = Date.now();
+
+// 자동 로그아웃 타이머 시작
+function startAutoLogoutTimer() {
+  resetAutoLogoutTimer();
+  
+  // 사용자 활동 감지 이벤트
+  const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+  activityEvents.forEach(event => {
+    document.addEventListener(event, handleUserActivity, { passive: true });
+  });
+  
+  console.log('⏰ 자동 로그아웃 타이머 시작 (30분)');
+}
+
+// 사용자 활동 감지
+function handleUserActivity() {
+  const now = Date.now();
+  // 1초 이내 중복 호출 방지
+  if (now - lastActivityTime < 1000) return;
+  
+  lastActivityTime = now;
+  resetAutoLogoutTimer();
+}
+
+// 타이머 리셋
+function resetAutoLogoutTimer() {
+  // 기존 타이머 정리
+  if (autoLogoutTimer) clearTimeout(autoLogoutTimer);
+  if (autoLogoutWarningTimer) clearTimeout(autoLogoutWarningTimer);
+  
+  // 경고 팝업 닫기
+  const warningPopup = document.getElementById('auto-logout-warning');
+  if (warningPopup) warningPopup.remove();
+  
+  // 경고 타이머 설정 (로그아웃 5분 전)
+  autoLogoutWarningTimer = setTimeout(() => {
+    showAutoLogoutWarning();
+  }, AUTO_LOGOUT_TIME - AUTO_LOGOUT_WARNING_TIME);
+  
+  // 로그아웃 타이머 설정
+  autoLogoutTimer = setTimeout(() => {
+    performAutoLogout();
+  }, AUTO_LOGOUT_TIME);
+}
+
+// 자동 로그아웃 경고 표시
+function showAutoLogoutWarning() {
+  // 이미 경고 팝업이 있으면 무시
+  if (document.getElementById('auto-logout-warning')) return;
+  
+  const popup = document.createElement('div');
+  popup.id = 'auto-logout-warning';
+  popup.innerHTML = `
+    <div style="position:fixed; top:0; left:0; right:0; bottom:0; 
+                background:rgba(0,0,0,0.5); z-index:99999;
+                display:flex; align-items:center; justify-content:center;
+                font-family: 'Malgun Gothic', sans-serif;">
+      <div style="background:white; border-radius:16px; padding:30px 40px;
+                  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                  max-width:400px; width:90%; text-align:center;">
+        <div style="font-size:50px; margin-bottom:15px;">⏰</div>
+        <h2 style="margin:0 0 10px 0; font-size:20px; color:#333;">자동 로그아웃 예정</h2>
+        <p style="color:#666; margin-bottom:20px; font-size:14px;">
+          5분간 활동이 없어 곧 자동 로그아웃됩니다.<br>
+          계속 사용하시려면 아래 버튼을 클릭하세요.
+        </p>
+        <div id="auto-logout-countdown" style="font-size:32px; font-weight:bold; color:#EF4444; margin-bottom:20px;">
+          5:00
+        </div>
+        <button onclick="extendSession()" 
+                style="background:linear-gradient(135deg, #10B981 0%, #059669 100%);
+                       border:none; color:white; padding:12px 40px; border-radius:8px;
+                       font-size:15px; font-weight:bold; cursor:pointer;
+                       margin-right:10px;">
+          계속 사용
+        </button>
+        <button onclick="performAutoLogout()" 
+                style="background:#EF4444;
+                       border:none; color:white; padding:12px 30px; border-radius:8px;
+                       font-size:15px; cursor:pointer;">
+          로그아웃
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(popup);
+  
+  // 카운트다운 시작
+  startLogoutCountdown();
+}
+
+// 카운트다운 표시
+let countdownInterval = null;
+function startLogoutCountdown() {
+  let remaining = 5 * 60; // 5분
+  
+  if (countdownInterval) clearInterval(countdownInterval);
+  
+  countdownInterval = setInterval(() => {
+    remaining--;
+    const mins = Math.floor(remaining / 60);
+    const secs = remaining % 60;
+    const countdownEl = document.getElementById('auto-logout-countdown');
+    if (countdownEl) {
+      countdownEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+    
+    if (remaining <= 0) {
+      clearInterval(countdownInterval);
+    }
+  }, 1000);
+}
+
+// 세션 연장
+function extendSession() {
+  const warningPopup = document.getElementById('auto-logout-warning');
+  if (warningPopup) warningPopup.remove();
+  if (countdownInterval) clearInterval(countdownInterval);
+  
+  resetAutoLogoutTimer();
+  showToast('세션이 연장되었습니다.', 'success');
+}
+
+// 자동 로그아웃 실행
+function performAutoLogout() {
+  const warningPopup = document.getElementById('auto-logout-warning');
+  if (warningPopup) warningPopup.remove();
+  if (countdownInterval) clearInterval(countdownInterval);
+  if (autoLogoutTimer) clearTimeout(autoLogoutTimer);
+  if (autoLogoutWarningTimer) clearTimeout(autoLogoutWarningTimer);
+  
+  // 알림 시스템 정리
+  if (window.TaskNotification && typeof window.TaskNotification.cleanup === 'function') {
+    window.TaskNotification.cleanup();
+  }
+  
+  clearAuthToken();
+  state.user = null;
+  state.isLoggedIn = false;
+  showLoginScreen();
+  showToast('장시간 미사용으로 자동 로그아웃 되었습니다.', 'info');
+}
+
+// 자동 로그아웃 타이머 정지
+function stopAutoLogoutTimer() {
+  if (autoLogoutTimer) clearTimeout(autoLogoutTimer);
+  if (autoLogoutWarningTimer) clearTimeout(autoLogoutWarningTimer);
+  if (countdownInterval) clearInterval(countdownInterval);
+  
+  const warningPopup = document.getElementById('auto-logout-warning');
+  if (warningPopup) warningPopup.remove();
+  
+  // 이벤트 리스너 제거
+  const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
+  activityEvents.forEach(event => {
+    document.removeEventListener(event, handleUserActivity);
+  });
+}
+
 // 로그아웃
 async function handleLogout() {
   if (!confirm('로그아웃 하시겠습니까?')) return;
+  
+  // ★ v3.4.25: 자동 로그아웃 타이머 정지
+  stopAutoLogoutTimer();
   
   try {
     const token = getAuthToken();
@@ -45800,11 +45973,18 @@ function renderCoopNewForm() {
         </div>
       </div>
       
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">요청자</label>
-          <input type="text" id="coop-requester" class="w-full px-3 py-2 border rounded-lg" placeholder="이름">
+          <input type="text" id="coop-requester" class="w-full px-3 py-2 border rounded-lg" placeholder="요청자 이름">
         </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">담당자 <span class="text-red-500">*</span></label>
+          <input type="text" id="coop-receiver" class="w-full px-3 py-2 border rounded-lg" placeholder="협조 받을 담당자 이름">
+        </div>
+      </div>
+      
+      <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">우선순위</label>
           <select id="coop-priority" class="w-full px-3 py-2 border rounded-lg">
@@ -45826,8 +46006,8 @@ function renderCoopNewForm() {
       </div>
       
       <div class="flex justify-end gap-2 pt-4 border-t">
-        <button onclick="showCoopTab('list')" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
-        <button onclick="submitCooperation()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+        <button type="button" onclick="showCoopTab('list')" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button type="button" id="coop-submit-btn" onclick="submitCooperation()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
           <i class="fas fa-paper-plane mr-1"></i>요청 보내기
         </button>
       </div>
@@ -45840,12 +46020,19 @@ async function submitCooperation() {
   const from_dept = document.getElementById('coop-from-dept').value;
   const to_dept = document.getElementById('coop-to-dept').value;
   const requester = document.getElementById('coop-requester').value.trim();
+  const receiver = document.getElementById('coop-receiver').value.trim();  // ★ v3.4.25: 담당자 추가
   const priority = document.getElementById('coop-priority').value;
   const due_date = document.getElementById('coop-due-date').value;
   const content = document.getElementById('coop-content').value.trim();
   
   if (!title || !from_dept || !to_dept) {
     showToast('필수 항목을 입력해주세요', 'warning');
+    return;
+  }
+  
+  // ★ v3.4.25: 담당자 필수 체크
+  if (!receiver) {
+    showToast('담당자를 입력해주세요', 'warning');
     return;
   }
   
@@ -45861,6 +46048,7 @@ async function submitCooperation() {
       from_department_id: parseInt(from_dept),
       to_department_id: parseInt(to_dept),
       requester_name: requester,
+      receiver_name: receiver,  // ★ v3.4.25: 담당자 전송
       priority,
       due_date: due_date || null
     });

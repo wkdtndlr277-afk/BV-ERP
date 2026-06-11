@@ -1240,19 +1240,33 @@ app.get('/cooperations/:id', async (c) => {
 // 협조 요청 등록
 app.post('/cooperations', async (c) => {
   const body = await c.req.json();
-  const { title, content, from_department_id, to_department_id, requester_name, priority, due_date } = body;
+  const { title, content, from_department_id, to_department_id, requester_name, receiver_name, priority, due_date } = body;
   
   if (!title || !from_department_id || !to_department_id) {
     return c.json({ success: false, error: '필수 항목을 입력해주세요' }, 400);
   }
   
   try {
+    // 협조 요청 등록
     const result = await c.env.DB.prepare(`
-      INSERT INTO task_cooperations (title, content, from_department_id, to_department_id, requester_name, priority, due_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(title, content || '', from_department_id, to_department_id, requester_name || '', priority || 'normal', due_date || null).run();
+      INSERT INTO task_cooperations (title, content, from_department_id, to_department_id, requester_name, receiver_name, priority, due_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(title, content || '', from_department_id, to_department_id, requester_name || '', receiver_name || '', priority || 'normal', due_date || null).run();
     
-    return c.json({ success: true, message: '협조 요청이 등록되었습니다', data: { id: result.meta.last_row_id } });
+    const coopId = result.meta.last_row_id;
+    
+    // ★ v3.4.25: 담당자에게 알림 등록
+    if (receiver_name) {
+      const fromDept = await c.env.DB.prepare('SELECT name FROM task_departments WHERE id = ?').bind(from_department_id).first<any>();
+      const message = `[${fromDept?.name || ''}] ${requester_name || ''}님이 협조 요청을 보냈습니다: ${title}`;
+      
+      await c.env.DB.prepare(`
+        INSERT INTO cooperation_notifications (cooperation_id, receiver_name, message)
+        VALUES (?, ?, ?)
+      `).bind(coopId, receiver_name, message).run();
+    }
+    
+    return c.json({ success: true, message: '협조 요청이 등록되었습니다', data: { id: coopId } });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }
@@ -1302,6 +1316,79 @@ app.delete('/cooperations/:id', async (c) => {
   try {
     await c.env.DB.prepare('DELETE FROM task_cooperations WHERE id = ?').bind(id).run();
     return c.json({ success: true, message: '협조 요청이 삭제되었습니다' });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ★ v3.4.25: 협조 알림 조회 (담당자별)
+app.get('/cooperation-notifications', async (c) => {
+  const receiverName = c.req.query('receiver_name');
+  const unreadOnly = c.req.query('unread_only') === 'true';
+  
+  try {
+    let query = `
+      SELECT cn.*, c.title as coop_title, c.status as coop_status,
+             fd.name as from_department_name, c.requester_name
+      FROM cooperation_notifications cn
+      JOIN task_cooperations c ON cn.cooperation_id = c.id
+      LEFT JOIN task_departments fd ON c.from_department_id = fd.id
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+    
+    if (receiverName) {
+      query += ' AND cn.receiver_name = ?';
+      params.push(receiverName);
+    }
+    if (unreadOnly) {
+      query += ' AND cn.is_read = 0';
+    }
+    
+    query += ' ORDER BY cn.created_at DESC LIMIT 50';
+    
+    const result = params.length > 0
+      ? await c.env.DB.prepare(query).bind(...params).all()
+      : await c.env.DB.prepare(query).all();
+    
+    return c.json({ success: true, data: result.results || [] });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ★ v3.4.25: 협조 알림 읽음 처리
+app.post('/cooperation-notifications/:id/read', async (c) => {
+  const id = c.req.param('id');
+  
+  try {
+    await c.env.DB.prepare(`
+      UPDATE cooperation_notifications SET is_read = 1, read_at = CURRENT_TIMESTAMP WHERE id = ?
+    `).bind(id).run();
+    return c.json({ success: true });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ★ v3.4.25: 안읽은 협조 알림 개수
+app.get('/cooperation-notifications/unread-count', async (c) => {
+  const receiverName = c.req.query('receiver_name');
+  
+  try {
+    let query = 'SELECT COUNT(*) as count FROM cooperation_notifications WHERE is_read = 0';
+    const params: any[] = [];
+    
+    if (receiverName) {
+      query += ' AND receiver_name = ?';
+      params.push(receiverName);
+    }
+    
+    const result = params.length > 0
+      ? await c.env.DB.prepare(query).bind(...params).first<any>()
+      : await c.env.DB.prepare(query).first<any>();
+    
+    return c.json({ success: true, count: result?.count || 0 });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }

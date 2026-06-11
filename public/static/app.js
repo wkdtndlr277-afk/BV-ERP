@@ -431,10 +431,11 @@ function formatNumber(num, decimals = 2) {
 
 // ★ v3.4.23: BOM 수량 표시용 포맷 (소수점 3자리 고정)
 // BOM 배합비 표시에 사용 - 항상 3자리로 표시
+// ★ v3.4.24: BOM 수량 표시용 포맷 (소수점 4자리 고정 - kg 단위)
 function formatBOMQuantity(num) {
   const n = Number(num || 0);
-  if (n === 0) return '0.000';
-  return n.toFixed(3);
+  if (n === 0) return '0.0000';
+  return n.toFixed(4);
 }
 
 // v2.4.1: kg 단위 중량 데이터 포맷 (소수점 4자리 고정)
@@ -17637,6 +17638,7 @@ function updateMaterialRequirements() {
   
   let hasShortage = false;
   
+  // ★ v3.4.24: 소수점 4자리 표시 통일
   const rows = materials.map(mat => {
     const required = mat.quantity * quantity;
     const requiredKg = mat.unit === 'g' ? required / 1000 : required;
@@ -17650,9 +17652,9 @@ function updateMaterialRequirements() {
           <span class="text-gray-500 text-xs mr-1">${mat.item_code}</span>
           <span class="font-medium">${mat.item_name || ''}</span>
         </td>
-        <td class="px-3 py-2 border text-center">${mat.quantity} ${mat.unit}</td>
-        <td class="px-3 py-2 border text-right font-medium">${formatNumber(required)} ${mat.unit}</td>
-        <td class="px-3 py-2 border text-right">${formatNumber(stock)} kg</td>
+        <td class="px-3 py-2 border text-center">${formatBOMQuantity(mat.quantity)} ${mat.unit}</td>
+        <td class="px-3 py-2 border text-right font-medium">${formatBOMQuantity(required)} ${mat.unit}</td>
+        <td class="px-3 py-2 border text-right">${formatBOMQuantity(stock)} kg</td>
         <td class="px-3 py-2 border text-center text-xs">${mat.supplier || '-'}</td>
         <td class="px-3 py-2 border text-center text-xs">${mat.expiry_date || '-'}</td>
         <td class="px-3 py-2 border text-center">
@@ -22103,14 +22105,15 @@ async function calculateOrderMaterials(items) {
     const isAvailable = mat.stock >= requiredKg;
     if (!isAvailable) hasShortage = true;
     
+    // ★ v3.4.24: 소수점 4자리 표시
     rows.push(`
       <tr class="${isAvailable ? '' : 'bg-red-50'}">
         <td class="px-3 py-2">
           <span class="text-gray-500 text-xs">${code}</span>
           <span class="ml-1 font-medium">${mat.name}</span>
         </td>
-        <td class="px-3 py-2 text-right">${formatNumber(mat.required)} ${mat.unit}</td>
-        <td class="px-3 py-2 text-right">${formatNumber(mat.stock)} kg</td>
+        <td class="px-3 py-2 text-right">${formatBOMQuantity(mat.required)} ${mat.unit}</td>
+        <td class="px-3 py-2 text-right">${formatBOMQuantity(mat.stock)} kg</td>
         <td class="px-3 py-2 text-center">
           ${isAvailable 
             ? '<span class="text-green-600"><i class="fas fa-check-circle"></i></span>' 
@@ -31628,9 +31631,9 @@ function renderMaterialsSummaryTable(materials) {
         ${materials.map(m => `
           <tr class="hover:bg-gray-50">
             <td class="px-3 py-2 font-medium">${m.material_name}</td>
-            <td class="px-3 py-2 text-right">${formatNumber(m.quantity)}${m.unit}</td>
+            <td class="px-3 py-2 text-right">${formatBOMQuantity(m.quantity)}${m.unit}</td>
             <td class="px-3 py-2 text-right text-gray-500">
-              ${m.quantity_kg ? formatNumber(m.quantity_kg, 2) + 'kg' : '-'}
+              ${m.quantity_kg ? formatBOMQuantity(m.quantity_kg) + 'kg' : '-'}
             </td>
           </tr>
         `).join('')}

@@ -836,13 +836,13 @@ bomRoutes.get('/current-version/:product_code', async (c) => {
   }
 });
 
-// BOM 수정 (★ v3.4.23: 버전 관리 적용)
+// BOM 수정 (★ v3.4.24: 버전 관리 로직 수정 - bom_versioned 직접 UPDATE)
 bomRoutes.put('/:id', async (c) => {
   const id = c.req.param('id');
   const body = await c.req.json();
   const { item_code, quantity, unit, sort_order, memo } = body;
   
-  // 기존 BOM 정보 가져오기 (product_code 필요)
+  // bom 뷰에서 기존 정보 조회 (product_code, item_code 확인용)
   const existingBom = await c.env.DB.prepare(`
     SELECT product_code, item_code, quantity FROM bom WHERE id = ?
   `).bind(id).first() as any;
@@ -851,100 +851,73 @@ bomRoutes.put('/:id', async (c) => {
     return c.json({ success: false, error: 'BOM을 찾을 수 없습니다.' }, 404);
   }
   
-  // ★ v3.4.23: 수량 변경 시 버전 관리 (bom_versioned 테이블이 있는 경우)
-  const tableExists = await c.env.DB.prepare(`
-    SELECT name FROM sqlite_master WHERE type='table' AND name='bom_versioned'
-  `).first();
-  
   const safeQuantity = quantity !== undefined ? roundForStorage(quantity) : null;
-  
-  if (tableExists && safeQuantity !== null && safeQuantity !== existingBom.quantity) {
-    // 버전 관리: 기존 버전 archived, 새 버전 생성
-    const today = getKSTDate();
-    const now = getKSTDateTime();
-    
-    // 현재 active 버전 정보 가져오기
-    const activeVersion = await c.env.DB.prepare(`
-      SELECT id, version FROM bom_versioned 
-      WHERE product_code = ? AND item_code = ? AND status = 'active'
-    `).bind(existingBom.product_code, existingBom.item_code).first<any>();
-    
-    if (activeVersion) {
-      const newVersion = (activeVersion.version || 1) + 1;
-      
-      // 기존 버전 archived 처리
-      await c.env.DB.prepare(`
-        UPDATE bom_versioned 
-        SET status = 'archived', archived_at = ?
-        WHERE id = ?
-      `).bind(now, activeVersion.id).run();
-      
-      // 새 버전 생성
-      await c.env.DB.prepare(`
-        INSERT INTO bom_versioned (
-          product_code, item_code, quantity, unit, sort_order, memo,
-          version, status, effective_date, created_at, updated_at
-        )
-        SELECT 
-          product_code, item_code, ?, 
-          COALESCE(?, unit), COALESCE(?, sort_order), COALESCE(?, memo),
-          ?, 'active', ?, ?, ?
-        FROM bom_versioned WHERE id = ?
-      `).bind(
-        safeQuantity,
-        unit || null,
-        sort_order !== undefined ? sort_order : null,
-        memo !== undefined ? memo : null,
-        newVersion,
-        today,
-        now,
-        now,
-        activeVersion.id
-      ).run();
-      
-      console.log(`BOM versioned: ${existingBom.product_code}/${existingBom.item_code} v${activeVersion.version} -> v${newVersion}`);
-    }
-  }
-  
-  // 기존 bom 뷰 업데이트 (호환성 유지)
-  // undefined 값을 null로 변환
-  const safeItemCode = item_code !== undefined ? item_code : null;
   const safeUnit = unit !== undefined ? unit : null;
   const safeSortOrder = sort_order !== undefined ? sort_order : null;
   const safeMemo = memo !== undefined ? memo : null;
+  const now = getKSTDateTime();
+  const today = getKSTDate();
   
-  // bom_versioned가 있으면 거기서 업데이트, 없으면 기존 bom 테이블
-  if (tableExists) {
-    const result = await c.env.DB.prepare(`
+  // ★ v3.4.24: bom_versioned 테이블에서 현재 active 레코드 직접 조회
+  const activeRecord = await c.env.DB.prepare(`
+    SELECT id, version, quantity FROM bom_versioned 
+    WHERE product_code = ? AND item_code = ? AND status = 'active'
+  `).bind(existingBom.product_code, existingBom.item_code).first<any>();
+  
+  if (!activeRecord) {
+    return c.json({ success: false, error: '활성 BOM 레코드를 찾을 수 없습니다.' }, 404);
+  }
+  
+  // 수량 변경 여부 확인
+  const quantityChanged = safeQuantity !== null && 
+    Math.abs(safeQuantity - activeRecord.quantity) > 0.00001;
+  
+  if (quantityChanged) {
+    // ★ 수량 변경: 버전 관리 - 기존 archived, 새 버전 INSERT
+    const newVersion = (activeRecord.version || 1) + 1;
+    
+    // 기존 버전 archived 처리
+    await c.env.DB.prepare(`
       UPDATE bom_versioned 
-      SET item_code = COALESCE(?, item_code),
-          quantity = COALESCE(?, quantity),
-          unit = COALESCE(?, unit),
+      SET status = 'archived', archived_at = ?
+      WHERE id = ?
+    `).bind(now, activeRecord.id).run();
+    
+    // 새 버전 생성 (기존 레코드 기반)
+    await c.env.DB.prepare(`
+      INSERT INTO bom_versioned (
+        product_code, item_code, quantity, unit, sort_order, memo,
+        version, status, effective_date, created_at, updated_at
+      )
+      SELECT 
+        product_code, item_code, ?, 
+        COALESCE(?, unit), COALESCE(?, sort_order), COALESCE(?, memo),
+        ?, 'active', ?, created_at, ?
+      FROM bom_versioned WHERE id = ?
+    `).bind(
+      safeQuantity,
+      safeUnit,
+      safeSortOrder,
+      safeMemo,
+      newVersion,
+      today,
+      now,
+      activeRecord.id
+    ).run();
+    
+    console.log(`BOM versioned: ${existingBom.product_code}/${existingBom.item_code} v${activeRecord.version} -> v${newVersion}, qty: ${activeRecord.quantity} -> ${safeQuantity}`);
+  } else {
+    // ★ 수량 미변경: 기존 active 레코드 직접 UPDATE (버전 유지)
+    await c.env.DB.prepare(`
+      UPDATE bom_versioned 
+      SET unit = COALESCE(?, unit),
           sort_order = COALESCE(?, sort_order),
           memo = COALESCE(?, memo),
           updated_at = ?
-      WHERE product_code = ? AND item_code = ? AND status = 'active'
-    `).bind(
-      safeItemCode, 
-      safeQuantity, 
-      safeUnit, 
-      safeSortOrder, 
-      safeMemo,
-      getKSTDateTime(),
-      existingBom.product_code,
-      existingBom.item_code
-    ).run();
-  } else {
-    await c.env.DB.prepare(`
-      UPDATE bom 
-      SET item_code = COALESCE(?, item_code),
-          quantity = COALESCE(?, quantity),
-          unit = COALESCE(?, unit),
-          sort_order = COALESCE(?, sort_order),
-          memo = COALESCE(?, memo),
-          updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).bind(safeItemCode, safeQuantity, safeUnit, safeSortOrder, safeMemo, id).run();
+    `).bind(safeUnit, safeSortOrder, safeMemo, now, activeRecord.id).run();
+    
+    console.log(`BOM updated (no version change): ${existingBom.product_code}/${existingBom.item_code}`);
   }
   
   // production_bom 동기화

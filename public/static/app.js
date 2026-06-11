@@ -46007,7 +46007,7 @@ function renderCoopNewForm() {
       
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">협조 내용</label>
-        <textarea id="coop-content" rows="4" class="w-full px-3 py-2 border rounded-lg" placeholder="협조 요청 상세 내용을 입력하세요"></textarea>
+        <textarea id="coop-request-content" rows="4" class="w-full px-3 py-2 border rounded-lg" placeholder="협조 요청 상세 내용을 입력하세요"></textarea>
       </div>
       
       <div class="flex justify-end gap-2 pt-4 border-t">
@@ -46056,7 +46056,7 @@ async function submitCooperation() {
   const receiver = receiverEl ? (receiverEl.value || '').trim() : '';  // ★ v3.4.25: 담당자 추가
   const priority = document.getElementById('coop-priority').value;
   const due_date = document.getElementById('coop-due-date').value;
-  const content = document.getElementById('coop-content').value.trim();
+  const content = document.getElementById('coop-request-content').value.trim();
   
   if (!title || !from_dept || !to_dept) {
     showToast('필수 항목을 입력해주세요', 'warning');

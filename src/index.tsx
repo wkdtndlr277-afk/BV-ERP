@@ -900,6 +900,7 @@ app.get('/*', (c) => {
       // 업무 알림 관련 전역 변수
       let currentPopupTask = null;
       let notificationTasks = [];
+      let cooperationNotifications = []; // ★ v3.4.25: 협조 알림
       
       // 로그인 후 알림 체크
       async function checkTaskNotifications() {
@@ -907,30 +908,55 @@ app.get('/*', (c) => {
           const res = await axios.get('/api/task/notifications/new');
           if (res.data.success && res.data.data.length > 0) {
             notificationTasks = res.data.data;
-            
-            // 알림 개수 표시
-            const count = notificationTasks.length;
-            const badge = document.getElementById('notification-count');
-            const taskBadge = document.getElementById('task-badge');
-            
-            if (count > 0) {
-              badge.textContent = count;
-              badge.classList.remove('hidden');
-              if (taskBadge) {
-                taskBadge.textContent = count;
-                taskBadge.classList.remove('hidden');
-              }
-              
-              // 오늘 숨기기 체크
-              const hiddenToday = localStorage.getItem('task_popup_hidden_' + new Date().toISOString().split('T')[0]);
-              if (!hiddenToday) {
-                // 첫 번째 알림 팝업 표시
-                showTaskPopup(notificationTasks[0]);
+          } else {
+            notificationTasks = [];
+          }
+        } catch (e) {
+          console.log('업무 알림 체크 실패:', e);
+          notificationTasks = [];
+        }
+        
+        // ★ v3.4.25: 협조 요청 알림 체크
+        try {
+          const userInfo = localStorage.getItem('user_info');
+          if (userInfo) {
+            const user = JSON.parse(userInfo);
+            const userName = user.user_name || user.name;
+            if (userName) {
+              const coopRes = await axios.get('/api/task/cooperation-notifications?receiver_name=' + encodeURIComponent(userName));
+              if (coopRes.data.success && coopRes.data.data.length > 0) {
+                cooperationNotifications = coopRes.data.data;
+              } else {
+                cooperationNotifications = [];
               }
             }
           }
         } catch (e) {
-          console.log('알림 체크 실패:', e);
+          console.log('협조 알림 체크 실패:', e);
+          cooperationNotifications = [];
+        }
+        
+        // 전체 알림 개수 표시
+        const totalCount = notificationTasks.length + cooperationNotifications.length;
+        const badge = document.getElementById('notification-count');
+        const taskBadge = document.getElementById('task-badge');
+        
+        if (totalCount > 0) {
+          badge.textContent = totalCount;
+          badge.classList.remove('hidden');
+          if (taskBadge) {
+            taskBadge.textContent = totalCount;
+            taskBadge.classList.remove('hidden');
+          }
+          
+          // 오늘 숨기기 체크 (업무 알림만)
+          const hiddenToday = localStorage.getItem('task_popup_hidden_' + new Date().toISOString().split('T')[0]);
+          if (!hiddenToday && notificationTasks.length > 0) {
+            showTaskPopup(notificationTasks[0]);
+          }
+        } else {
+          badge.classList.add('hidden');
+          if (taskBadge) taskBadge.classList.add('hidden');
         }
       }
       
@@ -988,25 +1014,70 @@ app.get('/*', (c) => {
         const panel = document.getElementById('notification-panel');
         const list = document.getElementById('notification-list');
         
-        if (notificationTasks.length === 0) {
+        const totalCount = notificationTasks.length + cooperationNotifications.length;
+        
+        if (totalCount === 0) {
           list.innerHTML = '<div class="p-6 text-center text-gray-400"><i class="fas fa-check-circle text-3xl mb-2"></i><p>새로운 알림이 없습니다</p></div>';
         } else {
-          list.innerHTML = notificationTasks.map(t => \`
-            <div class="p-3 border-b hover:bg-gray-50 cursor-pointer" onclick="showTaskPopup(notificationTasks.find(x => x.id === \${t.id}))">
-              <div class="flex items-start gap-3">
-                <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 \${t.type === 'notice' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}">
-                  <i class="fas \${t.type === 'notice' ? 'fa-bullhorn' : 'fa-clipboard-list'} text-sm"></i>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <p class="font-medium text-gray-800 text-sm truncate">\${t.title}</p>
-                  <p class="text-xs text-gray-500 mt-0.5">\${t.due_date}</p>
+          let html = '';
+          
+          // ★ v3.4.25: 협조 요청 알림 표시 (상단)
+          if (cooperationNotifications.length > 0) {
+            html += cooperationNotifications.map(c => \`
+              <div class="p-3 border-b hover:bg-purple-50 cursor-pointer" onclick="goToCooperationDetail(\${c.cooperation_id}, \${c.id})">
+                <div class="flex items-start gap-3">
+                  <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 bg-purple-100 text-purple-600">
+                    <i class="fas fa-handshake text-sm"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="font-medium text-gray-800 text-sm truncate">\${c.title || '협조 요청'}</p>
+                    <p class="text-xs text-purple-600 mt-0.5">\${c.requester_name || ''} → 나에게</p>
+                    <p class="text-xs text-gray-400 mt-0.5">\${c.message || ''}</p>
+                  </div>
                 </div>
               </div>
-            </div>
-          \`).join('');
+            \`).join('');
+          }
+          
+          // 업무/공지 알림 표시
+          if (notificationTasks.length > 0) {
+            html += notificationTasks.map(t => \`
+              <div class="p-3 border-b hover:bg-gray-50 cursor-pointer" onclick="showTaskPopup(notificationTasks.find(x => x.id === \${t.id}))">
+                <div class="flex items-start gap-3">
+                  <div class="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 \${t.type === 'notice' ? 'bg-blue-100 text-blue-600' : 'bg-red-100 text-red-600'}">
+                    <i class="fas \${t.type === 'notice' ? 'fa-bullhorn' : 'fa-clipboard-list'} text-sm"></i>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <p class="font-medium text-gray-800 text-sm truncate">\${t.title}</p>
+                    <p class="text-xs text-gray-500 mt-0.5">\${t.due_date}</p>
+                  </div>
+                </div>
+              </div>
+            \`).join('');
+          }
+          
+          list.innerHTML = html;
         }
         
         panel.classList.remove('hidden');
+      }
+      
+      // ★ v3.4.25: 협조 요청 상세로 이동
+      async function goToCooperationDetail(coopId, notifId) {
+        closeNotificationPanel();
+        
+        // 알림 읽음 처리
+        try {
+          await axios.post('/api/task/cooperation-notifications/' + notifId + '/read');
+        } catch (e) {}
+        
+        // 업무 협조 페이지로 이동
+        window.location.hash = 'task-management';
+        setTimeout(() => {
+          if (typeof window.showCooperationDetailModal === 'function') {
+            window.showCooperationDetailModal(coopId);
+          }
+        }, 500);
       }
       
       function closeNotificationPanel() {

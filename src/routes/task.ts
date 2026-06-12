@@ -1328,12 +1328,16 @@ app.get('/cooperation-notifications', async (c) => {
   
   try {
     let query = `
-      SELECT cn.*, c.title as coop_title, c.status as coop_status,
-             fd.name as from_department_name, c.requester_name
+      SELECT cn.*, 
+             c.title as title, 
+             c.status as coop_status,
+             c.priority,
+             fd.name as from_department,
+             c.requester_name
       FROM cooperation_notifications cn
       JOIN task_cooperations c ON cn.cooperation_id = c.id
       LEFT JOIN task_departments fd ON c.from_department_id = fd.id
-      WHERE 1=1
+      WHERE cn.is_read = 0
     `;
     const params: any[] = [];
     

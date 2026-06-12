@@ -46107,8 +46107,20 @@ async function showCooperationDetailModal(id) {
     
     const c = res.data.data;
     
+    // ★ v3.4.25: 현재 사용자 확인 (본인에게 온 요청인지)
+    const userInfo = localStorage.getItem('user_info');
+    const currentUser = userInfo ? JSON.parse(userInfo) : null;
+    const currentUserName = currentUser ? (currentUser.user_name || currentUser.name) : '';
+    const isMyRequest = c.receiver_name === currentUserName;
+    
     showModal('협조 요청 상세', `
       <div class="space-y-4" style="min-width: 500px;">
+        ${isMyRequest ? `
+          <div class="bg-purple-100 text-purple-800 px-3 py-2 rounded-lg text-sm font-medium">
+            <i class="fas fa-bell mr-1"></i> 나에게 온 협조 요청입니다
+          </div>
+        ` : ''}
+        
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <span class="px-2 py-1 rounded text-sm ${getCoopStatusStyle(c.status)}">${c.status}</span>
@@ -46121,7 +46133,7 @@ async function showCooperationDetailModal(id) {
         
         <div class="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
           <div>
-            <span class="text-sm text-gray-500">요청 부서</span>
+            <span class="text-sm text-gray-500">요청자</span>
             <div class="flex items-center gap-2 mt-1">
               <span class="w-3 h-3 rounded-full" style="background: ${c.from_department_color}"></span>
               <span class="font-medium">${c.from_department_name}</span>
@@ -46129,12 +46141,13 @@ async function showCooperationDetailModal(id) {
             ${c.requester_name ? `<div class="text-sm text-gray-600 mt-1"><i class="fas fa-user mr-1"></i>${c.requester_name}</div>` : ''}
           </div>
           <div>
-            <span class="text-sm text-gray-500">협조 부서</span>
+            <span class="text-sm text-gray-500">담당자 <span class="text-purple-600">(처리자)</span></span>
             <div class="flex items-center gap-2 mt-1">
               <span class="w-3 h-3 rounded-full" style="background: ${c.to_department_color}"></span>
               <span class="font-medium">${c.to_department_name}</span>
             </div>
-            ${c.responder_name ? `<div class="text-sm text-gray-600 mt-1"><i class="fas fa-user mr-1"></i>${c.responder_name}</div>` : ''}
+            ${c.receiver_name ? `<div class="text-sm text-purple-600 mt-1 font-medium"><i class="fas fa-user-check mr-1"></i>${c.receiver_name}</div>` : ''}
+            ${c.responder_name && c.responder_name !== c.receiver_name ? `<div class="text-sm text-gray-600 mt-1"><i class="fas fa-reply mr-1"></i>응답: ${c.responder_name}</div>` : ''}
           </div>
         </div>
         
@@ -46158,24 +46171,27 @@ async function showCooperationDetailModal(id) {
           </div>
         ` : ''}
         
-        <!-- 응답 입력 (대기/검토 상태일 때) -->
-        ${c.status === '요청' || c.status === '검토중' ? `
+        <!-- 응답 입력 (대기/검토/진행중 상태일 때, 본인 또는 담당자만) -->
+        ${(c.status === '요청' || c.status === '검토중' || c.status === '진행중') ? `
           <div class="border-t pt-4">
-            <h4 class="font-semibold text-gray-700 mb-2">응답하기</h4>
+            <h4 class="font-semibold text-gray-700 mb-2">
+              <i class="fas fa-edit mr-1 text-purple-600"></i>
+              ${c.status === '요청' || c.status === '검토중' ? '응답하기' : '상태 업데이트'}
+            </h4>
             <div class="space-y-3">
               <div class="flex gap-2">
                 <select id="coop-response-status" class="px-3 py-2 border rounded-lg">
-                  <option value="검토중">검토중</option>
-                  <option value="진행중">진행중</option>
+                  <option value="검토중" ${c.status === '검토중' ? 'selected' : ''}>검토중</option>
+                  <option value="진행중" ${c.status === '진행중' ? 'selected' : ''}>진행중</option>
                   <option value="완료">완료</option>
                   <option value="반려">반려</option>
                 </select>
-                <input type="text" id="coop-responder" class="flex-1 px-3 py-2 border rounded-lg" placeholder="응답자 이름">
+                <input type="text" id="coop-responder" class="flex-1 px-3 py-2 border rounded-lg" placeholder="응답자 이름" value="${currentUserName || ''}">
               </div>
-              <textarea id="coop-response" rows="3" class="w-full px-3 py-2 border rounded-lg" placeholder="응답 내용을 입력하세요"></textarea>
+              <textarea id="coop-response" rows="3" class="w-full px-3 py-2 border rounded-lg" placeholder="처리 내용 또는 코멘트를 입력하세요">${c.response || ''}</textarea>
               <div class="flex justify-end">
                 <button onclick="respondCooperation(${c.id})" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
-                  <i class="fas fa-reply mr-1"></i>응답하기
+                  <i class="fas fa-check mr-1"></i>저장
                 </button>
               </div>
             </div>

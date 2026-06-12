@@ -126,7 +126,7 @@ async function syncFromProductionBom(db: any, productionCode: string) {
     
     // 3. 기존 bom 삭제
     await db.prepare(
-      'DELETE FROM bom WHERE product_code = ?'
+      'DELETE FROM bom_versioned WHERE status = \'active\' AND product_code = ?'
     ).bind(productCode).run();
     
     // 4. production_bom에서 bom으로 복사
@@ -138,8 +138,7 @@ async function syncFromProductionBom(db: any, productionCode: string) {
     
     for (const bom of prodBomData.results as any[]) {
       await db.prepare(`
-        INSERT INTO bom (product_code, item_code, quantity, unit)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO bom_versioned (product_code, item_code, quantity, unit, status) VALUES (?, ?, ?, ?, 'active')
       `).bind(
         productCode,
         bom.material_code,
@@ -442,8 +441,8 @@ bomRoutes.post('/', async (c) => {
     } else {
       // 기존 bom 테이블에 등록 (마이그레이션 전)
       await c.env.DB.prepare(`
-        INSERT INTO bom (product_code, item_code, quantity, unit, sort_order, memo)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO bom_versioned (product_code, item_code, quantity, unit, sort_order, memo, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'active')
       `).bind(
         product_code,
         item_code,
@@ -512,13 +511,11 @@ bomRoutes.post('/bulk', async (c) => {
         
         if (existing) {
           await c.env.DB.prepare(`
-            UPDATE bom SET quantity = ?, unit = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE product_code = ? AND item_code = ?
+            UPDATE bom_versioned SET quantity = ?, unit = ?, updated_at = CURRENT_TIMESTAMP WHERE status = 'active' AND product_code = ? AND item_code = ?
           `).bind(mat.quantity, mat.unit || 'g', product_code, mat.item_code).run();
         } else {
           await c.env.DB.prepare(`
-            INSERT INTO bom (product_code, item_code, quantity, unit)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO bom_versioned (product_code, item_code, quantity, unit, status) VALUES (?, ?, ?, ?, 'active')
           `).bind(product_code, mat.item_code, mat.quantity, mat.unit || 'g').run();
         }
       }
@@ -562,8 +559,7 @@ bomRoutes.post('/sync-all', async (c) => {
       
       if (existing) {
         await c.env.DB.prepare(`
-          UPDATE bom SET quantity = ?, unit = ?, sort_order = ?, memo = ?, updated_at = CURRENT_TIMESTAMP
-          WHERE product_code = ? AND item_code = ?
+          UPDATE bom_versioned SET quantity = ?, unit = ?, sort_order = ?, memo = ?, updated_at = CURRENT_TIMESTAMP WHERE status = 'active' AND product_code = ? AND item_code = ?
         `).bind(
           quantity || 0,
           unit || 'g',
@@ -574,8 +570,8 @@ bomRoutes.post('/sync-all', async (c) => {
         ).run();
       } else {
         await c.env.DB.prepare(`
-          INSERT INTO bom (product_code, item_code, quantity, unit, sort_order, memo)
-          VALUES (?, ?, ?, ?, ?, ?)
+          INSERT INTO bom_versioned (product_code, item_code, quantity, unit, sort_order, memo, status)
+          VALUES (?, ?, ?, ?, ?, ?, 'active')
         `).bind(
           product_code,
           item_code,
@@ -633,13 +629,12 @@ bomRoutes.post('/sync-from-production', async (c) => {
         }
         
         // 기존 bom 삭제
-        await c.env.DB.prepare('DELETE FROM bom WHERE product_code = ?').bind(product.item_code).run();
+        await c.env.DB.prepare('DELETE FROM bom_versioned WHERE status = \'active\' AND product_code = ?').bind(product.item_code).run();
         
         // production_bom → bom 복사
         for (const bom of prodBomData.results as any[]) {
           await c.env.DB.prepare(`
-            INSERT INTO bom (product_code, item_code, quantity, unit)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO bom_versioned (product_code, item_code, quantity, unit, status) VALUES (?, ?, ?, ?, 'active')
           `).bind(product.item_code, bom.material_code, bom.quantity, bom.unit || 'g').run();
         }
         
@@ -936,7 +931,7 @@ bomRoutes.delete('/:id', async (c) => {
   ).bind(id).first() as any;
   
   const result = await c.env.DB.prepare(
-    'DELETE FROM bom WHERE id = ?'
+    'DELETE FROM bom_versioned WHERE status = \'active\' AND id = ?'
   ).bind(id).run();
   
   if (result.meta.changes === 0) {
@@ -1029,7 +1024,7 @@ bomRoutes.delete('/product/:product_code', async (c) => {
   const productCode = c.req.param('product_code');
   
   await c.env.DB.prepare(
-    'DELETE FROM bom WHERE product_code = ?'
+    'DELETE FROM bom_versioned WHERE status = \'active\' AND product_code = ?'
   ).bind(productCode).run();
   
   // production_bom 동기화 (삭제)
@@ -1043,7 +1038,7 @@ bomRoutes.delete('/product/:product_code/clear', async (c) => {
   const productCode = c.req.param('product_code');
   
   const result = await c.env.DB.prepare(
-    'DELETE FROM bom WHERE product_code = ?'
+    'DELETE FROM bom_versioned WHERE status = \'active\' AND product_code = ?'
   ).bind(productCode).run();
   
   // production_bom 동기화 (삭제)

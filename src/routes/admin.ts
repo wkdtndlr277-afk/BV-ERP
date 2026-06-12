@@ -904,12 +904,12 @@ admin.delete('/super/master-data', async (c) => {
     
     // 관련 데이터 먼저 삭제
     if (category === '제품') {
-      await env.DB.prepare('DELETE FROM bom').run()
+      await env.DB.prepare(`DELETE FROM bom_versioned WHERE status = 'active'`).run()
       await env.DB.prepare('DELETE FROM production').run()
       await env.DB.prepare('DELETE FROM production_materials').run()
       await env.DB.prepare('DELETE FROM product_outbound').run()
     } else if (category === '원료') {
-      await env.DB.prepare('DELETE FROM bom').run()
+      await env.DB.prepare(`DELETE FROM bom_versioned WHERE status = 'active'`).run()
       await env.DB.prepare('DELETE FROM inbound WHERE item_code IN (SELECT item_code FROM master WHERE category = ?)').bind('원료').run()
       await env.DB.prepare('DELETE FROM transactions WHERE item_code IN (SELECT item_code FROM master WHERE category = ?)').bind('원료').run()
     }
@@ -1025,7 +1025,7 @@ admin.delete('/super/master/:item_code', async (c) => {
     }
     
     // 관련 데이터 삭제
-    await env.DB.prepare('DELETE FROM bom WHERE product_code = ? OR item_code = ?').bind(item_code, item_code).run()
+    await env.DB.prepare(`DELETE FROM bom_versioned WHERE status = 'active' AND (product_code = ? OR item_code = ?)`).bind(item_code, item_code).run()
     await env.DB.prepare('DELETE FROM production_materials WHERE item_code = ?').bind(item_code).run()
     await env.DB.prepare('DELETE FROM production WHERE product_code = ?').bind(item_code).run()
     await env.DB.prepare('DELETE FROM product_outbound WHERE product_code = ?').bind(item_code).run()
@@ -1223,7 +1223,7 @@ admin.delete('/super/bom-all', async (c) => {
       bomCount = bomCountResult?.count || 0
       
       // BOM 삭제
-      await env.DB.prepare('DELETE FROM bom WHERE product_code = ?').bind(product_code).run()
+      await env.DB.prepare(`DELETE FROM bom_versioned WHERE status = 'active' AND product_code = ?`).bind(product_code).run()
       
       // 제품 마스터 삭제 (카테고리가 '제품'인 경우만)
       const masterResult = await env.DB.prepare('DELETE FROM master WHERE item_code = ? AND category = ?').bind(product_code, '제품').run()
@@ -1237,7 +1237,7 @@ admin.delete('/super/bom-all', async (c) => {
       masterCount = masterCountResult?.count || 0
       
       // BOM 전체 삭제
-      await env.DB.prepare('DELETE FROM bom').run()
+      await env.DB.prepare(`DELETE FROM bom_versioned WHERE status = 'active'`).run()
       
       // 제품 마스터 전체 삭제
       await env.DB.prepare("DELETE FROM master WHERE category = '제품'").run()
@@ -1298,7 +1298,7 @@ admin.delete('/super/products-all', async (c) => {
     await env.DB.prepare("DELETE FROM transactions WHERE item_code IN (SELECT item_code FROM master WHERE category = '제품')").run()
     
     // 4. bom (혹시 남아있는 것)
-    await env.DB.prepare("DELETE FROM bom WHERE product_code IN (SELECT item_code FROM master WHERE category = '제품')").run()
+    await env.DB.prepare(`DELETE FROM bom_versioned WHERE status = 'active' AND product_code IN (SELECT item_code FROM master WHERE category = '제품')`).run()
     
     // 5. inbound (제품 입고가 있다면)
     await env.DB.prepare("DELETE FROM inbound WHERE item_code IN (SELECT item_code FROM master WHERE category = '제품')").run()

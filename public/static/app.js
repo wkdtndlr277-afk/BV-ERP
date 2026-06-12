@@ -43974,7 +43974,7 @@ async function showDateDetail(dateStr) {
                   <span class="text-xs px-2 py-0.5 rounded ${getCoopStatusStyle(c.status)}">${c.status}</span>
                 </div>
                 <div class="text-sm text-gray-500 mt-1">
-                  ${c.from_department_name} → ${c.to_department_name}
+                  ${c.from_department_name} → ${c.to_department_name}${c.receiver_name ? ' <span class="text-purple-600 font-medium">(' + c.receiver_name + ')</span>' : ''}
                 </div>
               </div>
             `).join('')}
@@ -45927,14 +45927,14 @@ async function showCoopTab(tab) {
                   <span class="font-semibold text-gray-800">${c.title}</span>
                 </div>
                 <div class="flex items-center gap-4 text-sm text-gray-500">
-                  <span>
+                  <span title="요청자">
                     <span class="inline-block w-2 h-2 rounded-full mr-1" style="background: ${c.from_department_color}"></span>
-                    ${c.from_department_name}
+                    ${c.from_department_name}${c.requester_name ? ' <span class="text-gray-600">(' + c.requester_name + ')</span>' : ''}
                   </span>
                   <i class="fas fa-arrow-right"></i>
-                  <span>
+                  <span title="담당자">
                     <span class="inline-block w-2 h-2 rounded-full mr-1" style="background: ${c.to_department_color}"></span>
-                    ${c.to_department_name}
+                    ${c.to_department_name}${c.receiver_name ? ' <span class="text-purple-600 font-medium">(' + c.receiver_name + ')</span>' : ''}
                   </span>
                   ${c.due_date ? `<span class="text-orange-500"><i class="fas fa-calendar mr-1"></i>${c.due_date}</span>` : ''}
                 </div>

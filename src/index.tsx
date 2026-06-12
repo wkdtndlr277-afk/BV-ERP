@@ -1062,14 +1062,13 @@ app.get('/*', (c) => {
         panel.classList.remove('hidden');
       }
       
-      // ★ v3.4.25: 협조 요청 상세로 이동
+      // ★ v3.4.25: 협조 요청 상세로 이동 (읽음 처리는 응답 시에만)
       async function goToCooperationDetail(coopId, notifId) {
         closeNotificationPanel();
         
-        // 알림 읽음 처리
-        try {
-          await axios.post('/api/task/cooperation-notifications/' + notifId + '/read');
-        } catch (e) {}
+        // ★ 읽음 처리는 상세에서 응답/확인 버튼 클릭 시에만 처리
+        // notifId를 전역 변수로 저장해서 나중에 읽음 처리
+        window.pendingCoopNotifId = notifId;
         
         // 업무 협조 페이지로 이동
         window.location.hash = 'task-management';

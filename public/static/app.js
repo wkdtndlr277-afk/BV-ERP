@@ -46202,7 +46202,14 @@ async function showCooperationDetailModal(id) {
           <button onclick="deleteCooperation(${c.id})" class="px-4 py-2 text-red-600 hover:bg-red-50 rounded-lg">
             <i class="fas fa-trash mr-1"></i>삭제
           </button>
-          <button onclick="closeModal(); showCooperationModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">목록으로</button>
+          <div class="flex gap-2">
+            ${isMyRequest ? `
+              <button onclick="markCoopAsRead(${c.id})" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+                <i class="fas fa-check mr-1"></i>확인완료
+              </button>
+            ` : ''}
+            <button onclick="closeModal(); showCooperationModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">목록으로</button>
+          </div>
         </div>
       </div>
     `);
@@ -46225,6 +46232,15 @@ async function respondCooperation(id) {
     
     if (res.data.success) {
       showToast('응답이 등록되었습니다', 'success');
+      
+      // ★ v3.4.25: 협조 알림 읽음 처리
+      if (window.pendingCoopNotifId) {
+        try {
+          await axios.post('/api/task/cooperation-notifications/' + window.pendingCoopNotifId + '/read');
+          window.pendingCoopNotifId = null;
+        } catch (e) {}
+      }
+      
       loadCooperations();
       showCooperationDetailModal(id);
     } else {
@@ -46232,6 +46248,24 @@ async function respondCooperation(id) {
     }
   } catch (e) {
     showToast('응답 실패', 'error');
+  }
+}
+
+// ★ v3.4.25: 협조 알림 확인 완료 (읽음 처리만)
+async function markCoopAsRead(coopId) {
+  if (window.pendingCoopNotifId) {
+    try {
+      await axios.post('/api/task/cooperation-notifications/' + window.pendingCoopNotifId + '/read');
+      window.pendingCoopNotifId = null;
+      showToast('확인되었습니다', 'success');
+      closeModal();
+      loadCooperations();
+    } catch (e) {
+      showToast('처리 실패', 'error');
+    }
+  } else {
+    showToast('확인되었습니다', 'success');
+    closeModal();
   }
 }
 

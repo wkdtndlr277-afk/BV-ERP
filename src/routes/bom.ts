@@ -138,7 +138,7 @@ async function syncFromProductionBom(db: any, productionCode: string) {
     
     for (const bom of prodBomData.results as any[]) {
       await db.prepare(`
-        INSERT INTO bom_versioned (product_code, item_code, quantity, unit, status) VALUES (?, ?, ?, ?, 'active')
+        INSERT INTO bom_versioned (product_code, item_code, quantity, unit, status, version, effective_date) VALUES (?, ?, ?, ?, 'active', 1, date('now'))
       `).bind(
         productCode,
         bom.material_code,
@@ -441,8 +441,8 @@ bomRoutes.post('/', async (c) => {
     } else {
       // 기존 bom 테이블에 등록 (마이그레이션 전)
       await c.env.DB.prepare(`
-        INSERT INTO bom_versioned (product_code, item_code, quantity, unit, sort_order, memo, status)
-        VALUES (?, ?, ?, ?, ?, ?, 'active')
+        INSERT INTO bom_versioned (product_code, item_code, quantity, unit, sort_order, memo, status, version, effective_date)
+        VALUES (?, ?, ?, ?, ?, ?, 'active', 1, date('now'))
       `).bind(
         product_code,
         item_code,
@@ -515,7 +515,7 @@ bomRoutes.post('/bulk', async (c) => {
           `).bind(mat.quantity, mat.unit || 'g', product_code, mat.item_code).run();
         } else {
           await c.env.DB.prepare(`
-            INSERT INTO bom_versioned (product_code, item_code, quantity, unit, status) VALUES (?, ?, ?, ?, 'active')
+            INSERT INTO bom_versioned (product_code, item_code, quantity, unit, status, version, effective_date) VALUES (?, ?, ?, ?, 'active', 1, date('now'))
           `).bind(product_code, mat.item_code, mat.quantity, mat.unit || 'g').run();
         }
       }
@@ -570,8 +570,8 @@ bomRoutes.post('/sync-all', async (c) => {
         ).run();
       } else {
         await c.env.DB.prepare(`
-          INSERT INTO bom_versioned (product_code, item_code, quantity, unit, sort_order, memo, status)
-          VALUES (?, ?, ?, ?, ?, ?, 'active')
+          INSERT INTO bom_versioned (product_code, item_code, quantity, unit, sort_order, memo, status, version, effective_date)
+          VALUES (?, ?, ?, ?, ?, ?, 'active', 1, date('now'))
         `).bind(
           product_code,
           item_code,
@@ -634,7 +634,7 @@ bomRoutes.post('/sync-from-production', async (c) => {
         // production_bom → bom 복사
         for (const bom of prodBomData.results as any[]) {
           await c.env.DB.prepare(`
-            INSERT INTO bom_versioned (product_code, item_code, quantity, unit, status) VALUES (?, ?, ?, ?, 'active')
+            INSERT INTO bom_versioned (product_code, item_code, quantity, unit, status, version, effective_date) VALUES (?, ?, ?, ?, 'active', 1, date('now'))
           `).bind(product.item_code, bom.material_code, bom.quantity, bom.unit || 'g').run();
         }
         

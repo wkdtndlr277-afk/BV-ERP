@@ -43591,9 +43591,9 @@ async function loadAdminCooperations() {
         <div class="p-3 hover:bg-purple-50 cursor-pointer" onclick="showCooperationDetailModal(${c.id})">
           <div class="font-medium text-gray-800 text-sm truncate">${c.title}</div>
           <div class="flex items-center gap-2 text-xs text-gray-400 mt-1">
-            <span>${c.from_department_name}</span>
+            <span>${c.from_department_name}${c.requester_name ? '(' + c.requester_name + ')' : ''}</span>
             <i class="fas fa-arrow-right"></i>
-            <span>${c.to_department_name}</span>
+            <span>${c.to_department_name}${c.receiver_name ? '<span class="text-purple-600 font-medium">(' + c.receiver_name + ')</span>' : ''}</span>
           </div>
         </div>
       `).join('');

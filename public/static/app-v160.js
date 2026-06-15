@@ -12356,17 +12356,21 @@ async function calculateOrderMaterials(items) {
       
       for (const mat of materials) {
         const required = mat.quantity * item.quantity;
+        // SF 코드 여부 확인 (자동생산 원료)
+        const isSF = mat.item_code && mat.item_code.startsWith('SF');
         const existing = materialSummary.get(mat.item_code) || {
           name: mat.item_name || '',  // item_code는 이미 key로 사용되므로 name에는 item_name만
           required: 0,
           stock: mat.current_stock || 0,
-          unit: mat.unit || 'g'
+          unit: mat.unit || 'g',
+          isSF: isSF  // SF 여부 저장
         };
         // item_name이 있으면 업데이트 (기존 값이 비어있을 수 있음)
         if (mat.item_name && !existing.name) {
           existing.name = mat.item_name;
         }
         existing.required += required;
+        existing.isSF = existing.isSF || isSF;  // SF 여부 유지
         materialSummary.set(mat.item_code, existing);
       }
     } catch (e) {
@@ -12388,22 +12392,38 @@ async function calculateOrderMaterials(items) {
   
   for (const [code, mat] of materialSummary) {
     const requiredKg = mat.unit === 'g' ? mat.required / 1000 : mat.required;
-    const isAvailable = mat.stock >= requiredKg;
-    if (!isAvailable) hasShortage = true;
+    // SF 코드는 자동생산이므로 부족 체크에서 제외
+    const isSF = mat.isSF || code.startsWith('SF');
+    const isAvailable = isSF ? true : (mat.stock >= requiredKg);
+    if (!isAvailable && !isSF) hasShortage = true;
+    
+    // SF 원료: 자동생산 표시, 일반 원료: 재고/부족 표시
+    let stockDisplay, statusDisplay, rowClass;
+    if (isSF) {
+      // SF 원료: 필요량만큼 자동생산됨
+      rowClass = 'bg-blue-50';
+      stockDisplay = `<span class="text-blue-600 font-medium">${formatNumber(requiredKg)} kg</span>`;
+      statusDisplay = '<span class="text-blue-600" title="사용량만큼 자동 생산"><i class="fas fa-cog fa-spin"></i> 자동생산</span>';
+    } else if (isAvailable) {
+      rowClass = '';
+      stockDisplay = `${formatNumber(mat.stock)} kg`;
+      statusDisplay = '<span class="text-green-600"><i class="fas fa-check-circle"></i></span>';
+    } else {
+      rowClass = 'bg-red-50';
+      stockDisplay = `${formatNumber(mat.stock)} kg`;
+      statusDisplay = '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i> 부족</span>';
+    }
     
     rows.push(`
-      <tr class="${isAvailable ? '' : 'bg-red-50'}">
+      <tr class="${rowClass}">
         <td class="px-3 py-2">
           <span class="text-gray-500 text-xs">${code}</span>
+          ${isSF ? '<span class="ml-1 px-1 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">SF-LOT</span>' : ''}
           <span class="ml-1 font-medium">${mat.name}</span>
         </td>
         <td class="px-3 py-2 text-right">${formatNumber(mat.required)} ${mat.unit}</td>
-        <td class="px-3 py-2 text-right">${formatNumber(mat.stock)} kg</td>
-        <td class="px-3 py-2 text-center">
-          ${isAvailable 
-            ? '<span class="text-green-600"><i class="fas fa-check-circle"></i></span>' 
-            : '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i></span>'}
-        </td>
+        <td class="px-3 py-2 text-right">${stockDisplay}</td>
+        <td class="px-3 py-2 text-center">${statusDisplay}</td>
       </tr>
     `);
   }

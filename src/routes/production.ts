@@ -2698,9 +2698,20 @@ productionRoutes.post('/confirm', async (c) => {
         integrityErrors.push(`${item.product_code}: BOM 데이터 불일치 (프리뷰와 DB 상태가 다름)`);
       }
       
-      // 재고 부족 시 force 플래그 없으면 차단
+      // ★★★ v3.4.28: 재고 부족 체크 - SF 원료 제외 ★★★
+      // item.issues에 STOCK_SHORTAGE가 있어도, SF 원료만 부족한 경우는 허용
       if (item.issues?.includes('STOCK_SHORTAGE') && !force_stock_shortage) {
-        integrityErrors.push(`${item.product_code}: 재고 부족 - 강제 승인 필요`);
+        // materials에서 SF가 아닌 원료 중 부족한 것이 있는지 확인
+        const nonSfShortages = (item.materials || []).filter((m: any) => 
+          !m.is_sufficient && !m.is_sf && !m.item_code?.startsWith('SF')
+        );
+        
+        // SF가 아닌 원료 중 부족한 것이 있을 때만 에러
+        if (nonSfShortages.length > 0) {
+          const shortageNames = nonSfShortages.map((m: any) => m.item_name || m.item_code).join(', ');
+          integrityErrors.push(`${item.product_code}: 재고 부족 (${shortageNames}) - 강제 승인 필요`);
+        }
+        // SF만 부족한 경우는 자동생산이므로 허용 (에러 추가 안함)
       }
     }
     
@@ -2721,53 +2732,84 @@ productionRoutes.post('/confirm', async (c) => {
     
     for (const item of items) {
       try {
+        // ★★★ v3.4.29: undefined 값 방지를 위한 데이터 정제 ★★★
+        const safeProductCode = item.product_code || '';
+        const safeQuantity = Number(item.quantity) || 0;
+        const safeChannel = item.channel || channel || '';
+        const safeShelfLife = Number(item.shelf_life_days) || 7;
+        
+        // product_code가 비어있으면 스킵
+        if (!safeProductCode) {
+          failCount++;
+          results.push({ product_code: 'UNKNOWN', status: 'FAILED', error: 'product_code가 누락됨' });
+          continue;
+        }
+        
+        // quantity가 0이면 스킵
+        if (safeQuantity <= 0) {
+          failCount++;
+          results.push({ product_code: safeProductCode, status: 'FAILED', error: 'quantity가 0이거나 누락됨' });
+          continue;
+        }
+        
         // LOT 번호 생성
         const lotDate = productionDate.replace(/-/g, '');
         const countResult = await c.env.DB.prepare(`
           SELECT COUNT(*) as cnt FROM production 
           WHERE prod_date = ? AND product_code = ?
-        `).bind(productionDate, item.product_code).first<any>();
+        `).bind(productionDate, safeProductCode).first<any>();
         const seq = String((countResult?.cnt || 0) + 1).padStart(3, '0');
-        const lotNumber = `${item.product_code}-${lotDate}-${seq}`;
+        const lotNumber = `${safeProductCode}-${lotDate}-${seq}`;
         
         // 소비기한 계산
         const expiryDate = new Date(productionDate);
-        expiryDate.setDate(expiryDate.getDate() + (item.shelf_life_days || 7));
+        expiryDate.setDate(expiryDate.getDate() + safeShelfLife);
         const expiryDateStr = expiryDate.toISOString().split('T')[0];
         
-        // production 테이블에 INSERT
+        // production 테이블에 INSERT - 모든 값이 명시적으로 정의됨
         const insertResult = await c.env.DB.prepare(`
           INSERT INTO production (prod_date, product_code, quantity, lot_number, channel, expiry_date, status, created_at)
           VALUES (?, ?, ?, ?, ?, ?, '완료', datetime('now'))
         `).bind(
-          productionDate,
-          item.product_code,
-          item.quantity,
-          lotNumber,
-          item.channel || channel || '',
-          expiryDateStr
+          productionDate,       // string (YYYY-MM-DD)
+          safeProductCode,      // string (PR106 등)
+          safeQuantity,         // number (160 등)
+          lotNumber,            // string (PR106-20250615-001 등)
+          safeChannel,          // string ('bmart' 등, 빈 문자열 가능)
+          expiryDateStr         // string (YYYY-MM-DD)
         ).run();
         
         const productionId = insertResult.meta?.last_row_id;
         
         // BOM 기반 원재료 사용 기록 (production_materials)
-        if (item.materials && item.materials.length > 0 && productionId) {
+        if (item.materials && Array.isArray(item.materials) && item.materials.length > 0 && productionId) {
           for (const mat of item.materials) {
+            // ★★★ v3.4.29: materials 데이터도 정제 ★★★
+            const safeItemCode = mat.item_code || '';
+            const safeRequiredQty = Number(mat.required_qty) || 0;
+            const safeUnit = mat.unit || 'kg';
+            
+            // item_code가 비어있으면 스킵
+            if (!safeItemCode) {
+              console.warn(`[production/confirm] Skipping material with empty item_code for production ${productionId}`);
+              continue;
+            }
+            
             await c.env.DB.prepare(`
               INSERT INTO production_materials (production_id, item_code, planned_qty, actual_qty, unit)
               VALUES (?, ?, ?, ?, ?)
             `).bind(
-              productionId,
-              mat.item_code,
-              mat.required_qty,
-              mat.required_qty,
-              mat.unit || 'kg'
+              productionId,      // number
+              safeItemCode,      // string
+              safeRequiredQty,   // number
+              safeRequiredQty,   // number
+              safeUnit           // string
             ).run();
           }
         }
         
         successCount++;
-        results.push({ product_code: item.product_code, lot_number: lotNumber, status: 'SUCCESS' });
+        results.push({ product_code: safeProductCode, lot_number: lotNumber, status: 'SUCCESS' });
         
       } catch (itemError: any) {
         failCount++;

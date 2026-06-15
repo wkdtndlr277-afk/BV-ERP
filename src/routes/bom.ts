@@ -284,19 +284,76 @@ bomRoutes.get('/product/:product_code', async (c) => {
       }
     }
     
+    // ★★★ v3.4.28: SF 코드 및 자체생산 원료도 재고 조회 ★★★
     // 자체생산 원료 코드 목록 (르방, 탕종, 발효종 등)
     const selfMadeMaterials = ['RM135', 'RM137', 'RM141', 'RM146', 'RM149', 'RM155', 'RM156'];
     const selfMadeKeywords = ['르방', '탕종', '발효종'];
     const isSelfMade = selfMadeMaterials.includes(actualItemCode) || 
       selfMadeKeywords.some(kw => (master?.item_name || '').includes(kw));
     
-    // ★ 실제 재고 = inbound.remain_qty 합계 (수불부와 동일한 기준)
-    // 자체생산 원료가 아닌 경우에만 입고 정보 조회
+    // SF 코드인지 확인
+    const isSFCode = actualItemCode.startsWith('SF');
+    
+    // ★ 실제 재고 조회 - 품목 유형에 따라 다른 테이블 사용
     let supplierInfo: any = null;
     let actualStock = 0; // LOT 잔량 합계
     
-    if (!isSelfMade) {
-      // 1) LOT 잔량 합계 조회 (실제 재고)
+    if (isSFCode) {
+      // ★ SF 코드: semi_finished_lots 테이블에서 재고 조회
+      const sfStockResult = await c.env.DB.prepare(`
+        SELECT COALESCE(SUM(remain_qty), 0) as total_remain 
+        FROM semi_finished_lots 
+        WHERE item_code = ? AND remain_qty > 0
+      `).bind(actualItemCode).first<{total_remain: number}>();
+      
+      actualStock = sfStockResult?.total_remain || 0;
+      
+      // SF 재고가 0이면 semi_finished_items에서 master 정보 보완 시도
+      if (!master) {
+        const sfItem = await c.env.DB.prepare(`
+          SELECT item_name, unit FROM semi_finished_items WHERE item_code = ?
+        `).bind(actualItemCode).first<any>();
+        if (sfItem) {
+          master = { item_name: sfItem.item_name, unit: sfItem.unit, current_stock: actualStock };
+        }
+      }
+      
+      // 최근 SF LOT 정보
+      const sfLotInfo = await c.env.DB.prepare(`
+        SELECT prod_date, expiry_date FROM semi_finished_lots 
+        WHERE item_code = ? AND remain_qty > 0
+        ORDER BY expiry_date ASC, prod_date ASC LIMIT 1
+      `).bind(actualItemCode).first<any>();
+      
+      if (sfLotInfo) {
+        supplierInfo = { supplier: '자체생산', expiry_date: sfLotInfo.expiry_date };
+      }
+      
+    } else if (isSelfMade) {
+      // ★ 자체생산 원료 (SF 코드 아닌 경우): semi_finished_lots에서도 조회 시도
+      // 먼저 inbound에서 조회
+      const inboundResult = await c.env.DB.prepare(`
+        SELECT COALESCE(SUM(remain_qty), 0) as total_remain 
+        FROM inbound 
+        WHERE item_code = ? AND quality_status = '합격' AND remain_qty > 0
+      `).bind(actualItemCode).first<{total_remain: number}>();
+      
+      actualStock = inboundResult?.total_remain || 0;
+      
+      // inbound에 없으면 semi_finished_lots 시도 (코드 변환: RM135 -> SF 관련)
+      if (actualStock === 0) {
+        const sfResult = await c.env.DB.prepare(`
+          SELECT COALESCE(SUM(remain_qty), 0) as total_remain 
+          FROM semi_finished_lots 
+          WHERE item_code = ? AND remain_qty > 0
+        `).bind(actualItemCode).first<{total_remain: number}>();
+        actualStock = sfResult?.total_remain || 0;
+      }
+      
+      supplierInfo = { supplier: '자체생산', expiry_date: null };
+      
+    } else {
+      // ★ 일반 원료: inbound 테이블에서 조회 (기존 로직)
       const stockResult = await c.env.DB.prepare(`
         SELECT COALESCE(SUM(remain_qty), 0) as total_remain 
         FROM inbound 
@@ -323,7 +380,7 @@ bomRoutes.get('/product/:product_code', async (c) => {
         }
       }
       
-      // 2) 최근 입고 LOT에서 거래처 정보 조회 (FEFO 순서로 첫번째)
+      // 최근 입고 LOT에서 거래처 정보 조회 (FEFO 순서로 첫번째)
       supplierInfo = await c.env.DB.prepare(`
         SELECT supplier, expiry_date FROM inbound 
         WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
@@ -348,15 +405,23 @@ bomRoutes.get('/product/:product_code', async (c) => {
       }
     }
     
+    // ★★★ v3.4.28: LOT 재고가 0이면 master.current_stock을 폴백으로 사용 ★★★
+    // 실제 LOT가 없거나 모두 소진된 경우, master에 기록된 재고라도 표시
+    let finalStock = actualStock;
+    if (actualStock === 0 && master?.current_stock && master.current_stock > 0) {
+      finalStock = master.current_stock;
+    }
+    
     materials.push({
       ...item,
-      item_name: master?.item_name || null,
+      item_name: master?.item_name || item.material_name || null,
       item_unit: master?.unit || item.unit,
-      // ★ 수불부와 동일하게 LOT 잔량 합계 사용 (기존: master?.current_stock)
-      current_stock: actualStock,
-      supplier: isSelfMade ? '자체제작' : (supplierInfo?.supplier || null),
+      // LOT 잔량 우선, 없으면 master 재고 사용
+      current_stock: finalStock,
+      supplier: isSFCode ? '자체생산' : (isSelfMade ? '자체제작' : (supplierInfo?.supplier || null)),
       expiry_date: supplierInfo?.expiry_date || null,
-      bom_table: bomTable // 어떤 테이블에서 조회했는지
+      bom_table: bomTable, // 어떤 테이블에서 조회했는지
+      stock_source: actualStock > 0 ? (isSFCode ? 'sf_lots' : 'inbound') : (finalStock > 0 ? 'master' : 'none')
     });
   }
   

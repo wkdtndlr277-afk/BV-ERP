@@ -2522,18 +2522,20 @@ productionRoutes.post('/preview', async (c) => {
             });
           }
           
-          const isSufficient = availableStock >= requiredQty;
           const isSF = itemCode.startsWith('SF');
+          // ★★★ v3.4.28: SF 원료는 자동생산이므로 항상 충분한 것으로 처리 ★★★
+          const isSufficient = isSF ? true : (availableStock >= requiredQty);
           
           materialDetails.push({
             item_code: itemCode,
             item_name: itemName,
             required_qty: requiredQty,
-            available_stock: availableStock,
+            // SF 원료는 필요량을 가용량으로 표시 (자동생산)
+            available_stock: isSF ? requiredQty : availableStock,
             unit: unit,
             is_sufficient: isSufficient,
             is_sf: isSF,
-            stock_source: stockSource  // 재고 출처 명시
+            stock_source: isSF ? 'auto_production' : stockSource  // SF는 자동생산으로 표시
           });
           
           // 총 소요량 누적
@@ -2607,23 +2609,28 @@ productionRoutes.post('/preview', async (c) => {
     }
     
     // ===== 4단계: 총 원재료 소요량 요약 =====
-    const materialSummary = Array.from(totalMaterialRequirements.entries()).map(([code, data]: [string, any]) => ({
-      item_code: code,
-      item_name: data.item_name,
-      total_required: data.required,
-      available: data.available,
-      unit: data.unit,
-      is_sufficient: data.available >= data.required,
-      shortage: Math.max(0, data.required - data.available),
-      is_sf: data.is_sf,
-      stock_source: data.stock_source  // 재고 출처 명시
-    })).sort((a, b) => b.shortage - a.shortage);
+    const materialSummary = Array.from(totalMaterialRequirements.entries()).map(([code, data]: [string, any]) => {
+      const isSF = data.is_sf || code.startsWith('SF');
+      return {
+        item_code: code,
+        item_name: data.item_name,
+        total_required: data.required,
+        // ★ SF 원료는 필요량을 가용량으로 표시 (자동생산)
+        available: isSF ? data.required : data.available,
+        unit: data.unit,
+        // ★ SF 원료는 항상 충분
+        is_sufficient: isSF ? true : (data.available >= data.required),
+        shortage: isSF ? 0 : Math.max(0, data.required - data.available),
+        is_sf: isSF,
+        stock_source: isSF ? 'auto_production' : data.stock_source  // SF는 자동생산으로 표시
+      };
+    }).sort((a, b) => b.shortage - a.shortage);
     
-    // 결과 요약
+    // 결과 요약 - SF 원료는 부족 카운트에서 제외
     const matchedCount = validatedItems.filter(v => v.is_matched).length;
     const unmatchedCount = validatedItems.filter(v => !v.is_matched).length;
     const withBomCount = validatedItems.filter(v => v.has_bom).length;
-    const stockIssueCount = materialSummary.filter(m => !m.is_sufficient).length;
+    const stockIssueCount = materialSummary.filter(m => !m.is_sufficient && !m.is_sf).length;
     
     return c.json({
       success: true,

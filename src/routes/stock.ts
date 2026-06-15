@@ -1,335 +1,384 @@
-// 재고 관리 API (제품 재고 간편 등록 포함)
+/**
+ * ★★★ v3.4.27: 재고 무결성 관리 API ★★★
+ * 
+ * 이카운트 수준의 정확한 재고 관리 시스템
+ */
 import { Hono } from 'hono';
-import type { Bindings, StockAdjustmentRequest } from '../types';
+import type { Bindings } from '../types';
+import {
+  getVerifiedStock,
+  getBulkVerifiedStock,
+  validateAllStock,
+  syncMasterStockFromLots,
+  calculateMaterialRequirements,
+  detectAndLogInconsistencies,
+  StockInfo
+} from '../utils/stock-validator';
 
 const stockRoutes = new Hono<{ Bindings: Bindings }>();
 
-// 전체 재고 조회 (기본 루트)
-stockRoutes.get('/', async (c) => {
-  const category = c.req.query('category');
+// ===== 재고 조회 API =====
+
+/**
+ * 단일 품목 재고 조회 (검증 포함)
+ * GET /api/stock/:item_code
+ */
+stockRoutes.get('/:item_code', async (c) => {
+  const itemCode = c.req.param('item_code');
   
   try {
-    // master 테이블에서 재고 조회
-    let query = `
-      SELECT m.item_code, m.item_name, m.category, m.unit, 
-             m.current_stock as quantity, m.safety_stock,
-             m.created_at, m.updated_at
-      FROM master m
-    `;
+    const stock = await getVerifiedStock(c.env.DB, itemCode);
     
-    const params: any[] = [];
-    
-    if (category && category !== '전체') {
-      query += ' WHERE m.category = ?';
-      params.push(category);
-    }
-    
-    query += ' ORDER BY m.category, m.item_name';
-    
-    const result = params.length > 0 
-      ? await c.env.DB.prepare(query).bind(...params).all()
-      : await c.env.DB.prepare(query).all();
-    
-    return c.json({ success: true, data: result.results });
-  } catch (error: any) {
-    console.error('Stock query error:', error);
-    return c.json({ success: false, error: error.message, data: [] }, 500);
-  }
-});
-
-// 현재 재고 현황 (원료, 제품, 부자재 통합)
-stockRoutes.get('/current', async (c) => {
-  const category = c.req.query('category');
-  
-  // master 테이블 (원료, 제품)
-  let masterQuery = `
-    SELECT m.item_code, m.item_name, m.category, m.unit, m.current_stock, m.safety_stock,
-           CASE WHEN m.current_stock < m.safety_stock THEN 1 ELSE 0 END as is_low_stock,
-           m.expiry_days, m.created_at, m.updated_at
-    FROM master m
-  `;
-  
-  // supplies 테이블 (부자재)
-  let suppliesQuery = `
-    SELECT s.item_code, s.item_name, '부자재' as category, s.unit, s.current_stock, 0 as safety_stock,
-           0 as is_low_stock,
-           NULL as expiry_days, s.created_at, s.updated_at
-    FROM supplies s
-  `;
-  
-  const params: any[] = [];
-  
-  if (category && category !== '전체') {
-    if (category === '부자재') {
-      // 부자재만
-      suppliesQuery += " WHERE 1=1";
-      const result = await c.env.DB.prepare(suppliesQuery).all();
-      return c.json({ success: true, data: result.results });
-    } else {
-      // 원료 또는 제품만
-      masterQuery += ' WHERE m.category = ?';
-      params.push(category);
-      masterQuery += ' ORDER BY m.category, m.item_name';
-      const result = await c.env.DB.prepare(masterQuery).bind(...params).all();
-      return c.json({ success: true, data: result.results });
-    }
-  }
-  
-  // 전체 조회 - UNION ALL
-  const unionQuery = `
-    ${masterQuery}
-    UNION ALL
-    ${suppliesQuery}
-    ORDER BY category, item_name
-  `;
-  
-  const result = await c.env.DB.prepare(unionQuery).all();
-  return c.json({ success: true, data: result.results });
-});
-
-// 안전재고 미만 품목
-stockRoutes.get('/low-stock', async (c) => {
-  const result = await c.env.DB.prepare(`
-    SELECT m.*,
-           (m.safety_stock - m.current_stock) as shortage
-    FROM master m
-    WHERE m.current_stock < m.safety_stock
-    ORDER BY m.category, shortage DESC
-  `).all();
-  
-  return c.json({ success: true, data: result.results });
-});
-
-// 제품 재고 간편 등록 (재고 실사/초기등록/조정용)
-stockRoutes.post('/quick-register', async (c) => {
-  const body = await c.req.json<StockAdjustmentRequest>();
-  const { items, adjustment_date } = body;
-  
-  if (!items || items.length === 0) {
-    return c.json({ success: false, error: '재고 정보를 입력해주세요.' }, 400);
-  }
-  
-  const results: any[] = [];
-  const errors: string[] = [];
-  
-  for (const item of items) {
-    if (item.new_stock < 0) {
-      errors.push(`${item.item_code}: 재고는 0 이상이어야 합니다.`);
-      continue;
-    }
-    
-    // 제품인지 확인
-    const master = await c.env.DB.prepare(
-      'SELECT * FROM master WHERE item_code = ?'
-    ).bind(item.item_code).first<{ item_code: string; current_stock: number; category: string }>();
-    
-    if (!master) {
-      errors.push(`${item.item_code}: 존재하지 않는 품목입니다.`);
-      continue;
-    }
-    
-    const diff = item.new_stock - master.current_stock;
-    
-    if (diff === 0) {
-      continue; // 변동 없으면 스킵
-    }
-    
-    // Master 재고 업데이트
-    await c.env.DB.prepare(`
-      UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
-    `).bind(item.new_stock, item.item_code).run();
-    
-    // 재고 조정 LOT 생성 (양수인 경우 - 재고 증가)
-    let lot_number = null;
-    if (diff > 0) {
-      const dateStr = adjustment_date.replace(/-/g, '');
-      lot_number = `${dateStr}-${item.item_code}-ADJ`;
-      
-      // 기존 조정 LOT이 있으면 수량 추가, 없으면 새로 생성
-      const existingLot = await c.env.DB.prepare(
-        'SELECT * FROM inbound WHERE lot_number = ?'
-      ).bind(lot_number).first();
-      
-      if (existingLot) {
-        await c.env.DB.prepare(`
-          UPDATE inbound SET origin_qty = origin_qty + ?, remain_qty = remain_qty + ?, updated_at = CURRENT_TIMESTAMP 
-          WHERE lot_number = ?
-        `).bind(diff, diff, lot_number).run();
-      } else {
-        // 유통기한 계산 (품목의 기본 유통기한 사용)
-        const masterDetail = await c.env.DB.prepare(
-          'SELECT expiry_days FROM master WHERE item_code = ?'
-        ).bind(item.item_code).first<{ expiry_days: number }>();
-        
-        const expiryDays = masterDetail?.expiry_days || 365;
-        const expiryDate = new Date(adjustment_date);
-        expiryDate.setDate(expiryDate.getDate() + expiryDays);
-        
-        await c.env.DB.prepare(`
-          INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status)
-          VALUES (?, ?, ?, ?, ?, ?, '합격')
-        `).bind(
-          lot_number, 
-          item.item_code, 
-          adjustment_date, 
-          expiryDate.toISOString().split('T')[0],
-          diff, 
-          diff
-        ).run();
-      }
-    }
-    
-    // Transaction 기록
-    await c.env.DB.prepare(`
-      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, memo)
-      VALUES (?, ?, '재고조정', ?, ?, ?, ?)
-    `).bind(
-      adjustment_date, 
-      item.item_code, 
-      diff, 
-      lot_number, 
-      item.new_stock,
-      diff > 0 ? '재고 실사 증가' : '재고 실사 감소'
-    ).run();
-    
-    results.push({
-      item_code: item.item_code,
-      previous_stock: master.current_stock,
-      new_stock: item.new_stock,
-      adjustment: diff
-    });
-  }
-  
-  if (errors.length > 0 && results.length === 0) {
-    return c.json({ success: false, error: errors.join('\n') }, 400);
-  }
-  
-  return c.json({ 
-    success: true, 
-    message: `${results.length}개 품목의 재고가 조정되었습니다.`,
-    data: results,
-    warnings: errors.length > 0 ? errors : undefined
-  });
-});
-
-// 품목별 재고 집계
-stockRoutes.get('/summary', async (c) => {
-  const category = c.req.query('category');
-  
-  let baseQuery = `
-    SELECT 
-      m.item_code,
-      m.item_name,
-      m.category,
-      m.unit,
-      m.current_stock,
-      m.safety_stock,
-      COALESCE(SUM(CASE WHEN t.trans_type = '입고' THEN t.quantity ELSE 0 END), 0) as total_inbound,
-      COALESCE(SUM(CASE WHEN t.trans_type = '사용' THEN ABS(t.quantity) ELSE 0 END), 0) as total_usage,
-      COALESCE(SUM(CASE WHEN t.trans_type = '출고' THEN ABS(t.quantity) ELSE 0 END), 0) as total_outbound,
-      COALESCE(SUM(CASE WHEN t.trans_type = '재고조정' THEN t.quantity ELSE 0 END), 0) as total_adjustment
-    FROM master m
-    LEFT JOIN transactions t ON m.item_code = t.item_code
-  `;
-  const params: any[] = [];
-  
-  if (category) {
-    baseQuery += ' WHERE m.category = ?';
-    params.push(category);
-  }
-  
-  baseQuery += ' GROUP BY m.item_code ORDER BY m.category, m.item_name';
-  
-  const result = await c.env.DB.prepare(baseQuery).bind(...params).all();
-  return c.json({ success: true, data: result.results });
-});
-
-// 재고 수동 조정
-stockRoutes.post('/adjust', async (c) => {
-  const body = await c.req.json();
-  const { item_code, adjustment, reason, new_quantity } = body;
-  
-  if (!item_code || new_quantity === undefined) {
-    return c.json({ success: false, error: '품목코드와 변경할 재고량이 필요합니다' }, 400);
-  }
-  
-  if (!reason) {
-    return c.json({ success: false, error: '사유가 필요합니다' }, 400);
-  }
-  
-  try {
-    // 현재 재고 조회
-    const current = await c.env.DB.prepare(`
-      SELECT current_stock FROM master WHERE item_code = ?
-    `).bind(item_code).first() as { current_stock: number } | null;
-    
-    const oldQty = current?.current_stock || 0;
-    const diff = new_quantity - oldQty;
-    
-    // 재고 업데이트
-    await c.env.DB.prepare(`
-      UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
-    `).bind(new_quantity, item_code).run();
-    
-    // 트랜잭션 기록 (조정)
-    await c.env.DB.prepare(`
-      INSERT INTO transactions (item_code, transaction_type, quantity, lot_number, notes, transaction_date)
-      VALUES (?, '조정', ?, ?, ?, datetime('now', '+9 hours'))
-    `).bind(item_code, diff, 'ADJUST-' + Date.now(), `재고조정: ${reason} (${oldQty} → ${new_quantity})`).run();
-    
-    // 로그 기록
-    await c.env.DB.prepare(`
-      INSERT INTO admin_logs (action_type, target_table, reason)
-      VALUES (?, ?, ?)
-    `).bind('재고조정', 'master', `${item_code}: ${oldQty} → ${new_quantity} (${reason})`).run();
-    
-    return c.json({ 
-      success: true, 
-      message: '재고가 조정되었습니다',
-      old_quantity: oldQty,
-      new_quantity: new_quantity,
-      adjustment: diff
+    return c.json({
+      success: true,
+      data: stock,
+      warning: !stock.is_consistent ? {
+        message: '재고 불일치 감지',
+        lot_stock: stock.lot_stock,
+        master_stock: stock.master_stock,
+        difference: stock.difference
+      } : null
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }
 });
 
-// 재고 재계산
-stockRoutes.post('/recalculate', async (c) => {
+/**
+ * 여러 품목 재고 일괄 조회
+ * POST /api/stock/bulk
+ */
+stockRoutes.post('/bulk', async (c) => {
+  const { item_codes } = await c.req.json();
+  
+  if (!item_codes || !Array.isArray(item_codes)) {
+    return c.json({ success: false, error: 'item_codes 배열이 필요합니다' }, 400);
+  }
+  
   try {
-    // 모든 품목의 재고를 트랜잭션 기반으로 재계산
-    const items = await c.env.DB.prepare(`
-      SELECT item_code FROM master
-    `).all();
+    const stockMap = await getBulkVerifiedStock(c.env.DB, item_codes);
+    const items = Array.from(stockMap.values());
+    const inconsistent = items.filter(i => !i.is_consistent);
     
-    let updated = 0;
-    for (const item of items.results as any[]) {
-      const code = item.item_code;
-      
-      // 트랜잭션 합계 계산
-      const result = await c.env.DB.prepare(`
-        SELECT 
-          COALESCE(SUM(CASE WHEN transaction_type = '입고' THEN quantity ELSE 0 END), 0) as total_in,
-          COALESCE(SUM(CASE WHEN transaction_type = '사용' THEN quantity ELSE 0 END), 0) as total_usage,
-          COALESCE(SUM(CASE WHEN transaction_type = '출고' THEN quantity ELSE 0 END), 0) as total_out,
-          COALESCE(SUM(CASE WHEN transaction_type = '조정' THEN quantity ELSE 0 END), 0) as total_adjust
-        FROM transactions WHERE item_code = ?
-      `).bind(code).first() as { total_in: number, total_usage: number, total_out: number, total_adjust: number };
-      
-      const calculatedStock = (result.total_in || 0) - (result.total_usage || 0) - (result.total_out || 0) + (result.total_adjust || 0);
-      
-      await c.env.DB.prepare(`
-        UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
-      `).bind(calculatedStock, code).run();
-      
-      updated++;
+    return c.json({
+      success: true,
+      data: items,
+      summary: {
+        total: items.length,
+        consistent: items.length - inconsistent.length,
+        inconsistent: inconsistent.length
+      },
+      warnings: inconsistent.length > 0 ? inconsistent.map(i => ({
+        item_code: i.item_code,
+        item_name: i.item_name,
+        lot_stock: i.lot_stock,
+        master_stock: i.master_stock,
+        difference: i.difference
+      })) : []
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * 전체 원료 재고 현황 (카테고리별)
+ * GET /api/stock/all/summary
+ */
+stockRoutes.get('/all/summary', async (c) => {
+  try {
+    // 원료 재고 (LOT 기반)
+    const rawMaterials = await c.env.DB.prepare(`
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.unit,
+        m.safety_stock,
+        COALESCE(SUM(i.remain_qty), 0) as lot_stock,
+        m.current_stock as master_stock,
+        CASE 
+          WHEN COALESCE(SUM(i.remain_qty), 0) < m.safety_stock THEN 'LOW'
+          WHEN COALESCE(SUM(i.remain_qty), 0) = 0 THEN 'OUT'
+          ELSE 'OK'
+        END as status
+      FROM master m
+      LEFT JOIN inbound i ON m.item_code = i.item_code AND i.remain_qty > 0
+      WHERE m.category = '원료'
+      GROUP BY m.item_code
+      ORDER BY m.item_name
+    `).all<any>();
+    
+    // SF 원료 재고
+    const sfMaterials = await c.env.DB.prepare(`
+      SELECT 
+        sf.item_code,
+        sf.item_name,
+        sf.unit,
+        0 as safety_stock,
+        COALESCE(SUM(sfl.remain_qty), 0) as lot_stock,
+        sf.current_stock as master_stock,
+        CASE 
+          WHEN COALESCE(SUM(sfl.remain_qty), 0) = 0 THEN 'OUT'
+          ELSE 'OK'
+        END as status
+      FROM semi_finished_items sf
+      LEFT JOIN semi_finished_lots sfl ON sf.item_code = sfl.item_code AND sfl.remain_qty > 0
+      WHERE sf.is_active = 1
+      GROUP BY sf.item_code
+      ORDER BY sf.item_name
+    `).all<any>();
+    
+    const allItems = [
+      ...(rawMaterials.results || []).map((r: any) => ({ ...r, category: 'raw' })),
+      ...(sfMaterials.results || []).map((r: any) => ({ ...r, category: 'semi' }))
+    ];
+    
+    const outOfStock = allItems.filter(i => i.status === 'OUT');
+    const lowStock = allItems.filter(i => i.status === 'LOW');
+    const inconsistent = allItems.filter(i => Math.abs(i.lot_stock - i.master_stock) >= 0.01);
+    
+    return c.json({
+      success: true,
+      data: allItems,
+      summary: {
+        total: allItems.length,
+        raw_count: rawMaterials.results?.length || 0,
+        sf_count: sfMaterials.results?.length || 0,
+        out_of_stock: outOfStock.length,
+        low_stock: lowStock.length,
+        inconsistent: inconsistent.length
+      },
+      alerts: {
+        out_of_stock: outOfStock.map(i => ({ item_code: i.item_code, item_name: i.item_name })),
+        low_stock: lowStock.map(i => ({ item_code: i.item_code, item_name: i.item_name, stock: i.lot_stock, safety: i.safety_stock })),
+        inconsistent: inconsistent.map(i => ({ item_code: i.item_code, item_name: i.item_name, lot: i.lot_stock, master: i.master_stock }))
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ===== 재고 검증 API =====
+
+/**
+ * 전체 재고 일관성 검증
+ * GET /api/stock/validate/all
+ */
+stockRoutes.get('/validate/all', async (c) => {
+  try {
+    const result = await validateAllStock(c.env.DB);
+    
+    return c.json({
+      success: result.success,
+      data: result,
+      message: result.success 
+        ? '모든 재고가 일관성을 유지하고 있습니다.'
+        : `${result.inconsistent_count}개 품목의 재고 불일치가 발견되었습니다.`
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * 생산 원료 소요량 검증
+ * POST /api/stock/validate/requirements
+ */
+stockRoutes.post('/validate/requirements', async (c) => {
+  const { items } = await c.req.json();
+  
+  if (!items || !Array.isArray(items)) {
+    return c.json({ success: false, error: 'items 배열이 필요합니다' }, 400);
+  }
+  
+  try {
+    const result = await calculateMaterialRequirements(c.env.DB, items);
+    
+    return c.json({
+      success: !result.has_shortage,
+      data: result.requirements,
+      summary: {
+        total_materials: result.requirements.length,
+        sufficient: result.requirements.length - result.shortage_count,
+        insufficient: result.shortage_count
+      },
+      can_proceed: !result.has_shortage,
+      shortages: result.requirements.filter(r => !r.is_sufficient).map(r => ({
+        item_code: r.item_code,
+        item_name: r.item_name,
+        required: r.required_qty,
+        available: r.available_qty,
+        shortage: r.shortage,
+        unit: r.unit
+      }))
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ===== 재고 동기화 API =====
+
+/**
+ * 마스터 재고를 LOT 합계로 동기화
+ * POST /api/stock/sync
+ */
+stockRoutes.post('/sync', async (c) => {
+  const { item_code, reason } = await c.req.json();
+  
+  try {
+    // 동기화 전 상태 확인
+    const beforeValidation = await validateAllStock(c.env.DB);
+    
+    // 동기화 실행
+    const result = await syncMasterStockFromLots(c.env.DB, item_code);
+    
+    // 동기화 후 상태 확인
+    const afterValidation = await validateAllStock(c.env.DB);
+    
+    // 감사 로그 추가
+    await c.env.DB.prepare(`
+      INSERT INTO stock_audit_log (action, item_code, details, created_at)
+      VALUES ('MANUAL_SYNC', ?, ?, CURRENT_TIMESTAMP)
+    `).bind(
+      item_code || 'ALL',
+      JSON.stringify({
+        reason: reason || '수동 동기화',
+        before_inconsistent: beforeValidation.inconsistent_count,
+        after_inconsistent: afterValidation.inconsistent_count,
+        synced: result.synced
+      })
+    ).run();
+    
+    return c.json({
+      success: result.errors.length === 0,
+      message: item_code 
+        ? `${item_code} 재고가 동기화되었습니다.`
+        : `${result.synced}개 품목의 재고가 동기화되었습니다.`,
+      data: {
+        synced: result.synced,
+        before_inconsistent: beforeValidation.inconsistent_count,
+        after_inconsistent: afterValidation.inconsistent_count
+      },
+      errors: result.errors
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * 재고 불일치 자동 감지 및 로그
+ * POST /api/stock/detect-inconsistencies
+ */
+stockRoutes.post('/detect-inconsistencies', async (c) => {
+  try {
+    const result = await detectAndLogInconsistencies(c.env.DB);
+    
+    return c.json({
+      success: true,
+      data: result,
+      message: result.detected === 0 
+        ? '재고 불일치가 없습니다.'
+        : `${result.detected}개 불일치가 감지되어 로그에 기록되었습니다.`
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ===== 재고 감사 로그 API =====
+
+/**
+ * 재고 감사 로그 조회
+ * GET /api/stock/audit-log
+ */
+stockRoutes.get('/audit-log', async (c) => {
+  const itemCode = c.req.query('item_code');
+  const action = c.req.query('action');
+  const limit = parseInt(c.req.query('limit') || '100');
+  
+  try {
+    let query = `
+      SELECT * FROM stock_audit_log
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+    
+    if (itemCode) {
+      query += ' AND item_code = ?';
+      params.push(itemCode);
+    }
+    if (action) {
+      query += ' AND action = ?';
+      params.push(action);
     }
     
-    return c.json({ 
-      success: true, 
-      message: `${updated}개 품목의 재고가 재계산되었습니다`,
-      updated: updated
+    query += ' ORDER BY created_at DESC LIMIT ?';
+    params.push(limit);
+    
+    const result = await c.env.DB.prepare(query).bind(...params).all();
+    
+    return c.json({
+      success: true,
+      data: result.results
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * 재고 이력 조회 (수불부)
+ * GET /api/stock/history/:item_code
+ */
+stockRoutes.get('/history/:item_code', async (c) => {
+  const itemCode = c.req.param('item_code');
+  const startDate = c.req.query('start_date');
+  const endDate = c.req.query('end_date');
+  
+  try {
+    let query = `
+      SELECT 
+        trans_date,
+        trans_type,
+        quantity,
+        lot_number,
+        remain_qty,
+        memo,
+        created_at
+      FROM transactions
+      WHERE item_code = ?
+    `;
+    const params: any[] = [itemCode];
+    
+    if (startDate) {
+      query += ' AND trans_date >= ?';
+      params.push(startDate);
+    }
+    if (endDate) {
+      query += ' AND trans_date <= ?';
+      params.push(endDate);
+    }
+    
+    query += ' ORDER BY trans_date DESC, created_at DESC LIMIT 500';
+    
+    const result = await c.env.DB.prepare(query).bind(...params).all();
+    
+    // 현재 재고
+    const currentStock = await getVerifiedStock(c.env.DB, itemCode);
+    
+    return c.json({
+      success: true,
+      data: {
+        item_code: itemCode,
+        item_name: currentStock.item_name,
+        current_stock: currentStock.lot_stock,
+        unit: currentStock.unit,
+        is_consistent: currentStock.is_consistent,
+        transactions: result.results
+      }
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

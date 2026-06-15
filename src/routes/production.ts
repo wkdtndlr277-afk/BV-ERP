@@ -2611,7 +2611,7 @@ productionRoutes.post('/preview', async (c) => {
       item_code: code,
       item_name: data.item_name,
       total_required: data.required,
-      total_available: data.available,
+      available: data.available,
       unit: data.unit,
       is_sufficient: data.available >= data.required,
       shortage: Math.max(0, data.required - data.available),

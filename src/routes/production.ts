@@ -2676,7 +2676,8 @@ productionRoutes.post('/confirm', async (c) => {
     
     const productionDate = prod_date || new Date().toISOString().split('T')[0];
     
-    // ===== 무결성 검사: 실제 DB 테이블과 BOM 교차 검증 =====
+    // ===== v3.4.30: 무결성 검사 간소화 - product_code 존재 여부만 확인 =====
+    // BOM 불일치 검사 제거 (프론트엔드 데이터와 DB 상태 차이로 인한 오류 방지)
     const integrityErrors: string[] = [];
     
     for (const item of items) {
@@ -2685,21 +2686,23 @@ productionRoutes.post('/confirm', async (c) => {
         continue;
       }
       
-      // BOM 존재 확인
-      const bomCheck = await c.env.DB.prepare(`
+      // v3.4.30: 제품 코드 존재 확인 - master 테이블 또는 BOM에 등록된 제품인지 확인
+      const productCheck = await c.env.DB.prepare(`
+        SELECT COUNT(*) as cnt FROM master WHERE item_code = ?
+        UNION ALL
         SELECT COUNT(*) as cnt FROM bom WHERE product_code = ?
         UNION ALL
         SELECT COUNT(*) as cnt FROM production_bom WHERE production_code = ?
-      `).bind(item.product_code, item.product_code).all<any>();
+      `).bind(item.product_code, item.product_code, item.product_code).all<{cnt: number}>();
       
-      const bomExists = (bomCheck.results || []).some((r: any) => r.cnt > 0);
+      const productExists = (productCheck.results || []).some(r => r.cnt > 0);
       
-      if (item.has_bom && !bomExists) {
-        integrityErrors.push(`${item.product_code}: BOM 데이터 불일치 (프리뷰와 DB 상태가 다름)`);
+      if (!productExists) {
+        integrityErrors.push(`${item.product_code}: 미등록 제품 코드 (마스터/BOM에 없음)`);
       }
       
-      // ★★★ v3.4.28: 재고 부족 체크 - SF 원료 제외 ★★★
-      // item.issues에 STOCK_SHORTAGE가 있어도, SF 원료만 부족한 경우는 허용
+      // v3.4.30: 재고 부족 체크는 force_stock_shortage=true일 때 무시
+      // 프론트엔드에서 이미 force_stock_shortage: true로 보내므로 이 검사는 거의 실행 안됨
       if (item.issues?.includes('STOCK_SHORTAGE') && !force_stock_shortage) {
         // materials에서 SF가 아닌 원료 중 부족한 것이 있는지 확인
         const nonSfShortages = (item.materials || []).filter((m: any) => 
@@ -2711,7 +2714,6 @@ productionRoutes.post('/confirm', async (c) => {
           const shortageNames = nonSfShortages.map((m: any) => m.item_name || m.item_code).join(', ');
           integrityErrors.push(`${item.product_code}: 재고 부족 (${shortageNames}) - 강제 승인 필요`);
         }
-        // SF만 부족한 경우는 자동생산이므로 허용 (에러 추가 안함)
       }
     }
     

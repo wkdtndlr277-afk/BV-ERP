@@ -22450,37 +22450,51 @@ function updateMaterialTableWithDBResult(materialSummary, warnings) {
   let unregisteredCount = 0;
   
   const rows = materialSummary.map(mat => {
-    const isAvailable = mat.is_sufficient !== false && mat.available >= mat.total_required;
-    const isUnregistered = mat.stock_source === 'NOT_FOUND';
-    if (!isAvailable) hasShortage = true;
+    // ★ v3.4.28: SF 코드는 자동생산이므로 부족 체크에서 제외
+    const isSF = mat.item_code && mat.item_code.startsWith('SF');
+    const isAvailable = isSF ? true : (mat.is_sufficient !== false && mat.available >= mat.total_required);
+    const isUnregistered = mat.stock_source === 'NOT_FOUND' && !isSF;
+    
+    // SF 원료가 아닌 경우에만 부족으로 처리
+    if (!isAvailable && !isSF) hasShortage = true;
     if (isUnregistered) unregisteredCount++;
     
     const warning = warningMap.get(mat.item_code);
     const stockSourceBadge = getStockSourceBadge(mat.stock_source);
     
-    // 미등록 원료는 주황색 배경, 재고부족은 빨간색 배경
-    const rowClass = isUnregistered ? 'bg-orange-50' : (isAvailable ? '' : 'bg-red-50');
+    // SF 원료: 파란색 배경, 미등록 원료: 주황색 배경, 재고부족: 빨간색 배경
+    const rowClass = isSF ? 'bg-blue-50' : (isUnregistered ? 'bg-orange-50' : (isAvailable ? '' : 'bg-red-50'));
+    
+    // SF 원료 표시 (자동생산)
+    let stockDisplay, statusDisplay;
+    if (isSF) {
+      stockDisplay = `<span class="text-blue-600 font-medium">${formatNumber(mat.total_required, 2)} ${mat.unit || 'kg'}</span>`;
+      statusDisplay = '<span class="text-blue-600"><i class="fas fa-cog fa-spin"></i> 자동생산</span>';
+    } else if (isUnregistered) {
+      stockDisplay = `<span class="text-orange-600">${formatNumber(mat.available, 2)} ${mat.unit || 'kg'}</span>`;
+      statusDisplay = '<span class="text-orange-600"><i class="fas fa-question-circle"></i> 미등록</span>';
+    } else if (isAvailable) {
+      stockDisplay = `<span class="text-green-600">${formatNumber(mat.available, 2)} ${mat.unit || 'kg'}</span>`;
+      statusDisplay = '<span class="text-green-600"><i class="fas fa-check-circle"></i></span>';
+    } else {
+      stockDisplay = `<span class="text-red-600">${formatNumber(mat.available, 2)} ${mat.unit || 'kg'}</span>`;
+      statusDisplay = '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i> 부족</span>';
+    }
     
     return `
       <tr class="${rowClass}">
         <td class="px-3 py-2">
           <span class="text-gray-500 text-xs">${mat.item_code}</span>
+          ${isSF ? '<span class="ml-1 px-1 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">SF-LOT</span>' : ''}
           <span class="ml-1 font-medium">${mat.item_name || mat.item_code}</span>
-          ${stockSourceBadge}
+          ${!isSF ? stockSourceBadge : ''}
           ${isUnregistered ? '<div class="text-xs text-orange-600 mt-0.5"><i class="fas fa-info-circle mr-1"></i>원료 마스터 등록 및 입고 필요</div>' : ''}
-          ${warning && !isUnregistered ? `<div class="text-xs text-yellow-600 mt-0.5"><i class="fas fa-exclamation-triangle mr-1"></i>${warning.message}</div>` : ''}
+          ${isSF ? '<div class="text-xs text-blue-600 mt-0.5"><i class="fas fa-info-circle mr-1"></i>사용량만큼 자동 생산</div>' : ''}
+          ${warning && !isUnregistered && !isSF ? `<div class="text-xs text-yellow-600 mt-0.5"><i class="fas fa-exclamation-triangle mr-1"></i>${warning.message}</div>` : ''}
         </td>
         <td class="px-3 py-2 text-right">${formatNumber(mat.total_required, 2)} ${mat.unit || 'kg'}</td>
-        <td class="px-3 py-2 text-right">
-          <span class="${isUnregistered ? 'text-orange-600' : (isAvailable ? 'text-green-600' : 'text-red-600')}">${formatNumber(mat.available, 2)} ${mat.unit || 'kg'}</span>
-        </td>
-        <td class="px-3 py-2 text-center">
-          ${isUnregistered 
-            ? '<span class="text-orange-600"><i class="fas fa-question-circle"></i> 미등록</span>'
-            : (isAvailable 
-              ? '<span class="text-green-600"><i class="fas fa-check-circle"></i></span>' 
-              : '<span class="text-red-600"><i class="fas fa-exclamation-circle"></i> 부족</span>')}
-        </td>
+        <td class="px-3 py-2 text-right">${stockDisplay}</td>
+        <td class="px-3 py-2 text-center">${statusDisplay}</td>
       </tr>
     `;
   }).join('');

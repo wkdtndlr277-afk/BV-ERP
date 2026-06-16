@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 2.2.0 Build: 20260528
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.2.2';
 const APP_BUILD = '20260528';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -43488,7 +43488,8 @@ async function loadAdminDailyReportsList() {
           <div id="date-report-${date.replace(/-/g, '')}" class="divide-y">
             ${dayReports.filter(r => r.id && r.items && r.items.length > 0).map(report => `
               ${report.items.map((item, idx) => `
-                <div class="p-3 hover:bg-gray-50">
+                <div class="p-3 hover:bg-gray-50 cursor-pointer transition-colors" 
+                     onclick="openWorkItemEditModal(${item.id}, '${(item.title || '').replace(/'/g, "\\'")}', \`${(item.content || '').replace(/`/g, "\\`").replace(/\\/g, "\\\\")}\`, '${item.status || '대기'}', '${item.work_type || 'general'}', '${report.dept_name || ''}', '${report.report_date}')">
                   <div class="flex items-start gap-3">
                     <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" 
                          style="background: ${report.dept_color || '#6B7280'}">
@@ -43501,11 +43502,12 @@ async function loadAdminDailyReportsList() {
                           item.status === '완료' ? 'bg-green-100 text-green-700' : 
                           item.status === '진행중' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
                         }">${item.status || '대기'}</span>
+                        <i class="fas fa-edit text-gray-300 text-xs ml-auto"></i>
                       </div>
                       ${item.content ? `<div class="text-sm text-gray-600 mt-1 line-clamp-2">${item.content}</div>` : ''}
                       <div class="flex items-center gap-3 mt-1 text-xs text-gray-400">
                         <span style="color: ${report.dept_color || '#6B7280'}">${report.dept_name || '알 수 없음'}</span>
-                        ${item.category ? `<span><i class="fas fa-tag mr-1"></i>${item.category}</span>` : ''}
+                        ${item.work_type ? `<span><i class="fas fa-tag mr-1"></i>${item.work_type}</span>` : ''}
                         ${report.reporter_name ? `<span><i class="fas fa-user mr-1"></i>${report.reporter_name}</span>` : ''}
                       </div>
                     </div>
@@ -43562,6 +43564,170 @@ function setReportDateRange(range) {
   loadAdminDailyReportsList();
 }
 window.setReportDateRange = setReportDateRange;
+
+// 업무 항목 수정 모달 열기
+function openWorkItemEditModal(itemId, title, content, status, workType, deptName, reportDate) {
+  // 모달이 없으면 생성
+  let modal = document.getElementById('work-item-edit-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'work-item-edit-modal';
+    modal.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4';
+    document.body.appendChild(modal);
+  }
+  
+  modal.innerHTML = `
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
+      <!-- 헤더 -->
+      <div class="bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-5 py-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-bold">업무 수정</h3>
+            <p class="text-sm text-white/80">${deptName} · ${reportDate}</p>
+          </div>
+          <button onclick="closeWorkItemEditModal()" class="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+      </div>
+      
+      <!-- 폼 -->
+      <div class="p-5 space-y-4 overflow-y-auto max-h-[60vh]">
+        <input type="hidden" id="edit-work-item-id" value="${itemId}">
+        
+        <!-- 제목 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">제목</label>
+          <input type="text" id="edit-work-item-title" value="${title}" 
+                 class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
+        </div>
+        
+        <!-- 내용 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">내용</label>
+          <textarea id="edit-work-item-content" rows="5" 
+                    class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">${content}</textarea>
+        </div>
+        
+        <!-- 상태 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">상태</label>
+          <div class="flex gap-2">
+            <button type="button" onclick="selectWorkItemStatus('대기')" 
+                    class="flex-1 py-2 rounded-lg border-2 transition-all ${status === '대기' ? 'border-gray-500 bg-gray-100 text-gray-700' : 'border-gray-200 text-gray-400 hover:border-gray-300'}"
+                    id="status-btn-대기">
+              <i class="fas fa-clock mr-1"></i>대기
+            </button>
+            <button type="button" onclick="selectWorkItemStatus('진행중')" 
+                    class="flex-1 py-2 rounded-lg border-2 transition-all ${status === '진행중' ? 'border-blue-500 bg-blue-100 text-blue-700' : 'border-gray-200 text-gray-400 hover:border-blue-300'}"
+                    id="status-btn-진행중">
+              <i class="fas fa-spinner mr-1"></i>진행중
+            </button>
+            <button type="button" onclick="selectWorkItemStatus('완료')" 
+                    class="flex-1 py-2 rounded-lg border-2 transition-all ${status === '완료' ? 'border-green-500 bg-green-100 text-green-700' : 'border-gray-200 text-gray-400 hover:border-green-300'}"
+                    id="status-btn-완료">
+              <i class="fas fa-check mr-1"></i>완료
+            </button>
+          </div>
+          <input type="hidden" id="edit-work-item-status" value="${status}">
+        </div>
+        
+        <!-- 업무 유형 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">업무 유형</label>
+          <select id="edit-work-item-type" class="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
+            <option value="general" ${workType === 'general' ? 'selected' : ''}>일반 업무</option>
+            <option value="task" ${workType === 'task' ? 'selected' : ''}>업무 지시</option>
+            <option value="cooperation" ${workType === 'cooperation' ? 'selected' : ''}>협조 요청</option>
+          </select>
+        </div>
+      </div>
+      
+      <!-- 버튼 -->
+      <div class="px-5 py-4 bg-gray-50 border-t flex gap-2">
+        <button onclick="closeWorkItemEditModal()" class="flex-1 py-2 px-4 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">
+          취소
+        </button>
+        <button onclick="saveWorkItemEdit()" class="flex-1 py-2 px-4 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-medium">
+          <i class="fas fa-save mr-1"></i>저장
+        </button>
+      </div>
+    </div>
+  `;
+  
+  modal.classList.remove('hidden');
+  modal.onclick = closeWorkItemEditModal;
+}
+window.openWorkItemEditModal = openWorkItemEditModal;
+
+// 상태 선택
+function selectWorkItemStatus(status) {
+  document.getElementById('edit-work-item-status').value = status;
+  
+  // 버튼 스타일 업데이트
+  ['대기', '진행중', '완료'].forEach(s => {
+    const btn = document.getElementById('status-btn-' + s);
+    if (!btn) return;
+    
+    btn.classList.remove('border-gray-500', 'bg-gray-100', 'text-gray-700');
+    btn.classList.remove('border-blue-500', 'bg-blue-100', 'text-blue-700');
+    btn.classList.remove('border-green-500', 'bg-green-100', 'text-green-700');
+    btn.classList.add('border-gray-200', 'text-gray-400');
+    
+    if (s === status) {
+      btn.classList.remove('border-gray-200', 'text-gray-400');
+      if (s === '대기') {
+        btn.classList.add('border-gray-500', 'bg-gray-100', 'text-gray-700');
+      } else if (s === '진행중') {
+        btn.classList.add('border-blue-500', 'bg-blue-100', 'text-blue-700');
+      } else if (s === '완료') {
+        btn.classList.add('border-green-500', 'bg-green-100', 'text-green-700');
+      }
+    }
+  });
+}
+window.selectWorkItemStatus = selectWorkItemStatus;
+
+// 모달 닫기
+function closeWorkItemEditModal() {
+  const modal = document.getElementById('work-item-edit-modal');
+  if (modal) modal.classList.add('hidden');
+}
+window.closeWorkItemEditModal = closeWorkItemEditModal;
+
+// 업무 항목 저장
+async function saveWorkItemEdit() {
+  const itemId = document.getElementById('edit-work-item-id')?.value;
+  const title = document.getElementById('edit-work-item-title')?.value?.trim();
+  const content = document.getElementById('edit-work-item-content')?.value?.trim();
+  const status = document.getElementById('edit-work-item-status')?.value;
+  const workType = document.getElementById('edit-work-item-type')?.value;
+  
+  if (!itemId || !title) {
+    alert('제목을 입력해주세요');
+    return;
+  }
+  
+  try {
+    const res = await axios.put('/api/task/daily-work-item/' + itemId, {
+      title,
+      content,
+      status,
+      work_type: workType
+    });
+    
+    if (res.data.success) {
+      closeWorkItemEditModal();
+      loadAdminDailyReportsList(); // 목록 새로고침
+      showToast('업무가 수정되었습니다', 'success');
+    } else {
+      alert('저장 실패: ' + (res.data.error || '알 수 없는 오류'));
+    }
+  } catch (e) {
+    alert('저장 실패: ' + e.message);
+  }
+}
+window.saveWorkItemEdit = saveWorkItemEdit;
 
 // 부서별 일일보고 상세 로드 (레거시 - 단일 날짜)
 async function loadAdminDailyReportsSingle(date) {

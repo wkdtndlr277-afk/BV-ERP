@@ -1031,7 +1031,6 @@ app.get('/daily-reports-with-items', async (c) => {
         r.report_date,
         r.reporter_name,
         r.summary,
-        r.remarks,
         d.name as dept_name,
         d.color as dept_color
       FROM daily_work_reports r
@@ -1043,7 +1042,7 @@ app.get('/daily-reports-with-items', async (c) => {
     // 각 보고서의 업무 항목 로드
     const reportsWithItems = await Promise.all((reports.results || []).map(async (r: any) => {
       const items = await c.env.DB.prepare(`
-        SELECT id, title, content, category, status, progress
+        SELECT id, title, content, status, work_type
         FROM daily_work_items
         WHERE report_id = ?
         ORDER BY id
@@ -1056,6 +1055,28 @@ app.get('/daily-reports-with-items', async (c) => {
       success: true, 
       data: reportsWithItems
     });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// 업무 항목 수정
+app.put('/daily-work-item/:id', async (c) => {
+  const itemId = c.req.param('id');
+  const { title, content, status, work_type } = await c.req.json();
+  
+  if (!title?.trim()) {
+    return c.json({ success: false, error: '제목은 필수입니다' }, 400);
+  }
+  
+  try {
+    await c.env.DB.prepare(`
+      UPDATE daily_work_items
+      SET title = ?, content = ?, status = ?, work_type = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).bind(title.trim(), content || '', status || '대기', work_type || 'general', itemId).run();
+    
+    return c.json({ success: true, message: '업무가 수정되었습니다' });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }

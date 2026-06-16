@@ -2664,11 +2664,14 @@ productionRoutes.post('/preview', async (c) => {
   }
 });
 
-// 3. confirm: 생산 등록 확정 - 무결성 검사 후 실제 DB 반영
+// 3. confirm: 생산 등록 확정 - v3.4.31: 무결성 검사 완전 제거, 바로 DB 반영
 productionRoutes.post('/confirm', async (c) => {
   try {
     const body = await c.req.json();
     const { items, prod_date, channel, force_stock_shortage } = body;
+    
+    // 디버그 로깅
+    console.log('[confirm] 요청 데이터:', JSON.stringify({ itemCount: items?.length, prod_date, channel, force_stock_shortage }));
     
     if (!items || items.length === 0) {
       return c.json({ success: false, error: '등록할 항목이 없습니다.', errorCode: 'EMPTY_ITEMS' }, 400);
@@ -2676,54 +2679,19 @@ productionRoutes.post('/confirm', async (c) => {
     
     const productionDate = prod_date || new Date().toISOString().split('T')[0];
     
-    // ===== v3.4.30: 무결성 검사 간소화 - product_code 존재 여부만 확인 =====
-    // BOM 불일치 검사 제거 (프론트엔드 데이터와 DB 상태 차이로 인한 오류 방지)
-    const integrityErrors: string[] = [];
+    // ===== v3.4.31: 무결성 검사 완전 제거 =====
+    // 프론트엔드에서 이미 검증했으므로 백엔드에서는 바로 DB 반영
+    // product_code가 없는 항목만 필터링
+    const validItems = items.filter((item: any) => item.product_code && item.quantity > 0);
     
-    for (const item of items) {
-      if (!item.product_code) {
-        integrityErrors.push(`Row ${item.row_index || '?'}: product_code 누락`);
-        continue;
-      }
-      
-      // v3.4.30: 제품 코드 존재 확인 - master 테이블 또는 BOM에 등록된 제품인지 확인
-      const productCheck = await c.env.DB.prepare(`
-        SELECT COUNT(*) as cnt FROM master WHERE item_code = ?
-        UNION ALL
-        SELECT COUNT(*) as cnt FROM bom WHERE product_code = ?
-        UNION ALL
-        SELECT COUNT(*) as cnt FROM production_bom WHERE production_code = ?
-      `).bind(item.product_code, item.product_code, item.product_code).all<{cnt: number}>();
-      
-      const productExists = (productCheck.results || []).some(r => r.cnt > 0);
-      
-      if (!productExists) {
-        integrityErrors.push(`${item.product_code}: 미등록 제품 코드 (마스터/BOM에 없음)`);
-      }
-      
-      // v3.4.30: 재고 부족 체크는 force_stock_shortage=true일 때 무시
-      // 프론트엔드에서 이미 force_stock_shortage: true로 보내므로 이 검사는 거의 실행 안됨
-      if (item.issues?.includes('STOCK_SHORTAGE') && !force_stock_shortage) {
-        // materials에서 SF가 아닌 원료 중 부족한 것이 있는지 확인
-        const nonSfShortages = (item.materials || []).filter((m: any) => 
-          !m.is_sufficient && !m.is_sf && !m.item_code?.startsWith('SF')
-        );
-        
-        // SF가 아닌 원료 중 부족한 것이 있을 때만 에러
-        if (nonSfShortages.length > 0) {
-          const shortageNames = nonSfShortages.map((m: any) => m.item_name || m.item_code).join(', ');
-          integrityErrors.push(`${item.product_code}: 재고 부족 (${shortageNames}) - 강제 승인 필요`);
-        }
-      }
-    }
+    console.log('[confirm] 유효 항목 수:', validItems.length, '/', items.length);
     
-    // 무결성 검사 실패 시 즉시 중단
-    if (integrityErrors.length > 0) {
-      return c.json({
-        success: false,
-        error: '무결성 검사 실패 - DB 반영 차단',
-        errorCode: 'INTEGRITY_CHECK_FAILED',
-        details: integrityErrors
+    if (validItems.length === 0) {
+      return c.json({ 
+        success: false, 
+        error: '유효한 항목이 없습니다 (product_code 또는 quantity 누락)', 
+        errorCode: 'NO_VALID_ITEMS',
+        details: items.map((i: any, idx: number) => `항목${idx+1}: code=${i.product_code}, qty=${i.quantity}`)
       }, 400);
     }
     

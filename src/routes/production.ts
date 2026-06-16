@@ -2702,11 +2702,10 @@ productionRoutes.post('/confirm', async (c) => {
     
     for (const item of items) {
       try {
-        // ★★★ v3.4.29: undefined 값 방지를 위한 데이터 정제 ★★★
+        // ★★★ v3.4.32: undefined 값 방지 + 사용자 설정 소비기한 우선 사용 ★★★
         const safeProductCode = item.product_code || '';
         const safeQuantity = Number(item.quantity) || 0;
         const safeChannel = item.channel || channel || '';
-        const safeShelfLife = Number(item.shelf_life_days) || 7;
         
         // product_code가 비어있으면 스킵
         if (!safeProductCode) {
@@ -2731,10 +2730,18 @@ productionRoutes.post('/confirm', async (c) => {
         const seq = String((countResult?.cnt || 0) + 1).padStart(3, '0');
         const lotNumber = `${safeProductCode}-${lotDate}-${seq}`;
         
-        // 소비기한 계산
-        const expiryDate = new Date(productionDate);
-        expiryDate.setDate(expiryDate.getDate() + safeShelfLife);
-        const expiryDateStr = expiryDate.toISOString().split('T')[0];
+        // ★★★ v3.4.32: 소비기한 - 사용자 설정값 우선, 없으면 shelf_life_days로 계산 ★★★
+        let expiryDateStr: string;
+        if (item.expiry_date) {
+          // 사용자가 직접 설정한 소비기한 사용
+          expiryDateStr = item.expiry_date;
+        } else {
+          // shelf_life_days로 계산 (기본값 7일)
+          const safeShelfLife = Number(item.shelf_life_days) || 7;
+          const expiryDate = new Date(productionDate);
+          expiryDate.setDate(expiryDate.getDate() + safeShelfLife);
+          expiryDateStr = expiryDate.toISOString().split('T')[0];
+        }
         
         // production 테이블에 INSERT - 모든 값이 명시적으로 정의됨
         const insertResult = await c.env.DB.prepare(`

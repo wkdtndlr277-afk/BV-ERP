@@ -38277,16 +38277,14 @@ async function showBarcodeModal(productionCode, productionName) {
                          class="w-16 border rounded px-2 py-1 text-sm text-center">
                   <span class="text-xs text-gray-400">EA/박스</span>
                 </div>
-                ${b.channel === '오아시스' ? `
                 <div class="flex items-center gap-1">
-                  <label class="text-xs text-green-600 font-medium">소비기한:</label>
-                  <input type="number" min="1" max="365" value="${b.expiry_days || ''}" 
+                  <label class="text-xs text-blue-600 font-medium">소비기한:</label>
+                  <input type="number" min="1" max="999" value="${b.expiry_days || ''}" 
                          placeholder="일수"
                          onchange="updateBarcodeExpiryDays(${b.id}, this.value, '${productionCode}', '${productionName.replace(/'/g, "\\'")}')" 
-                         class="w-16 border border-green-300 rounded px-2 py-1 text-sm text-center focus:ring-green-500 focus:border-green-500">
-                  <span class="text-xs text-green-600">일</span>
+                         class="w-16 border border-blue-300 rounded px-2 py-1 text-sm text-center focus:ring-blue-500 focus:border-blue-500">
+                  <span class="text-xs text-blue-600">일</span>
                 </div>
-                ` : ''}
               </div>
             </div>
           `).join('')}
@@ -38325,20 +38323,20 @@ async function showBarcodeModal(productionCode, productionName) {
               <input type="number" id="new-barcode-box-quantity" min="1" value="1" class="w-full border rounded-lg px-4 py-2" placeholder="EA/박스">
             </div>
           </div>
-          <!-- 오아시스 채널 선택 시 소비기한 입력 필드 -->
-          <div id="new-barcode-expiry-container" class="hidden">
-            <div class="bg-green-50 border border-green-200 rounded-lg p-3">
-              <label class="block text-sm text-green-700 font-medium mb-2">
+          <!-- 소비기한 입력 필드 (모든 채널) -->
+          <div id="new-barcode-expiry-container">
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <label class="block text-sm text-blue-700 font-medium mb-2">
                 <i class="fas fa-calendar-alt mr-1"></i>
-                소비기한 (오아시스용)
+                소비기한 (일)
               </label>
               <div class="flex items-center gap-2">
-                <input type="number" id="new-barcode-expiry-days" min="1" max="365" 
-                       class="w-24 border border-green-300 rounded-lg px-4 py-2 focus:ring-green-500 focus:border-green-500" 
+                <input type="number" id="new-barcode-expiry-days" min="1" max="999" 
+                       class="w-24 border border-blue-300 rounded-lg px-4 py-2 focus:ring-blue-500 focus:border-blue-500" 
                        placeholder="일수">
-                <span class="text-sm text-green-600">일 (예: 빵 7일, 쿠키 90일)</span>
+                <span class="text-sm text-blue-600">일 (예: 실온 3~7일, 냉동 90일)</span>
               </div>
-              <p class="text-xs text-green-600 mt-1">
+              <p class="text-xs text-blue-600 mt-1">
                 <i class="fas fa-info-circle mr-1"></i>
                 생산일 기준 소비기한 일수를 입력하세요. 미입력 시 생산명 기본 소비기한이 적용됩니다.
               </p>
@@ -38365,16 +38363,14 @@ async function addBarcode(productionCode, productionName) {
   const channel = document.getElementById('new-barcode-channel').value;
   const boxQuantity = parseInt(document.getElementById('new-barcode-box-quantity')?.value) || 1;
   
-  // 오아시스 채널인 경우 소비기한 값 가져오기
+  // 모든 채널에서 소비기한 값 가져오기
   let expiryDays = null;
-  if (channel === '오아시스') {
-    const expiryValue = document.getElementById('new-barcode-expiry-days')?.value;
-    if (expiryValue) {
-      expiryDays = parseInt(expiryValue);
-      if (isNaN(expiryDays) || expiryDays < 1 || expiryDays > 365) {
-        showToast('소비기한은 1~365일 사이여야 합니다', 'warning');
-        return;
-      }
+  const expiryValue = document.getElementById('new-barcode-expiry-days')?.value;
+  if (expiryValue) {
+    expiryDays = parseInt(expiryValue);
+    if (isNaN(expiryDays) || expiryDays < 1 || expiryDays > 999) {
+      showToast('소비기한은 1~999일 사이여야 합니다', 'warning');
+      return;
     }
   }
   
@@ -38469,28 +38465,33 @@ async function updateBarcodeBoxQuantity(id, newQuantity, productionCode, product
 }
 window.updateBarcodeBoxQuantity = updateBarcodeBoxQuantity;
 
-// 오아시스 채널 선택 시 소비기한 필드 표시/숨김
+// 소비기한 필드는 항상 표시 (모든 채널에서 사용)
 function toggleBarcodeExpiryField() {
+  // 더 이상 숨기지 않음 - 항상 표시
+  // 필요 시 채널별 기본값 설정 가능
   const channel = document.getElementById('new-barcode-channel')?.value;
-  const expiryContainer = document.getElementById('new-barcode-expiry-container');
-  if (expiryContainer) {
-    if (channel === '오아시스') {
-      expiryContainer.classList.remove('hidden');
+  const expiryInput = document.getElementById('new-barcode-expiry-days');
+  
+  // 채널별 기본 소비기한 힌트 (선택 시 placeholder로 표시)
+  if (expiryInput) {
+    if (channel === '컬리냉동' || channel === '쿠팡냉동') {
+      expiryInput.placeholder = '냉동 90';
+    } else if (channel === '배민') {
+      expiryInput.placeholder = '냉동 90';
+    } else if (channel === '컬리' || channel === '쿠팡' || channel === '오아시스') {
+      expiryInput.placeholder = '실온 3~7';
     } else {
-      expiryContainer.classList.add('hidden');
-      // 다른 채널 선택 시 소비기한 값 초기화
-      const expiryInput = document.getElementById('new-barcode-expiry-days');
-      if (expiryInput) expiryInput.value = '';
+      expiryInput.placeholder = '일수';
     }
   }
 }
 window.toggleBarcodeExpiryField = toggleBarcodeExpiryField;
 
-// 바코드 소비기한 수정 (오아시스 채널용)
+// 바코드 소비기한 수정 (모든 채널)
 async function updateBarcodeExpiryDays(id, newDays, productionCode, productionName) {
   const days = newDays ? parseInt(newDays) : null;
-  if (days !== null && (isNaN(days) || days < 1 || days > 365)) {
-    showToast('소비기한은 1~365일 사이여야 합니다', 'warning');
+  if (days !== null && (isNaN(days) || days < 1 || days > 999)) {
+    showToast('소비기한은 1~999일 사이여야 합니다', 'warning');
     return;
   }
   

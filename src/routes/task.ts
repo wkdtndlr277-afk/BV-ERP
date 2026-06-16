@@ -1017,6 +1017,50 @@ app.get('/daily-reports-range', async (c) => {
   }
 });
 
+// 기간별 일일보고 + 업무 항목 조회 (리스트 뷰용)
+app.get('/daily-reports-with-items', async (c) => {
+  const startDate = c.req.query('start') || new Date().toISOString().split('T')[0];
+  const endDate = c.req.query('end') || startDate;
+  
+  try {
+    // 해당 기간의 보고서 목록
+    const reports = await c.env.DB.prepare(`
+      SELECT 
+        r.id,
+        r.department_id,
+        r.report_date,
+        r.reporter_name,
+        r.summary,
+        r.remarks,
+        d.name as dept_name,
+        d.color as dept_color
+      FROM daily_work_reports r
+      LEFT JOIN task_departments d ON r.department_id = d.id
+      WHERE r.report_date >= ? AND r.report_date <= ?
+      ORDER BY r.report_date DESC, d.sort_order
+    `).bind(startDate, endDate).all();
+    
+    // 각 보고서의 업무 항목 로드
+    const reportsWithItems = await Promise.all((reports.results || []).map(async (r: any) => {
+      const items = await c.env.DB.prepare(`
+        SELECT id, title, content, category, status, progress
+        FROM daily_work_items
+        WHERE report_id = ?
+        ORDER BY id
+      `).bind(r.id).all();
+      
+      return { ...r, items: items.results || [] };
+    }));
+    
+    return c.json({ 
+      success: true, 
+      data: reportsWithItems
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
 // 부서별 업무 이력 조회 (기간별)
 app.get('/work-history', async (c) => {
   const deptId = c.req.query('department_id');

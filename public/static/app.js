@@ -43298,36 +43298,21 @@ async function renderTaskAdminView() {
                 <i class="fas fa-clipboard-list text-lg lg:text-xl"></i>
                 <span class="font-bold text-base lg:text-lg">부서별 일일보고</span>
               </div>
-              <div class="flex items-center gap-2">
-                <!-- 뷰 모드 토글 -->
-                <div class="flex bg-white/20 rounded-lg p-0.5">
-                  <button onclick="switchReportViewMode('calendar')" id="report-view-calendar" 
-                    class="px-3 py-1 rounded text-xs font-medium transition-all bg-white text-emerald-600">
-                    <i class="fas fa-calendar-alt mr-1"></i>월별
-                  </button>
-                  <button onclick="switchReportViewMode('list')" id="report-view-list"
-                    class="px-3 py-1 rounded text-xs font-medium transition-all text-white hover:bg-white/10">
-                    <i class="fas fa-list mr-1"></i>리스트
-                  </button>
-                </div>
-              </div>
             </div>
             
             <!-- 기간 검색 영역 -->
-            <div id="report-search-area" class="mt-3 pt-3 border-t border-white/20">
+            <div class="mt-3 pt-3 border-t border-white/20">
               <div class="flex flex-wrap items-center gap-2">
                 <div class="flex items-center gap-1 bg-white/10 rounded-lg px-2 py-1">
-                  <i class="fas fa-calendar text-white/70 text-xs"></i>
                   <input type="date" id="admin-report-start-date" value="${today.substring(0, 8)}01" 
                     class="bg-transparent text-white text-sm border-none focus:outline-none w-32">
                 </div>
                 <span class="text-white/70">~</span>
                 <div class="flex items-center gap-1 bg-white/10 rounded-lg px-2 py-1">
-                  <i class="fas fa-calendar text-white/70 text-xs"></i>
                   <input type="date" id="admin-report-end-date" value="${today}" 
                     class="bg-transparent text-white text-sm border-none focus:outline-none w-32">
                 </div>
-                <button onclick="loadAdminDailyReportsRange()" class="px-3 py-1 bg-white text-emerald-600 rounded-lg text-sm font-medium hover:bg-emerald-50">
+                <button onclick="loadAdminDailyReportsList()" class="px-3 py-1 bg-white text-emerald-600 rounded-lg text-sm font-medium hover:bg-emerald-50">
                   <i class="fas fa-search mr-1"></i>검색
                 </button>
                 <div class="flex gap-1 ml-auto">
@@ -43339,18 +43324,10 @@ async function renderTaskAdminView() {
             </div>
           </div>
           
-          <!-- 월별 캘린더 뷰 -->
-          <div id="report-calendar-view" class="p-3 lg:p-4">
-            <div id="report-month-calendar" class="mb-4"></div>
-            <div id="report-calendar-details" class="max-h-[300px] lg:max-h-[350px] overflow-y-auto"></div>
-          </div>
-          
-          <!-- 리스트 뷰 -->
-          <div id="report-list-view" class="hidden p-3 lg:p-4 max-h-[400px] lg:max-h-[500px] overflow-y-auto">
-            <div id="admin-daily-reports">
-              <div class="text-center py-8 text-gray-400">
-                <i class="fas fa-spinner fa-spin text-2xl"></i>
-              </div>
+          <!-- 일일보고 리스트 -->
+          <div id="admin-daily-reports" class="p-3 lg:p-4 max-h-[450px] lg:max-h-[550px] overflow-y-auto">
+            <div class="text-center py-8 text-gray-400">
+              <i class="fas fa-spinner fa-spin text-2xl"></i>
             </div>
           </div>
         </div>
@@ -43444,13 +43421,147 @@ async function loadAdminSummary() {
   }
 }
 
-// 부서별 일일보고 상세 로드 (초기 로드 - 월별 캘린더 뷰)
+// 부서별 일일보고 상세 로드 (초기 로드)
 async function loadAdminDailyReports() {
-  // 기본적으로 월별 캘린더 뷰로 시작
-  reportViewMode = 'calendar';
-  reportCalendarMonth = new Date();
-  renderReportCalendar();
+  // 기본 1개월치 로드
+  const today = getLocalDateString();
+  const monthAgo = new Date();
+  monthAgo.setMonth(monthAgo.getMonth() - 1);
+  monthAgo.setDate(monthAgo.getDate() + 1);
+  
+  document.getElementById('admin-report-start-date').value = monthAgo.toISOString().split('T')[0];
+  document.getElementById('admin-report-end-date').value = today;
+  
+  loadAdminDailyReportsList();
 }
+
+// 기간별 일일보고 리스트 로드 (업무 제목/내용 표시)
+async function loadAdminDailyReportsList() {
+  const startDate = document.getElementById('admin-report-start-date')?.value;
+  const endDate = document.getElementById('admin-report-end-date')?.value;
+  const container = document.getElementById('admin-daily-reports');
+  if (!container) return;
+  
+  container.innerHTML = '<div class="text-center py-8 text-gray-400"><i class="fas fa-spinner fa-spin text-2xl"></i></div>';
+  
+  try {
+    // 기간 내 모든 보고서와 업무 항목 로드
+    const res = await axios.get(`/api/task/daily-reports-with-items?start=${startDate}&end=${endDate}`);
+    if (!res.data.success) throw new Error('로드 실패');
+    
+    const reports = res.data.data || [];
+    
+    if (reports.length === 0) {
+      container.innerHTML = '<div class="text-center py-8 text-gray-400">해당 기간에 보고된 내역이 없습니다</div>';
+      return;
+    }
+    
+    // 날짜별로 그룹화
+    const groupedByDate = {};
+    reports.forEach(r => {
+      const date = r.report_date;
+      if (!groupedByDate[date]) groupedByDate[date] = [];
+      groupedByDate[date].push(r);
+    });
+    
+    // 날짜 내림차순 정렬
+    const sortedDates = Object.keys(groupedByDate).sort((a, b) => b.localeCompare(a));
+    
+    container.innerHTML = sortedDates.map(date => {
+      const dayReports = groupedByDate[date];
+      const totalItems = dayReports.reduce((sum, r) => sum + (r.items?.length || 0), 0);
+      
+      return `
+        <div class="mb-4 border rounded-xl overflow-hidden">
+          <!-- 날짜 헤더 -->
+          <div class="bg-gray-50 px-4 py-2 border-b flex items-center justify-between cursor-pointer hover:bg-gray-100"
+               onclick="toggleDateReport('${date}')">
+            <div class="flex items-center gap-2">
+              <i class="fas fa-calendar-day text-emerald-500"></i>
+              <span class="font-bold text-gray-800">${date.replace(/-/g, '.')}</span>
+              <span class="text-sm text-gray-500">(${dayReports.filter(r => r.id).length}개 부서, ${totalItems}건 업무)</span>
+            </div>
+            <i class="fas fa-chevron-down text-gray-400 transition-transform" id="date-arrow-${date.replace(/-/g, '')}"></i>
+          </div>
+          
+          <!-- 해당 날짜 업무 목록 -->
+          <div id="date-report-${date.replace(/-/g, '')}" class="divide-y">
+            ${dayReports.filter(r => r.id && r.items && r.items.length > 0).map(report => `
+              ${report.items.map((item, idx) => `
+                <div class="p-3 hover:bg-gray-50">
+                  <div class="flex items-start gap-3">
+                    <div class="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0" 
+                         style="background: ${report.dept_color || '#6B7280'}">
+                      ${(report.dept_name || '?').charAt(0)}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-medium text-gray-800">${item.title || '제목 없음'}</span>
+                        <span class="px-2 py-0.5 rounded text-xs ${
+                          item.status === '완료' ? 'bg-green-100 text-green-700' : 
+                          item.status === '진행중' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
+                        }">${item.status || '대기'}</span>
+                      </div>
+                      ${item.content ? `<div class="text-sm text-gray-600 mt-1 line-clamp-2">${item.content}</div>` : ''}
+                      <div class="flex items-center gap-3 mt-1 text-xs text-gray-400">
+                        <span style="color: ${report.dept_color || '#6B7280'}">${report.dept_name || '알 수 없음'}</span>
+                        ${item.category ? `<span><i class="fas fa-tag mr-1"></i>${item.category}</span>` : ''}
+                        ${report.reporter_name ? `<span><i class="fas fa-user mr-1"></i>${report.reporter_name}</span>` : ''}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              `).join('')}
+            `).join('') || `
+              <div class="p-4 text-center text-gray-400 text-sm">등록된 업무가 없습니다</div>
+            `}
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+  } catch (e) {
+    container.innerHTML = '<div class="text-center py-8 text-red-400">로드 실패: ' + e.message + '</div>';
+  }
+}
+window.loadAdminDailyReportsList = loadAdminDailyReportsList;
+
+// 날짜별 보고 토글
+function toggleDateReport(date) {
+  const content = document.getElementById('date-report-' + date.replace(/-/g, ''));
+  const arrow = document.getElementById('date-arrow-' + date.replace(/-/g, ''));
+  if (content) {
+    content.classList.toggle('hidden');
+    arrow?.classList.toggle('rotate-180');
+  }
+}
+window.toggleDateReport = toggleDateReport;
+
+// 기간 빠른 설정
+function setReportDateRange(range) {
+  const today = new Date();
+  let startDate, endDate;
+  
+  endDate = getLocalDateString();
+  
+  if (range === 'today') {
+    startDate = endDate;
+  } else if (range === 'week') {
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 6);
+    startDate = weekAgo.toISOString().split('T')[0];
+  } else if (range === 'month') {
+    const monthAgo = new Date(today);
+    monthAgo.setMonth(monthAgo.getMonth() - 1);
+    monthAgo.setDate(monthAgo.getDate() + 1);
+    startDate = monthAgo.toISOString().split('T')[0];
+  }
+  
+  document.getElementById('admin-report-start-date').value = startDate;
+  document.getElementById('admin-report-end-date').value = endDate;
+  loadAdminDailyReportsList();
+}
+window.setReportDateRange = setReportDateRange;
 
 // 부서별 일일보고 상세 로드 (레거시 - 단일 날짜)
 async function loadAdminDailyReportsSingle(date) {

@@ -974,6 +974,49 @@ app.get('/daily-dashboard', async (c) => {
   }
 });
 
+// 기간별 일일보고 조회 (월별 캘린더, 리스트 뷰용)
+app.get('/daily-reports-range', async (c) => {
+  const startDate = c.req.query('start') || new Date().toISOString().split('T')[0];
+  const endDate = c.req.query('end') || startDate;
+  
+  try {
+    // 해당 기간의 모든 부서 + 보고 현황
+    const result = await c.env.DB.prepare(`
+      SELECT 
+        d.id as department_id,
+        d.name as dept_name,
+        d.color as dept_color,
+        dates.date as report_date,
+        r.id,
+        r.reporter_name,
+        r.summary,
+        r.remarks,
+        (SELECT COUNT(*) FROM daily_work_items WHERE report_id = r.id) as item_count
+      FROM task_departments d
+      CROSS JOIN (
+        WITH RECURSIVE date_range(date) AS (
+          SELECT ?
+          UNION ALL
+          SELECT date(date, '+1 day')
+          FROM date_range
+          WHERE date < ?
+        )
+        SELECT date FROM date_range
+      ) as dates
+      LEFT JOIN daily_work_reports r ON d.id = r.department_id AND r.report_date = dates.date
+      WHERE d.is_active = 1
+      ORDER BY dates.date DESC, d.sort_order
+    `).bind(startDate, endDate).all();
+    
+    return c.json({ 
+      success: true, 
+      data: result.results || []
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
 // 부서별 업무 이력 조회 (기간별)
 app.get('/work-history', async (c) => {
   const deptId = c.req.query('department_id');

@@ -1021,10 +1021,11 @@ app.get('/daily-reports-range', async (c) => {
 app.get('/daily-reports-with-items', async (c) => {
   const startDate = c.req.query('start') || new Date().toISOString().split('T')[0];
   const endDate = c.req.query('end') || startDate;
+  const deptId = c.req.query('dept_id');
   
   try {
-    // 해당 기간의 보고서 목록
-    const reports = await c.env.DB.prepare(`
+    // 해당 기간의 보고서 목록 (부서 필터 포함)
+    let query = `
       SELECT 
         r.id,
         r.department_id,
@@ -1036,8 +1037,17 @@ app.get('/daily-reports-with-items', async (c) => {
       FROM daily_work_reports r
       LEFT JOIN task_departments d ON r.department_id = d.id
       WHERE r.report_date >= ? AND r.report_date <= ?
-      ORDER BY r.report_date DESC, d.sort_order
-    `).bind(startDate, endDate).all();
+    `;
+    const params: any[] = [startDate, endDate];
+    
+    if (deptId) {
+      query += ' AND r.department_id = ?';
+      params.push(deptId);
+    }
+    
+    query += ' ORDER BY r.report_date DESC, d.sort_order';
+    
+    const reports = await c.env.DB.prepare(query).bind(...params).all();
     
     // 각 보고서의 업무 항목 로드
     const reportsWithItems = await Promise.all((reports.results || []).map(async (r: any) => {

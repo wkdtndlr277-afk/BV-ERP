@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 2.2.0 Build: 20260528
-const APP_VERSION = '2.2.2';
+const APP_VERSION = '2.2.3';
 const APP_BUILD = '20260528';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -43300,9 +43300,16 @@ async function renderTaskAdminView() {
               </div>
             </div>
             
-            <!-- 기간 검색 영역 -->
+            <!-- 기간 및 부서 검색 영역 -->
             <div class="mt-3 pt-3 border-t border-white/20">
               <div class="flex flex-wrap items-center gap-2">
+                <!-- 부서 선택 -->
+                <select id="admin-report-dept-filter" onchange="loadAdminDailyReportsList()" 
+                        class="bg-white/10 text-white text-sm rounded-lg px-2 py-1 border-none focus:outline-none focus:ring-2 focus:ring-white/50 cursor-pointer">
+                  <option value="" class="text-gray-800">전체 부서</option>
+                </select>
+                
+                <!-- 기간 선택 -->
                 <div class="flex items-center gap-1 bg-white/10 rounded-lg px-2 py-1">
                   <input type="date" id="admin-report-start-date" value="${today.substring(0, 8)}01" 
                     class="bg-transparent text-white text-sm border-none focus:outline-none w-32">
@@ -43432,13 +43439,35 @@ async function loadAdminDailyReports() {
   document.getElementById('admin-report-start-date').value = monthAgo.toISOString().split('T')[0];
   document.getElementById('admin-report-end-date').value = today;
   
+  // 부서 목록 로드
+  await loadReportDeptFilter();
+  
   loadAdminDailyReportsList();
 }
+
+// 부서 필터 목록 로드
+async function loadReportDeptFilter() {
+  const select = document.getElementById('admin-report-dept-filter');
+  if (!select) return;
+  
+  try {
+    const res = await axios.get('/api/task/departments');
+    if (res.data.success) {
+      const depts = res.data.data || [];
+      select.innerHTML = '<option value="" class="text-gray-800">전체 부서</option>' + 
+        depts.map(d => `<option value="${d.id}" class="text-gray-800">${d.name}</option>`).join('');
+    }
+  } catch (e) {
+    console.error('부서 목록 로드 실패:', e);
+  }
+}
+window.loadReportDeptFilter = loadReportDeptFilter;
 
 // 기간별 일일보고 리스트 로드 (업무 제목/내용 표시)
 async function loadAdminDailyReportsList() {
   const startDate = document.getElementById('admin-report-start-date')?.value;
   const endDate = document.getElementById('admin-report-end-date')?.value;
+  const deptId = document.getElementById('admin-report-dept-filter')?.value;
   const container = document.getElementById('admin-daily-reports');
   if (!container) return;
   
@@ -43446,10 +43475,13 @@ async function loadAdminDailyReportsList() {
   
   try {
     // 기간 내 모든 보고서와 업무 항목 로드
-    const res = await axios.get(`/api/task/daily-reports-with-items?start=${startDate}&end=${endDate}`);
+    let url = `/api/task/daily-reports-with-items?start=${startDate}&end=${endDate}`;
+    if (deptId) url += `&dept_id=${deptId}`;
+    
+    const res = await axios.get(url);
     if (!res.data.success) throw new Error('로드 실패');
     
-    const reports = res.data.data || [];
+    let reports = res.data.data || [];
     
     if (reports.length === 0) {
       container.innerHTML = '<div class="text-center py-8 text-gray-400">해당 기간에 보고된 내역이 없습니다</div>';

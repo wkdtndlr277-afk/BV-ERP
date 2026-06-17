@@ -1072,7 +1072,7 @@ app.put('/daily-work-item/:id', async (c) => {
   try {
     await c.env.DB.prepare(`
       UPDATE daily_work_items
-      SET title = ?, content = ?, status = ?, work_type = ?, updated_at = datetime('now')
+      SET title = ?, content = ?, status = ?, work_type = ?
       WHERE id = ?
     `).bind(title.trim(), content || '', status || '대기', work_type || 'general', itemId).run();
     

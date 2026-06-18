@@ -137,6 +137,28 @@ dailyReport.delete('/barcodes/:id', async (c) => {
   return c.json({ success: true, message: '삭제되었습니다.' })
 })
 
+// 특정 바코드 조회 (바코드 번호로 검색)
+dailyReport.get('/barcode-lookup/:barcode', async (c) => {
+  const barcode = c.req.param('barcode')
+  
+  try {
+    const result = await c.env.DB.prepare(`
+      SELECT pb.*, pi.production_name
+      FROM production_barcodes pb
+      LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+      WHERE pb.barcode = ?
+    `).bind(barcode).all()
+    
+    return c.json({ 
+      success: true, 
+      data: result.results || [],
+      exists: (result.results || []).length > 0
+    })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
 // ===== v2.4.2: UNKNOWN 품목 수동 매칭 API =====
 dailyReport.post('/items/update-match', async (c) => {
   const body = await c.req.json()

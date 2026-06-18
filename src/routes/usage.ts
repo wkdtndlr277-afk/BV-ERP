@@ -133,93 +133,127 @@ usageRoutes.post('/single', async (c) => {
   const date = usage_date || new Date().toISOString().split('T')[0];
   
   try {
-    // 1. FEFO 쿼리로 사용 가능한 LOT 조회 (소비기한 빠른 순)
-    const lots = await c.env.DB.prepare(FEFO_QUERY.INBOUND).bind(item_code, date).all<{
-      id: number;
-      lot_number: string;
-      item_code: string;
-      remain_qty: number;
-      inbound_date: string;
-      expiry_date: string;
-    }>();
-    
-    if (!lots.results || lots.results.length === 0) {
-      return c.json({ 
-        success: false, 
-        error: '사용 가능한 LOT가 없습니다.',
-        errorCode: 'NO_LOT_AVAILABLE'
-      }, 400);
-    }
-    
-    // 2. 재고 검증 (방어 코드)
-    const totalAvailable = lots.results.reduce((sum, lot) => sum + lot.remain_qty, 0);
-    if (totalAvailable < quantity) {
-      return c.json({ 
-        success: false, 
-        error: `재고 부족: 요청 ${quantity}, 가용 ${totalAvailable.toFixed(2)} (부족: ${(quantity - totalAvailable).toFixed(2)})`,
-        errorCode: 'INSUFFICIENT_STOCK',
-        details: { required: quantity, available: totalAvailable, shortage: quantity - totalAvailable }
-      }, 400);
-    }
-    
-    // 3. Atomic Transaction 준비 (FEFO 차감)
     const batchStatements: D1PreparedStatement[] = [];
-    let remainingQty = quantity;
     const usedLots: any[] = [];
     
-    for (const lot of lots.results) {
-      if (remainingQty <= 0) break;
-      
-      const useQty = Math.min(remainingQty, lot.remain_qty);
-      const newRemainQty = lot.remain_qty - useQty;
-      
-      // LOT 잔량 업데이트 (MAX(0,...) 적용)
-      batchStatements.push(
-        c.env.DB.prepare(`
-          UPDATE inbound SET remain_qty = MAX(0, remain_qty - ?), updated_at = CURRENT_TIMESTAMP 
-          WHERE id = ? AND remain_qty >= ?
-        `).bind(useQty, lot.id, useQty)
-      );
-      
-      // transactions 테이블에 사용 기록
-      batchStatements.push(
-        c.env.DB.prepare(`
-          INSERT INTO transactions (trans_date, trans_type, item_code, lot_number, quantity, remain_qty, memo)
-          VALUES (?, '사용', ?, ?, ?, ?, ?)
-        `).bind(date, item_code, lot.lot_number, -useQty, newRemainQty, memo || purpose || null)
-      );
-      
-      usedLots.push({ lot_number: lot.lot_number, used_qty: useQty, expiry_date: lot.expiry_date });
-      remainingQty -= useQty;
-    }
+    // 부자재(SM 코드)는 LOT 관리 없이 직접 차감
+    const isSupply = item_code.startsWith('SM');
     
-    // 4. master 또는 supplies 테이블 current_stock 업데이트 (MAX(0,...) 적용)
-    const masterItem = await c.env.DB.prepare(
-      'SELECT item_code FROM master WHERE item_code = ?'
-    ).bind(item_code).first();
-    
-    if (masterItem) {
-      batchStatements.push(
-        c.env.DB.prepare(`
-          UPDATE master SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
-          WHERE item_code = ?
-        `).bind(quantity, item_code)
-      );
-    } else {
+    if (isSupply) {
+      // 부자재: supplies 테이블에서 직접 차감
+      const supply = await c.env.DB.prepare(
+        'SELECT item_code, current_stock FROM supplies WHERE item_code = ?'
+      ).bind(item_code).first<{ item_code: string; current_stock: number }>();
+      
+      if (!supply) {
+        return c.json({ 
+          success: false, 
+          error: '부자재를 찾을 수 없습니다.',
+          errorCode: 'ITEM_NOT_FOUND'
+        }, 400);
+      }
+      
+      if (supply.current_stock < quantity) {
+        return c.json({ 
+          success: false, 
+          error: `재고 부족: 요청 ${quantity}, 가용 ${supply.current_stock}`,
+          errorCode: 'INSUFFICIENT_STOCK',
+          details: { required: quantity, available: supply.current_stock, shortage: quantity - supply.current_stock }
+        }, 400);
+      }
+      
+      // supplies 재고 차감
       batchStatements.push(
         c.env.DB.prepare(`
           UPDATE supplies SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
           WHERE item_code = ?
         `).bind(quantity, item_code)
       );
+      
+      // transactions 기록 (LOT 없이)
+      batchStatements.push(
+        c.env.DB.prepare(`
+          INSERT INTO transactions (trans_date, trans_type, item_code, lot_number, quantity, remain_qty, memo)
+          VALUES (?, '사용', ?, 'NO_LOT', ?, ?, ?)
+        `).bind(date, item_code, -quantity, supply.current_stock - quantity, memo || purpose || null)
+      );
+      
+      usedLots.push({ lot_number: 'NO_LOT', used_qty: quantity });
+      
+    } else {
+      // 원료: FEFO 쿼리로 사용 가능한 LOT 조회 (소비기한 빠른 순)
+      const lots = await c.env.DB.prepare(FEFO_QUERY.INBOUND).bind(item_code, date).all<{
+        id: number;
+        lot_number: string;
+        item_code: string;
+        remain_qty: number;
+        inbound_date: string;
+        expiry_date: string;
+      }>();
+      
+      if (!lots.results || lots.results.length === 0) {
+        return c.json({ 
+          success: false, 
+          error: '사용 가능한 LOT가 없습니다.',
+          errorCode: 'NO_LOT_AVAILABLE'
+        }, 400);
+      }
+      
+      // 재고 검증 (방어 코드)
+      const totalAvailable = lots.results.reduce((sum, lot) => sum + lot.remain_qty, 0);
+      if (totalAvailable < quantity) {
+        return c.json({ 
+          success: false, 
+          error: `재고 부족: 요청 ${quantity}, 가용 ${totalAvailable.toFixed(2)} (부족: ${(quantity - totalAvailable).toFixed(2)})`,
+          errorCode: 'INSUFFICIENT_STOCK',
+          details: { required: quantity, available: totalAvailable, shortage: quantity - totalAvailable }
+        }, 400);
+      }
+      
+      // FEFO 차감 준비
+      let remainingQty = quantity;
+      
+      for (const lot of lots.results) {
+        if (remainingQty <= 0) break;
+        
+        const useQty = Math.min(remainingQty, lot.remain_qty);
+        const newRemainQty = lot.remain_qty - useQty;
+        
+        // LOT 잔량 업데이트 (MAX(0,...) 적용)
+        batchStatements.push(
+          c.env.DB.prepare(`
+            UPDATE inbound SET remain_qty = MAX(0, remain_qty - ?), updated_at = CURRENT_TIMESTAMP 
+            WHERE id = ? AND remain_qty >= ?
+          `).bind(useQty, lot.id, useQty)
+        );
+        
+        // transactions 테이블에 사용 기록
+        batchStatements.push(
+          c.env.DB.prepare(`
+            INSERT INTO transactions (trans_date, trans_type, item_code, lot_number, quantity, remain_qty, memo)
+            VALUES (?, '사용', ?, ?, ?, ?, ?)
+          `).bind(date, item_code, lot.lot_number, -useQty, newRemainQty, memo || purpose || null)
+        );
+        
+        usedLots.push({ lot_number: lot.lot_number, used_qty: useQty, expiry_date: lot.expiry_date });
+        remainingQty -= useQty;
+      }
+      
+      // master 재고 차감
+      batchStatements.push(
+        c.env.DB.prepare(`
+          UPDATE master SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
+          WHERE item_code = ?
+        `).bind(quantity, item_code)
+      );
     }
     
-    // 5. Atomic 실행: batch()로 모든 작업 한 번에
+    // Atomic 실행: batch()로 모든 작업 한 번에
     await c.env.DB.batch(batchStatements);
     
     return c.json({ 
       success: true, 
-      message: `${quantity} 사용 등록 완료 (FEFO 적용)`,
+      message: `${quantity} 사용 등록 완료${isSupply ? '' : ' (FEFO 적용)'}`,
       used_lots: usedLots
     });
     
@@ -253,88 +287,125 @@ usageRoutes.post('/', async (c) => {
     }
     
     try {
-      // FEFO 쿼리로 LOT 조회
-      const lots = await c.env.DB.prepare(FEFO_QUERY.INBOUND).bind(item.item_code, date).all<{
-        id: number;
-        lot_number: string;
-        item_code: string;
-        remain_qty: number;
-        expiry_date: string;
-      }>();
+      // 부자재(SM 코드)는 LOT 관리 없이 직접 차감
+      const isSupply = item.item_code.startsWith('SM');
       
-      if (!lots.results || lots.results.length === 0) {
-        failedItems.push({ item_code: item.item_code, error: 'LOT 없음', errorCode: 'NO_LOT_AVAILABLE' });
-        if (strict_mode) break;
-        continue;
-      }
-      
-      // 재고 검증
-      const totalAvailable = lots.results.reduce((sum, lot) => sum + lot.remain_qty, 0);
-      if (totalAvailable < item.quantity) {
-        failedItems.push({ 
-          item_code: item.item_code, 
-          error: `재고 부족 (요청: ${item.quantity}, 가용: ${totalAvailable.toFixed(2)})`,
-          errorCode: 'INSUFFICIENT_STOCK',
-          shortage: item.quantity - totalAvailable
-        });
-        if (strict_mode) break;
-        continue;
-      }
-      
-      // FEFO 차감 statements 준비
-      let remainingQty = item.quantity;
-      const usedLots: any[] = [];
-      
-      for (const lot of lots.results) {
-        if (remainingQty <= 0) break;
+      if (isSupply) {
+        // 부자재: supplies 테이블에서 직접 차감
+        const supply = await c.env.DB.prepare(
+          'SELECT item_code, current_stock FROM supplies WHERE item_code = ?'
+        ).bind(item.item_code).first<{ item_code: string; current_stock: number }>();
         
-        const useQty = Math.min(remainingQty, lot.remain_qty);
-        const newRemainQty = lot.remain_qty - useQty;
+        if (!supply) {
+          failedItems.push({ item_code: item.item_code, error: '부자재를 찾을 수 없습니다', errorCode: 'ITEM_NOT_FOUND' });
+          if (strict_mode) break;
+          continue;
+        }
         
-        batchStatements.push(
-          c.env.DB.prepare(`
-            UPDATE inbound SET remain_qty = MAX(0, remain_qty - ?), updated_at = CURRENT_TIMESTAMP 
-            WHERE id = ? AND remain_qty >= ?
-          `).bind(useQty, lot.id, useQty)
-        );
+        if (supply.current_stock < item.quantity) {
+          failedItems.push({ 
+            item_code: item.item_code, 
+            error: `재고 부족 (요청: ${item.quantity}, 가용: ${supply.current_stock})`,
+            errorCode: 'INSUFFICIENT_STOCK',
+            shortage: item.quantity - supply.current_stock
+          });
+          if (strict_mode) break;
+          continue;
+        }
         
-        batchStatements.push(
-          c.env.DB.prepare(`
-            INSERT INTO transactions (trans_date, trans_type, item_code, lot_number, quantity, remain_qty, memo)
-            VALUES (?, '사용', ?, ?, ?, ?, ?)
-          `).bind(date, item.item_code, lot.lot_number, -useQty, newRemainQty, item.memo || purpose || null)
-        );
-        
-        usedLots.push({ lot_number: lot.lot_number, used_qty: useQty, expiry_date: lot.expiry_date });
-        remainingQty -= useQty;
-      }
-      
-      // master/supplies 재고 차감 준비
-      const masterItem = await c.env.DB.prepare(
-        'SELECT item_code FROM master WHERE item_code = ?'
-      ).bind(item.item_code).first();
-      
-      if (masterItem) {
-        batchStatements.push(
-          c.env.DB.prepare(`
-            UPDATE master SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
-            WHERE item_code = ?
-          `).bind(item.quantity, item.item_code)
-        );
-      } else {
+        // supplies 재고 차감
         batchStatements.push(
           c.env.DB.prepare(`
             UPDATE supplies SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
             WHERE item_code = ?
           `).bind(item.quantity, item.item_code)
         );
+        
+        // transactions 기록 (LOT 없이)
+        batchStatements.push(
+          c.env.DB.prepare(`
+            INSERT INTO transactions (trans_date, trans_type, item_code, lot_number, quantity, remain_qty, memo)
+            VALUES (?, '사용', ?, 'NO_LOT', ?, ?, ?)
+          `).bind(date, item.item_code, -item.quantity, supply.current_stock - item.quantity, item.memo || purpose || null)
+        );
+        
+        successItems.push({ 
+          item_code: item.item_code, 
+          quantity: item.quantity,
+          used_lots: [{ lot_number: 'NO_LOT', used_qty: item.quantity }]
+        });
+        
+      } else {
+        // 원료: FEFO 쿼리로 LOT 조회
+        const lots = await c.env.DB.prepare(FEFO_QUERY.INBOUND).bind(item.item_code, date).all<{
+          id: number;
+          lot_number: string;
+          item_code: string;
+          remain_qty: number;
+          expiry_date: string;
+        }>();
+        
+        if (!lots.results || lots.results.length === 0) {
+          failedItems.push({ item_code: item.item_code, error: 'LOT 없음', errorCode: 'NO_LOT_AVAILABLE' });
+          if (strict_mode) break;
+          continue;
+        }
+        
+        // 재고 검증
+        const totalAvailable = lots.results.reduce((sum, lot) => sum + lot.remain_qty, 0);
+        if (totalAvailable < item.quantity) {
+          failedItems.push({ 
+            item_code: item.item_code, 
+            error: `재고 부족 (요청: ${item.quantity}, 가용: ${totalAvailable.toFixed(2)})`,
+            errorCode: 'INSUFFICIENT_STOCK',
+            shortage: item.quantity - totalAvailable
+          });
+          if (strict_mode) break;
+          continue;
+        }
+        
+        // FEFO 차감 statements 준비
+        let remainingQty = item.quantity;
+        const usedLots: any[] = [];
+        
+        for (const lot of lots.results) {
+          if (remainingQty <= 0) break;
+          
+          const useQty = Math.min(remainingQty, lot.remain_qty);
+          const newRemainQty = lot.remain_qty - useQty;
+          
+          batchStatements.push(
+            c.env.DB.prepare(`
+              UPDATE inbound SET remain_qty = MAX(0, remain_qty - ?), updated_at = CURRENT_TIMESTAMP 
+              WHERE id = ? AND remain_qty >= ?
+            `).bind(useQty, lot.id, useQty)
+          );
+          
+          batchStatements.push(
+            c.env.DB.prepare(`
+              INSERT INTO transactions (trans_date, trans_type, item_code, lot_number, quantity, remain_qty, memo)
+              VALUES (?, '사용', ?, ?, ?, ?, ?)
+            `).bind(date, item.item_code, lot.lot_number, -useQty, newRemainQty, item.memo || purpose || null)
+          );
+          
+          usedLots.push({ lot_number: lot.lot_number, used_qty: useQty, expiry_date: lot.expiry_date });
+          remainingQty -= useQty;
+        }
+        
+        // master 재고 차감 준비
+        batchStatements.push(
+          c.env.DB.prepare(`
+            UPDATE master SET current_stock = MAX(0, current_stock - ?), updated_at = CURRENT_TIMESTAMP 
+            WHERE item_code = ?
+          `).bind(item.quantity, item.item_code)
+        );
+        
+        successItems.push({ 
+          item_code: item.item_code, 
+          quantity: item.quantity,
+          used_lots: usedLots 
+        });
       }
-      
-      successItems.push({ 
-        item_code: item.item_code, 
-        quantity: item.quantity,
-        used_lots: usedLots 
-      });
       
     } catch (error: any) {
       failedItems.push({ item_code: item.item_code, error: error.message, errorCode: 'DB_ERROR' });

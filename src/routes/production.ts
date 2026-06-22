@@ -400,18 +400,27 @@ productionRoutes.get('/transaction-history/:itemCode', async (c) => {
 });
 
 // ★★★ v3.5.3: 로트 누락 데이터 모니터링 API ★★★
+// v3.5.4: Cut-off date 적용 - 2026-06-23 이전은 레거시 데이터로 분류
 // 로트 번호가 없는 트랜잭션을 감지하여 무결성 확인
+const LOT_ENFORCEMENT_DATE = '2026-06-23'; // v3.5.3 로트 검증 강화 적용일
+
 productionRoutes.get('/lot-integrity-check', async (c) => {
   try {
-    const { days = '30', trans_type } = c.req.query();
+    const { days = '30', trans_type, include_legacy = 'false' } = c.req.query();
     const daysNum = parseInt(days) || 30;
+    const showLegacy = include_legacy === 'true';
     
     // 최근 N일 기준 날짜 계산
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - daysNum);
-    const startDateStr = startDate.toISOString().split('T')[0];
+    let startDateStr = startDate.toISOString().split('T')[0];
     
-    // 1. 로트 번호 누락된 '사용' 트랜잭션 조회
+    // ★ Cut-off: 레거시 데이터 제외 시 LOT_ENFORCEMENT_DATE 이후만 검사
+    const effectiveStartDate = showLegacy 
+      ? startDateStr 
+      : (startDateStr < LOT_ENFORCEMENT_DATE ? LOT_ENFORCEMENT_DATE : startDateStr);
+    
+    // 1. 로트 번호 누락된 '사용' 트랜잭션 조회 (LOT_ENFORCEMENT_DATE 이후만)
     let usageQuery = `
       SELECT 
         id, item_code, trans_type, quantity, trans_date, lot_number, memo, created_at
@@ -419,7 +428,7 @@ productionRoutes.get('/lot-integrity-check', async (c) => {
       WHERE (lot_number IS NULL OR lot_number = '')
         AND trans_date >= ?
     `;
-    const usageParams: any[] = [startDateStr];
+    const usageParams: any[] = [effectiveStartDate];
     
     if (trans_type) {
       usageQuery += ` AND trans_type = ?`;
@@ -441,7 +450,7 @@ productionRoutes.get('/lot-integrity-check', async (c) => {
         created_at: string;
       }>();
     
-    // 2. 트랜잭션 유형별 통계
+    // 2. 트랜잭션 유형별 통계 (새 데이터 기준)
     const statsQuery = `
       SELECT 
         trans_type,
@@ -455,7 +464,7 @@ productionRoutes.get('/lot-integrity-check', async (c) => {
     `;
     
     const stats = await c.env.DB.prepare(statsQuery)
-      .bind(startDateStr)
+      .bind(effectiveStartDate)
       .all<{
         trans_type: string;
         total_count: number;
@@ -463,7 +472,26 @@ productionRoutes.get('/lot-integrity-check', async (c) => {
         with_lot_count: number;
       }>();
     
-    // 3. 품목별 로트 누락 현황
+    // 3. 레거시 데이터 통계 (별도 집계)
+    const legacyStatsQuery = `
+      SELECT 
+        trans_type,
+        COUNT(*) as total_count,
+        SUM(CASE WHEN lot_number IS NULL OR lot_number = '' THEN 1 ELSE 0 END) as missing_lot_count
+      FROM transactions
+      WHERE trans_date < ?
+      GROUP BY trans_type
+    `;
+    
+    const legacyStats = await c.env.DB.prepare(legacyStatsQuery)
+      .bind(LOT_ENFORCEMENT_DATE)
+      .all<{
+        trans_type: string;
+        total_count: number;
+        missing_lot_count: number;
+      }>();
+    
+    // 4. 품목별 로트 누락 현황 (새 데이터만)
     const byItemQuery = `
       SELECT 
         t.item_code,
@@ -481,7 +509,7 @@ productionRoutes.get('/lot-integrity-check', async (c) => {
     `;
     
     const byItem = await c.env.DB.prepare(byItemQuery)
-      .bind(startDateStr)
+      .bind(effectiveStartDate)
       .all<{
         item_code: string;
         item_name: string;
@@ -489,29 +517,44 @@ productionRoutes.get('/lot-integrity-check', async (c) => {
         total_qty: number;
       }>();
     
-    // 4. 전체 무결성 상태 판정
+    // 5. 전체 무결성 상태 판정 (새 데이터 기준으로만 판정)
     const totalMissing = (stats.results || [])
       .filter(s => s.trans_type === '사용')
       .reduce((sum, s) => sum + (s.missing_lot_count || 0), 0);
     
+    // 레거시 데이터 누락 합계
+    const legacyMissing = (legacyStats.results || [])
+      .filter(s => s.trans_type === '사용')
+      .reduce((sum, s) => sum + (s.missing_lot_count || 0), 0);
+    
+    // ★ 새 데이터 기준으로만 상태 판정 (레거시 데이터는 무시)
     const status = totalMissing === 0 ? 'PASS' : totalMissing < 10 ? 'WARNING' : 'FAIL';
     
     return c.json({
       success: true,
-      version: 'v3.5.3',
+      version: 'v3.5.4',
       status,
+      enforcement: {
+        cutoffDate: LOT_ENFORCEMENT_DATE,
+        description: '이 날짜 이후의 트랜잭션만 무결성 검사 대상',
+        includeLegacy: showLegacy
+      },
       period: {
-        start: startDateStr,
-        end: new Date().toISOString().split('T')[0],
-        days: daysNum
+        requested: { start: startDateStr, days: daysNum },
+        effective: { start: effectiveStartDate, end: new Date().toISOString().split('T')[0] }
       },
       summary: {
-        totalMissingLotUsage: totalMissing,
+        newDataMissingLot: totalMissing,
+        legacyDataMissingLot: legacyMissing,
         message: totalMissing === 0 
-          ? '✅ 모든 사용 트랜잭션에 로트 번호가 정상적으로 기록되어 있습니다.'
-          : `⚠️ ${totalMissing}건의 사용 트랜잭션에 로트 번호가 누락되어 있습니다.`
+          ? `✅ ${LOT_ENFORCEMENT_DATE} 이후 모든 사용 트랜잭션에 로트 번호가 정상 기록되어 있습니다.`
+          : `⚠️ ${LOT_ENFORCEMENT_DATE} 이후 ${totalMissing}건의 사용 트랜잭션에 로트 번호가 누락되어 있습니다.`,
+        legacyNote: legacyMissing > 0 
+          ? `ℹ️ 레거시 데이터(${LOT_ENFORCEMENT_DATE} 이전): ${legacyMissing}건 로트 누락 (정상 - 시스템 적용 전 데이터)`
+          : null
       },
       statsByType: stats.results || [],
+      legacyStatsByType: legacyStats.results || [],
       missingLotByItem: byItem.results || [],
       recentMissingTransactions: (missingLotTransactions.results || []).slice(0, 20).map(t => ({
         id: t.id,
@@ -519,6 +562,8 @@ productionRoutes.get('/lot-integrity-check', async (c) => {
         transType: t.trans_type,
         quantity: t.quantity,
         transDate: t.trans_date,
+        isLegacy: t.trans_date < LOT_ENFORCEMENT_DATE,
+        dataCategory: t.trans_date < LOT_ENFORCEMENT_DATE ? 'LEGACY' : 'NEW',
         memo: t.memo,
         createdAt: t.created_at
       }))

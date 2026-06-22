@@ -4,6 +4,7 @@
  * v3.5.0: transactions 테이블 기반 Single Source of Truth
  * v3.5.1: 재고 조정(Adjustment) 메서드 추가, 모든 재고 변동은 트랜잭션으로 기록
  * v3.5.2: 정제수(RM184, RM267) 등 비관리 품목 제외
+ * v3.5.4: 레거시 데이터 식별 헬퍼 함수 추가
  * 
  * 핵심 원칙:
  * 1. 모든 재고 계산은 transactions 테이블의 시계열 누적 합산으로 수행
@@ -18,6 +19,55 @@ export const INVENTORY_EXCLUDE_CODES = [
   'RM184',  // 정제수
   'RM267',  // 2차정제수
 ];
+
+// ===== v3.5.4: 레거시 데이터 구분 =====
+// v3.5.3 로트 검증 강화 적용일 - 이 날짜 이전 데이터는 레거시로 분류
+export const LOT_ENFORCEMENT_DATE = '2026-06-23';
+
+/**
+ * 트랜잭션이 레거시 데이터인지 확인
+ * @param transDate 트랜잭션 날짜 (YYYY-MM-DD)
+ * @returns 레거시 데이터 여부
+ */
+export function isLegacyTransaction(transDate: string): boolean {
+  return transDate < LOT_ENFORCEMENT_DATE;
+}
+
+/**
+ * 로트 번호 상태 분류
+ * - 레거시 데이터의 로트 누락은 'LEGACY' (정상)
+ * - 새 데이터의 로트 누락은 'ERROR' (비정상)
+ * - 로트 있으면 'VALID'
+ */
+export type LotStatus = 'VALID' | 'LEGACY' | 'ERROR';
+
+export function classifyLotStatus(
+  lotNumber: string | null | undefined, 
+  transDate: string
+): LotStatus {
+  const hasLot = lotNumber && lotNumber.trim() !== '';
+  
+  if (hasLot) {
+    return 'VALID';
+  }
+  
+  // 로트 없음 - 레거시 데이터면 정상, 아니면 에러
+  return isLegacyTransaction(transDate) ? 'LEGACY' : 'ERROR';
+}
+
+/**
+ * 로트 상태에 따른 표시 문자열
+ */
+export function getLotDisplayValue(
+  lotNumber: string | null | undefined,
+  transDate: string
+): string {
+  if (lotNumber && lotNumber.trim() !== '') {
+    return lotNumber;
+  }
+  
+  return isLegacyTransaction(transDate) ? '[레거시]' : '[누락-확인필요]';
+}
 
 // ===== 타입 정의 =====
 

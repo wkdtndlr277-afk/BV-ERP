@@ -1914,52 +1914,16 @@ productionRoutes.post('/batch', async (c) => {
       item, product, productLot, itemExpiryDate, itemChannel, expiryDays, actualItemCount
     });
     
-    // BOM 처리 (메모리에서만)
+    // BOM 처리 (메모리에서만 - LOT 조회는 나중에 배치로)
     const bomItems = bomMap.get(item.product_code) || [];
-    console.log(`[production/batch] ${item.product_code}: BOM ${bomItems.length}건 (bomMap에서 조회)`);
     for (const bom of bomItems) {
       const actualItemCode = bom.matched_item_code || bom.item_code;
       const requiredQty = bom.quantity * actualItemCount;
-      // v2.3.1: BOM 단위가 kg으로 통일됨 - 변환 로직 제거
-    const requiredKg = requiredQty; // BOM.quantity는 이제 kg 단위
+      const requiredKg = requiredQty;
       
-      // FEFO 방식으로 원료 LOT 조회 (잔량이 있고 유통기한이 지나지 않은 가장 오래된 LOT)
-      // 유통기한 필터: expiry_date >= 생산일 (생산일 기준으로 유효한 LOT만 선택)
-      let materialLot = null;
-      try {
-        const lotResult = await c.env.DB.prepare(`
-          SELECT lot_number FROM inbound 
-          WHERE item_code = ? AND remain_qty > 0 AND expiry_date >= ?
-          ORDER BY expiry_date ASC, inbound_date ASC, id ASC 
-          LIMIT 1
-        `).bind(actualItemCode, productionDate).first<{lot_number: string}>();
-        materialLot = lotResult?.lot_number || null;
-        
-        // 유효한 LOT가 없으면 RM/R 코드 변환 후 재시도
-        if (!materialLot) {
-          let altCode = '';
-          if (actualItemCode.startsWith('RM')) {
-            altCode = 'R' + actualItemCode.substring(2);
-          } else if (actualItemCode.startsWith('R') && !actualItemCode.startsWith('RM')) {
-            altCode = 'RM' + actualItemCode.substring(1);
-          }
-          if (altCode) {
-            const altLotResult = await c.env.DB.prepare(`
-              SELECT lot_number FROM inbound 
-              WHERE item_code = ? AND remain_qty > 0 AND expiry_date >= ?
-              ORDER BY expiry_date ASC, inbound_date ASC, id ASC 
-              LIMIT 1
-            `).bind(altCode, productionDate).first<{lot_number: string}>();
-            materialLot = altLotResult?.lot_number || null;
-          }
-        }
-      } catch (e) {
-        // LOT 조회 실패해도 계속 진행
-        console.log(`[production/batch] LOT 조회 실패 ${actualItemCode}:`, e);
-      }
-      
+      // ★ v3.5.4: LOT 조회를 여기서 하지 않고 나중에 배치로 처리
       materialRecords.push({
-        productLot, actualItemCode, requiredQty, unit: bom.unit, materialLot
+        productLot, actualItemCode, requiredQty, unit: bom.unit, materialLot: null // 나중에 채움
       });
       
       if (materialDeductions.has(actualItemCode)) {
@@ -1974,6 +1938,81 @@ productionRoutes.post('/batch', async (c) => {
         });
       }
     }
+  }
+  
+  // ★★★ v3.5.4: 원료 LOT 배치 조회 (성능 최적화) ★★★
+  // 개별 쿼리 대신 한 번에 모든 원료의 LOT를 조회
+  const uniqueMaterialCodes = [...new Set(materialRecords.map(r => r.actualItemCode))];
+  const materialLotMap = new Map<string, string>(); // item_code → lot_number
+  
+  if (uniqueMaterialCodes.length > 0) {
+    console.log(`[production/batch] 원료 LOT 배치 조회: ${uniqueMaterialCodes.length}개 품목`);
+    
+    // 50개씩 배치 처리
+    for (let i = 0; i < uniqueMaterialCodes.length; i += 50) {
+      const batch = uniqueMaterialCodes.slice(i, i + 50);
+      const placeholders = batch.map(() => '?').join(',');
+      
+      // FEFO 방식: 소비기한 빠른 순서로 LOT 조회
+      const lotResults = await c.env.DB.prepare(`
+        SELECT item_code, lot_number
+        FROM inbound 
+        WHERE item_code IN (${placeholders}) 
+          AND remain_qty > 0 
+          AND expiry_date >= ?
+        GROUP BY item_code
+        ORDER BY expiry_date ASC, inbound_date ASC
+      `).bind(...batch, productionDate).all<{item_code: string; lot_number: string}>();
+      
+      for (const row of lotResults.results || []) {
+        if (!materialLotMap.has(row.item_code)) {
+          materialLotMap.set(row.item_code, row.lot_number);
+        }
+      }
+      
+      // RM/R 코드 변환 조회 (없는 품목만)
+      const missingCodes = batch.filter(code => !materialLotMap.has(code));
+      if (missingCodes.length > 0) {
+        const altCodes = missingCodes.map(code => {
+          if (code.startsWith('RM')) return 'R' + code.substring(2);
+          if (code.startsWith('R') && !code.startsWith('RM')) return 'RM' + code.substring(1);
+          return null;
+        }).filter(Boolean) as string[];
+        
+        if (altCodes.length > 0) {
+          const altPlaceholders = altCodes.map(() => '?').join(',');
+          const altResults = await c.env.DB.prepare(`
+            SELECT item_code, lot_number
+            FROM inbound 
+            WHERE item_code IN (${altPlaceholders}) 
+              AND remain_qty > 0 
+              AND expiry_date >= ?
+            GROUP BY item_code
+            ORDER BY expiry_date ASC
+          `).bind(...altCodes, productionDate).all<{item_code: string; lot_number: string}>();
+          
+          for (const row of altResults.results || []) {
+            // 원래 코드로 매핑
+            let originalCode = row.item_code;
+            if (row.item_code.startsWith('RM')) {
+              originalCode = 'R' + row.item_code.substring(2);
+            } else if (row.item_code.startsWith('R')) {
+              originalCode = 'RM' + row.item_code.substring(1);
+            }
+            if (missingCodes.includes(originalCode) && !materialLotMap.has(originalCode)) {
+              materialLotMap.set(originalCode, row.lot_number);
+            }
+          }
+        }
+      }
+    }
+    
+    // materialRecords에 LOT 번호 채우기
+    for (const rec of materialRecords) {
+      rec.materialLot = materialLotMap.get(rec.actualItemCode) || null;
+    }
+    
+    console.log(`[production/batch] LOT 매핑 완료: ${materialLotMap.size}/${uniqueMaterialCodes.length}개`);
   }
   
   // 2단계: 생산 기록 일괄 INSERT (핵심 최적화)
@@ -1992,16 +2031,23 @@ productionRoutes.post('/batch', async (c) => {
     }
     
     // 2-1단계: 생산 ID 조회 및 production_materials INSERT (원료 추적을 위해)
-    // LOT 번호로 방금 INSERT된 production ID 조회
+    // ★ v3.5.4: LOT 번호로 방금 INSERT된 production ID 배치 조회 (성능 최적화)
     const productionIdMap = new Map<string, number>();
-    for (const p of preparedItems) {
-      const prod = await c.env.DB.prepare(`
-        SELECT id FROM production WHERE lot_number = ? LIMIT 1
-      `).bind(p.productLot).first<{id: number}>();
-      if (prod) {
-        productionIdMap.set(p.productLot, prod.id);
+    const allLotNumbers = preparedItems.map(p => p.productLot);
+    
+    // 50개씩 배치 처리
+    for (let i = 0; i < allLotNumbers.length; i += 50) {
+      const batchLots = allLotNumbers.slice(i, i + 50);
+      const placeholders = batchLots.map(() => '?').join(',');
+      const prodResults = await c.env.DB.prepare(`
+        SELECT id, lot_number FROM production WHERE lot_number IN (${placeholders})
+      `).bind(...batchLots).all<{id: number; lot_number: string}>();
+      
+      for (const prod of prodResults.results || []) {
+        productionIdMap.set(prod.lot_number, prod.id);
       }
     }
+    console.log(`[production/batch] 생산 ID 조회: ${productionIdMap.size}/${preparedItems.length}개`);
     
     // BOM 기반 원료 정보를 production_materials에 INSERT (LOT 번호 포함)
     const materialInserts: any[] = [];

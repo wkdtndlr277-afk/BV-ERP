@@ -11725,28 +11725,69 @@ async function processOrderFile(file) {
 }
 
 // 판매처 자동 감지
+// ★★★ v3.5.4: 채널 감지 로직 개선 - 오탐 방지 ★★★
 function detectOrderChannel(fileName, wb) {
   const fn = fileName.toLowerCase();
   
-  if (fn.includes('쿠팡') || fn.includes('coupang')) return 'coupang';
-  if (fn.includes('컬리') || fn.includes('kurly')) return 'kurly';
-  if (fn.includes('비마트') || fn.includes('bmart')) return 'bmart';
-  if (fn.includes('오아시스') || fn.includes('oasis')) return 'oasis';
+  // 1단계: 파일명으로 우선 감지
+  if (fn.includes('쿠팡') || fn.includes('coupang')) {
+    console.log(`[채널감지] 파일명으로 coupang 감지: ${fileName}`);
+    return 'coupang';
+  }
+  if (fn.includes('컬리') || fn.includes('kurly')) {
+    console.log(`[채널감지] 파일명으로 kurly 감지: ${fileName}`);
+    return 'kurly';
+  }
+  if (fn.includes('비마트') || fn.includes('bmart')) {
+    console.log(`[채널감지] 파일명으로 bmart 감지: ${fileName}`);
+    return 'bmart';
+  }
+  if (fn.includes('오아시스') || fn.includes('oasis')) {
+    console.log(`[채널감지] 파일명으로 oasis 감지: ${fileName}`);
+    return 'oasis';
+  }
   
-  // 시트명 또는 내용으로 감지
+  // 2단계: 시트명으로 감지
   const sheetNames = wb.SheetNames.join(' ').toLowerCase();
-  if (sheetNames.includes('발주서내역')) return 'kurly';
+  if (sheetNames.includes('발주서내역')) {
+    console.log(`[채널감지] 시트명으로 kurly 감지: ${wb.SheetNames.join(', ')}`);
+    return 'kurly';
+  }
   
-  // 첫 번째 시트 내용 확인
+  // 3단계: 시트 내용으로 감지 (순서 중요!)
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
   const headerRow = rows.slice(0, 25).map(r => r.join(' ')).join(' ').toLowerCase();
   
-  if (headerRow.includes('sku명') || headerRow.includes('sku코드')) return 'bmart';
-  if (headerRow.includes('로켓프레시') || headerRow.includes('상품코드')) return 'coupang';
-  if (headerRow.includes('매장코드') || headerRow.includes('출고수량')) return 'oasis';
-  if (headerRow.includes('김포냉동') || headerRow.includes('평택냉동')) return 'kurly';
+  // ★ 쿠팡 특유의 키워드를 먼저 체크 (오탐 방지)
+  if (headerRow.includes('로켓프레시') || headerRow.includes('발주수량')) {
+    console.log(`[채널감지] 헤더 키워드로 coupang 감지 (로켓프레시/발주수량)`);
+    return 'coupang';
+  }
   
+  // ★ 비마트는 반드시 bmart 관련 키워드가 있어야 함
+  if ((headerRow.includes('sku명') || headerRow.includes('sku코드')) && 
+      (headerRow.includes('비마트') || headerRow.includes('bmart') || fn.includes('bmart'))) {
+    console.log(`[채널감지] 헤더 키워드로 bmart 감지 (SKU + bmart키워드)`);
+    return 'bmart';
+  }
+  
+  // 쿠팡 추가 감지 (상품코드 + 옵션)
+  if (headerRow.includes('상품코드') && headerRow.includes('옵션')) {
+    console.log(`[채널감지] 헤더 키워드로 coupang 감지 (상품코드+옵션)`);
+    return 'coupang';
+  }
+  
+  if (headerRow.includes('매장코드') || headerRow.includes('출고수량')) {
+    console.log(`[채널감지] 헤더 키워드로 oasis 감지`);
+    return 'oasis';
+  }
+  if (headerRow.includes('김포냉동') || headerRow.includes('평택냉동')) {
+    console.log(`[채널감지] 헤더 키워드로 kurly 감지`);
+    return 'kurly';
+  }
+  
+  console.log(`[채널감지] 감지 실패 - generic 반환. 파일: ${fileName}`);
   return 'generic';
 }
 

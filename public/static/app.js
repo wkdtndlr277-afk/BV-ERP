@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 2.2.0 Build: 20260528
-const APP_VERSION = '2.2.8';
+const APP_VERSION = '2.2.9';
 const APP_BUILD = '20260622';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -20026,16 +20026,29 @@ async function processPdfFile(file) {
         // 바코드 이후 텍스트에서 데이터 추출
         const afterText = allText.substring(barcodeIdx, barcodeIdx + 500);
         
-        // 소비기한: 바코드 이후 가장 가까운 날짜 (5월 이후)
-        const nearbyExpiry = afterText.match(/20\d{2}[-‑](0[5-9]|1[0-2])[-‑]\d{2}/);
-        let expiryDate = nearbyExpiry ? nearbyExpiry[0].replace(/‑/g, '-') : null;
+        // v2.2.9: 소비기한 추출 개선 - 두 날짜 중 더 빠른(과거) 날짜 선택
+        // PDF 열 순서: 소비기한가이드 | 제조일가이드
+        // 소비기한은 제조일보다 먼저이므로, 두 날짜 중 더 빠른 날짜가 소비기한
+        const allDatesInRange = afterText.match(/20\d{2}[-‑](0[5-9]|1[0-2])[-‑]\d{2}/g) || [];
+        const normalizedDates = allDatesInRange.map(d => d.replace(/‑/g, '-'));
+        
+        let expiryDate = null;
+        if (normalizedDates.length >= 2) {
+          // 두 날짜 중 더 빠른(과거) 날짜를 소비기한으로 선택
+          const date1 = new Date(normalizedDates[0]);
+          const date2 = new Date(normalizedDates[1]);
+          expiryDate = date1 <= date2 ? normalizedDates[0] : normalizedDates[1];
+          console.log(`📄 바코드 ${barcode}: 두 날짜 ${normalizedDates[0]}, ${normalizedDates[1]} 중 소비기한 = ${expiryDate}`);
+        } else if (normalizedDates.length === 1) {
+          expiryDate = normalizedDates[0];
+        }
         
         // 소비기한을 못 찾으면 productExpiries에서 순서대로 할당
         if (!expiryDate && productExpiries[i]) {
           expiryDate = productExpiries[i];
         }
         
-        console.log(`📄 바코드 ${barcode}: 주변 소비기한 = ${nearbyExpiry?.[0]}, 최종 = ${expiryDate}`);
+        console.log(`📄 바코드 ${barcode}: 최종 소비기한 = ${expiryDate}`);
         
         // 수량 추출: 배민 입고확인서 형식
         // 형식: 냉동 박스수 입수량 총수량 소비기한

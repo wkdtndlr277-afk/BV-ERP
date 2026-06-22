@@ -2960,9 +2960,9 @@ productionRoutes.post('/confirm', async (c) => {
         const productionId = insertResult.meta?.last_row_id;
         
         // BOM 기반 원재료 사용 기록 (production_materials)
+        // ★★★ v2.2.12: LOT 번호도 함께 저장 (FEFO 방식으로 조회) ★★★
         if (item.materials && Array.isArray(item.materials) && item.materials.length > 0 && productionId) {
           for (const mat of item.materials) {
-            // ★★★ v3.4.29: materials 데이터도 정제 ★★★
             const safeItemCode = mat.item_code || '';
             const safeRequiredQty = Number(mat.required_qty) || 0;
             const safeUnit = mat.unit || 'kg';
@@ -2973,15 +2973,39 @@ productionRoutes.post('/confirm', async (c) => {
               continue;
             }
             
+            // ★★★ v2.2.12: FEFO 방식으로 사용한 LOT 번호 조회 ★★★
+            let materialLotNumber = null;
+            try {
+              // SF 원료는 semi_finished_lots에서, 일반 원료는 inbound에서 조회
+              if (safeItemCode.startsWith('SF')) {
+                const sfLot = await c.env.DB.prepare(`
+                  SELECT lot_number FROM semi_finished_lots 
+                  WHERE item_code = ? AND remain_qty > 0
+                  ORDER BY prod_date ASC, id ASC LIMIT 1
+                `).bind(safeItemCode).first<{lot_number: string}>();
+                materialLotNumber = sfLot?.lot_number || null;
+              } else {
+                const inboundLot = await c.env.DB.prepare(`
+                  SELECT lot_number FROM inbound 
+                  WHERE item_code = ? AND remain_qty > 0 AND expiry_date >= ?
+                  ORDER BY expiry_date ASC, inbound_date ASC, id ASC LIMIT 1
+                `).bind(safeItemCode, productionDate).first<{lot_number: string}>();
+                materialLotNumber = inboundLot?.lot_number || null;
+              }
+            } catch (lotErr) {
+              console.warn(`[production/confirm] LOT 조회 실패: ${safeItemCode}`, lotErr);
+            }
+            
             await c.env.DB.prepare(`
-              INSERT INTO production_materials (production_id, item_code, planned_qty, actual_qty, unit)
-              VALUES (?, ?, ?, ?, ?)
+              INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
+              VALUES (?, ?, ?, ?, ?, ?)
             `).bind(
-              productionId,      // number
-              safeItemCode,      // string
-              safeRequiredQty,   // number
-              safeRequiredQty,   // number
-              safeUnit           // string
+              productionId,        // number
+              safeItemCode,        // string
+              materialLotNumber,   // string or null
+              safeRequiredQty,     // number
+              safeRequiredQty,     // number
+              safeUnit             // string
             ).run();
           }
         }

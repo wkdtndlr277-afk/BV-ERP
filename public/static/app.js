@@ -18627,8 +18627,8 @@ function generateClosingPrintHtml(cache, date) {
           </tr>
         </thead>
         <tbody>
-          ${filteredUsage.slice(0, 20).map((item, idx) => {
-            // ★★★ v3.4.6: LOT 정보 표시 개선 - null, undefined, 빈문자열 처리 ★★★
+          ${filteredUsage.map((item, idx) => {
+            // ★★★ v2.2.12: LOT 정보 표시 개선 - 전체 표시 (20개 제한 제거) ★★★
             const lotDisplay = (item.lot_numbers && item.lot_numbers.trim() && item.lot_numbers !== 'null') 
               ? item.lot_numbers 
               : (item.used_lots || '-');
@@ -18641,7 +18641,6 @@ function generateClosingPrintHtml(cache, date) {
               '<td class="text-left font-small">' + lotDisplay + '</td>' +
             '</tr>';
           }).join('')}
-          ${filteredUsage.length > 20 ? '<tr><td colspan="6" style="text-align:center">... 외 ' + (filteredUsage.length - 20) + '건 (상세는 수불부 참조)</td></tr>' : ''}
         </tbody>
       </table>
       

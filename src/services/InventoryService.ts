@@ -3,6 +3,7 @@
  * 
  * v3.5.0: transactions 테이블 기반 Single Source of Truth
  * v3.5.1: 재고 조정(Adjustment) 메서드 추가, 모든 재고 변동은 트랜잭션으로 기록
+ * v3.5.2: 정제수(RM184, RM267) 등 비관리 품목 제외
  * 
  * 핵심 원칙:
  * 1. 모든 재고 계산은 transactions 테이블의 시계열 누적 합산으로 수행
@@ -10,6 +11,13 @@
  * 3. 수불부 = 전일재고 + 입고 - 사용 ± 조정 = 현재재고
  * 4. ★ 모든 재고 변동은 반드시 이 서비스를 통해서만 처리 ★
  */
+
+// ===== 제외 품목 코드 (재고 관리 대상 아님) =====
+// 정제수 등 실제 재고 관리가 필요 없는 품목
+export const INVENTORY_EXCLUDE_CODES = [
+  'RM184',  // 정제수
+  'RM267',  // 2차정제수
+];
 
 // ===== 타입 정의 =====
 
@@ -248,6 +256,11 @@ export async function bulkAdjustInventory(
   const executedAt = new Date().toISOString();
   
   try {
+    // 제외 품목 WHERE 절 생성
+    const excludeClause = INVENTORY_EXCLUDE_CODES.length > 0
+      ? `AND m.item_code NOT IN (${INVENTORY_EXCLUDE_CODES.map(() => '?').join(',')})`
+      : '';
+    
     // 불일치 품목 조회
     let query = `
       SELECT 
@@ -263,10 +276,11 @@ export async function bulkAdjustInventory(
         GROUP BY item_code
       ) t ON m.item_code = t.item_code
       WHERE m.category = '원료'
+        ${excludeClause}
         AND ABS(m.current_stock - COALESCE(t.trans_sum, 0)) > 0.01
     `;
     
-    const params: any[] = [];
+    const params: any[] = [...INVENTORY_EXCLUDE_CODES];
     if (itemCodes && itemCodes.length > 0) {
       query += ` AND m.item_code IN (${itemCodes.map(() => '?').join(',')})`;
       params.push(...itemCodes);
@@ -578,6 +592,11 @@ export async function checkInventoryIntegrity(
 ): Promise<IntegrityCheckResult> {
   const checkedAt = new Date().toISOString();
   
+  // 제외 품목 WHERE 절 생성
+  const excludeClause = INVENTORY_EXCLUDE_CODES.length > 0
+    ? `AND m.item_code NOT IN (${INVENTORY_EXCLUDE_CODES.map(() => '?').join(',')})`
+    : '';
+  
   // Master 재고 vs Transactions 합계 비교
   const comparisonQuery = `
     SELECT 
@@ -600,6 +619,7 @@ export async function checkInventoryIntegrity(
       GROUP BY item_code
     ) i ON m.item_code = i.item_code
     WHERE m.category = '원료'
+      ${excludeClause}
       AND (
         ABS(m.current_stock - COALESCE(t.trans_sum, 0)) > 0.01
         OR ABS(m.current_stock - COALESCE(i.inbound_sum, 0)) > 0.01
@@ -607,7 +627,7 @@ export async function checkInventoryIntegrity(
     ORDER BY diff_trans DESC
   `;
   
-  const mismatches = await db.prepare(comparisonQuery).all<{
+  const mismatches = await db.prepare(comparisonQuery).bind(...INVENTORY_EXCLUDE_CODES).all<{
     item_code: string;
     item_name: string;
     master_stock: number;

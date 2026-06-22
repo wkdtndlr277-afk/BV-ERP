@@ -1218,30 +1218,35 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
     // master와 supplies 테이블 UNION ALL로 모두 조회
     
     // 카테고리 필터 조건 생성
+    // ★★★ v3.5.4: 기본값 변경 - 일별 수불부는 원료(master)만 표시, 제품 제외 ★★★
     let masterCategoryFilter = '';
-    let suppliesCategoryFilter = '';
-    let productCategoryFilter = '';
+    let suppliesCategoryFilter = ' AND 1=0'; // 기본: 부자재 제외
+    let productCategoryFilter = ' AND 1=0'; // 기본: 제품 제외
     const categoryParams: any[] = [];
     
-    if (category && category !== '전체') {
-      if (category === '부자재') {
-        // 부자재만 조회 - supplies만 사용
-        masterCategoryFilter = ' AND 1=0'; // master 제외
-        suppliesCategoryFilter = ''; // supplies 전체
-        productCategoryFilter = ' AND 1=0'; // production_items 제외
-      } else if (category === '제품') {
-        // 제품만 조회 - production_items만 사용
-        masterCategoryFilter = ' AND 1=0'; // master 제외
-        suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
-        productCategoryFilter = ''; // production_items 전체
-      } else {
-        // 원료 등 - master만 사용
-        masterCategoryFilter = ' AND m.category = ?';
-        suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
-        productCategoryFilter = ' AND 1=0'; // production_items 제외
-        categoryParams.push(category);
-      }
+    if (category === '전체') {
+      // '전체' 선택 시 - 원료 + 부자재 + 제품 모두 표시
+      masterCategoryFilter = '';
+      suppliesCategoryFilter = '';
+      productCategoryFilter = '';
+    } else if (category === '부자재') {
+      // 부자재만 조회 - supplies만 사용
+      masterCategoryFilter = ' AND 1=0'; // master 제외
+      suppliesCategoryFilter = ''; // supplies 전체
+      productCategoryFilter = ' AND 1=0'; // production_items 제외
+    } else if (category === '제품') {
+      // 제품만 조회 - production_items만 사용
+      masterCategoryFilter = ' AND 1=0'; // master 제외
+      suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
+      productCategoryFilter = ''; // production_items 전체
+    } else if (category && category !== '원료') {
+      // 특정 카테고리 (원료 세부 분류) - master만 사용
+      masterCategoryFilter = ' AND m.category = ?';
+      suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
+      productCategoryFilter = ' AND 1=0'; // production_items 제외
+      categoryParams.push(category);
     }
+    // else: 기본값 - 원료(master) 전체만 표시
     
     // 검색 필터
     let searchFilter = '';

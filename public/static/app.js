@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 2.2.0 Build: 20260528
-const APP_VERSION = '2.2.6';
+const APP_VERSION = '2.2.7';
 const APP_BUILD = '20260622';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -47195,7 +47195,7 @@ async function validateExpiryDates() {
   }
 }
 
-// 소비기한 검증 결과 모달
+// 소비기한 검증 결과 모달 (v2.2.7 - 스크롤 및 용어 수정)
 function showExpiryValidationModal(summary, items) {
   const existingModal = document.getElementById('expiry-validation-modal');
   if (existingModal) existingModal.remove();
@@ -47206,10 +47206,11 @@ function showExpiryValidationModal(summary, items) {
   
   const modal = document.createElement('div');
   modal.id = 'expiry-validation-modal';
-  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
   modal.innerHTML = `
-    <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
-      <div class="p-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
+    <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+      <!-- 헤더 (고정) -->
+      <div class="p-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-t-xl flex-shrink-0">
         <div class="flex items-center justify-between">
           <h3 class="text-lg font-bold">
             <i class="fas fa-calendar-check mr-2"></i>
@@ -47221,7 +47222,8 @@ function showExpiryValidationModal(summary, items) {
         </div>
       </div>
       
-      <div class="p-4">
+      <!-- 본문 (스크롤 가능) -->
+      <div class="p-4 overflow-y-auto flex-1">
         <!-- 요약 -->
         <div class="grid grid-cols-4 gap-3 mb-4">
           <div class="bg-gray-100 rounded-lg p-3 text-center">
@@ -47250,39 +47252,41 @@ function showExpiryValidationModal(summary, items) {
             소비기한 불일치 항목 (${mismatchItems.length}건)
           </h4>
           <div class="bg-red-50 border border-red-200 rounded-lg overflow-hidden">
-            <table class="w-full text-sm">
-              <thead class="bg-red-100">
-                <tr>
-                  <th class="px-3 py-2 text-left">바코드</th>
-                  <th class="px-3 py-2 text-left">제품명</th>
-                  <th class="px-3 py-2 text-center">입력 소비기한</th>
-                  <th class="px-3 py-2 text-center">시스템 계산값</th>
-                  <th class="px-3 py-2 text-center">차이</th>
-                  <th class="px-3 py-2 text-center">조치</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${mismatchItems.map(item => `
-                <tr class="border-t border-red-200">
-                  <td class="px-3 py-2 font-mono text-xs">${item.barcode}</td>
-                  <td class="px-3 py-2">${item.product_name || '-'}</td>
-                  <td class="px-3 py-2 text-center text-red-600">${item.input_expiry || '-'}</td>
-                  <td class="px-3 py-2 text-center text-green-600">${item.system_expiry || '-'}</td>
-                  <td class="px-3 py-2 text-center font-bold text-red-600">${item.days_diff}일</td>
-                  <td class="px-3 py-2 text-center">
-                    <button onclick="applySystemExpiry('${item.barcode}', '${item.system_expiry}')" 
-                            class="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600">
-                      시스템값 적용
-                    </button>
-                  </td>
-                </tr>
-                `).join('')}
-              </tbody>
-            </table>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-red-100">
+                  <tr>
+                    <th class="px-3 py-2 text-left whitespace-nowrap">바코드</th>
+                    <th class="px-3 py-2 text-left">제품명</th>
+                    <th class="px-3 py-2 text-center whitespace-nowrap">입력값</th>
+                    <th class="px-3 py-2 text-center whitespace-nowrap">등록값</th>
+                    <th class="px-3 py-2 text-center whitespace-nowrap">차이</th>
+                    <th class="px-3 py-2 text-center whitespace-nowrap">조치</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${mismatchItems.map(item => `
+                  <tr class="border-t border-red-200">
+                    <td class="px-3 py-2 font-mono text-xs">${item.barcode}</td>
+                    <td class="px-3 py-2 text-xs">${item.product_name || '-'}</td>
+                    <td class="px-3 py-2 text-center text-red-600 whitespace-nowrap">${item.input_expiry || item.input_expiry_date || '-'}</td>
+                    <td class="px-3 py-2 text-center text-green-600 whitespace-nowrap">${item.system_expiry || item.system_expiry_date || '-'}</td>
+                    <td class="px-3 py-2 text-center font-bold text-red-600">${item.days_diff}일</td>
+                    <td class="px-3 py-2 text-center">
+                      <button onclick="applySystemExpiry('${item.barcode}', '${item.system_expiry || item.system_expiry_date}')" 
+                              class="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600 whitespace-nowrap">
+                        등록값 적용
+                      </button>
+                    </td>
+                  </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
           </div>
           <p class="text-xs text-gray-500 mt-2">
             <i class="fas fa-info-circle mr-1"></i>
-            시스템 계산값은 바코드별 등록된 소비기한 또는 생산명별 기본 소비기한을 기준으로 합니다.
+            <strong>등록값</strong> = 바코드별 등록된 소비기한 (생산명 관리 > 바코드 탭에서 설정한 expiry_days)
           </p>
         </div>
         ` : ''}
@@ -47294,11 +47298,11 @@ function showExpiryValidationModal(summary, items) {
             <i class="fas fa-check-circle mr-1"></i>
             소비기한 일치 항목 (${matchItems.length}건)
           </h4>
-          <div class="bg-green-50 border border-green-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+          <div class="bg-green-50 border border-green-200 rounded-lg p-3 max-h-32 overflow-y-auto">
             <div class="flex flex-wrap gap-2">
               ${matchItems.map(item => `
               <span class="px-2 py-1 bg-white border border-green-300 rounded text-xs">
-                ${item.barcode} → ${item.input_expiry}
+                ${item.barcode} → ${item.input_expiry || item.input_expiry_date}
               </span>
               `).join('')}
             </div>
@@ -47313,7 +47317,7 @@ function showExpiryValidationModal(summary, items) {
             <i class="fas fa-question-circle mr-1"></i>
             바코드 미등록 항목 (${notFoundItems.length}건)
           </h4>
-          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 max-h-32 overflow-y-auto">
             <div class="flex flex-wrap gap-2">
               ${notFoundItems.map(item => `
               <span class="px-2 py-1 bg-white border border-yellow-300 rounded text-xs">
@@ -47324,13 +47328,14 @@ function showExpiryValidationModal(summary, items) {
           </div>
           <p class="text-xs text-yellow-600 mt-2">
             <i class="fas fa-info-circle mr-1"></i>
-            시스템에 등록되지 않은 바코드입니다. 관리자 > 시스템관리 > 생산명 관리에서 바코드를 등록하세요.
+            시스템에 등록되지 않은 바코드입니다. <strong>관리자 > 시스템관리 > 생산명 관리 > 바코드 탭</strong>에서 등록하세요.
           </p>
         </div>
         ` : ''}
       </div>
       
-      <div class="p-4 bg-gray-50 border-t flex justify-between items-center">
+      <!-- 푸터 (고정) -->
+      <div class="p-4 bg-gray-50 border-t rounded-b-xl flex justify-between items-center flex-shrink-0">
         <div class="text-sm text-gray-500">
           ${mismatchItems.length > 0 ? 
             '<i class="fas fa-exclamation-triangle text-yellow-500 mr-1"></i> 불일치 항목이 있습니다. 확인 후 진행하세요.' : 
@@ -47340,7 +47345,7 @@ function showExpiryValidationModal(summary, items) {
           ${mismatchItems.length > 0 ? `
           <button onclick="applyAllSystemExpiry()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
             <i class="fas fa-check-double mr-1"></i>
-            전체 시스템값 적용
+            전체 등록값 적용
           </button>
           ` : ''}
           <button onclick="document.getElementById('expiry-validation-modal').remove()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">

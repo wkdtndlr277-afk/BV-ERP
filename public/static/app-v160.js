@@ -3013,16 +3013,16 @@ async function renderDailyReport() {
       
       <!-- 구분 탭 + 검색 조건 -->
       <div class="bg-white rounded-xl shadow">
-        <!-- 원료/제품 탭 -->
+        <!-- 원료/제품 탭 - v3.5.4: 기본값 원료로 변경 -->
         <div class="flex border-b">
-          <button onclick="switchDailyTab('전체')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-haccp-primary text-haccp-primary bg-blue-50" data-tab="전체">
-            <i class="fas fa-th-list mr-1"></i> 전체
-          </button>
-          <button onclick="switchDailyTab('원료')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="원료">
+          <button onclick="switchDailyTab('원료')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-haccp-primary text-haccp-primary bg-blue-50" data-tab="원료">
             <i class="fas fa-seedling mr-1"></i> 원료
           </button>
           <button onclick="switchDailyTab('제품')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="제품">
             <i class="fas fa-box mr-1"></i> 제품
+          </button>
+          <button onclick="switchDailyTab('전체')" class="daily-tab flex-1 py-3 text-center font-medium border-b-2 border-transparent text-gray-500 hover:bg-gray-50" data-tab="전체">
+            <i class="fas fa-th-list mr-1"></i> 전체
           </button>
         </div>
         
@@ -3070,7 +3070,7 @@ async function renderDailyReport() {
     </div>
   `;
   
-  window.dailyCategory = ''; // 전체
+  window.dailyCategory = '원료'; // v3.5.4: 기본값 원료로 변경
   loadDailyLedger();
 }
 
@@ -3085,7 +3085,8 @@ function switchDailyTab(tab) {
       el.classList.add('border-transparent', 'text-gray-500');
     }
   });
-  window.dailyCategory = tab === '전체' ? '' : tab;
+  // ★★★ v3.5.4: '전체' 탭일 때 명시적으로 '전체' 전달 (기본값은 원료만)
+  window.dailyCategory = tab;
   loadDailyLedger();
 }
 

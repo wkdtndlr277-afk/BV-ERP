@@ -1108,7 +1108,7 @@ app.get('/*', (c) => {
       setInterval(checkTaskNotifications, 30000);
     </script>
     
-    <script src="/static/app.js?v=3.4.1&cb=${Date.now()}"></script>
+    <script src="/static/app-v354.js?cb=${Date.now()}"></script>
 </body>
 </html>
   `);

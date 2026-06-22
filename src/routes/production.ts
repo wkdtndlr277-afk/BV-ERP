@@ -1,4 +1,5 @@
 // 생산 관리 API
+// v3.5.0: Service Layer 도입 - 재고 차감/트랜잭션 기록 원자적 처리
 // 최적화: Atomic Transaction, FEFO 강제, MAX(0,...) 적용, 재고 부족 방어
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
@@ -13,6 +14,23 @@ import {
   StockError,
   createInsufficientStockError
 } from '../utils/inventory';
+import {
+  validateProductionItem,
+  validateProductionDate,
+  planFEFODeduction,
+  executeAtomicDeduction,
+  generateProductionLotNumber,
+  getMaterialLotNumber,
+  calculateExpiryDate,
+  registerProduction,
+  EXCLUDE_CODES as SERVICE_EXCLUDE_CODES
+} from '../services/ProductionService';
+import {
+  getDailyStockReport,
+  getSemiFinishedDailyReport,
+  checkInventoryIntegrity,
+  getItemTransactionHistory
+} from '../services/InventoryService';
 
 const productionRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -179,8 +197,12 @@ productionRoutes.get('/debug-stock', async (c) => {
   }
 });
 
-// ★★★ v3.4.5: closing-status - LOT 기반 실시간 재고 + 수불부 데이터 무결성 ★★★
-// 당일 생산 마감 현황 통합 조회
+// ★★★ v3.5.0: closing-status - transactions 테이블 기반 수불부 (Single Source of Truth) ★★★
+// 핵심 개선:
+// 1. 모든 재고 계산을 transactions 테이블의 시계열 누적 합산으로 수행
+// 2. 전일재고 = SUM(quantity) WHERE trans_date < 기준일
+// 3. 당일입고/사용/조정 = SUM() WHERE trans_date = 기준일 AND trans_type = ?
+// 4. 현재재고 = SUM(quantity) WHERE trans_date <= 기준일
 productionRoutes.get('/closing-status', async (c) => {
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
@@ -202,41 +224,13 @@ productionRoutes.get('/closing-status', async (c) => {
       ORDER BY p.created_at DESC
     `).bind(date).all<any>();
     
-    // 2. 당일 원재료 사용량 - LOT별 remain_qty SUM 기반 실시간 재고
-    // ★★★ v2.2.14: 수불부 계산 로직 전면 개선 ★★★
-    // 전일재고 = 현재재고 + 당일사용량 - 당일입고량 (역산)
-    const materialUsage = await c.env.DB.prepare(`
-      SELECT pm.item_code, 
-             COALESCE(m.item_name, sf.item_name, pm.item_code) as item_name,
-             SUM(pm.actual_qty) as total_used,
-             COALESCE(m.unit, sf.unit, 'kg') as unit,
-             GROUP_CONCAT(DISTINCT pm.lot_number) as lot_numbers,
-             -- 현재 재고 (실시간)
-             CASE 
-               WHEN pm.item_code LIKE 'SF%' THEN 
-                 COALESCE((SELECT SUM(remain_qty) FROM semi_finished_lots WHERE item_code = pm.item_code), 0)
-               ELSE 
-                 COALESCE((SELECT SUM(remain_qty) FROM inbound WHERE item_code = pm.item_code), 0)
-             END as current_stock,
-             -- 당일 입고량
-             CASE 
-               WHEN pm.item_code LIKE 'SF%' THEN 
-                 COALESCE((SELECT SUM(origin_qty) FROM semi_finished_lots WHERE item_code = pm.item_code AND prod_date = ?), 0)
-               ELSE 
-                 COALESCE((SELECT SUM(origin_qty) FROM inbound WHERE item_code = pm.item_code AND inbound_date = ?), 0)
-             END as inbound_qty
-      FROM production_materials pm
-      JOIN production p ON pm.production_id = p.id
-      LEFT JOIN master m ON pm.item_code = m.item_code
-      LEFT JOIN semi_finished_items sf ON pm.item_code = sf.item_code
-      WHERE p.prod_date = ?
-        AND pm.item_code NOT IN (${excludeClause})
-        AND LOWER(COALESCE(m.item_name, sf.item_name, '')) NOT LIKE '%정제수%'
-      GROUP BY pm.item_code
-      ORDER BY total_used DESC
-    `).bind(date, date, date, ...EXCLUDE_CODES).all<any>();
+    // ★★★ 2. transactions 테이블 기반 수불부 데이터 (Single Source of Truth) ★★★
+    const stockReport = await getDailyStockReport(c.env.DB, date, EXCLUDE_CODES);
     
-    // 3. 당일 입고 현황 - LOT별 상세
+    // 3. 반제품 수불부 (semi_finished_transactions 기반)
+    const sfReport = await getSemiFinishedDailyReport(c.env.DB, date);
+    
+    // 4. 당일 입고 현황 (참고용 - 원천은 transactions)
     const inboundData = await c.env.DB.prepare(`
       SELECT i.item_code, 
              COALESCE(m.item_name, i.item_code) as item_name, 
@@ -250,62 +244,7 @@ productionRoutes.get('/closing-status', async (c) => {
       ORDER BY total_inbound DESC
     `).bind(date, ...EXCLUDE_CODES).all<any>();
     
-    // 4. 수불부 데이터 처리 + SF원료 LOT 자동 생성 (전날 기준)
-    const yesterdayDate = new Date(date + 'T00:00:00');
-    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-    const yesterdayStr = yesterdayDate.toISOString().split('T')[0].replace(/-/g, ''); // YYYYMMDD
-    
-    // ★★★ v2.2.14: 수불부 계산 - 역산 방식 ★★★
-    // 전일재고 = 현재재고 + 당일사용량 - 당일입고량
-    const usageWithIntegrity = (materialUsage.results || []).map((item: any) => {
-      const currentStock = parseFloat(item.current_stock) || 0;
-      const inboundQty = parseFloat(item.inbound_qty) || 0;
-      const usedQty = parseFloat(item.total_used) || 0;
-      
-      // ★ 전일재고 역산: 현재고 + 사용량 - 입고량 = 전일재고
-      const prevStock = currentStock + usedQty - inboundQty;
-      const adjustment = 0;
-      
-      // ★★★ SF원료: lot_numbers가 없으면 전날 기준 LOT 자동 생성 ★★★
-      let lotNumbers = item.lot_numbers;
-      if (item.item_code.startsWith('SF') && (!lotNumbers || lotNumbers === 'null' || lotNumbers.trim() === '')) {
-        lotNumbers = `${yesterdayStr}-${item.item_code}-001`;
-      }
-      // 일반 원료도 LOT가 없으면 자동 생성
-      if (!item.item_code.startsWith('SF') && (!lotNumbers || lotNumbers === 'null' || lotNumbers.trim() === '')) {
-        lotNumbers = `${yesterdayStr}-${item.item_code}-001`;
-      }
-      
-      // 검증: 전일 + 입고 - 사용 = 현재고 (항상 일치해야 함)
-      const calculatedStock = prevStock + inboundQty - usedQty + adjustment;
-      const difference = Math.abs(calculatedStock - currentStock);
-      const isValid = difference < 0.01;  // 역산이므로 항상 유효해야 함
-      
-      return {
-        ...item,
-        lot_numbers: lotNumbers,
-        prev_stock: Math.max(0, prevStock),  // 음수 방지
-        inbound_qty: inboundQty,
-        adjustment: adjustment,
-        calculated_stock: calculatedStock,
-        integrity_valid: isValid,
-        integrity_diff: difference
-      };
-    });
-    
-    // 5. 무결성 검증 실패 항목
-    const integrityErrors = usageWithIntegrity.filter((item: any) => !item.integrity_valid);
-    
-    // 6. 요약 계산
-    const totalProducts = productionData.results?.length || 0;
-    const totalQuantity = (productionData.results || []).reduce((sum: number, p: any) => sum + (p.quantity || 0), 0);
-    const totalMaterialTypes = usageWithIntegrity.length;
-    const totalMaterialUsed = usageWithIntegrity.reduce((sum: number, m: any) => sum + (m.total_used || 0), 0);
-    const totalPrevStock = usageWithIntegrity.reduce((sum: number, m: any) => sum + (m.prev_stock || 0), 0);
-    const totalInbound = usageWithIntegrity.reduce((sum: number, m: any) => sum + (m.inbound_qty || 0), 0);
-    const totalCurrentStock = usageWithIntegrity.reduce((sum: number, m: any) => sum + (m.current_stock || 0), 0);
-    
-    // 채널별 집계
+    // 5. 채널별 집계
     const channelSummary: Record<string, { count: number, quantity: number }> = {};
     for (const p of productionData.results || []) {
       const ch = p.channel || '기타';
@@ -314,42 +253,142 @@ productionRoutes.get('/closing-status', async (c) => {
       channelSummary[ch].quantity += p.quantity || 0;
     }
     
+    // 6. 요약 계산
+    const totalProducts = productionData.results?.length || 0;
+    const totalQuantity = (productionData.results || []).reduce((sum: number, p: any) => sum + (p.quantity || 0), 0);
+    
+    // 일반 원료 + 반제품 합산
+    const allMaterials = [
+      ...stockReport.items.map(i => ({ ...i, type: '원료' })),
+      ...sfReport.items.map(i => ({ ...i, type: '반제품' }))
+    ];
+    
+    // 수불부 형식으로 변환 (기존 API 호환)
+    const usageWithIntegrity = allMaterials.map(item => ({
+      item_code: item.itemCode,
+      item_name: item.itemName,
+      unit: item.unit,
+      total_used: item.usedQty,
+      lot_numbers: item.lotNumbers || '',
+      current_stock: item.currentStock,
+      inbound_qty: item.inboundQty,
+      prev_stock: item.prevStock,
+      adjustment: item.adjustmentQty,
+      calculated_stock: item.prevStock + item.inboundQty - item.usedQty + item.adjustmentQty,
+      integrity_valid: item.isValid,
+      integrity_diff: item.difference,
+      type: (item as any).type
+    }));
+    
     return c.json({
       success: true,
+      version: 'v3.5.0',
       date,
       production: {
         items: productionData.results || [],
-        summary: { total_products: totalProducts, total_quantity: totalQuantity, by_channel: channelSummary }
+        summary: { 
+          total_products: totalProducts, 
+          total_quantity: totalQuantity, 
+          by_channel: channelSummary 
+        }
       },
       materials: {
         usage: usageWithIntegrity,
         inbound: inboundData.results || [],
         summary: { 
-          total_types: totalMaterialTypes, 
-          total_used_kg: totalMaterialUsed,
-          total_prev_stock: totalPrevStock,
-          total_inbound: totalInbound,
-          total_current_stock: totalCurrentStock,
-          integrity_errors: integrityErrors.length,
-          integrity_status: integrityErrors.length === 0 ? 'VALID' : 'INVALID'
+          total_types: allMaterials.length, 
+          total_used_kg: stockReport.summary.totalUsed + sfReport.summary.totalUsed,
+          total_prev_stock: stockReport.summary.totalPrevStock + sfReport.summary.totalPrevStock,
+          total_inbound: stockReport.summary.totalInbound + sfReport.summary.totalInbound,
+          total_current_stock: stockReport.summary.totalCurrentStock + sfReport.summary.totalCurrentStock,
+          integrity_errors: stockReport.summary.errorCount + sfReport.summary.errorCount,
+          integrity_status: (stockReport.summary.errorCount + sfReport.summary.errorCount) === 0 ? 'VALID' : 'INVALID'
         }
       },
       integrity: {
-        status: integrityErrors.length === 0 ? 'PASS' : 'FAIL',
-        error_count: integrityErrors.length,
-        errors: integrityErrors.map((e: any) => ({
-          item_code: e.item_code,
-          item_name: e.item_name,
-          expected: e.calculated_stock,
-          actual: e.current_stock,
-          difference: e.integrity_diff
-        }))
+        status: (stockReport.summary.errorCount + sfReport.summary.errorCount) === 0 ? 'PASS' : 'FAIL',
+        error_count: stockReport.summary.errorCount + sfReport.summary.errorCount,
+        errors: [
+          ...stockReport.errors.map(e => ({ ...e, type: '원료' })),
+          ...sfReport.errors.map(e => ({ ...e, type: '반제품' }))
+        ]
+      },
+      // 추가 메타데이터
+      metadata: {
+        data_source: 'transactions_table',
+        calculation_method: 'time_series_accumulation',
+        note: '전일재고=SUM(~<date), 입고=SUM(date,입고), 사용=SUM(date,사용), 현재고=SUM(~<=date)'
       }
     });
     
   } catch (error: any) {
-    console.error('[production/closing-status] D1_ERROR:', error);
+    console.error('[closing-status/v3.5.0] D1_ERROR:', error);
     return c.json({ success: false, error: `D1_ERROR: ${error.message}`, errorCode: 'D1_QUERY_ERROR' }, 500);
+  }
+});
+
+// ★★★ v3.5.0: 정합성 체크 API (Sanity Check) ★★★
+// Master.current_stock vs Transactions SUM 비교
+// IMPORTANT: 이 라우트는 /:id 보다 먼저 정의되어야 함
+productionRoutes.get('/integrity-check', async (c) => {
+  try {
+    const result = await checkInventoryIntegrity(c.env.DB);
+    
+    return c.json({
+      success: true,
+      version: 'v3.5.0',
+      ...result
+    });
+    
+  } catch (error: any) {
+    console.error('[integrity-check] Error:', error);
+    return c.json({ 
+      success: false, 
+      error: error.message,
+      errorCode: 'INTEGRITY_CHECK_ERROR'
+    }, 500);
+  }
+});
+
+// ★★★ v3.5.0: 품목별 트랜잭션 이력 조회 (디버깅/감사용) ★★★
+// IMPORTANT: 이 라우트는 /:id 보다 먼저 정의되어야 함
+productionRoutes.get('/transaction-history/:itemCode', async (c) => {
+  try {
+    const itemCode = decodeURIComponent(c.req.param('itemCode'));
+    const startDate = c.req.query('start_date');
+    const endDate = c.req.query('end_date');
+    const limit = parseInt(c.req.query('limit') || '100');
+    
+    const history = await getItemTransactionHistory(c.env.DB, itemCode, startDate, endDate, limit);
+    
+    // 현재 재고 상태
+    const masterStock = await c.env.DB.prepare(`
+      SELECT current_stock FROM master WHERE item_code = ?
+    `).bind(itemCode).first<{ current_stock: number }>();
+    
+    const inboundSum = await c.env.DB.prepare(`
+      SELECT SUM(remain_qty) as total FROM inbound WHERE item_code = ?
+    `).bind(itemCode).first<{ total: number }>();
+    
+    const transactionSum = await c.env.DB.prepare(`
+      SELECT SUM(quantity) as total FROM transactions WHERE item_code = ?
+    `).bind(itemCode).first<{ total: number }>();
+    
+    return c.json({
+      success: true,
+      itemCode,
+      currentStatus: {
+        masterStock: masterStock?.current_stock || 0,
+        inboundRemainSum: inboundSum?.total || 0,
+        transactionSum: transactionSum?.total || 0
+      },
+      history,
+      historyCount: history.length
+    });
+    
+  } catch (error: any) {
+    console.error('[transaction-history] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
   }
 });
 
@@ -2867,200 +2906,314 @@ productionRoutes.post('/preview', async (c) => {
 });
 
 // 3. confirm: 생산 등록 확정 - v3.4.31: 무결성 검사 완전 제거, 바로 DB 반영
+// ★★★ v3.5.0: /production/confirm API - Service Layer 적용 완전 재작성 ★★★
+// 핵심 개선: 
+// 1. 엄격한 유효성 검증 (Validation Layer)
+// 2. FEFO 재고 차감 + inbound.remain_qty 업데이트
+// 3. transactions INSERT (Single Source of Truth)
+// 4. 원자적 트랜잭션 (D1 batch)
 productionRoutes.post('/confirm', async (c) => {
   try {
     const body = await c.req.json();
     const { items, prod_date, channel, force_stock_shortage } = body;
     
-    // 디버그 로깅
-    console.log('[confirm] 요청 데이터:', JSON.stringify({ itemCount: items?.length, prod_date, channel, force_stock_shortage }));
+    console.log('[confirm/v3.5.0] 요청:', JSON.stringify({ itemCount: items?.length, prod_date, channel }));
     
-    if (!items || items.length === 0) {
-      return c.json({ success: false, error: '등록할 항목이 없습니다.', errorCode: 'EMPTY_ITEMS' }, 400);
-    }
-    
-    const productionDate = prod_date || new Date().toISOString().split('T')[0];
-    
-    // ===== v3.4.31: 무결성 검사 완전 제거 =====
-    // 프론트엔드에서 이미 검증했으므로 백엔드에서는 바로 DB 반영
-    // product_code가 없는 항목만 필터링
-    const validItems = items.filter((item: any) => item.product_code && item.quantity > 0);
-    
-    console.log('[confirm] 유효 항목 수:', validItems.length, '/', items.length);
-    
-    if (validItems.length === 0) {
+    // ===== 1단계: 기본 유효성 검증 =====
+    if (!items || !Array.isArray(items) || items.length === 0) {
       return c.json({ 
         success: false, 
-        error: '유효한 항목이 없습니다 (product_code 또는 quantity 누락)', 
-        errorCode: 'NO_VALID_ITEMS',
-        details: items.map((i: any, idx: number) => `항목${idx+1}: code=${i.product_code}, qty=${i.quantity}`)
+        error: '등록할 항목이 없습니다.', 
+        errorCode: 'EMPTY_ITEMS' 
       }, 400);
     }
     
-    // ===== 실제 DB 반영 (배치 처리) =====
+    // 생산일 검증
+    const productionDate = prod_date || new Date().toISOString().split('T')[0];
+    const dateValidation = validateProductionDate(productionDate);
+    if (!dateValidation.valid) {
+      return c.json({
+        success: false,
+        error: dateValidation.errors.map(e => e.message).join(', '),
+        errorCode: 'INVALID_DATE'
+      }, 400);
+    }
+    
+    // ===== 2단계: 각 항목 유효성 검증 =====
+    const validationErrors: Array<{ index: number; errors: string[] }> = [];
+    const allWarnings: string[] = [];
+    
+    for (let i = 0; i < items.length; i++) {
+      const validation = validateProductionItem(items[i], i);
+      if (!validation.valid) {
+        validationErrors.push({
+          index: i,
+          errors: validation.errors.map(e => e.message)
+        });
+      }
+      if (validation.warnings.length > 0) {
+        allWarnings.push(...validation.warnings);
+      }
+    }
+    
+    if (validationErrors.length > 0 && !force_stock_shortage) {
+      return c.json({
+        success: false,
+        error: '유효성 검증 실패',
+        errorCode: 'VALIDATION_ERROR',
+        validationErrors,
+        warnings: allWarnings
+      }, 400);
+    }
+    
+    // ===== 3단계: 재고 사전 검증 (모든 항목) =====
+    const stockShortages: Array<{
+      productCode: string;
+      itemCode: string;
+      itemName: string;
+      required: number;
+      available: number;
+      shortage: number;
+    }> = [];
+    
+    for (const item of items) {
+      if (!item.materials || !Array.isArray(item.materials)) continue;
+      
+      for (const mat of item.materials) {
+        const itemCode = mat.item_code?.trim();
+        if (!itemCode) continue;
+        if (SERVICE_EXCLUDE_CODES.includes(itemCode.toUpperCase())) continue;
+        
+        const plan = await planFEFODeduction(c.env.DB, itemCode, mat.required_qty || 0, productionDate);
+        
+        if (!plan.isWater && plan.shortage > 0) {
+          stockShortages.push({
+            productCode: item.product_code,
+            itemCode: plan.itemCode,
+            itemName: plan.itemName,
+            required: plan.requiredQty,
+            available: plan.totalAvailable,
+            shortage: plan.shortage
+          });
+        }
+      }
+    }
+    
+    // 재고 부족 시 경고 (force_stock_shortage가 아니면 중단)
+    if (stockShortages.length > 0 && !force_stock_shortage) {
+      return c.json({
+        success: false,
+        error: `재고 부족: ${stockShortages.length}개 원료`,
+        errorCode: 'INSUFFICIENT_STOCK',
+        stockShortages,
+        hint: 'force_stock_shortage: true로 강제 진행 가능'
+      }, 400);
+    }
+    
+    // ===== 4단계: 생산 등록 (원자적 처리) =====
     let successCount = 0;
     let failCount = 0;
     const results: any[] = [];
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
     
     for (const item of items) {
       try {
-        // ★★★ v3.4.32: undefined 값 방지 + 사용자 설정 소비기한 우선 사용 ★★★
-        const safeProductCode = item.product_code || '';
+        const safeProductCode = (item.product_code || '').trim();
         const safeQuantity = Number(item.quantity) || 0;
-        const safeChannel = item.channel || channel || '';
+        const safeChannel = (item.channel || channel || '').trim();
         
-        // product_code가 비어있으면 스킵
-        if (!safeProductCode) {
+        if (!safeProductCode || safeQuantity <= 0) {
           failCount++;
-          results.push({ product_code: 'UNKNOWN', status: 'FAILED', error: 'product_code가 누락됨' });
-          continue;
-        }
-        
-        // quantity가 0이면 스킵
-        if (safeQuantity <= 0) {
-          failCount++;
-          results.push({ product_code: safeProductCode, status: 'FAILED', error: 'quantity가 0이거나 누락됨' });
+          results.push({ 
+            product_code: safeProductCode || 'UNKNOWN', 
+            status: 'FAILED', 
+            error: 'product_code 또는 quantity 누락' 
+          });
           continue;
         }
         
         // LOT 번호 생성
-        const lotDate = productionDate.replace(/-/g, '');
-        const countResult = await c.env.DB.prepare(`
-          SELECT COUNT(*) as cnt FROM production 
-          WHERE prod_date = ? AND product_code = ?
-        `).bind(productionDate, safeProductCode).first<any>();
-        const seq = String((countResult?.cnt || 0) + 1).padStart(3, '0');
-        const lotNumber = `${safeProductCode}-${lotDate}-${seq}`;
+        const lotNumber = await generateProductionLotNumber(c.env.DB, safeProductCode, productionDate);
         
-        // ★★★ v3.4.32: 소비기한 - 사용자 설정값 우선, 없으면 shelf_life_days로 계산 ★★★
-        let expiryDateStr: string;
-        if (item.expiry_date) {
-          // 사용자가 직접 설정한 소비기한 사용
-          expiryDateStr = item.expiry_date;
-        } else {
-          // shelf_life_days로 계산 (기본값 7일)
-          const safeShelfLife = Number(item.shelf_life_days) || 7;
-          const expiryDate = new Date(productionDate);
-          expiryDate.setDate(expiryDate.getDate() + safeShelfLife);
-          expiryDateStr = expiryDate.toISOString().split('T')[0];
-        }
+        // 소비기한 계산
+        const expiryDateStr = calculateExpiryDate(
+          productionDate,
+          item.expiry_date,
+          item.shelf_life_days
+        );
         
-        // production 테이블에 INSERT - 모든 값이 명시적으로 정의됨
+        // ===== production INSERT =====
         const insertResult = await c.env.DB.prepare(`
           INSERT INTO production (prod_date, product_code, quantity, lot_number, channel, expiry_date, status, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, '완료', datetime('now'))
-        `).bind(
-          productionDate,       // string (YYYY-MM-DD)
-          safeProductCode,      // string (PR106 등)
-          safeQuantity,         // number (160 등)
-          lotNumber,            // string (PR106-20250615-001 등)
-          safeChannel,          // string ('bmart' 등, 빈 문자열 가능)
-          expiryDateStr         // string (YYYY-MM-DD)
-        ).run();
+          VALUES (?, ?, ?, ?, ?, ?, '완료', ?)
+        `).bind(productionDate, safeProductCode, safeQuantity, lotNumber, safeChannel, expiryDateStr, now).run();
         
         const productionId = insertResult.meta?.last_row_id;
+        if (!productionId) {
+          failCount++;
+          results.push({ product_code: safeProductCode, status: 'FAILED', error: 'production INSERT 실패' });
+          continue;
+        }
         
-        // BOM 기반 원재료 사용 기록 (production_materials)
-        // ★★★ v2.2.12: LOT 번호도 함께 저장 (FEFO 방식으로 조회) ★★★
-        if (item.materials && Array.isArray(item.materials) && item.materials.length > 0 && productionId) {
+        // ===== 원료 처리: FEFO 차감 + production_materials + transactions =====
+        const deductionPlans: any[] = [];
+        const statements: D1PreparedStatement[] = [];
+        
+        if (item.materials && Array.isArray(item.materials) && item.materials.length > 0) {
           for (const mat of item.materials) {
-            const safeItemCode = mat.item_code || '';
+            const safeItemCode = (mat.item_code || '').trim();
+            if (!safeItemCode) continue;
+            if (SERVICE_EXCLUDE_CODES.includes(safeItemCode.toUpperCase())) continue;
+            
             const safeRequiredQty = Number(mat.required_qty) || 0;
+            if (safeRequiredQty <= 0) continue;
+            
             const safeUnit = mat.unit || 'kg';
             
-            // item_code가 비어있으면 스킵
-            if (!safeItemCode) {
-              console.warn(`[production/confirm] Skipping material with empty item_code for production ${productionId}`);
-              continue;
-            }
+            // FEFO 차감 계획 수립
+            const plan = await planFEFODeduction(c.env.DB, safeItemCode, safeRequiredQty, productionDate);
+            deductionPlans.push(plan);
             
-            // ★★★ v2.2.14: FEFO 방식 LOT 조회 개선 - 폴백 로직 추가 ★★★
-            let materialLotNumber = null;
-            try {
-              if (safeItemCode.startsWith('SF')) {
-                // SF 원료: semi_finished_lots에서 조회
-                const sfLot = await c.env.DB.prepare(`
-                  SELECT lot_number FROM semi_finished_lots 
-                  WHERE item_code = ? AND remain_qty > 0
-                  ORDER BY prod_date ASC, id ASC LIMIT 1
-                `).bind(safeItemCode).first<{lot_number: string}>();
-                materialLotNumber = sfLot?.lot_number || null;
-                
-                // 폴백: remain_qty > 0 조건 제거하고 가장 최근 LOT
-                if (!materialLotNumber) {
-                  const sfLotFallback = await c.env.DB.prepare(`
-                    SELECT lot_number FROM semi_finished_lots 
-                    WHERE item_code = ?
-                    ORDER BY prod_date DESC, id DESC LIMIT 1
-                  `).bind(safeItemCode).first<{lot_number: string}>();
-                  materialLotNumber = sfLotFallback?.lot_number || null;
-                }
-              } else if (safeItemCode.startsWith('RM') || safeItemCode.startsWith('R')) {
-                // 일반 원료: inbound에서 FEFO 조회
-                // 1차: 소비기한 유효 & 재고 있음
-                const inboundLot = await c.env.DB.prepare(`
-                  SELECT lot_number FROM inbound 
-                  WHERE item_code = ? AND remain_qty > 0
-                  ORDER BY expiry_date ASC, inbound_date ASC, id ASC LIMIT 1
-                `).bind(safeItemCode).first<{lot_number: string}>();
-                materialLotNumber = inboundLot?.lot_number || null;
-                
-                // 2차 폴백: 재고만 있으면 (소비기한 무관)
-                if (!materialLotNumber) {
-                  const inboundFallback = await c.env.DB.prepare(`
-                    SELECT lot_number FROM inbound 
-                    WHERE item_code = ?
-                    ORDER BY inbound_date DESC, id DESC LIMIT 1
-                  `).bind(safeItemCode).first<{lot_number: string}>();
-                  materialLotNumber = inboundFallback?.lot_number || null;
-                }
-              }
-              
-              // 최종 폴백: 자동 생성 LOT (YYYYMMDD-ITEMCODE-001)
+            // 원료 LOT 번호 결정
+            let materialLotNumber: string | null = null;
+            if (plan.lots && plan.lots.length > 0) {
+              materialLotNumber = plan.lots[0].lotNumber;
+            } else {
+              materialLotNumber = await getMaterialLotNumber(c.env.DB, safeItemCode, productionDate);
               if (!materialLotNumber) {
                 const lotDate = productionDate.replace(/-/g, '');
                 materialLotNumber = `${lotDate}-${safeItemCode}-001`;
-                console.log(`[production/confirm] LOT 자동 생성: ${safeItemCode} → ${materialLotNumber}`);
               }
-            } catch (lotErr) {
-              console.warn(`[production/confirm] LOT 조회 실패: ${safeItemCode}`, lotErr);
-              // 에러 시에도 자동 생성 LOT 부여
-              const lotDate = productionDate.replace(/-/g, '');
-              materialLotNumber = `${lotDate}-${safeItemCode}-001`;
             }
             
+            // production_materials INSERT
+            statements.push(
+              c.env.DB.prepare(`
+                INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
+                VALUES (?, ?, ?, ?, ?, ?)
+              `).bind(productionId, safeItemCode, materialLotNumber, safeRequiredQty, safeRequiredQty, safeUnit)
+            );
+            
+            // ★★★ 핵심: 재고 차감 + transactions INSERT ★★★
+            if (!plan.isWater && plan.lots && plan.lots.length > 0) {
+              // 각 LOT에서 차감
+              for (const lot of plan.lots) {
+                if (plan.isSemiFinished) {
+                  // 반제품: semi_finished_lots 차감
+                  statements.push(
+                    c.env.DB.prepare(`
+                      UPDATE semi_finished_lots 
+                      SET remain_qty = MAX(0, remain_qty - ?), updated_at = ?
+                      WHERE lot_number = ? AND item_code = ?
+                    `).bind(lot.deductQty, now, lot.lotNumber, safeItemCode)
+                  );
+                } else {
+                  // 일반 원료: inbound 차감
+                  statements.push(
+                    c.env.DB.prepare(`
+                      UPDATE inbound 
+                      SET remain_qty = MAX(0, remain_qty - ?), updated_at = ?
+                      WHERE lot_number = ? AND item_code = ?
+                    `).bind(lot.deductQty, now, lot.lotNumber, safeItemCode)
+                  );
+                }
+              }
+              
+              // master.current_stock 차감 (일반 원료만)
+              if (!plan.isSemiFinished) {
+                statements.push(
+                  c.env.DB.prepare(`
+                    UPDATE master 
+                    SET current_stock = MAX(0, current_stock - ?), updated_at = ?
+                    WHERE item_code = ?
+                  `).bind(safeRequiredQty, now, safeItemCode)
+                );
+              }
+              
+              // ★★★ transactions INSERT - Single Source of Truth ★★★
+              const memoText = `생산사용: ${safeProductCode} (생산ID:${productionId})`;
+              const lotNumbers = plan.lots.map((l: any) => l.lotNumber).join(',');
+              
+              if (plan.isSemiFinished) {
+                statements.push(
+                  c.env.DB.prepare(`
+                    INSERT INTO semi_finished_transactions 
+                    (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
+                    VALUES (?, ?, '사용', ?, ?, ?, ?)
+                  `).bind(productionDate, safeItemCode, -safeRequiredQty, lotNumbers, memoText, now)
+                );
+              } else {
+                statements.push(
+                  c.env.DB.prepare(`
+                    INSERT INTO transactions 
+                    (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
+                    VALUES (?, ?, '사용', ?, ?, ?, ?)
+                  `).bind(productionDate, safeItemCode, -safeRequiredQty, lotNumbers, memoText, now)
+                );
+              }
+            }
+          }
+        }
+        
+        // ===== 원자적 실행 (D1 batch) =====
+        if (statements.length > 0) {
+          try {
+            await c.env.DB.batch(statements);
+            console.log(`[confirm/v3.5.0] ${safeProductCode}: ${statements.length}개 쿼리 원자적 실행 완료`);
+          } catch (batchError: any) {
+            console.error(`[confirm/v3.5.0] batch 실패:`, batchError);
+            // 생산은 등록되었으나 재고 차감 실패 - 상태 업데이트
             await c.env.DB.prepare(`
-              INSERT INTO production_materials (production_id, item_code, lot_number, planned_qty, actual_qty, unit)
-              VALUES (?, ?, ?, ?, ?, ?)
-            `).bind(
-              productionId,        // number
-              safeItemCode,        // string
-              materialLotNumber,   // string or null
-              safeRequiredQty,     // number
-              safeRequiredQty,     // number
-              safeUnit             // string
-            ).run();
+              UPDATE production SET status = '재고차감실패', memo = ? WHERE id = ?
+            `).bind(`재고 차감 중 오류: ${batchError.message}`, productionId).run();
+            
+            failCount++;
+            results.push({ 
+              product_code: safeProductCode, 
+              lot_number: lotNumber,
+              production_id: productionId,
+              status: 'PARTIAL_FAIL', 
+              error: `생산 등록됨, 재고 차감 실패: ${batchError.message}`,
+              deductions: deductionPlans
+            });
+            continue;
           }
         }
         
         successCount++;
-        results.push({ product_code: safeProductCode, lot_number: lotNumber, status: 'SUCCESS' });
+        results.push({ 
+          product_code: safeProductCode, 
+          lot_number: lotNumber,
+          production_id: productionId,
+          expiry_date: expiryDateStr,
+          status: 'SUCCESS',
+          materials_processed: deductionPlans.length,
+          transactions_created: statements.length > 0
+        });
         
       } catch (itemError: any) {
         failCount++;
-        results.push({ product_code: item.product_code, status: 'FAILED', error: itemError.message });
+        results.push({ 
+          product_code: item.product_code, 
+          status: 'FAILED', 
+          error: itemError.message 
+        });
+        console.error(`[confirm/v3.5.0] 항목 처리 오류:`, itemError);
       }
     }
     
     return c.json({
       success: failCount === 0,
       message: `생산 등록 완료: 성공 ${successCount}건, 실패 ${failCount}건`,
+      version: 'v3.5.0',
       results,
-      production_date: productionDate
+      production_date: productionDate,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
+      stockShortages: stockShortages.length > 0 ? stockShortages : undefined
     });
     
   } catch (error: any) {
-    console.error('[production/confirm] D1_TRANSACTION_ERROR:', error);
+    console.error('[confirm/v3.5.0] D1_TRANSACTION_ERROR:', error);
     return c.json({
       success: false,
       error: `D1_TRANSACTION_ERROR: ${error.message}`,
@@ -3068,7 +3221,6 @@ productionRoutes.post('/confirm', async (c) => {
     }, 500);
   }
 });
-
 export default productionRoutes;
 
 // v2.2.8: 개별 바코드 소비기한(expiry_days) 수정 API

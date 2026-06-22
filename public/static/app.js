@@ -19994,13 +19994,18 @@ async function processPdfFile(file) {
         console.log('📄 배민 분리 바코드:', foundBarcodes.length, '개');
       }
       
-      // 소비기한 패턴: 2026-06-30 또는 2026‑06‑30 (유니코드 하이픈)
+      // v2.2.10: 소비기한 패턴 수정 - 모든 월(1~12월) 허용
+      // 이전: 5월 이후만 허용했으나 소비기한이 1~4월인 경우도 있음
+      // 입고예정일시는 현재 연도, 소비기한은 미래 연도로 구분
       const expiryPattern = /20\d{2}[-‑]\d{2}[-‑]\d{2}/g;
       const allExpiries = allText.match(expiryPattern) || [];
-      // 입고예정일시 제외 (04-28 등)하고 05 이후 월의 날짜만 제품 소비기한으로 간주
+      const currentYear = new Date().getFullYear();
+      // 소비기한은 현재 연도보다 미래(또는 같은 연도의 후반)인 날짜
       const productExpiries = allExpiries.filter(d => {
-        const month = parseInt(d.split(/[-‑]/)[1]);
-        return month >= 5; // 5월 이후 날짜만 소비기한으로 간주
+        const normalizedDate = d.replace(/‑/g, '-');
+        const year = parseInt(normalizedDate.split('-')[0]);
+        // 현재 연도 이상인 날짜만 소비기한 후보 (입고예정일시 제외)
+        return year >= currentYear;
       }).map(d => d.replace(/‑/g, '-')); // 유니코드 하이픈을 일반 하이픈으로
       
       console.log('📄 배민 소비기한 후보:', productExpiries);
@@ -20026,11 +20031,15 @@ async function processPdfFile(file) {
         // 바코드 이후 텍스트에서 데이터 추출
         const afterText = allText.substring(barcodeIdx, barcodeIdx + 500);
         
-        // v2.2.9: 소비기한 추출 개선 - 두 날짜 중 더 빠른(과거) 날짜 선택
+        // v2.2.10: 소비기한 추출 개선 - 모든 월(1~12월) 허용
         // PDF 열 순서: 소비기한가이드 | 제조일가이드
-        // 소비기한은 제조일보다 먼저이므로, 두 날짜 중 더 빠른 날짜가 소비기한
-        const allDatesInRange = afterText.match(/20\d{2}[-‑](0[5-9]|1[0-2])[-‑]\d{2}/g) || [];
-        const normalizedDates = allDatesInRange.map(d => d.replace(/‑/g, '-'));
+        // 두 날짜 중 더 빠른(과거) 날짜가 소비기한 (소비기한 < 제조일가이드)
+        const allDatesInRange = afterText.match(/20\d{2}[-‑]\d{2}[-‑]\d{2}/g) || [];
+        const currentYear = new Date().getFullYear();
+        // 현재 연도 이상인 날짜만 (입고예정일시 제외)
+        const normalizedDates = allDatesInRange
+          .map(d => d.replace(/‑/g, '-'))
+          .filter(d => parseInt(d.split('-')[0]) >= currentYear);
         
         let expiryDate = null;
         if (normalizedDates.length >= 2) {

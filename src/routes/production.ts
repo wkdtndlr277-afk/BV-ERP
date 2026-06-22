@@ -235,7 +235,19 @@ productionRoutes.get('/closing-status', async (c) => {
     // ⚠️ v3.5.1: 반제품 수불부는 스키마 차이로 현재 지원하지 않음
     // TODO: semi_finished_transactions 테이블 마이그레이션 후 활성화
     // const sfReport = await getSemiFinishedDailyReport(c.env.DB, date);
-    const sfReport = { items: [], summary: { totalItems: 0, totalPrevStock: 0, totalInbound: 0, totalUsed: 0, totalAdjustment: 0, totalCurrentStock: 0 } };
+    const sfReport = { 
+      items: [], 
+      summary: { 
+        totalItems: 0, 
+        totalPrevStock: 0, 
+        totalInbound: 0, 
+        totalUsed: 0, 
+        totalAdjustment: 0, 
+        totalCurrentStock: 0,
+        errorCount: 0  // v3.5.4: 누락된 필드 추가
+      },
+      errors: []  // v3.5.4: 누락된 필드 추가
+    };
     
     // 4. 당일 입고 현황 (참고용 - 원천은 transactions)
     const inboundData = await c.env.DB.prepare(`

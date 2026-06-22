@@ -374,15 +374,25 @@ export async function recordInbound(
 
 /**
  * 사용(출고) 트랜잭션 기록 (편의 함수)
+ * ★ v3.5.3: lot_number 필수 - 없으면 오류 반환 ★
  */
 export async function recordUsage(
   db: D1Database,
   itemCode: string,
   quantity: number,
   transDate: string,
-  lotNumber?: string,
+  lotNumber: string,  // ★ 필수 파라미터로 변경
   memo?: string
 ): Promise<{ success: boolean; id?: number; error?: string }> {
+  // ★★★ v3.5.3: lot_number 필수 검증 ★★★
+  if (!lotNumber || lotNumber.trim() === '') {
+    console.error(`[recordUsage] lot_number 누락: itemCode=${itemCode}, quantity=${quantity}`);
+    return {
+      success: false,
+      error: `사용 트랜잭션 거부: lot_number는 필수입니다. (품목: ${itemCode})`
+    };
+  }
+  
   return recordTransaction(db, {
     itemCode,
     transType: '사용',

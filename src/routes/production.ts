@@ -399,6 +399,137 @@ productionRoutes.get('/transaction-history/:itemCode', async (c) => {
   }
 });
 
+// ★★★ v3.5.3: 로트 누락 데이터 모니터링 API ★★★
+// 로트 번호가 없는 트랜잭션을 감지하여 무결성 확인
+productionRoutes.get('/lot-integrity-check', async (c) => {
+  try {
+    const { days = '30', trans_type } = c.req.query();
+    const daysNum = parseInt(days) || 30;
+    
+    // 최근 N일 기준 날짜 계산
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - daysNum);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    
+    // 1. 로트 번호 누락된 '사용' 트랜잭션 조회
+    let usageQuery = `
+      SELECT 
+        id, item_code, trans_type, quantity, trans_date, lot_number, memo, created_at
+      FROM transactions
+      WHERE (lot_number IS NULL OR lot_number = '')
+        AND trans_date >= ?
+    `;
+    const usageParams: any[] = [startDateStr];
+    
+    if (trans_type) {
+      usageQuery += ` AND trans_type = ?`;
+      usageParams.push(trans_type);
+    }
+    
+    usageQuery += ` ORDER BY trans_date DESC, id DESC LIMIT 100`;
+    
+    const missingLotTransactions = await c.env.DB.prepare(usageQuery)
+      .bind(...usageParams)
+      .all<{
+        id: number;
+        item_code: string;
+        trans_type: string;
+        quantity: number;
+        trans_date: string;
+        lot_number: string | null;
+        memo: string | null;
+        created_at: string;
+      }>();
+    
+    // 2. 트랜잭션 유형별 통계
+    const statsQuery = `
+      SELECT 
+        trans_type,
+        COUNT(*) as total_count,
+        SUM(CASE WHEN lot_number IS NULL OR lot_number = '' THEN 1 ELSE 0 END) as missing_lot_count,
+        SUM(CASE WHEN lot_number IS NOT NULL AND lot_number != '' THEN 1 ELSE 0 END) as with_lot_count
+      FROM transactions
+      WHERE trans_date >= ?
+      GROUP BY trans_type
+      ORDER BY total_count DESC
+    `;
+    
+    const stats = await c.env.DB.prepare(statsQuery)
+      .bind(startDateStr)
+      .all<{
+        trans_type: string;
+        total_count: number;
+        missing_lot_count: number;
+        with_lot_count: number;
+      }>();
+    
+    // 3. 품목별 로트 누락 현황
+    const byItemQuery = `
+      SELECT 
+        t.item_code,
+        COALESCE(m.item_name, t.item_code) as item_name,
+        COUNT(*) as missing_count,
+        SUM(ABS(t.quantity)) as total_qty
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE (t.lot_number IS NULL OR t.lot_number = '')
+        AND t.trans_date >= ?
+        AND t.trans_type = '사용'
+      GROUP BY t.item_code
+      ORDER BY missing_count DESC
+      LIMIT 20
+    `;
+    
+    const byItem = await c.env.DB.prepare(byItemQuery)
+      .bind(startDateStr)
+      .all<{
+        item_code: string;
+        item_name: string;
+        missing_count: number;
+        total_qty: number;
+      }>();
+    
+    // 4. 전체 무결성 상태 판정
+    const totalMissing = (stats.results || [])
+      .filter(s => s.trans_type === '사용')
+      .reduce((sum, s) => sum + (s.missing_lot_count || 0), 0);
+    
+    const status = totalMissing === 0 ? 'PASS' : totalMissing < 10 ? 'WARNING' : 'FAIL';
+    
+    return c.json({
+      success: true,
+      version: 'v3.5.3',
+      status,
+      period: {
+        start: startDateStr,
+        end: new Date().toISOString().split('T')[0],
+        days: daysNum
+      },
+      summary: {
+        totalMissingLotUsage: totalMissing,
+        message: totalMissing === 0 
+          ? '✅ 모든 사용 트랜잭션에 로트 번호가 정상적으로 기록되어 있습니다.'
+          : `⚠️ ${totalMissing}건의 사용 트랜잭션에 로트 번호가 누락되어 있습니다.`
+      },
+      statsByType: stats.results || [],
+      missingLotByItem: byItem.results || [],
+      recentMissingTransactions: (missingLotTransactions.results || []).slice(0, 20).map(t => ({
+        id: t.id,
+        itemCode: t.item_code,
+        transType: t.trans_type,
+        quantity: t.quantity,
+        transDate: t.trans_date,
+        memo: t.memo,
+        createdAt: t.created_at
+      }))
+    });
+    
+  } catch (error: any) {
+    console.error('[lot-integrity-check] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.5.0: transactions 테이블 백필 API ★★★
 // 생산 기록 기반으로 누락된 transactions 데이터 복구
 productionRoutes.post('/backfill-transactions', async (c) => {

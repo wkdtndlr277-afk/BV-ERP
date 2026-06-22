@@ -2,12 +2,14 @@
  * ProductionService - 생산 관련 비즈니스 로직 Service Layer
  * 
  * v3.5.0: 근본적 시스템 개선
+ * v3.5.3: 로트 검증 강화 - lot_number 필수화
  * 
  * 핵심 원칙:
  * 1. Single Source of Truth: transactions 테이블이 모든 재고 변동의 원천
  * 2. Atomic Transaction: 모든 재고 차감 + 트랜잭션 기록은 하나의 DB 트랜잭션으로 처리
  * 3. FEFO (First Expired First Out): 소비기한 빠른 LOT 우선 사용
  * 4. Validation First: 모든 작업 전 엄격한 유효성 검증
+ * 5. ★ Lot Integrity: 모든 사용 트랜잭션은 반드시 lot_number 포함 ★
  */
 
 // ===== 타입 정의 =====
@@ -376,6 +378,26 @@ export async function executeAtomicDeduction(
       };
     }
     
+    // ★★★ v3.5.3: lot_number 필수 검증 ★★★
+    if (plan.lots.length === 0) {
+      return {
+        success: false,
+        error: `로트 정보 없음: ${plan.itemName}(${plan.itemCode}) - 재고는 있으나 유효한 로트를 찾을 수 없습니다. inbound 테이블을 확인하세요.`,
+        errorCode: 'LOT_NOT_FOUND'
+      };
+    }
+    
+    // 각 LOT의 lot_number 유효성 검증
+    for (const lot of plan.lots) {
+      if (!lot.lotNumber || lot.lotNumber.trim() === '') {
+        return {
+          success: false,
+          error: `로트 번호 누락: ${plan.itemName}(${plan.itemCode}) - 로트 번호가 비어있는 재고가 있습니다.`,
+          errorCode: 'LOT_NUMBER_REQUIRED'
+        };
+      }
+    }
+    
     // 각 LOT에서 차감
     for (const lot of plan.lots) {
       if (plan.isSemiFinished) {
@@ -414,6 +436,15 @@ export async function executeAtomicDeduction(
     // ★★★ 핵심: 이것이 수불부의 Single Source of Truth ★★★
     const memoText = `생산사용: ${productCode} (생산ID:${productionId})`;
     const lotNumbers = plan.lots.map(l => l.lotNumber).join(',');
+    
+    // ★★★ v3.5.3: lot_number 빈 문자열 최종 검증 ★★★
+    if (!lotNumbers || lotNumbers.trim() === '') {
+      return {
+        success: false,
+        error: `트랜잭션 기록 실패: ${plan.itemName}(${plan.itemCode}) - lot_number가 비어있습니다. 생산 등록이 거부됩니다.`,
+        errorCode: 'LOT_NUMBER_EMPTY'
+      };
+    }
     
     if (plan.isSemiFinished) {
       // 반제품: semi_finished_transactions에 기록

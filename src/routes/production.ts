@@ -3013,3 +3013,47 @@ productionRoutes.post('/confirm', async (c) => {
 });
 
 export default productionRoutes;
+
+// v2.2.8: 개별 바코드 소비기한(expiry_days) 수정 API
+productionRoutes.post('/update-barcode-expiry', async (c) => {
+  try {
+    const { barcode, expiry_days } = await c.req.json<{ barcode: string; expiry_days: number }>();
+    
+    if (!barcode) {
+      return c.json({ success: false, error: '바코드가 필요합니다.' }, 400);
+    }
+    
+    if (expiry_days === undefined || expiry_days === null) {
+      return c.json({ success: false, error: '소비기한(일수)이 필요합니다.' }, 400);
+    }
+    
+    // 바코드 존재 확인
+    const existing = await c.env.DB.prepare(
+      'SELECT barcode, production_code, channel, expiry_days FROM production_barcodes WHERE barcode = ?'
+    ).bind(barcode).first<any>();
+    
+    if (!existing) {
+      return c.json({ success: false, error: `바코드 ${barcode}가 존재하지 않습니다.` }, 404);
+    }
+    
+    const oldExpiryDays = existing.expiry_days;
+    
+    // expiry_days 업데이트
+    await c.env.DB.prepare(
+      'UPDATE production_barcodes SET expiry_days = ? WHERE barcode = ?'
+    ).bind(expiry_days, barcode).run();
+    
+    return c.json({
+      success: true,
+      message: `바코드 ${barcode} 소비기한이 ${oldExpiryDays}일 → ${expiry_days}일로 수정되었습니다.`,
+      barcode,
+      production_code: existing.production_code,
+      channel: existing.channel,
+      old_expiry_days: oldExpiryDays,
+      new_expiry_days: expiry_days
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});

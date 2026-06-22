@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 2.2.0 Build: 20260528
-const APP_VERSION = '2.2.7';
+const APP_VERSION = '2.2.8';
 const APP_BUILD = '20260622';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -38508,7 +38508,7 @@ async function updateBarcodeExpiryDays(id, newDays, productionCode, productionNa
     showBarcodeModal(productionCode, productionName);
   }
 }
-window.updateBarcodeExpiryDays = updateBarcodeExpiryDays;
+window.updateBarcodeExpiryFromValidation = updateBarcodeExpiryFromValidation;
 
 
 
@@ -47195,7 +47195,7 @@ async function validateExpiryDates() {
   }
 }
 
-// 소비기한 검증 결과 모달 (v2.2.7 - 스크롤 및 용어 수정)
+// 소비기한 검증 결과 모달 (v2.2.8 - 입고확인서 기준으로 변경)
 function showExpiryValidationModal(summary, items) {
   const existingModal = document.getElementById('expiry-validation-modal');
   if (existingModal) existingModal.remove();
@@ -47208,7 +47208,7 @@ function showExpiryValidationModal(summary, items) {
   modal.id = 'expiry-validation-modal';
   modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
   modal.innerHTML = `
-    <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col">
+    <div class="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] flex flex-col">
       <!-- 헤더 (고정) -->
       <div class="p-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-t-xl flex-shrink-0">
         <div class="flex items-center justify-between">
@@ -47245,48 +47245,61 @@ function showExpiryValidationModal(summary, items) {
         </div>
         
         ${mismatchItems.length > 0 ? `
-        <!-- 불일치 항목 -->
+        <!-- 불일치 항목 - 입고확인서 기준 -->
         <div class="mb-4">
+          <div class="bg-orange-50 border border-orange-300 rounded-lg p-3 mb-3">
+            <p class="text-orange-800 font-medium">
+              <i class="fas fa-info-circle mr-1"></i>
+              입고확인서의 소비기한이 정확한 값입니다. 시스템에 등록된 바코드 소비기한을 수정해야 합니다.
+            </p>
+          </div>
+          
           <h4 class="font-bold text-red-700 mb-2">
             <i class="fas fa-exclamation-triangle mr-1"></i>
-            소비기한 불일치 항목 (${mismatchItems.length}건)
+            소비기한 불일치 항목 (${mismatchItems.length}건) - 바코드 소비기한 수정 필요
           </h4>
           <div class="bg-red-50 border border-red-200 rounded-lg overflow-hidden">
             <div class="overflow-x-auto">
               <table class="w-full text-sm">
                 <thead class="bg-red-100">
                   <tr>
-                    <th class="px-3 py-2 text-left whitespace-nowrap">바코드</th>
-                    <th class="px-3 py-2 text-left">제품명</th>
-                    <th class="px-3 py-2 text-center whitespace-nowrap">입력값</th>
-                    <th class="px-3 py-2 text-center whitespace-nowrap">등록값</th>
-                    <th class="px-3 py-2 text-center whitespace-nowrap">차이</th>
-                    <th class="px-3 py-2 text-center whitespace-nowrap">조치</th>
+                    <th class="px-2 py-2 text-left whitespace-nowrap">바코드</th>
+                    <th class="px-2 py-2 text-left">제품명</th>
+                    <th class="px-2 py-2 text-center whitespace-nowrap">입고확인서<br/>(정확한 값)</th>
+                    <th class="px-2 py-2 text-center whitespace-nowrap">시스템 등록<br/>(수정 필요)</th>
+                    <th class="px-2 py-2 text-center whitespace-nowrap">차이</th>
+                    <th class="px-2 py-2 text-center whitespace-nowrap">조치</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${mismatchItems.map(item => `
-                  <tr class="border-t border-red-200">
-                    <td class="px-3 py-2 font-mono text-xs">${item.barcode}</td>
-                    <td class="px-3 py-2 text-xs">${item.product_name || '-'}</td>
-                    <td class="px-3 py-2 text-center text-red-600 whitespace-nowrap">${item.input_expiry || item.input_expiry_date || '-'}</td>
-                    <td class="px-3 py-2 text-center text-green-600 whitespace-nowrap">${item.system_expiry || item.system_expiry_date || '-'}</td>
-                    <td class="px-3 py-2 text-center font-bold text-red-600">${item.days_diff}일</td>
-                    <td class="px-3 py-2 text-center">
-                      <button onclick="applySystemExpiry('${item.barcode}', '${item.system_expiry || item.system_expiry_date}')" 
-                              class="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600 whitespace-nowrap">
-                        등록값 적용
-                      </button>
-                    </td>
-                  </tr>
-                  `).join('')}
+                  ${mismatchItems.map(item => {
+                    const inputExpiry = item.input_expiry || item.input_expiry_date || '-';
+                    const systemExpiry = item.system_expiry || item.system_expiry_date || '-';
+                    // 입고확인서 날짜에서 생산일을 빼서 새로운 expiry_days 계산
+                    const newExpiryDays = item.system_expiry_days ? (item.system_expiry_days + item.days_diff) : item.days_diff;
+                    return `
+                    <tr class="border-t border-red-200">
+                      <td class="px-2 py-2 font-mono text-xs">${item.barcode}</td>
+                      <td class="px-2 py-2 text-xs max-w-48 truncate" title="${item.product_name || ''}">${item.product_name || '-'}</td>
+                      <td class="px-2 py-2 text-center text-green-600 font-bold whitespace-nowrap">${inputExpiry}</td>
+                      <td class="px-2 py-2 text-center text-red-600 whitespace-nowrap">${systemExpiry}</td>
+                      <td class="px-2 py-2 text-center font-bold ${item.days_diff > 0 ? 'text-blue-600' : 'text-red-600'}">${item.days_diff > 0 ? '+' : ''}${item.days_diff}일</td>
+                      <td class="px-2 py-2 text-center">
+                        <button onclick="updateBarcodeExpiryFromValidation('${item.barcode}', ${newExpiryDays}, '${item.product_name || ''}')" 
+                                class="px-2 py-1 bg-orange-500 text-white rounded text-xs hover:bg-orange-600 whitespace-nowrap">
+                          바코드 수정
+                        </button>
+                      </td>
+                    </tr>
+                    `;
+                  }).join('')}
                 </tbody>
               </table>
             </div>
           </div>
           <p class="text-xs text-gray-500 mt-2">
             <i class="fas fa-info-circle mr-1"></i>
-            <strong>등록값</strong> = 바코드별 등록된 소비기한 (생산명 관리 > 바코드 탭에서 설정한 expiry_days)
+            <strong>"바코드 수정"</strong> 클릭 시 해당 바코드의 expiry_days가 입고확인서 기준으로 업데이트됩니다.
           </p>
         </div>
         ` : ''}
@@ -47338,14 +47351,14 @@ function showExpiryValidationModal(summary, items) {
       <div class="p-4 bg-gray-50 border-t rounded-b-xl flex justify-between items-center flex-shrink-0">
         <div class="text-sm text-gray-500">
           ${mismatchItems.length > 0 ? 
-            '<i class="fas fa-exclamation-triangle text-yellow-500 mr-1"></i> 불일치 항목이 있습니다. 확인 후 진행하세요.' : 
+            '<i class="fas fa-exclamation-triangle text-orange-500 mr-1"></i> 바코드 소비기한 수정이 필요합니다.' : 
             '<i class="fas fa-check-circle text-green-500 mr-1"></i> 모든 소비기한이 정상입니다.'}
         </div>
         <div class="flex gap-2">
           ${mismatchItems.length > 0 ? `
-          <button onclick="applyAllSystemExpiry()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+          <button onclick="updateAllBarcodeExpiryFromValidation()" class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700">
             <i class="fas fa-check-double mr-1"></i>
-            전체 등록값 적용
+            전체 바코드 수정
           </button>
           ` : ''}
           <button onclick="document.getElementById('expiry-validation-modal').remove()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
@@ -47359,75 +47372,80 @@ function showExpiryValidationModal(summary, items) {
   document.body.appendChild(modal);
 }
 
-// 시스템 소비기한 적용 (개별)
-function applySystemExpiry(barcode, systemExpiry) {
-  if (!window.orderUploadData?.items) return;
+// 개별 바코드 소비기한 수정
+async function updateBarcodeExpiryFromValidation(barcode, newExpiryDays, productName) {
+  if (!confirm(`바코드 ${barcode}의 소비기한을 ${newExpiryDays}일로 수정하시겠습니까?\n\n제품: ${productName}`)) {
+    return;
+  }
   
-  const items = window.orderUploadData.items;
-  const item = items.find(i => i.barcode === barcode);
-  
-  if (item) {
-    item.expiryDate = systemExpiry;
+  try {
+    const result = await api('/production/update-barcode-expiry', 'POST', {
+      barcode: barcode,
+      expiry_days: newExpiryDays
+    });
     
-    // 테이블 UI 업데이트
-    const expiryInput = document.querySelector(`input[data-barcode="${barcode}"].expiry-date-input`);
-    if (expiryInput) {
-      expiryInput.value = systemExpiry;
+    if (result.success) {
+      showToast(`${barcode} 소비기한이 ${newExpiryDays}일로 수정되었습니다`, 'success');
+      
+      // 해당 행 스타일 변경
+      const row = document.querySelector(`tr td:first-child:contains('${barcode}')`);
+      if (row) {
+        row.closest('tr').classList.remove('border-red-200');
+        row.closest('tr').classList.add('bg-green-50');
+      }
+    } else {
+      showToast(result.error || '바코드 수정 실패', 'error');
     }
-    
-    // 테이블 셀 업데이트
-    const expiryCell = document.querySelector(`[data-barcode="${barcode}"] .expiry-display`);
-    if (expiryCell) {
-      expiryCell.textContent = systemExpiry;
-      expiryCell.classList.remove('text-red-600');
-      expiryCell.classList.add('text-green-600');
-    }
-    
-    showToast(`${barcode} 소비기한이 ${systemExpiry}로 변경되었습니다`, 'success');
+  } catch (e) {
+    console.error('바코드 수정 오류:', e);
+    showToast('바코드 수정 중 오류가 발생했습니다', 'error');
   }
 }
 
-// 전체 시스템 소비기한 적용
-function applyAllSystemExpiry() {
+// 전체 바코드 소비기한 수정
+async function updateAllBarcodeExpiryFromValidation() {
   if (!window.expiryValidationResult?.items) return;
   
-  const mismatchItems = window.expiryValidationResult.items.filter(i => i.status === 'mismatch' && i.system_expiry);
+  const mismatchItems = window.expiryValidationResult.items.filter(i => i.status === 'mismatch');
   
-  let count = 0;
-  mismatchItems.forEach(item => {
-    applySystemExpiry(item.barcode, item.system_expiry);
-    count++;
-  });
+  if (mismatchItems.length === 0) {
+    showToast('수정할 항목이 없습니다', 'info');
+    return;
+  }
   
-  showToast(`${count}건의 소비기한이 시스템값으로 변경되었습니다`, 'success');
+  if (!confirm(`${mismatchItems.length}개 바코드의 소비기한을 입고확인서 기준으로 일괄 수정하시겠습니까?`)) {
+    return;
+  }
+  
+  let successCount = 0;
+  let errorCount = 0;
+  
+  for (const item of mismatchItems) {
+    const newExpiryDays = item.system_expiry_days ? (item.system_expiry_days + item.days_diff) : 0;
+    
+    try {
+      const result = await api('/production/update-barcode-expiry', 'POST', {
+        barcode: item.barcode,
+        expiry_days: newExpiryDays
+      });
+      
+      if (result.success) {
+        successCount++;
+      } else {
+        errorCount++;
+      }
+    } catch (e) {
+      errorCount++;
+    }
+  }
+  
+  showToast(`바코드 수정 완료: ${successCount}건 성공, ${errorCount}건 실패`, successCount > 0 ? 'success' : 'error');
   
   // 모달 닫기
   document.getElementById('expiry-validation-modal')?.remove();
 }
 
-// 소비기한 불일치 항목 하이라이트
-function highlightExpiryMismatches(validatedItems) {
-  const mismatchBarcodes = validatedItems
-    .filter(i => i.status === 'mismatch')
-    .map(i => i.barcode);
-  
-  // 테이블에서 해당 행 하이라이트
-  document.querySelectorAll('#order-items-table tr').forEach(row => {
-    const barcodeCell = row.querySelector('[data-barcode]');
-    if (barcodeCell && mismatchBarcodes.includes(barcodeCell.dataset.barcode)) {
-      row.classList.add('bg-red-50');
-      const expiryDisplay = row.querySelector('.expiry-display');
-      if (expiryDisplay) {
-        expiryDisplay.classList.add('text-red-600', 'font-bold');
-        expiryDisplay.innerHTML += ' <i class="fas fa-exclamation-triangle text-red-500"></i>';
-      }
-    }
-  });
-}
-
 // window에 노출
-window.validateExpiryDates = validateExpiryDates;
 window.showExpiryValidationModal = showExpiryValidationModal;
-window.applySystemExpiry = applySystemExpiry;
-window.applyAllSystemExpiry = applyAllSystemExpiry;
-window.highlightExpiryMismatches = highlightExpiryMismatches;
+window.updateBarcodeExpiryFromValidation = updateBarcodeExpiryFromValidation;
+window.updateAllBarcodeExpiryFromValidation = updateAllBarcodeExpiryFromValidation;

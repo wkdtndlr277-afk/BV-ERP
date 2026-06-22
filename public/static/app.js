@@ -18145,10 +18145,19 @@ function renderDailyReportTab(container, cache) {
 }
 
 // 일별 수불 현황 탭 렌더링
+// v3.5.4: 원료(R, RM으로 시작하는 품목)만 표시
 function renderInventoryMovementTab(container, cache) {
   const materials = cache.materials || {};
-  const usage = materials.usage || [];
-  const inbound = materials.inbound || [];
+  
+  // v3.5.4: 원료만 필터링 (R 또는 RM으로 시작하는 item_code)
+  const isRawMaterial = (itemCode) => {
+    if (!itemCode) return false;
+    const code = itemCode.toUpperCase();
+    return code.startsWith('R') || code.startsWith('RM');
+  };
+  
+  const usage = (materials.usage || []).filter(item => isRawMaterial(item.item_code));
+  const inbound = (materials.inbound || []).filter(item => isRawMaterial(item.item_code));
   
   if (usage.length === 0 && inbound.length === 0) {
     container.innerHTML = `

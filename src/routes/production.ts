@@ -16,6 +16,41 @@ import {
 
 const productionRoutes = new Hono<{ Bindings: Bindings }>();
 
+// ===== 채널명 정규화 함수 =====
+// 생산일보 채널(영문) ↔ 바코드 채널(한글) 매핑
+const CHANNEL_MAP: Record<string, string[]> = {
+  '배민': ['bmart', '배민', 'baemin'],
+  '쿠팡': ['coupang', '쿠팡'],
+  '쿠팡냉동': ['coupang_frozen', '쿠팡냉동', 'coupang_paste'],
+  '컬리': ['kurly', '컬리', 'kurly_room'],
+  '컬리냉동': ['kurly_frozen', '컬리냉동', 'kurly_paste'],
+  '오아시스': ['oasis', '오아시스'],
+  'GS': ['gs', 'GS', 'gs25'],
+  '네이버': ['naver', '네이버', 'smartstore'],
+  '자사몰': ['direct', '자사몰', 'own'],
+};
+
+// 채널명을 바코드 테이블 기준(한글)으로 정규화
+function normalizeChannel(channel: string): string {
+  if (!channel) return '';
+  const lowerChannel = channel.toLowerCase();
+  
+  for (const [normalized, aliases] of Object.entries(CHANNEL_MAP)) {
+    if (aliases.some(alias => alias.toLowerCase() === lowerChannel || alias === channel)) {
+      return normalized;
+    }
+  }
+  return channel; // 매핑 없으면 원본 반환
+}
+
+// 가능한 모든 채널 변형 반환 (바코드 검색용)
+function getChannelVariants(channel: string): string[] {
+  if (!channel) return [''];
+  const normalized = normalizeChannel(channel);
+  const variants = CHANNEL_MAP[normalized] || [channel];
+  return [...new Set([normalized, ...variants, channel])];
+}
+
 // 생산 목록 조회
 productionRoutes.get('/', async (c) => {
   const startDate = c.req.query('start_date');
@@ -1104,13 +1139,23 @@ productionRoutes.post('/batch', async (c) => {
     }
     
     // 바코드별 소비기한 저장 (채널별로 다를 수 있음)
-    // 키: production_code|channel (예: PR078|오아시스)
+    // 키: production_code|channel (예: PR078|배민)
+    // ★ v2.2.5: 채널 정규화 적용 - bmart → 배민, coupang → 쿠팡 등
     if (b.barcode_expiry_days) {
-      const key = `${b.item_code}|${b.channel || ''}`;
+      const normalizedChannel = normalizeChannel(b.channel || '');
+      const key = `${b.item_code}|${normalizedChannel}`;
       barcodeExpiryMap.set(key, b.barcode_expiry_days);
       
+      // 모든 채널 변형에 대해서도 저장 (역방향 매핑)
+      const variants = getChannelVariants(b.channel || '');
+      for (const variant of variants) {
+        const variantKey = `${b.item_code}|${variant}`;
+        if (!barcodeExpiryMap.has(variantKey)) {
+          barcodeExpiryMap.set(variantKey, b.barcode_expiry_days);
+        }
+      }
+      
       // 채널 무관 기본값도 저장 (채널 매칭 실패 시 사용)
-      // 이미 설정된 값이 없을 때만 저장
       const defaultKey = `${b.item_code}|__default__`;
       if (!barcodeExpiryMap.has(defaultKey)) {
         barcodeExpiryMap.set(defaultKey, b.barcode_expiry_days);
@@ -1225,16 +1270,19 @@ productionRoutes.post('/batch', async (c) => {
     // 1) 바코드별 expiry_days (채널 일치) → 2) 바코드별 expiry_days (채널 무관)
     // 3) production_items.shelf_life_days → 4) master.expiry_days → 5) 7일
     const itemChannel = item.channel || defaultChannel || '';
+    // ★ v2.2.5: 채널 정규화 적용
+    const normalizedItemChannel = normalizeChannel(itemChannel);
     
-    // 바코드별 소비기한 확인 (채널 일치 우선)
-    let expiryDays = barcodeExpiryMap.get(`${item.product_code}|${itemChannel}`) ||  // 채널 일치
-                     barcodeExpiryMap.get(`${item.product_code}|`) ||                 // 채널 없는 바코드
-                     barcodeExpiryMap.get(`${item.product_code}|__default__`) ||      // 바코드에 설정된 기본값 (채널 무관)
-                     productionExpiryMap.get(item.product_code) ||                    // production_items.shelf_life_days
-                     product.expiry_days ||                                            // master.expiry_days
+    // 바코드별 소비기한 확인 (채널 일치 우선 - 정규화된 채널명 및 원본 모두 확인)
+    let expiryDays = barcodeExpiryMap.get(`${item.product_code}|${normalizedItemChannel}`) ||  // 정규화된 채널 일치
+                     barcodeExpiryMap.get(`${item.product_code}|${itemChannel}`) ||             // 원본 채널 일치
+                     barcodeExpiryMap.get(`${item.product_code}|`) ||                           // 채널 없는 바코드
+                     barcodeExpiryMap.get(`${item.product_code}|__default__`) ||                // 바코드에 설정된 기본값 (채널 무관)
+                     productionExpiryMap.get(item.product_code) ||                              // production_items.shelf_life_days
+                     product.expiry_days ||                                                      // master.expiry_days
                      7;
     
-    console.log(`[production/batch] ${item.product_code} 소비기한: barcodeExpiry=${barcodeExpiryMap.get(`${item.product_code}|${itemChannel}`)}, productionExpiry=${productionExpiryMap.get(item.product_code)}, final=${expiryDays}일`);
+    console.log(`[production/batch] ${item.product_code} 소비기한: channel=${itemChannel}→${normalizedItemChannel}, barcodeExpiry=${barcodeExpiryMap.get(`${item.product_code}|${normalizedItemChannel}`)}, productionExpiry=${productionExpiryMap.get(item.product_code)}, final=${expiryDays}일`);
     
     const itemExpiryDate = item.expiry_date || (() => {
       const d = new Date(productionDate);
@@ -1754,6 +1802,159 @@ productionRoutes.post('/backfill-usage', async (c) => {
     
   } catch (error: any) {
     console.error('Backfill usage error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ===== v2.2.5: 소비기한 검증 API =====
+// 입고확인서 소비기한 vs 시스템 계산 소비기한 비교
+productionRoutes.post('/validate-expiry', async (c) => {
+  const body = await c.req.json();
+  const { items, prod_date } = body;
+  // items: [{ barcode, expiry_date, quantity?, product_name? }]
+  
+  if (!items || items.length === 0) {
+    return c.json({ success: false, error: '검증할 항목이 없습니다.' }, 400);
+  }
+  
+  const productionDate = prod_date || new Date().toISOString().split('T')[0];
+  const results: any[] = [];
+  let matchCount = 0;
+  let mismatchCount = 0;
+  
+  try {
+    for (const item of items) {
+      if (!item.barcode || !item.expiry_date) continue;
+      
+      // 바코드로 생산코드 및 등록된 소비기한 조회
+      const barcodeInfo = await c.env.DB.prepare(`
+        SELECT pb.production_code, pb.product_name, pb.channel, pb.expiry_days,
+               pi.production_name, pi.shelf_life_days
+        FROM production_barcodes pb
+        LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+        WHERE pb.barcode = ?
+      `).bind(item.barcode).first<any>();
+      
+      if (!barcodeInfo) {
+        results.push({
+          barcode: item.barcode,
+          product_name: item.product_name || '알 수 없음',
+          status: 'not_found',
+          message: '바코드 미등록'
+        });
+        continue;
+      }
+      
+      // 시스템 소비기한 계산
+      const systemExpiryDays = barcodeInfo.expiry_days || barcodeInfo.shelf_life_days || 7;
+      const systemExpiryDate = (() => {
+        const d = new Date(productionDate);
+        d.setDate(d.getDate() + systemExpiryDays);
+        return d.toISOString().split('T')[0];
+      })();
+      
+      // 입고확인서 소비기한과 비교
+      const inputExpiryDate = item.expiry_date;
+      const daysDiff = Math.round((new Date(inputExpiryDate).getTime() - new Date(systemExpiryDate).getTime()) / (1000 * 60 * 60 * 24));
+      
+      const isMatch = Math.abs(daysDiff) <= 1; // 1일 오차 허용
+      
+      if (isMatch) {
+        matchCount++;
+      } else {
+        mismatchCount++;
+      }
+      
+      results.push({
+        barcode: item.barcode,
+        production_code: barcodeInfo.production_code,
+        product_name: barcodeInfo.product_name || barcodeInfo.production_name || item.product_name,
+        channel: barcodeInfo.channel,
+        input_expiry_date: inputExpiryDate,
+        system_expiry_date: systemExpiryDate,
+        system_expiry_days: systemExpiryDays,
+        days_diff: daysDiff,
+        status: isMatch ? 'match' : 'mismatch',
+        message: isMatch ? '일치' : `${Math.abs(daysDiff)}일 차이`
+      });
+    }
+    
+    return c.json({
+      success: true,
+      summary: {
+        total: results.length,
+        match: matchCount,
+        mismatch: mismatchCount,
+        not_found: results.filter(r => r.status === 'not_found').length
+      },
+      prod_date: productionDate,
+      items: results
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 소비기한 불일치 자동 수정 API
+productionRoutes.post('/fix-expiry-mismatch', async (c) => {
+  const body = await c.req.json();
+  const { items, prod_date, fix_type } = body;
+  // fix_type: 'use_input' (입고확인서 기준) | 'use_system' (시스템 기준) | 'update_barcode' (바코드 소비기한 업데이트)
+  
+  if (!items || items.length === 0) {
+    return c.json({ success: false, error: '수정할 항목이 없습니다.' }, 400);
+  }
+  
+  const productionDate = prod_date || new Date().toISOString().split('T')[0];
+  let fixedCount = 0;
+  let errorCount = 0;
+  const results: any[] = [];
+  
+  try {
+    for (const item of items) {
+      if (!item.barcode) continue;
+      
+      try {
+        if (fix_type === 'update_barcode' && item.new_expiry_days) {
+          // 바코드 테이블의 expiry_days 업데이트
+          await c.env.DB.prepare(`
+            UPDATE production_barcodes SET expiry_days = ? WHERE barcode = ?
+          `).bind(item.new_expiry_days, item.barcode).run();
+          
+          results.push({ barcode: item.barcode, action: 'barcode_updated', new_expiry_days: item.new_expiry_days });
+          fixedCount++;
+        } else if (fix_type === 'use_input' && item.expiry_date) {
+          // 생산 테이블의 expiry_date 업데이트 (입고확인서 기준)
+          const barcodeInfo = await c.env.DB.prepare(`
+            SELECT production_code FROM production_barcodes WHERE barcode = ?
+          `).bind(item.barcode).first<any>();
+          
+          if (barcodeInfo) {
+            await c.env.DB.prepare(`
+              UPDATE production SET expiry_date = ? 
+              WHERE prod_date = ? AND product_code = ?
+            `).bind(item.expiry_date, productionDate, barcodeInfo.production_code).run();
+            
+            results.push({ barcode: item.barcode, action: 'production_updated', new_expiry_date: item.expiry_date });
+            fixedCount++;
+          }
+        }
+      } catch (e: any) {
+        errorCount++;
+        results.push({ barcode: item.barcode, error: e.message });
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${fixedCount}건 수정 완료, ${errorCount}건 실패`,
+      fixed: fixedCount,
+      errors: errorCount,
+      results
+    });
+    
+  } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }
 });

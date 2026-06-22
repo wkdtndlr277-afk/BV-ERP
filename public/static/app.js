@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 2.2.0 Build: 20260528
-const APP_VERSION = '2.2.3';
-const APP_BUILD = '20260528';
+const APP_VERSION = '2.2.6';
+const APP_BUILD = '20260622';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -17597,6 +17597,10 @@ async function renderProduction() {
                     취소
                   </button>
                   <!-- v3.3.0: 백엔드 DB 검증 버튼 추가 -->
+                  <button onclick="validateExpiryDates()" id="btn-validate-expiry" class="px-4 py-2 bg-indigo-500 text-white rounded-lg font-medium hover:bg-indigo-600">
+                    <i class="fas fa-calendar-check mr-1"></i>
+                    <span>소비기한 검증</span>
+                  </button>
                   <button onclick="validateWithBackendDB()" id="btn-validate-db" class="px-4 py-2 bg-blue-500 text-white rounded-lg font-medium hover:bg-blue-600">
                     <i class="fas fa-database mr-1"></i>
                     <span>DB 재고 검증</span>
@@ -47119,3 +47123,306 @@ window.showCooperationDetailModal = showCooperationDetailModal;
 window.respondCooperation = respondCooperation;
 window.deleteCooperation = deleteCooperation;
 window.loadCooperations = loadCooperations;
+
+// ========== v2.2.6: 소비기한 검증 기능 ==========
+
+// 소비기한 검증 실행 (발주서 업로드 후)
+async function validateExpiryDates() {
+  if (!window.orderUploadData) {
+    showToast('먼저 발주서를 업로드하세요', 'warning');
+    return;
+  }
+  
+  const prodDate = document.getElementById('order-prod-date')?.value || getLocalDateString();
+  const items = window.orderUploadData.items;
+  
+  // 매칭된 항목 + 소비기한이 있는 항목만
+  const itemsToValidate = items
+    .filter(item => item.matchedProduct && item.expiryDate && item.barcode)
+    .map(item => ({
+      barcode: item.barcode,
+      expiry_date: item.expiryDate,
+      quantity: item.quantity,
+      product_name: item.matchedProduct?.item_name || item.productName
+    }));
+  
+  if (itemsToValidate.length === 0) {
+    showToast('소비기한 검증할 바코드/소비기한 정보가 없습니다', 'warning');
+    return;
+  }
+  
+  // 버튼 상태 변경
+  const validateBtn = document.getElementById('btn-validate-expiry');
+  if (validateBtn) {
+    validateBtn.disabled = true;
+    validateBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> 검증 중...';
+  }
+  
+  try {
+    const result = await api('/production/validate-expiry', 'POST', {
+      items: itemsToValidate,
+      prod_date: prodDate
+    });
+    
+    if (result.success) {
+      window.expiryValidationResult = result;
+      
+      const { summary, items: validatedItems } = result;
+      
+      // 검증 결과 모달 표시
+      showExpiryValidationModal(summary, validatedItems);
+      
+      // 미스매치 항목이 있으면 테이블에 경고 표시
+      if (summary.mismatch > 0) {
+        highlightExpiryMismatches(validatedItems);
+      }
+      
+      showToast(`소비기한 검증 완료: ${summary.match}건 일치, ${summary.mismatch}건 불일치`, 
+        summary.mismatch > 0 ? 'warning' : 'success');
+      
+    } else {
+      showToast(result.error || '소비기한 검증 실패', 'error');
+    }
+    
+  } catch (e) {
+    console.error('[v2.2.6] 소비기한 검증 오류:', e);
+    showToast('소비기한 검증 중 오류가 발생했습니다', 'error');
+  } finally {
+    if (validateBtn) {
+      validateBtn.disabled = false;
+      validateBtn.innerHTML = '<i class="fas fa-calendar-check mr-1"></i> 소비기한 검증';
+    }
+  }
+}
+
+// 소비기한 검증 결과 모달
+function showExpiryValidationModal(summary, items) {
+  const existingModal = document.getElementById('expiry-validation-modal');
+  if (existingModal) existingModal.remove();
+  
+  const mismatchItems = items.filter(i => i.status === 'mismatch');
+  const matchItems = items.filter(i => i.status === 'match');
+  const notFoundItems = items.filter(i => i.status === 'not_found');
+  
+  const modal = document.createElement('div');
+  modal.id = 'expiry-validation-modal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden">
+      <div class="p-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg font-bold">
+            <i class="fas fa-calendar-check mr-2"></i>
+            소비기한 검증 결과
+          </h3>
+          <button onclick="document.getElementById('expiry-validation-modal').remove()" class="text-white hover:text-gray-200">
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+      </div>
+      
+      <div class="p-4">
+        <!-- 요약 -->
+        <div class="grid grid-cols-4 gap-3 mb-4">
+          <div class="bg-gray-100 rounded-lg p-3 text-center">
+            <p class="text-2xl font-bold text-gray-700">${summary.total}</p>
+            <p class="text-sm text-gray-500">총 검사</p>
+          </div>
+          <div class="bg-green-100 rounded-lg p-3 text-center">
+            <p class="text-2xl font-bold text-green-600">${summary.match}</p>
+            <p class="text-sm text-green-600">일치 ✓</p>
+          </div>
+          <div class="bg-red-100 rounded-lg p-3 text-center">
+            <p class="text-2xl font-bold text-red-600">${summary.mismatch}</p>
+            <p class="text-sm text-red-600">불일치 ✗</p>
+          </div>
+          <div class="bg-yellow-100 rounded-lg p-3 text-center">
+            <p class="text-2xl font-bold text-yellow-600">${summary.not_found}</p>
+            <p class="text-sm text-yellow-600">미등록</p>
+          </div>
+        </div>
+        
+        ${mismatchItems.length > 0 ? `
+        <!-- 불일치 항목 -->
+        <div class="mb-4">
+          <h4 class="font-bold text-red-700 mb-2">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            소비기한 불일치 항목 (${mismatchItems.length}건)
+          </h4>
+          <div class="bg-red-50 border border-red-200 rounded-lg overflow-hidden">
+            <table class="w-full text-sm">
+              <thead class="bg-red-100">
+                <tr>
+                  <th class="px-3 py-2 text-left">바코드</th>
+                  <th class="px-3 py-2 text-left">제품명</th>
+                  <th class="px-3 py-2 text-center">입력 소비기한</th>
+                  <th class="px-3 py-2 text-center">시스템 계산값</th>
+                  <th class="px-3 py-2 text-center">차이</th>
+                  <th class="px-3 py-2 text-center">조치</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${mismatchItems.map(item => `
+                <tr class="border-t border-red-200">
+                  <td class="px-3 py-2 font-mono text-xs">${item.barcode}</td>
+                  <td class="px-3 py-2">${item.product_name || '-'}</td>
+                  <td class="px-3 py-2 text-center text-red-600">${item.input_expiry || '-'}</td>
+                  <td class="px-3 py-2 text-center text-green-600">${item.system_expiry || '-'}</td>
+                  <td class="px-3 py-2 text-center font-bold text-red-600">${item.days_diff}일</td>
+                  <td class="px-3 py-2 text-center">
+                    <button onclick="applySystemExpiry('${item.barcode}', '${item.system_expiry}')" 
+                            class="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600">
+                      시스템값 적용
+                    </button>
+                  </td>
+                </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">
+            <i class="fas fa-info-circle mr-1"></i>
+            시스템 계산값은 바코드별 등록된 소비기한 또는 생산명별 기본 소비기한을 기준으로 합니다.
+          </p>
+        </div>
+        ` : ''}
+        
+        ${matchItems.length > 0 ? `
+        <!-- 일치 항목 -->
+        <div class="mb-4">
+          <h4 class="font-bold text-green-700 mb-2">
+            <i class="fas fa-check-circle mr-1"></i>
+            소비기한 일치 항목 (${matchItems.length}건)
+          </h4>
+          <div class="bg-green-50 border border-green-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+            <div class="flex flex-wrap gap-2">
+              ${matchItems.map(item => `
+              <span class="px-2 py-1 bg-white border border-green-300 rounded text-xs">
+                ${item.barcode} → ${item.input_expiry}
+              </span>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+        ` : ''}
+        
+        ${notFoundItems.length > 0 ? `
+        <!-- 미등록 항목 -->
+        <div class="mb-4">
+          <h4 class="font-bold text-yellow-700 mb-2">
+            <i class="fas fa-question-circle mr-1"></i>
+            바코드 미등록 항목 (${notFoundItems.length}건)
+          </h4>
+          <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 max-h-40 overflow-y-auto">
+            <div class="flex flex-wrap gap-2">
+              ${notFoundItems.map(item => `
+              <span class="px-2 py-1 bg-white border border-yellow-300 rounded text-xs">
+                ${item.barcode}
+              </span>
+              `).join('')}
+            </div>
+          </div>
+          <p class="text-xs text-yellow-600 mt-2">
+            <i class="fas fa-info-circle mr-1"></i>
+            시스템에 등록되지 않은 바코드입니다. 관리자 > 시스템관리 > 생산명 관리에서 바코드를 등록하세요.
+          </p>
+        </div>
+        ` : ''}
+      </div>
+      
+      <div class="p-4 bg-gray-50 border-t flex justify-between items-center">
+        <div class="text-sm text-gray-500">
+          ${mismatchItems.length > 0 ? 
+            '<i class="fas fa-exclamation-triangle text-yellow-500 mr-1"></i> 불일치 항목이 있습니다. 확인 후 진행하세요.' : 
+            '<i class="fas fa-check-circle text-green-500 mr-1"></i> 모든 소비기한이 정상입니다.'}
+        </div>
+        <div class="flex gap-2">
+          ${mismatchItems.length > 0 ? `
+          <button onclick="applyAllSystemExpiry()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+            <i class="fas fa-check-double mr-1"></i>
+            전체 시스템값 적용
+          </button>
+          ` : ''}
+          <button onclick="document.getElementById('expiry-validation-modal').remove()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+            닫기
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+}
+
+// 시스템 소비기한 적용 (개별)
+function applySystemExpiry(barcode, systemExpiry) {
+  if (!window.orderUploadData?.items) return;
+  
+  const items = window.orderUploadData.items;
+  const item = items.find(i => i.barcode === barcode);
+  
+  if (item) {
+    item.expiryDate = systemExpiry;
+    
+    // 테이블 UI 업데이트
+    const expiryInput = document.querySelector(`input[data-barcode="${barcode}"].expiry-date-input`);
+    if (expiryInput) {
+      expiryInput.value = systemExpiry;
+    }
+    
+    // 테이블 셀 업데이트
+    const expiryCell = document.querySelector(`[data-barcode="${barcode}"] .expiry-display`);
+    if (expiryCell) {
+      expiryCell.textContent = systemExpiry;
+      expiryCell.classList.remove('text-red-600');
+      expiryCell.classList.add('text-green-600');
+    }
+    
+    showToast(`${barcode} 소비기한이 ${systemExpiry}로 변경되었습니다`, 'success');
+  }
+}
+
+// 전체 시스템 소비기한 적용
+function applyAllSystemExpiry() {
+  if (!window.expiryValidationResult?.items) return;
+  
+  const mismatchItems = window.expiryValidationResult.items.filter(i => i.status === 'mismatch' && i.system_expiry);
+  
+  let count = 0;
+  mismatchItems.forEach(item => {
+    applySystemExpiry(item.barcode, item.system_expiry);
+    count++;
+  });
+  
+  showToast(`${count}건의 소비기한이 시스템값으로 변경되었습니다`, 'success');
+  
+  // 모달 닫기
+  document.getElementById('expiry-validation-modal')?.remove();
+}
+
+// 소비기한 불일치 항목 하이라이트
+function highlightExpiryMismatches(validatedItems) {
+  const mismatchBarcodes = validatedItems
+    .filter(i => i.status === 'mismatch')
+    .map(i => i.barcode);
+  
+  // 테이블에서 해당 행 하이라이트
+  document.querySelectorAll('#order-items-table tr').forEach(row => {
+    const barcodeCell = row.querySelector('[data-barcode]');
+    if (barcodeCell && mismatchBarcodes.includes(barcodeCell.dataset.barcode)) {
+      row.classList.add('bg-red-50');
+      const expiryDisplay = row.querySelector('.expiry-display');
+      if (expiryDisplay) {
+        expiryDisplay.classList.add('text-red-600', 'font-bold');
+        expiryDisplay.innerHTML += ' <i class="fas fa-exclamation-triangle text-red-500"></i>';
+      }
+    }
+  });
+}
+
+// window에 노출
+window.validateExpiryDates = validateExpiryDates;
+window.showExpiryValidationModal = showExpiryValidationModal;
+window.applySystemExpiry = applySystemExpiry;
+window.applyAllSystemExpiry = applyAllSystemExpiry;
+window.highlightExpiryMismatches = highlightExpiryMismatches;

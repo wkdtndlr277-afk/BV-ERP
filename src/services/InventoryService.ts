@@ -1,12 +1,14 @@
 /**
- * InventoryService - 재고 조회 서비스 (수불부 전용)
+ * InventoryService - 재고 관리 서비스
  * 
  * v3.5.0: transactions 테이블 기반 Single Source of Truth
+ * v3.5.1: 재고 조정(Adjustment) 메서드 추가, 모든 재고 변동은 트랜잭션으로 기록
  * 
  * 핵심 원칙:
  * 1. 모든 재고 계산은 transactions 테이블의 시계열 누적 합산으로 수행
  * 2. 특정 시점의 재고를 소급 조회 가능
  * 3. 수불부 = 전일재고 + 입고 - 사용 ± 조정 = 현재재고
+ * 4. ★ 모든 재고 변동은 반드시 이 서비스를 통해서만 처리 ★
  */
 
 // ===== 타입 정의 =====
@@ -71,6 +73,310 @@ export interface IntegrityCheckResult {
     severity: 'HIGH' | 'MEDIUM' | 'LOW';
   }>;
   recommendations: string[];
+}
+
+// ===== v3.5.1: 재고 변동 타입 =====
+
+export type TransactionType = '입고' | '사용' | '재고조정' | 'INBOUND' | 'USAGE' | 'ADJUST';
+
+export interface StockTransaction {
+  itemCode: string;
+  transType: TransactionType;
+  quantity: number;      // 입고/조정증가: 양수, 사용/조정감소: 음수
+  transDate: string;     // YYYY-MM-DD
+  lotNumber?: string;
+  memo?: string;
+}
+
+export interface AdjustmentRequest {
+  itemCode: string;
+  itemName: string;
+  currentMasterStock: number;   // master.current_stock 현재값
+  targetStock: number;          // 목표 재고 (보정 후)
+  adjustmentQty: number;        // 조정량 (targetStock - transactionSum)
+  reason: string;               // 조정 사유
+}
+
+export interface AdjustmentResult {
+  success: boolean;
+  itemCode: string;
+  beforeTransactionSum: number;
+  adjustmentQty: number;
+  afterTransactionSum: number;
+  transactionId?: number;
+  error?: string;
+}
+
+export interface BulkAdjustmentResult {
+  success: boolean;
+  totalItems: number;
+  successCount: number;
+  failCount: number;
+  results: AdjustmentResult[];
+  executedAt: string;
+}
+
+// ===== v3.5.1: 재고 변동 기록 함수 =====
+
+/**
+ * 트랜잭션 기록 (Single Source of Truth)
+ * ★ 모든 재고 변동은 반드시 이 함수를 통해서만 기록 ★
+ */
+export async function recordTransaction(
+  db: D1Database,
+  transaction: StockTransaction
+): Promise<{ success: boolean; id?: number; error?: string }> {
+  try {
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    
+    // trans_type 정규화 (영문 → 한글)
+    let normalizedType = transaction.transType;
+    if (normalizedType === 'INBOUND') normalizedType = '입고';
+    if (normalizedType === 'USAGE') normalizedType = '사용';
+    if (normalizedType === 'ADJUST') normalizedType = '재고조정';
+    
+    const result = await db.prepare(`
+      INSERT INTO transactions (item_code, trans_type, quantity, trans_date, lot_number, memo, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      transaction.itemCode,
+      normalizedType,
+      transaction.quantity,
+      transaction.transDate,
+      transaction.lotNumber || null,
+      transaction.memo || null,
+      now
+    ).run();
+    
+    return { 
+      success: true, 
+      id: result.meta?.last_row_id as number | undefined
+    };
+  } catch (error: any) {
+    console.error('[recordTransaction] Error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * 재고 조정 (단일 품목)
+ * master.current_stock을 기준으로 transactions 합계를 맞추는 조정 트랜잭션 생성
+ */
+export async function adjustInventory(
+  db: D1Database,
+  request: AdjustmentRequest
+): Promise<AdjustmentResult> {
+  try {
+    // 현재 transactions 합계 조회
+    const currentSum = await db.prepare(`
+      SELECT COALESCE(SUM(quantity), 0) as total
+      FROM transactions
+      WHERE item_code = ?
+    `).bind(request.itemCode).first<{ total: number }>();
+    
+    const beforeSum = Number(currentSum?.total) || 0;
+    const adjustmentQty = request.targetStock - beforeSum;
+    
+    // 조정량이 0이면 스킵
+    if (Math.abs(adjustmentQty) < 0.001) {
+      return {
+        success: true,
+        itemCode: request.itemCode,
+        beforeTransactionSum: beforeSum,
+        adjustmentQty: 0,
+        afterTransactionSum: beforeSum
+      };
+    }
+    
+    const today = new Date().toISOString().split('T')[0];
+    
+    // 재고조정 트랜잭션 기록
+    const result = await recordTransaction(db, {
+      itemCode: request.itemCode,
+      transType: '재고조정',
+      quantity: adjustmentQty,
+      transDate: today,
+      memo: `[시스템 보정] ${request.reason} | 목표: ${request.targetStock.toFixed(4)}kg`
+    });
+    
+    if (!result.success) {
+      return {
+        success: false,
+        itemCode: request.itemCode,
+        beforeTransactionSum: beforeSum,
+        adjustmentQty: adjustmentQty,
+        afterTransactionSum: beforeSum,
+        error: result.error
+      };
+    }
+    
+    return {
+      success: true,
+      itemCode: request.itemCode,
+      beforeTransactionSum: beforeSum,
+      adjustmentQty: adjustmentQty,
+      afterTransactionSum: beforeSum + adjustmentQty,
+      transactionId: result.id
+    };
+    
+  } catch (error: any) {
+    console.error('[adjustInventory] Error:', error);
+    return {
+      success: false,
+      itemCode: request.itemCode,
+      beforeTransactionSum: 0,
+      adjustmentQty: 0,
+      afterTransactionSum: 0,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * 대량 재고 조정 (전체 정합성 보정)
+ * master.current_stock을 기준으로 모든 불일치 품목의 transactions를 보정
+ */
+export async function bulkAdjustInventory(
+  db: D1Database,
+  options: {
+    dryRun?: boolean;
+    reason?: string;
+    itemCodes?: string[];  // 특정 품목만 보정 (미지정시 전체)
+  } = {}
+): Promise<BulkAdjustmentResult> {
+  const { dryRun = true, reason = 'v3.5.1 재고 정합성 일괄 보정', itemCodes } = options;
+  const executedAt = new Date().toISOString();
+  
+  try {
+    // 불일치 품목 조회
+    let query = `
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.current_stock as master_stock,
+        COALESCE(t.trans_sum, 0) as transaction_sum,
+        m.current_stock - COALESCE(t.trans_sum, 0) as adjustment_needed
+      FROM master m
+      LEFT JOIN (
+        SELECT item_code, SUM(quantity) as trans_sum
+        FROM transactions
+        GROUP BY item_code
+      ) t ON m.item_code = t.item_code
+      WHERE m.category = '원료'
+        AND ABS(m.current_stock - COALESCE(t.trans_sum, 0)) > 0.01
+    `;
+    
+    const params: any[] = [];
+    if (itemCodes && itemCodes.length > 0) {
+      query += ` AND m.item_code IN (${itemCodes.map(() => '?').join(',')})`;
+      params.push(...itemCodes);
+    }
+    
+    query += ' ORDER BY ABS(m.current_stock - COALESCE(t.trans_sum, 0)) DESC';
+    
+    const mismatches = await db.prepare(query).bind(...params).all<{
+      item_code: string;
+      item_name: string;
+      master_stock: number;
+      transaction_sum: number;
+      adjustment_needed: number;
+    }>();
+    
+    const items = mismatches.results || [];
+    const results: AdjustmentResult[] = [];
+    let successCount = 0;
+    let failCount = 0;
+    
+    for (const item of items) {
+      if (dryRun) {
+        // Dry run: 실제 실행 없이 결과만 반환
+        results.push({
+          success: true,
+          itemCode: item.item_code,
+          beforeTransactionSum: Number(item.transaction_sum) || 0,
+          adjustmentQty: Number(item.adjustment_needed) || 0,
+          afterTransactionSum: Number(item.master_stock) || 0
+        });
+        successCount++;
+      } else {
+        // 실제 보정 실행
+        const result = await adjustInventory(db, {
+          itemCode: item.item_code,
+          itemName: item.item_name,
+          currentMasterStock: Number(item.master_stock) || 0,
+          targetStock: Number(item.master_stock) || 0,  // master.current_stock에 맞춤
+          adjustmentQty: Number(item.adjustment_needed) || 0,
+          reason
+        });
+        
+        results.push(result);
+        if (result.success) successCount++;
+        else failCount++;
+      }
+    }
+    
+    return {
+      success: failCount === 0,
+      totalItems: items.length,
+      successCount,
+      failCount,
+      results,
+      executedAt
+    };
+    
+  } catch (error: any) {
+    console.error('[bulkAdjustInventory] Error:', error);
+    return {
+      success: false,
+      totalItems: 0,
+      successCount: 0,
+      failCount: 1,
+      results: [],
+      executedAt
+    };
+  }
+}
+
+/**
+ * 입고 트랜잭션 기록 (편의 함수)
+ */
+export async function recordInbound(
+  db: D1Database,
+  itemCode: string,
+  quantity: number,
+  transDate: string,
+  lotNumber?: string,
+  memo?: string
+): Promise<{ success: boolean; id?: number; error?: string }> {
+  return recordTransaction(db, {
+    itemCode,
+    transType: '입고',
+    quantity: Math.abs(quantity),  // 입고는 항상 양수
+    transDate,
+    lotNumber,
+    memo: memo || '입고'
+  });
+}
+
+/**
+ * 사용(출고) 트랜잭션 기록 (편의 함수)
+ */
+export async function recordUsage(
+  db: D1Database,
+  itemCode: string,
+  quantity: number,
+  transDate: string,
+  lotNumber?: string,
+  memo?: string
+): Promise<{ success: boolean; id?: number; error?: string }> {
+  return recordTransaction(db, {
+    itemCode,
+    transType: '사용',
+    quantity: -Math.abs(quantity),  // 사용은 항상 음수
+    transDate,
+    lotNumber,
+    memo: memo || '생산 사용'
+  });
 }
 
 // ===== 수불부 조회 함수 (transactions 기반) =====
@@ -189,14 +495,26 @@ export async function getDailyStockReport(
 }
 
 /**
- * 반제품 일일 수불부 조회 
- * 주의: semi_finished_transactions 테이블 스키마가 다르므로 빈 결과 반환
+ * [DEPRECATED] 반제품 일일 수불부 조회 
+ * 
+ * ⚠️ v3.5.1: 반제품 테이블(semi_finished_transactions)은 스키마가 다르므로 
+ *    현재 작업에서 완전히 배제됨. 향후 별도 리팩토링 필요.
+ * 
+ * 문제점:
+ * - semi_finished_transactions 테이블에 trans_date 컬럼 없음
+ * - transaction_type 사용 (trans_type 아님)
+ * - 시계열 조회 불가능
+ * 
+ * @deprecated 반제품 수불부는 별도 구현 필요
  */
 export async function getSemiFinishedDailyReport(
   db: D1Database,
   date: string
 ): Promise<DailyStockReport> {
-  // semi_finished_transactions 테이블 스키마가 다름 (trans_date 없음)
+  // ⚠️ 반제품 테이블은 현재 지원하지 않음
+  // TODO: semi_finished_transactions 테이블 스키마 마이그레이션 후 재구현
+  console.warn('[getSemiFinishedDailyReport] 반제품 수불부는 현재 지원되지 않습니다. 빈 결과 반환.');
+  
   return {
     date,
     items: [],

@@ -1,5 +1,6 @@
 // 생산 관리 API
 // v3.5.0: Service Layer 도입 - 재고 차감/트랜잭션 기록 원자적 처리
+// v3.5.1: 재고 정합성 보정 API 추가
 // 최적화: Atomic Transaction, FEFO 강제, MAX(0,...) 적용, 재고 부족 방어
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
@@ -29,7 +30,11 @@ import {
   getDailyStockReport,
   getSemiFinishedDailyReport,
   checkInventoryIntegrity,
-  getItemTransactionHistory
+  getItemTransactionHistory,
+  // v3.5.1: 재고 조정 관련
+  adjustInventory,
+  bulkAdjustInventory,
+  recordTransaction
 } from '../services/InventoryService';
 
 const productionRoutes = new Hono<{ Bindings: Bindings }>();
@@ -227,8 +232,10 @@ productionRoutes.get('/closing-status', async (c) => {
     // ★★★ 2. transactions 테이블 기반 수불부 데이터 (Single Source of Truth) ★★★
     const stockReport = await getDailyStockReport(c.env.DB, date, EXCLUDE_CODES);
     
-    // 3. 반제품 수불부 (semi_finished_transactions 기반)
-    const sfReport = await getSemiFinishedDailyReport(c.env.DB, date);
+    // ⚠️ v3.5.1: 반제품 수불부는 스키마 차이로 현재 지원하지 않음
+    // TODO: semi_finished_transactions 테이블 마이그레이션 후 활성화
+    // const sfReport = await getSemiFinishedDailyReport(c.env.DB, date);
+    const sfReport = { items: [], summary: { totalItems: 0, totalPrevStock: 0, totalInbound: 0, totalUsed: 0, totalAdjustment: 0, totalCurrentStock: 0 } };
     
     // 4. 당일 입고 현황 (참고용 - 원천은 transactions)
     const inboundData = await c.env.DB.prepare(`
@@ -388,6 +395,386 @@ productionRoutes.get('/transaction-history/:itemCode', async (c) => {
     
   } catch (error: any) {
     console.error('[transaction-history] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.0: transactions 테이블 백필 API ★★★
+// 생산 기록 기반으로 누락된 transactions 데이터 복구
+productionRoutes.post('/backfill-transactions', async (c) => {
+  try {
+    const { item_code, start_date, end_date, dry_run = true } = await c.req.json<{
+      item_code?: string;
+      start_date?: string;
+      end_date?: string;
+      dry_run?: boolean;
+    }>();
+    
+    // 날짜 범위 설정 (기본: 최근 30일)
+    const endDate = end_date || new Date().toISOString().split('T')[0];
+    const startDate = start_date || (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      return d.toISOString().split('T')[0];
+    })();
+    
+    console.log(`[backfill-transactions] Range: ${startDate} ~ ${endDate}, item_code: ${item_code || 'ALL'}, dry_run: ${dry_run}`);
+    
+    // 1. 해당 기간의 생산 기록 조회
+    let productionQuery = `
+      SELECT id, product_code, quantity, prod_date, lot_number
+      FROM production 
+      WHERE prod_date BETWEEN ? AND ?
+    `;
+    const productionParams: any[] = [startDate, endDate];
+    
+    const productionResult = await c.env.DB.prepare(productionQuery).bind(...productionParams).all();
+    const productions = productionResult.results || [];
+    
+    if (productions.length === 0) {
+      return c.json({
+        success: true,
+        dry_run,
+        message: `${startDate} ~ ${endDate} 기간에 생산 기록이 없습니다.`,
+        backfill_candidates: []
+      });
+    }
+    
+    // 2. 제품별 BOM 조회
+    const productCodes = [...new Set((productions as any[]).map(p => p.product_code))];
+    const BATCH_SIZE = 50;
+    let bomData: any[] = [];
+    
+    for (let i = 0; i < productCodes.length; i += BATCH_SIZE) {
+      const batch = productCodes.slice(i, i + BATCH_SIZE);
+      const placeholders = batch.map(() => '?').join(',');
+      const bomResult = await c.env.DB.prepare(`
+        SELECT production_code, material_code, material_name, quantity as bom_qty
+        FROM production_bom 
+        WHERE production_code IN (${placeholders})
+      `).bind(...batch).all();
+      bomData = bomData.concat(bomResult.results || []);
+    }
+    
+    // 제품별 BOM 맵
+    const bomMap = new Map<string, any[]>();
+    for (const bom of bomData as any[]) {
+      if (!bomMap.has(bom.production_code)) {
+        bomMap.set(bom.production_code, []);
+      }
+      bomMap.get(bom.production_code)!.push(bom);
+    }
+    
+    // 3. 날짜+품목별 사용량 집계
+    type UsageKey = string; // "YYYY-MM-DD|item_code"
+    const usageMap = new Map<UsageKey, {
+      trans_date: string;
+      item_code: string;
+      item_name: string;
+      quantity: number;
+      lot_numbers: Set<string>;
+    }>();
+    
+    for (const prod of productions as any[]) {
+      const boms = bomMap.get(prod.product_code) || [];
+      for (const bom of boms) {
+        // 특정 품목 필터링
+        if (item_code && bom.material_code !== item_code) continue;
+        
+        const usedQty = bom.bom_qty * prod.quantity;
+        const key = `${prod.prod_date}|${bom.material_code}`;
+        
+        if (usageMap.has(key)) {
+          const entry = usageMap.get(key)!;
+          entry.quantity += usedQty;
+          if (prod.lot_number) entry.lot_numbers.add(prod.lot_number);
+        } else {
+          usageMap.set(key, {
+            trans_date: prod.prod_date,
+            item_code: bom.material_code,
+            item_name: bom.material_name,
+            quantity: usedQty,
+            lot_numbers: new Set(prod.lot_number ? [prod.lot_number] : [])
+          });
+        }
+      }
+    }
+    
+    // 4. 기존 transactions 확인 (이미 있는 데이터 제외)
+    const candidates: any[] = [];
+    const alreadyExists: any[] = [];
+    
+    for (const [key, usage] of usageMap) {
+      // 해당 날짜+품목의 USAGE 트랜잭션이 있는지 확인
+      const existing = await c.env.DB.prepare(`
+        SELECT SUM(quantity) as total_qty
+        FROM transactions
+        WHERE item_code = ? AND trans_date = ? AND trans_type = 'USAGE'
+      `).bind(usage.item_code, usage.trans_date).first<any>();
+      
+      const existingQty = existing?.total_qty || 0;
+      // ★ USAGE는 음수여야 함. 계산된 사용량과 절대값 비교
+      const expectedQty = -Math.abs(usage.quantity);  // 음수
+      const diff = Math.abs(expectedQty - existingQty);
+      
+      if (diff > 0.001) { // 차이가 있으면 백필 대상
+        candidates.push({
+          trans_date: usage.trans_date,
+          item_code: usage.item_code,
+          item_name: usage.item_name,
+          calculated_usage: usage.quantity,
+          expected_qty: expectedQty,
+          existing_usage: existingQty,
+          difference: expectedQty - existingQty,
+          lot_numbers: Array.from(usage.lot_numbers).join(',')
+        });
+      } else {
+        alreadyExists.push({
+          trans_date: usage.trans_date,
+          item_code: usage.item_code,
+          quantity: existingQty
+        });
+      }
+    }
+    
+    // 5. dry_run이면 여기서 반환
+    if (dry_run) {
+      return c.json({
+        success: true,
+        dry_run: true,
+        period: { start: startDate, end: endDate },
+        filter_item_code: item_code || null,
+        productions_count: productions.length,
+        products_with_bom: bomMap.size,
+        backfill_candidates: candidates.length,
+        already_correct: alreadyExists.length,
+        samples: candidates.slice(0, 20)
+      });
+    }
+    
+    // 6. 실제 백필 실행
+    const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    let insertCount = 0;
+    let errorCount = 0;
+    const errors: any[] = [];
+    
+    for (const candidate of candidates) {
+      try {
+        // 기존 USAGE 트랜잭션 삭제 (해당 날짜+품목)
+        await c.env.DB.prepare(`
+          DELETE FROM transactions
+          WHERE item_code = ? AND trans_date = ? AND trans_type = 'USAGE'
+        `).bind(candidate.item_code, candidate.trans_date).run();
+        
+        // 새 트랜잭션 INSERT (USAGE는 음수로 저장)
+        await c.env.DB.prepare(`
+          INSERT INTO transactions (item_code, trans_type, quantity, trans_date, lot_number, memo, created_at)
+          VALUES (?, 'USAGE', ?, ?, ?, ?, ?)
+        `).bind(
+          candidate.item_code,
+          -Math.abs(candidate.calculated_usage),  // ★ USAGE는 음수
+          candidate.trans_date,
+          candidate.lot_numbers || null,
+          '백필 복구 (v3.5.0)',
+          now
+        ).run();
+        
+        insertCount++;
+      } catch (e: any) {
+        errorCount++;
+        errors.push({ item_code: candidate.item_code, date: candidate.trans_date, error: e.message });
+      }
+    }
+    
+    return c.json({
+      success: true,
+      dry_run: false,
+      period: { start: startDate, end: endDate },
+      filter_item_code: item_code || null,
+      total_candidates: candidates.length,
+      inserted: insertCount,
+      errors: errorCount,
+      error_details: errors.slice(0, 10)
+    });
+    
+  } catch (error: any) {
+    console.error('[backfill-transactions] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ 잘못된 백필 데이터 삭제 API ★★★
+// 양수 USAGE 트랜잭션 삭제 (잘못된 백필 데이터)
+productionRoutes.delete('/cleanup-invalid-backfill', async (c) => {
+  try {
+    const { item_code, dry_run = true } = await c.req.json<{
+      item_code?: string;
+      dry_run?: boolean;
+    }>();
+    
+    // 양수 USAGE 트랜잭션 조회 (잘못된 데이터)
+    let query = `
+      SELECT id, item_code, trans_date, quantity, memo
+      FROM transactions
+      WHERE trans_type = 'USAGE' AND quantity > 0
+    `;
+    const params: any[] = [];
+    
+    if (item_code) {
+      query += ` AND item_code = ?`;
+      params.push(item_code);
+    }
+    
+    const invalidData = await c.env.DB.prepare(query).bind(...params).all();
+    const invalidRecords = invalidData.results || [];
+    
+    if (dry_run) {
+      return c.json({
+        success: true,
+        dry_run: true,
+        invalid_count: invalidRecords.length,
+        samples: (invalidRecords as any[]).slice(0, 20).map(r => ({
+          id: r.id,
+          item_code: r.item_code,
+          trans_date: r.trans_date,
+          quantity: r.quantity,
+          memo: r.memo
+        }))
+      });
+    }
+    
+    // 삭제 실행
+    let deleteQuery = `
+      DELETE FROM transactions
+      WHERE trans_type = 'USAGE' AND quantity > 0
+    `;
+    if (item_code) {
+      deleteQuery += ` AND item_code = ?`;
+      await c.env.DB.prepare(deleteQuery).bind(item_code).run();
+    } else {
+      await c.env.DB.prepare(deleteQuery).run();
+    }
+    
+    return c.json({
+      success: true,
+      dry_run: false,
+      deleted_count: invalidRecords.length,
+      message: `${invalidRecords.length}건의 잘못된 백필 데이터 삭제 완료`
+    });
+    
+  } catch (error: any) {
+    console.error('[cleanup-invalid-backfill] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.1: 재고 정합성 일괄 보정 API ★★★
+// master.current_stock을 기준으로 transactions 합계를 맞추는 조정 트랜잭션 생성
+productionRoutes.post('/inventory-adjustment', async (c) => {
+  try {
+    const { 
+      dry_run = true, 
+      item_codes,
+      reason = 'v3.5.1 시스템 오픈 시점 재고 보정'
+    } = await c.req.json<{
+      dry_run?: boolean;
+      item_codes?: string[];
+      reason?: string;
+    }>();
+    
+    console.log(`[inventory-adjustment] dry_run: ${dry_run}, item_codes: ${item_codes?.join(',') || 'ALL'}`);
+    
+    const result = await bulkAdjustInventory(c.env.DB, {
+      dryRun: dry_run,
+      reason,
+      itemCodes: item_codes
+    });
+    
+    // 결과 요약
+    const summary = {
+      totalAdjustmentQty: result.results.reduce((sum, r) => sum + Math.abs(r.adjustmentQty), 0),
+      positiveAdjustments: result.results.filter(r => r.adjustmentQty > 0).length,
+      negativeAdjustments: result.results.filter(r => r.adjustmentQty < 0).length,
+      topAdjustments: result.results
+        .sort((a, b) => Math.abs(b.adjustmentQty) - Math.abs(a.adjustmentQty))
+        .slice(0, 20)
+        .map(r => ({
+          itemCode: r.itemCode,
+          before: r.beforeTransactionSum.toFixed(4),
+          adjustment: r.adjustmentQty.toFixed(4),
+          after: r.afterTransactionSum.toFixed(4)
+        }))
+    };
+    
+    return c.json({
+      success: result.success,
+      version: 'v3.5.1',
+      dry_run,
+      message: dry_run 
+        ? `${result.totalItems}개 품목 보정 예정 (dry_run 모드)` 
+        : `${result.successCount}개 품목 보정 완료, ${result.failCount}개 실패`,
+      executedAt: result.executedAt,
+      totalItems: result.totalItems,
+      successCount: result.successCount,
+      failCount: result.failCount,
+      summary,
+      // dry_run일 때만 전체 결과 반환
+      results: dry_run ? result.results : undefined
+    });
+    
+  } catch (error: any) {
+    console.error('[inventory-adjustment] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.1: 단일 품목 재고 조정 API ★★★
+productionRoutes.post('/inventory-adjustment/:itemCode', async (c) => {
+  try {
+    const itemCode = c.req.param('itemCode');
+    const { 
+      target_stock,
+      reason = '수동 재고 조정'
+    } = await c.req.json<{
+      target_stock: number;
+      reason?: string;
+    }>();
+    
+    if (typeof target_stock !== 'number') {
+      return c.json({ success: false, error: 'target_stock은 필수입니다.' }, 400);
+    }
+    
+    // 품목 정보 조회
+    const item = await c.env.DB.prepare(`
+      SELECT item_code, item_name, current_stock FROM master WHERE item_code = ?
+    `).bind(itemCode).first<{ item_code: string; item_name: string; current_stock: number }>();
+    
+    if (!item) {
+      return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
+    }
+    
+    const result = await adjustInventory(c.env.DB, {
+      itemCode: item.item_code,
+      itemName: item.item_name,
+      currentMasterStock: Number(item.current_stock) || 0,
+      targetStock: target_stock,
+      adjustmentQty: 0,  // 함수 내에서 계산됨
+      reason
+    });
+    
+    return c.json({
+      success: result.success,
+      version: 'v3.5.1',
+      itemCode: result.itemCode,
+      before: result.beforeTransactionSum,
+      adjustment: result.adjustmentQty,
+      after: result.afterTransactionSum,
+      transactionId: result.transactionId,
+      error: result.error
+    });
+    
+  } catch (error: any) {
+    console.error('[inventory-adjustment/:itemCode] Error:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });

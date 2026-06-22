@@ -18763,9 +18763,9 @@ function addToPendingItems(items, source = 'order') {
     // 고유 ID 생성
     const pendingId = 'pending_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     
-    // v2.2.11: PDF 소비기한 우선 사용
+    // ★★★ v2.2.14: 소비기한 처리 개선 ★★★
     const pdfExpiryDate = item.expiryDate || item.expiry_date;
-    console.log(`[addToPending] ${item.barcode}: expiry_date = ${pdfExpiryDate}`);
+    console.log(`[addToPending] ${item.barcode}: expiry_date=${pdfExpiryDate}, expiryDays=${item.expiryDays}`);
     
     window.pendingProductionItems.push({
       pending_id: pendingId,
@@ -18773,7 +18773,8 @@ function addToPendingItems(items, source = 'order') {
       product_code: item.product_code || item.matchedProduct?.item_code,
       product_name: item.product_name || item.matchedProduct?.item_name || item.originalName,
       quantity: item.quantity,
-      expiry_date: pdfExpiryDate,  // v2.2.11: PDF에서 추출한 소비기한 우선
+      expiry_date: pdfExpiryDate,
+      expiry_days: item.expiryDays || item.expiry_days || null,  // ★ expiry_days도 저장
       channel: item.channel,
       barcode: item.barcode,
       has_bom: item.hasBOM || item.has_bom || false,
@@ -18949,7 +18950,7 @@ function excludePendingItem(pendingId) {
   showToast('품목이 제외되었습니다', 'info');
 }
 
-// 최종 승인 (DB 반영)
+// 최종 승인 (DB 반영) - v2.2.13: 배치 처리로 타임아웃 방지
 async function finalApproveProduction() {
   const items = window.pendingProductionItems.filter(i => i.status === 'pending');
   
@@ -18976,37 +18977,76 @@ async function finalApproveProduction() {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> DB 반영 중...';
   }
   
-  showLoading('최종 승인 처리 중...');
+  // ★★★ v2.2.13: 배치 처리 - 20건씩 나눠서 등록 ★★★
+  const BATCH_SIZE = 20;
+  const totalBatches = Math.ceil(items.length / BATCH_SIZE);
+  let totalSuccess = 0;
+  let totalFail = 0;
+  let lastError = null;
+  
+  showLoading(`최종 승인 처리 중... (0/${items.length})`);
   
   try {
-    // confirm API 호출
-    // v2.2.11: PDF 소비기한이 제대로 전달되는지 확인
-    const confirmItems = items.map(item => {
-      console.log(`[finalApprove] ${item.barcode}: expiry_date = ${item.expiry_date}`);
-      return {
-        product_code: item.product_code,
-        product_name: item.product_name,
-        quantity: item.quantity,
-        expiry_date: item.expiry_date,  // PDF에서 추출한 소비기한
-        channel: item.channel,
-        barcode: item.barcode,
-        has_bom: item.has_bom,
-        materials: item.materials,
-        force_approved: item.force_approved || false
-      };
-    });
-    
-    const result = await api('/production/confirm', 'POST', {
-      items: confirmItems,
-      prod_date: prodDate,
-      force_stock_shortage: true // 최종 승인이므로 재고 부족 허용
-    });
-    
-    if (result.success) {
-      const successCount = result.results?.filter(r => r.status === 'SUCCESS').length || 0;
-      const failCount = result.results?.filter(r => r.status === 'FAILED').length || 0;
+    for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+      const startIdx = batchIdx * BATCH_SIZE;
+      const endIdx = Math.min(startIdx + BATCH_SIZE, items.length);
+      const batchItems = items.slice(startIdx, endIdx);
       
-      showToast(`✅ 최종 승인 완료: ${successCount}건 성공${failCount > 0 ? `, ${failCount}건 실패` : ''}`, 'success');
+      // 진행률 업데이트
+      showLoading(`최종 승인 처리 중... (${startIdx}/${items.length}) - 배치 ${batchIdx + 1}/${totalBatches}`);
+      
+      // confirm API 호출 - 배치 단위
+      // ★★★ v2.2.14: expiry_days도 함께 전달 ★★★
+      const confirmItems = batchItems.map(item => {
+        console.log(`[finalApprove] ${item.barcode}: expiry_date=${item.expiry_date}, expiry_days=${item.expiry_days}`);
+        return {
+          product_code: item.product_code,
+          product_name: item.product_name,
+          quantity: item.quantity,
+          expiry_date: item.expiry_date,
+          shelf_life_days: item.expiry_days || null,  // ★ 백엔드에서 사용할 expiry_days
+          channel: item.channel,
+          barcode: item.barcode,
+          has_bom: item.has_bom,
+          materials: item.materials,
+          force_approved: item.force_approved || false
+        };
+      });
+      
+      try {
+        const result = await api('/production/confirm', 'POST', {
+          items: confirmItems,
+          prod_date: prodDate,
+          force_stock_shortage: true
+        });
+        
+        if (result.success) {
+          const successCount = result.results?.filter(r => r.status === 'SUCCESS').length || batchItems.length;
+          const failCount = result.results?.filter(r => r.status === 'FAILED').length || 0;
+          totalSuccess += successCount;
+          totalFail += failCount;
+          console.log(`[finalApprove] 배치 ${batchIdx + 1} 완료: ${successCount}건 성공, ${failCount}건 실패`);
+        } else {
+          // 배치 실패 시 해당 배치 전체 실패 처리
+          totalFail += batchItems.length;
+          lastError = result.error || '배치 처리 실패';
+          console.error(`[finalApprove] 배치 ${batchIdx + 1} 실패:`, result.error);
+        }
+      } catch (batchError) {
+        totalFail += batchItems.length;
+        lastError = batchError.message;
+        console.error(`[finalApprove] 배치 ${batchIdx + 1} 예외:`, batchError);
+      }
+      
+      // 배치 간 딜레이 (서버 부하 방지)
+      if (batchIdx < totalBatches - 1) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    }
+    
+    // 최종 결과
+    if (totalSuccess > 0) {
+      showToast(`✅ 최종 승인 완료: ${totalSuccess}건 성공${totalFail > 0 ? `, ${totalFail}건 실패` : ''}`, totalFail > 0 ? 'warning' : 'success');
       
       // 대기 품목 초기화
       window.pendingProductionItems = [];
@@ -19014,42 +19054,13 @@ async function finalApproveProduction() {
       
       // 마감 현황 새로고침
       loadClosingStatus();
-      
     } else {
-      // ★★★ v3.4.5: 재고 부족 등 상세 사유 표시 ★★★
-      const errorCode = result.errorCode || '';
-      const details = result.details || [];
-      const messageForUser = result.message_for_user || '';
-      
-      if (errorCode === 'INSUFFICIENT_STOCK') {
-        // 재고 부족 상세 사유 표시
-        console.error('[v3.4.5] INSUFFICIENT_STOCK:', { details, messageForUser });
-        
-        let detailText = messageForUser || details.map(d => 
-          `⚠️ ${d.item_name || d.item_code}: 현재고 ${d.available}, 필요량 ${d.required} (${d.reason || '재고 부족'})`
-        ).join('\n');
-        
-        // 모달 형식으로 상세 사유 표시
-        showStockErrorModal(result.product_code || '', detailText, details);
-        throw new Error('재고 부족으로 생산 등록이 차단되었습니다.');
-      } else if (errorCode === 'INTEGRITY_CHECK_FAILED') {
-        // 무결성 검사 실패
-        const errorMessages = details.slice(0, 5).join('\n');
-        alert(`[무결성 검사 실패 - DB 반영 차단]\n\n${errorMessages}${details.length > 5 ? `\n...외 ${details.length - 5}건` : ''}`);
-        throw new Error('무결성 검사 실패');
-      } else {
-        throw new Error(result.error || '승인 실패');
-      }
+      showToast(`최종 승인 실패: ${lastError || '알 수 없는 오류'}`, 'error');
     }
     
   } catch (e) {
     console.error('최종 승인 실패:', e);
-    // ★ 이미 상세 표시한 경우 토스트는 간단하게
-    if (!e.message?.includes('재고 부족') && !e.message?.includes('무결성 검사')) {
-      showToast(`최종 승인 실패: ${e.message}`, 'error');
-    } else {
-      showToast(e.message, 'error');
-    }
+    showToast(`최종 승인 실패: ${e.message}`, 'error');
   } finally {
     hideLoading();
     if (btn) {
@@ -21749,9 +21760,20 @@ function matchOrderToProducts(items) {
         const productionItem = window.productionItemsData?.find(pi => pi.production_code === barcodeMatch.production_code);
         console.log(`바코드 매칭 성공: "${barcodeStr}" → "${barcodeMatch.production_name}" (${barcodeMatch.production_code})`);
         
+        // ★★★ v2.2.14: 바코드 expiry_days로 소비기한 계산 ★★★
+        let calculatedExpiryDate = null;
+        if (barcodeMatch.expiry_days && barcodeMatch.expiry_days > 0) {
+          // 생산일 기준 소비기한 계산 (생산일은 나중에 설정되므로 여기서는 expiry_days만 저장)
+          // 실제 계산은 executeOrderProduction에서 prod_date 기준으로 수행
+          calculatedExpiryDate = null; // prod_date가 확정되면 계산
+        }
+        console.log(`[v2.2.14] 바코드 ${barcodeStr}: expiry_days=${barcodeMatch.expiry_days}`);
+        
         return {
           ...item,
           cleanName: cleanedName,
+          expiryDays: barcodeMatch.expiry_days || null,  // ★ expiry_days 저장
+          expiryDate: calculatedExpiryDate,
           matchedProduct: {
             item_code: barcodeMatch.production_code,
             item_name: barcodeMatch.production_name,
@@ -24024,16 +24046,33 @@ async function executeOrderProduction() {
   const validationResults = await validateItemsForPreview(selectedItems, prodDate, channel);
   
   // 검증 결과와 함께 대기 품목으로 추가
+  // ★★★ v2.2.14: expiryDays로 소비기한 계산 (PDF 소비기한 없을 때) ★★★
   const pendingItems = selectedItems.map((item, idx) => {
     const validation = validationResults[idx] || {};
-    // v2.2.11: PDF 소비기한 우선 사용 - 디버그 로그 추가
-    console.log(`[pending] ${item.barcode}: PDF expiryDate = ${item.expiryDate}`);
+    
+    // 소비기한 결정 우선순위:
+    // 1. PDF/엑셀에서 직접 추출한 expiryDate
+    // 2. 바코드의 expiry_days로 계산 (생산일 + expiry_days)
+    // 3. 없으면 null (백엔드에서 기본값 7일 적용)
+    let finalExpiryDate = item.expiryDate || null;
+    
+    if (!finalExpiryDate && item.expiryDays && item.expiryDays > 0) {
+      // 생산일 기준으로 소비기한 계산
+      const pd = new Date(prodDate);
+      pd.setDate(pd.getDate() + item.expiryDays);
+      finalExpiryDate = pd.toISOString().split('T')[0];
+      console.log(`[v2.2.14] ${item.barcode}: expiryDays=${item.expiryDays} → 계산된 소비기한=${finalExpiryDate}`);
+    }
+    
+    console.log(`[pending] ${item.barcode}: 최종 소비기한 = ${finalExpiryDate} (원본: ${item.expiryDate}, expiryDays: ${item.expiryDays})`);
+    
     return {
       product_code: item.matchedProduct?.item_code,
       product_name: item.matchedProduct?.item_name || item.originalName,
       quantity: item.quantity,
-      expiryDate: item.expiryDate,  // PDF에서 추출한 소비기한
-      expiry_date: item.expiryDate, // v2.2.11: expiry_date로도 저장 (호환성)
+      expiryDate: finalExpiryDate,
+      expiry_date: finalExpiryDate,
+      expiryDays: item.expiryDays || null,  // ★ 백엔드 전달용
       channel: channel,
       barcode: item.barcode,
       hasBOM: item.hasBOM || validation.has_bom || false,

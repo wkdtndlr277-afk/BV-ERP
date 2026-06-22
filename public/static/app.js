@@ -18764,13 +18764,17 @@ function addToPendingItems(items, source = 'order') {
     // 고유 ID 생성
     const pendingId = 'pending_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     
+    // v2.2.11: PDF 소비기한 우선 사용
+    const pdfExpiryDate = item.expiryDate || item.expiry_date;
+    console.log(`[addToPending] ${item.barcode}: expiry_date = ${pdfExpiryDate}`);
+    
     window.pendingProductionItems.push({
       pending_id: pendingId,
       source: source,
       product_code: item.product_code || item.matchedProduct?.item_code,
       product_name: item.product_name || item.matchedProduct?.item_name || item.originalName,
       quantity: item.quantity,
-      expiry_date: item.expiryDate || item.expiry_date,
+      expiry_date: pdfExpiryDate,  // v2.2.11: PDF에서 추출한 소비기한 우선
       channel: item.channel,
       barcode: item.barcode,
       has_bom: item.hasBOM || item.has_bom || false,
@@ -18853,6 +18857,7 @@ function renderPendingItems() {
             <th class="px-3 py-2 text-left">제품명</th>
             <th class="px-3 py-2 text-center">수량</th>
             <th class="px-3 py-2 text-center">판매처</th>
+            <th class="px-3 py-2 text-center">소비기한</th>
             <th class="px-3 py-2 text-center">BOM</th>
             <th class="px-3 py-2 text-center">상태</th>
             <th class="px-3 py-2 text-center">작업</th>
@@ -18882,6 +18887,11 @@ function renderPendingItems() {
                 <td class="px-3 py-2 text-center font-medium">${formatNumber(item.quantity)}</td>
                 <td class="px-3 py-2 text-center">
                   <span class="px-2 py-0.5 rounded text-xs ${getChannelBadgeClass(item.channel)}">${item.channel || '-'}</span>
+                </td>
+                <td class="px-3 py-2 text-center">
+                  ${item.expiry_date 
+                    ? `<span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">${item.expiry_date}</span>`
+                    : '<span class="text-gray-400 text-xs">미설정</span>'}
                 </td>
                 <td class="px-3 py-2 text-center">
                   ${item.has_bom 
@@ -18971,17 +18981,21 @@ async function finalApproveProduction() {
   
   try {
     // confirm API 호출
-    const confirmItems = items.map(item => ({
-      product_code: item.product_code,
-      product_name: item.product_name,
-      quantity: item.quantity,
-      expiry_date: item.expiry_date,
-      channel: item.channel,
-      barcode: item.barcode,
-      has_bom: item.has_bom,
-      materials: item.materials,
-      force_approved: item.force_approved || false
-    }));
+    // v2.2.11: PDF 소비기한이 제대로 전달되는지 확인
+    const confirmItems = items.map(item => {
+      console.log(`[finalApprove] ${item.barcode}: expiry_date = ${item.expiry_date}`);
+      return {
+        product_code: item.product_code,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        expiry_date: item.expiry_date,  // PDF에서 추출한 소비기한
+        channel: item.channel,
+        barcode: item.barcode,
+        has_bom: item.has_bom,
+        materials: item.materials,
+        force_approved: item.force_approved || false
+      };
+    });
     
     const result = await api('/production/confirm', 'POST', {
       items: confirmItems,
@@ -24013,11 +24027,14 @@ async function executeOrderProduction() {
   // 검증 결과와 함께 대기 품목으로 추가
   const pendingItems = selectedItems.map((item, idx) => {
     const validation = validationResults[idx] || {};
+    // v2.2.11: PDF 소비기한 우선 사용 - 디버그 로그 추가
+    console.log(`[pending] ${item.barcode}: PDF expiryDate = ${item.expiryDate}`);
     return {
       product_code: item.matchedProduct?.item_code,
       product_name: item.matchedProduct?.item_name || item.originalName,
       quantity: item.quantity,
-      expiryDate: item.expiryDate,
+      expiryDate: item.expiryDate,  // PDF에서 추출한 소비기한
+      expiry_date: item.expiryDate, // v2.2.11: expiry_date로도 저장 (호환성)
       channel: channel,
       barcode: item.barcode,
       hasBOM: item.hasBOM || validation.has_bom || false,

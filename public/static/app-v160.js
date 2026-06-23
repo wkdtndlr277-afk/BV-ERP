@@ -10571,9 +10571,18 @@ function downloadDailyReport() {
 }
 
 // 일별 수불부 출력 (LOT 기반)
+// v3.5.4: 원료(R, RM으로 시작하는 품목)만 출력
 function printDailyReport() {
-  const data = window.dailyReportData || [];
+  const rawData = window.dailyReportData || [];
   const date = window.dailyReportDate || formatDate(new Date());
+  
+  // v3.5.4: 원료만 필터링 (R 또는 RM으로 시작하는 item_code)
+  const isRawMaterial = (itemCode) => {
+    if (!itemCode) return false;
+    const code = itemCode.toUpperCase();
+    return code.startsWith('R');  // R로 시작 (R, RM 모두 포함)
+  };
+  const data = rawData.filter(item => isRawMaterial(item.item_code));
   
   const columns = [
     { key: 'lot_number', label: 'LOT번호' },

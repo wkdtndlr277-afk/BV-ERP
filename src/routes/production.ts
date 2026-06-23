@@ -1954,15 +1954,16 @@ productionRoutes.post('/batch', async (c) => {
       const placeholders = batch.map(() => '?').join(',');
       
       // FEFO 방식: 소비기한 빠른 순서로 LOT 조회
+      // v3.5.5: remain_qty 조건 제거 - 재고 0이어도 LOT 기록 필요 (추적성)
+      // GROUP BY 대신 ROW_NUMBER로 품목별 첫 번째 LOT 선택
       const lotResults = await c.env.DB.prepare(`
-        SELECT item_code, lot_number
-        FROM inbound 
-        WHERE item_code IN (${placeholders}) 
-          AND remain_qty > 0 
-          AND expiry_date >= ?
-        GROUP BY item_code
-        ORDER BY expiry_date ASC, inbound_date ASC
-      `).bind(...batch, productionDate).all<{item_code: string; lot_number: string}>();
+        SELECT item_code, lot_number FROM (
+          SELECT item_code, lot_number,
+                 ROW_NUMBER() OVER (PARTITION BY item_code ORDER BY expiry_date ASC, inbound_date ASC) as rn
+          FROM inbound 
+          WHERE item_code IN (${placeholders})
+        ) WHERE rn = 1
+      `).bind(...batch).all<{item_code: string; lot_number: string}>();
       
       for (const row of lotResults.results || []) {
         if (!materialLotMap.has(row.item_code)) {
@@ -1981,15 +1982,15 @@ productionRoutes.post('/batch', async (c) => {
         
         if (altCodes.length > 0) {
           const altPlaceholders = altCodes.map(() => '?').join(',');
+          // v3.5.5: remain_qty 조건 제거, ROW_NUMBER로 변경
           const altResults = await c.env.DB.prepare(`
-            SELECT item_code, lot_number
-            FROM inbound 
-            WHERE item_code IN (${altPlaceholders}) 
-              AND remain_qty > 0 
-              AND expiry_date >= ?
-            GROUP BY item_code
-            ORDER BY expiry_date ASC
-          `).bind(...altCodes, productionDate).all<{item_code: string; lot_number: string}>();
+            SELECT item_code, lot_number FROM (
+              SELECT item_code, lot_number,
+                     ROW_NUMBER() OVER (PARTITION BY item_code ORDER BY expiry_date ASC, inbound_date ASC) as rn
+              FROM inbound 
+              WHERE item_code IN (${altPlaceholders})
+            ) WHERE rn = 1
+          `).bind(...altCodes).all<{item_code: string; lot_number: string}>();
           
           for (const row of altResults.results || []) {
             // 원래 코드로 매핑

@@ -468,6 +468,11 @@ export async function getDailyStockReport(
     ? `AND t.item_code NOT IN (${excludeCodes.map(() => '?').join(',')})` 
     : '';
   
+  // ★★★ v3.5.5: 원료만 필터링 - R*, RM* 코드 패턴만 포함 ★★★
+  // SF*(반제품), SM*(부자재), RT*(기타), PD*(제품), PR*(제품) 제외
+  const rawMaterialFilter = `AND (t.item_code LIKE 'R%' OR t.item_code LIKE 'RM%') 
+                             AND t.item_code NOT LIKE 'RT%'`;
+  
   // transactions 테이블 기반 수불부 쿼리 (CTE 없이)
   const query = `
     SELECT 
@@ -482,7 +487,7 @@ export async function getDailyStockReport(
       GROUP_CONCAT(DISTINCT CASE WHEN t.trans_date = ? AND t.trans_type = '사용' THEN t.lot_number ELSE NULL END) as lot_numbers
     FROM transactions t
     LEFT JOIN master m ON t.item_code = m.item_code
-    WHERE 1=1 ${excludeClause}
+    WHERE 1=1 ${excludeClause} ${rawMaterialFilter}
     GROUP BY t.item_code
     HAVING SUM(CASE WHEN t.trans_date < ? THEN t.quantity ELSE 0 END) != 0 
         OR SUM(CASE WHEN t.trans_date = ? AND t.trans_type = '입고' THEN t.quantity ELSE 0 END) != 0 

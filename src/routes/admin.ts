@@ -6777,6 +6777,62 @@ admin.post('/fix/delete-null-transactions', async (c) => {
   }
 })
 
+// 9-1. 날짜+유형별 트랜잭션 삭제 API (잘못 등록된 데이터 정리용)
+admin.post('/fix/delete-transactions-by-date', async (c) => {
+  const { env } = c
+  const { bypass_auth, date, trans_type, dry_run } = await c.req.json()
+  
+  // bypass_auth 확인
+  if (bypass_auth !== 'SYSTEM_CLEANUP_2026') {
+    return c.json({ success: false, error: '관리자 인증 실패' }, 401)
+  }
+  
+  if (!date || !trans_type) {
+    return c.json({ success: false, error: 'date와 trans_type 필수' }, 400)
+  }
+  
+  try {
+    // 삭제 대상 조회
+    const toDelete = await env.DB.prepare(`
+      SELECT * FROM transactions
+      WHERE trans_date = ? AND trans_type = ?
+    `).bind(date, trans_type).all()
+    
+    const count = toDelete.results?.length || 0
+    
+    if (dry_run) {
+      return c.json({
+        success: true,
+        message: `[DRY RUN] ${date} ${trans_type} ${count}건이 삭제될 예정`,
+        data: { count, sample: (toDelete.results || []).slice(0, 5) }
+      })
+    }
+    
+    // 백업 후 삭제
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES (?, ?, ?)
+    `).bind(
+      '날짜별_트랜잭션_삭제',
+      'transactions',
+      `${date} ${trans_type} ${count}건 삭제. 백업: ${JSON.stringify(toDelete.results).substring(0, 10000)}`
+    ).run()
+    
+    await env.DB.prepare(`
+      DELETE FROM transactions
+      WHERE trans_date = ? AND trans_type = ?
+    `).bind(date, trans_type).run()
+    
+    return c.json({
+      success: true,
+      message: `${date} ${trans_type} ${count}건 삭제 완료 (admin_logs에 백업)`,
+      data: { deleted_count: count }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 // 10. 고아 품목 상세 분석 및 master 등록 API
 admin.get('/diagnose/orphan-items-detail', async (c) => {
   const { env } = c

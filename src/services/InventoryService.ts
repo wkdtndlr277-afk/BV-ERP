@@ -524,11 +524,11 @@ export async function getDailyStockReport(
   // ★★★ LOT가 누락된 품목들의 FEFO 기반 LOT 조회 (기존 데이터 수정 없이 조회만) ★★★
   const fefoLotMap: Record<string, string> = {};
   if (itemsNeedingLot.length > 0) {
-    // 해당 날짜 기준으로 잔량이 있는 LOT를 FEFO 순서로 조회
+    // 해당 날짜 기준으로 잔량이 있는 LOT를 FEFO 순서로 조회 (중복 제거)
     const fefoQuery = `
       SELECT 
         i.item_code,
-        GROUP_CONCAT(i.lot_number ORDER BY i.expiry_date ASC, i.inbound_date ASC) as fefo_lots
+        GROUP_CONCAT(DISTINCT i.lot_number) as fefo_lots
       FROM inbound i
       WHERE i.item_code IN (${itemsNeedingLot.map(() => '?').join(',')})
         AND i.quality_status = '합격'

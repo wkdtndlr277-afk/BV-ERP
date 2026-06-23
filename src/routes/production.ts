@@ -212,8 +212,8 @@ productionRoutes.get('/closing-status', async (c) => {
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
     
-    // ★ R169-R172 구형 코드 제외 (영구 필터)
-    const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172'];
+    // ★ 구형 코드 및 없는 원료 제외 (영구 필터)
+    const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172', 'RM266'];
     const excludeClause = EXCLUDE_CODES.map(() => '?').join(',');
     
     // 1. 당일 생산 현황

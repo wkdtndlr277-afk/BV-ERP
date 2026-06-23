@@ -461,7 +461,7 @@ export async function recordUsage(
 export async function getDailyStockReport(
   db: D1Database,
   date: string,
-  excludeCodes: string[] = ['R169', 'R170', 'R171', 'R172']
+  excludeCodes: string[] = ['R169', 'R170', 'R171', 'R172', 'RM266']
 ): Promise<DailyStockReport> {
   
   const excludeClause = excludeCodes.length > 0 

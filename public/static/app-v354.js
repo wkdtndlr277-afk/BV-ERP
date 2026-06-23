@@ -18500,7 +18500,7 @@ function generateClosingPrintHtml(cache, date) {
     .inventory-summary-bar span {
       margin-right: 20px;
     }
-    .inventory-table th { background: #e0f2f1; }
+    .inventory-table th { background: #e8e8e8; }
     .inventory-table .lot-info { font-size: 8px; color: #666; }
     
     /* ===== 비고란 ===== */
@@ -18534,20 +18534,21 @@ function generateClosingPrintHtml(cache, date) {
       color: #666;
     }
     
-    /* ===== 유틸리티 클래스 ===== */
-    .color-blue { color: #1976d2; }
-    .color-red { color: #d32f2f; }
-    .color-green { color: #388e3c; }
+    /* ===== 유틸리티 클래스 (v3.5.8: 흑백 인쇄용) ===== */
+    .color-blue { color: #333; }
+    .color-red { color: #333; }
+    .color-green { color: #333; }
     .font-small { font-size: 8px; }
     .channel-badge {
       display: inline-block;
       padding: 1px 5px;
       border-radius: 3px;
       font-size: 9px;
+      border: 1px solid #999;
     }
-    .ch-coupang { background: #fff3e0; color: #e65100; }
-    .ch-kurly { background: #f3e5f5; color: #7b1fa2; }
-    .ch-default { background: #e3f2fd; color: #1565c0; }
+    .ch-coupang { background: #f5f5f5; color: #333; }
+    .ch-kurly { background: #f5f5f5; color: #333; }
+    .ch-default { background: #f5f5f5; color: #333; }
     .product-detail { font-size: 9px; color: #666; margin-top: 2px; }
   </style>
 </head>

@@ -1218,8 +1218,9 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
     // master와 supplies 테이블 UNION ALL로 모두 조회
     
     // 카테고리 필터 조건 생성
-    // ★★★ v3.5.4: 기본값 변경 - 일별 수불부는 원료(master)만 표시, 제품 제외 ★★★
-    let masterCategoryFilter = '';
+    // ★★★ v3.5.5: 기본값 변경 - 일별 수불부는 원료(master.category='원료')만 표시 ★★★
+    // master 테이블에 category='제품'인 데이터가 있을 수 있으므로 명시적으로 '원료'만 필터링
+    let masterCategoryFilter = " AND m.category = '원료'"; // 기본: master에서 원료만
     let suppliesCategoryFilter = ' AND 1=0'; // 기본: 부자재 제외
     let productCategoryFilter = ' AND 1=0'; // 기본: 제품 제외
     const categoryParams: any[] = [];
@@ -1239,14 +1240,19 @@ transactionRoutes.get('/inventory-ledger', async (c) => {
       masterCategoryFilter = ' AND 1=0'; // master 제외
       suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
       productCategoryFilter = ''; // production_items 전체
-    } else if (category && category !== '원료') {
+    } else if (category === '원료') {
+      // 원료만 조회 - master에서 category='원료'만
+      masterCategoryFilter = " AND m.category = '원료'";
+      suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
+      productCategoryFilter = ' AND 1=0'; // production_items 제외
+    } else if (category) {
       // 특정 카테고리 (원료 세부 분류) - master만 사용
       masterCategoryFilter = ' AND m.category = ?';
       suppliesCategoryFilter = ' AND 1=0'; // supplies 제외
       productCategoryFilter = ' AND 1=0'; // production_items 제외
       categoryParams.push(category);
     }
-    // else: 기본값 - 원료(master) 전체만 표시
+    // else: 기본값 - 원료(master.category='원료')만 표시
     
     // 검색 필터
     let searchFilter = '';

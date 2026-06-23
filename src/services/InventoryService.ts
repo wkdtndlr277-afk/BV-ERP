@@ -510,40 +510,69 @@ export async function getDailyStockReport(
     lot_numbers: string | null;
   }>();
   
-  // ★★★ v3.5.5: LOT null인 품목 목록 수집 (FEFO 기반 LOT 조회용) ★★★
-  const itemsNeedingLot: string[] = [];
+  // ★★★ v3.5.7: LOT null인 품목의 사용량 수집 (FEFO 기반 LOT 매칭용) ★★★
+  const itemsNeedingLot: { item_code: string; used_qty: number }[] = [];
   for (const row of result.results || []) {
     const usedQty = Number(row.used_qty) || 0;
     const lotNumbers = row.lot_numbers?.trim();
     // 사용량이 있는데 LOT가 없는 경우
     if (usedQty > 0 && (!lotNumbers || lotNumbers === '' || lotNumbers === 'null')) {
-      itemsNeedingLot.push(row.item_code);
+      itemsNeedingLot.push({ item_code: row.item_code, used_qty: usedQty });
     }
   }
   
-  // ★★★ LOT가 누락된 품목들의 FEFO 기반 LOT 조회 (기존 데이터 수정 없이 조회만) ★★★
+  // ★★★ v3.5.7: FEFO 기반 LOT 매칭 - 사용량에 맞게 필요한 LOT만 순차적으로 선택 ★★★
   const fefoLotMap: Record<string, string> = {};
   if (itemsNeedingLot.length > 0) {
-    // 해당 날짜 기준으로 잔량이 있는 LOT를 FEFO 순서로 조회 (중복 제거)
+    // 각 품목별로 FEFO 순서(유통기한 빠른 순)로 LOT 조회
     const fefoQuery = `
       SELECT 
         i.item_code,
-        GROUP_CONCAT(DISTINCT i.lot_number) as fefo_lots
+        i.lot_number,
+        i.remain_qty,
+        i.expiry_date
       FROM inbound i
       WHERE i.item_code IN (${itemsNeedingLot.map(() => '?').join(',')})
         AND i.quality_status = '합격'
         AND i.inbound_date <= ?
         AND i.remain_qty > 0
-      GROUP BY i.item_code
+      ORDER BY i.item_code, i.expiry_date ASC, i.inbound_date ASC
     `;
-    const fefoResult = await db.prepare(fefoQuery).bind(...itemsNeedingLot, date).all<{
+    const fefoResult = await db.prepare(fefoQuery).bind(
+      ...itemsNeedingLot.map(i => i.item_code), 
+      date
+    ).all<{
       item_code: string;
-      fefo_lots: string;
+      lot_number: string;
+      remain_qty: number;
+      expiry_date: string;
     }>();
     
+    // 품목별로 그룹화
+    const lotsByItem: Record<string, Array<{ lot: string; qty: number }>> = {};
     for (const row of fefoResult.results || []) {
-      if (row.fefo_lots) {
-        fefoLotMap[row.item_code] = row.fefo_lots;
+      if (!lotsByItem[row.item_code]) {
+        lotsByItem[row.item_code] = [];
+      }
+      lotsByItem[row.item_code].push({ lot: row.lot_number, qty: row.remain_qty });
+    }
+    
+    // 사용량에 맞게 필요한 LOT만 선택 (FEFO 순서)
+    for (const item of itemsNeedingLot) {
+      const lots = lotsByItem[item.item_code] || [];
+      let remainingUsage = item.used_qty;
+      const usedLots: string[] = [];
+      
+      for (const lot of lots) {
+        if (remainingUsage <= 0) break;
+        usedLots.push(lot.lot);
+        remainingUsage -= lot.qty;
+      }
+      
+      // 중복 제거 후 저장
+      const uniqueLots = [...new Set(usedLots)];
+      if (uniqueLots.length > 0) {
+        fefoLotMap[item.item_code] = uniqueLots.join(',');
       }
     }
   }

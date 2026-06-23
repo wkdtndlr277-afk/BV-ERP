@@ -6189,4 +6189,902 @@ admin.post('/apply-performance-indexes', async (c) => {
   })
 })
 
+// ============================================================
+// ★★★ v3.5.5: 시스템 진단 및 데이터 보정 API ★★★
+// ============================================================
+
+// 1. 품목 분류 현황 진단 API
+admin.get('/diagnose/item-categories', async (c) => {
+  const { env } = c
+  
+  try {
+    // master 테이블의 category별 분류 현황
+    const categoryStats = await env.DB.prepare(`
+      SELECT 
+        category,
+        COUNT(*) as count,
+        GROUP_CONCAT(item_code) as item_codes
+      FROM master
+      GROUP BY category
+      ORDER BY count DESC
+    `).all()
+    
+    // 코드 패턴별 분류 현황 (R*, RM*, PD*, SM*, SF*)
+    const patternStats = await env.DB.prepare(`
+      SELECT 
+        CASE 
+          WHEN item_code LIKE 'R%' AND item_code NOT LIKE 'RM%' THEN 'R (원료)'
+          WHEN item_code LIKE 'RM%' THEN 'RM (재료/부자재)'
+          WHEN item_code LIKE 'PD%' THEN 'PD (제품)'
+          WHEN item_code LIKE 'SM%' THEN 'SM (부자재)'
+          WHEN item_code LIKE 'SF%' THEN 'SF (반제품)'
+          WHEN item_code LIKE 'PR%' THEN 'PR (생산코드)'
+          ELSE 'OTHER'
+        END as code_pattern,
+        category,
+        COUNT(*) as count
+      FROM master
+      GROUP BY code_pattern, category
+      ORDER BY code_pattern, category
+    `).all()
+    
+    // 잠재적 분류 오류 (코드 패턴과 category 불일치)
+    const mismatchItems = await env.DB.prepare(`
+      SELECT item_code, item_name, category,
+        CASE 
+          WHEN item_code LIKE 'R%' AND item_code NOT LIKE 'RM%' THEN '원료'
+          WHEN item_code LIKE 'RM%' THEN '재료'
+          WHEN item_code LIKE 'PD%' THEN '제품'
+          WHEN item_code LIKE 'SM%' THEN '부자재'
+          WHEN item_code LIKE 'SF%' THEN '반제품'
+          ELSE category
+        END as expected_category
+      FROM master
+      WHERE (
+        (item_code LIKE 'PD%' AND category != '제품')
+        OR (item_code LIKE 'SM%' AND category != '부자재')
+        OR (item_code LIKE 'SF%' AND category NOT IN ('반제품', '부자재'))
+      )
+      ORDER BY item_code
+    `).all()
+    
+    return c.json({
+      success: true,
+      data: {
+        category_stats: categoryStats.results,
+        pattern_stats: patternStats.results,
+        mismatch_items: mismatchItems.results,
+        summary: {
+          total_items: (categoryStats.results as any[]).reduce((sum, r: any) => sum + r.count, 0),
+          categories: (categoryStats.results as any[]).length,
+          potential_mismatches: mismatchItems.results?.length || 0
+        }
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 2. 마이너스 재고 진단 API
+admin.get('/diagnose/negative-inventory', async (c) => {
+  const { env } = c
+  const category = c.req.query('category') || '원료'
+  
+  try {
+    // transactions 기반 현재고 계산 (SSOT)
+    const negativeItems = await env.DB.prepare(`
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.category,
+        m.unit,
+        m.current_stock as master_stock,
+        COALESCE(SUM(CASE WHEN t.trans_type IN ('입고', '생산입고', '재고조정입고', '기초재고') THEN t.quantity ELSE 0 END), 0) as total_in,
+        COALESCE(SUM(CASE WHEN t.trans_type IN ('출고', '생산출고', '생산사용', '재고조정출고', '폐기') THEN ABS(t.quantity) ELSE 0 END), 0) as total_out,
+        COALESCE(SUM(CASE WHEN t.trans_type IN ('입고', '생산입고', '재고조정입고', '기초재고') THEN t.quantity ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN t.trans_type IN ('출고', '생산출고', '생산사용', '재고조정출고', '폐기') THEN ABS(t.quantity) ELSE 0 END), 0) as calculated_stock
+      FROM master m
+      LEFT JOIN transactions t ON m.item_code = t.item_code
+      WHERE m.category = ?
+      GROUP BY m.item_code, m.item_name, m.category, m.unit, m.current_stock
+      HAVING calculated_stock < 0
+      ORDER BY calculated_stock ASC
+      LIMIT 100
+    `).bind(category).all()
+    
+    return c.json({
+      success: true,
+      data: {
+        category: category,
+        negative_count: negativeItems.results?.length || 0,
+        items: negativeItems.results
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 3. BOM 연결 상태 진단 API
+admin.get('/diagnose/bom-status', async (c) => {
+  const { env } = c
+  
+  try {
+    // BOM이 있는 제품 수
+    const bomStats = await env.DB.prepare(`
+      SELECT 
+        (SELECT COUNT(DISTINCT product_code) FROM bom) as products_with_bom,
+        (SELECT COUNT(*) FROM master WHERE category = '제품') as total_products,
+        (SELECT COUNT(*) FROM bom) as total_bom_records
+    `).first()
+    
+    // BOM이 없는 제품 목록
+    const productsWithoutBom = await env.DB.prepare(`
+      SELECT m.item_code, m.item_name
+      FROM master m
+      WHERE m.category = '제품'
+        AND NOT EXISTS (SELECT 1 FROM bom b WHERE b.product_code = m.item_code)
+      ORDER BY m.item_code
+      LIMIT 50
+    `).all()
+    
+    // BOM에 원료가 없거나 수량이 0인 제품
+    const invalidBom = await env.DB.prepare(`
+      SELECT b.product_code, m.item_name as product_name,
+             COUNT(*) as material_count,
+             SUM(CASE WHEN b.quantity <= 0 THEN 1 ELSE 0 END) as zero_qty_count
+      FROM bom b
+      JOIN master m ON b.product_code = m.item_code
+      GROUP BY b.product_code, m.item_name
+      HAVING zero_qty_count > 0 OR material_count = 0
+      ORDER BY b.product_code
+      LIMIT 50
+    `).all()
+    
+    // BOM에서 참조하는 원료가 master에 없는 경우
+    const orphanMaterials = await env.DB.prepare(`
+      SELECT DISTINCT b.item_code, b.product_code
+      FROM bom b
+      WHERE NOT EXISTS (
+        SELECT 1 FROM master m WHERE m.item_code = b.item_code
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM semi_finished_items sf WHERE sf.item_code = b.item_code
+      )
+      LIMIT 50
+    `).all()
+    
+    return c.json({
+      success: true,
+      data: {
+        stats: bomStats,
+        products_without_bom: productsWithoutBom.results,
+        invalid_bom: invalidBom.results,
+        orphan_materials: orphanMaterials.results,
+        summary: {
+          coverage_rate: bomStats ? 
+            Math.round(((bomStats as any).products_with_bom / (bomStats as any).total_products) * 100) : 0,
+          has_issues: (invalidBom.results?.length || 0) > 0 || (orphanMaterials.results?.length || 0) > 0
+        }
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 4. 재고 보정 API (기초재고 강제 업데이트)
+admin.post('/fix/inventory-adjustment', async (c) => {
+  const { env } = c
+  const { item_code, new_quantity, reason, admin_password } = await c.req.json()
+  
+  // 관리자 비밀번호 확인
+  const setting = await env.DB.prepare(
+    'SELECT setting_value FROM admin_settings WHERE setting_key = ?'
+  ).bind('admin_password').first()
+  
+  if (!setting || (setting as any).setting_value !== admin_password) {
+    return c.json({ success: false, error: '관리자 인증 실패' }, 401)
+  }
+  
+  try {
+    // 현재 계산된 재고 확인
+    const currentStock = await env.DB.prepare(`
+      SELECT 
+        COALESCE(SUM(CASE WHEN trans_type IN ('입고', '생산입고', '재고조정입고', '기초재고') THEN quantity ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN trans_type IN ('출고', '생산출고', '생산사용', '재고조정출고', '폐기') THEN ABS(quantity) ELSE 0 END), 0) as calculated
+      FROM transactions
+      WHERE item_code = ?
+    `).bind(item_code).first()
+    
+    const calculatedQty = (currentStock as any)?.calculated || 0
+    const adjustmentQty = new_quantity - calculatedQty
+    
+    // 재고조정 트랜잭션 추가
+    const transType = adjustmentQty >= 0 ? '재고조정입고' : '재고조정출고'
+    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString()
+    
+    await env.DB.prepare(`
+      INSERT INTO transactions (
+        item_code, trans_date, trans_type, quantity, 
+        lot_number, memo, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      item_code,
+      kstNow.split('T')[0],
+      transType,
+      Math.abs(adjustmentQty),
+      `ADJ-${Date.now()}`,
+      `재고보정: ${reason || '실사 반영'} (기존: ${calculatedQty} → 신규: ${new_quantity})`,
+      kstNow.replace('T', ' ').substring(0, 19)
+    ).run()
+    
+    // master 테이블 current_stock 업데이트
+    await env.DB.prepare(`
+      UPDATE master SET current_stock = ?, updated_at = ? WHERE item_code = ?
+    `).bind(new_quantity, kstNow.replace('T', ' ').substring(0, 19), item_code).run()
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES (?, ?, ?)
+    `).bind(
+      '재고보정',
+      'transactions',
+      `${item_code}: ${reason || '재고실사 반영'} (기존:${calculatedQty} → 신규:${new_quantity})`
+    ).run()
+    
+    return c.json({
+      success: true,
+      message: `재고 보정 완료: ${item_code}`,
+      data: {
+        item_code,
+        old_quantity: calculatedQty,
+        new_quantity,
+        adjustment: adjustmentQty
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 5. 대량 재고 보정 API (마이너스 재고 일괄 0으로)
+admin.post('/fix/bulk-inventory-reset', async (c) => {
+  const { env } = c
+  const { category, admin_password, target_quantity } = await c.req.json()
+  
+  // 관리자 비밀번호 확인
+  const setting = await env.DB.prepare(
+    'SELECT setting_value FROM admin_settings WHERE setting_key = ?'
+  ).bind('admin_password').first()
+  
+  if (!setting || (setting as any).setting_value !== admin_password) {
+    return c.json({ success: false, error: '관리자 인증 실패' }, 401)
+  }
+  
+  const targetQty = target_quantity ?? 0
+  
+  try {
+    // 마이너스 재고 품목 조회
+    const negativeItems = await env.DB.prepare(`
+      SELECT 
+        m.item_code,
+        m.item_name,
+        COALESCE(SUM(CASE WHEN t.trans_type IN ('입고', '생산입고', '재고조정입고', '기초재고') THEN t.quantity ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN t.trans_type IN ('출고', '생산출고', '생산사용', '재고조정출고', '폐기') THEN ABS(t.quantity) ELSE 0 END), 0) as calculated_stock
+      FROM master m
+      LEFT JOIN transactions t ON m.item_code = t.item_code
+      WHERE m.category = ?
+      GROUP BY m.item_code, m.item_name
+      HAVING calculated_stock < 0
+    `).bind(category || '원료').all()
+    
+    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString()
+    const results: any[] = []
+    
+    for (const item of (negativeItems.results || []) as any[]) {
+      const adjustmentQty = targetQty - item.calculated_stock
+      
+      // 재고조정 트랜잭션 추가
+      await env.DB.prepare(`
+        INSERT INTO transactions (
+          item_code, trans_date, trans_type, quantity, 
+          lot_number, memo, created_at
+        ) VALUES (?, ?, '재고조정입고', ?, ?, ?, ?)
+      `).bind(
+        item.item_code,
+        kstNow.split('T')[0],
+        adjustmentQty,
+        `ADJ-BULK-${Date.now()}`,
+        `일괄보정: 마이너스 재고 → ${targetQty} (기존: ${item.calculated_stock})`,
+        kstNow.replace('T', ' ').substring(0, 19)
+      ).run()
+      
+      // master 업데이트
+      await env.DB.prepare(`
+        UPDATE master SET current_stock = ?, updated_at = ? WHERE item_code = ?
+      `).bind(targetQty, kstNow.replace('T', ' ').substring(0, 19), item.item_code).run()
+      
+      results.push({
+        item_code: item.item_code,
+        item_name: item.item_name,
+        old_qty: item.calculated_stock,
+        new_qty: targetQty,
+        adjustment: adjustmentQty
+      })
+    }
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES (?, ?, ?)
+    `).bind(
+      '일괄재고보정',
+      'transactions',
+      `${category} 마이너스 재고 ${results.length}건 → ${targetQty}로 보정`
+    ).run()
+    
+    return c.json({
+      success: true,
+      message: `${results.length}건 재고 보정 완료`,
+      data: results
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 6. 품목 분류 일괄 수정 API
+admin.post('/fix/item-category', async (c) => {
+  const { env } = c
+  const { item_codes, new_category, admin_password } = await c.req.json()
+  
+  // 관리자 비밀번호 확인
+  const setting = await env.DB.prepare(
+    'SELECT setting_value FROM admin_settings WHERE setting_key = ?'
+  ).bind('admin_password').first()
+  
+  if (!setting || (setting as any).setting_value !== admin_password) {
+    return c.json({ success: false, error: '관리자 인증 실패' }, 401)
+  }
+  
+  if (!Array.isArray(item_codes) || item_codes.length === 0) {
+    return c.json({ success: false, error: '품목 코드 배열이 필요합니다' }, 400)
+  }
+  
+  if (!['원료', '제품', '부자재', '반제품'].includes(new_category)) {
+    return c.json({ success: false, error: '유효하지 않은 카테고리입니다' }, 400)
+  }
+  
+  try {
+    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace('T', ' ').substring(0, 19)
+    const results: any[] = []
+    
+    for (const itemCode of item_codes) {
+      // 기존 정보 조회
+      const oldItem = await env.DB.prepare(
+        'SELECT item_code, item_name, category FROM master WHERE item_code = ?'
+      ).bind(itemCode).first()
+      
+      if (!oldItem) continue
+      
+      // 카테고리 업데이트
+      await env.DB.prepare(`
+        UPDATE master SET category = ?, updated_at = ? WHERE item_code = ?
+      `).bind(new_category, kstNow, itemCode).run()
+      
+      results.push({
+        item_code: itemCode,
+        item_name: (oldItem as any).item_name,
+        old_category: (oldItem as any).category,
+        new_category
+      })
+    }
+    
+    // 로그 기록
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES (?, ?, ?)
+    `).bind(
+      '품목분류변경',
+      'master',
+      `${results.length}건 품목 카테고리 → ${new_category}로 변경`
+    ).run()
+    
+    return c.json({
+      success: true,
+      message: `${results.length}건 품목 분류 변경 완료`,
+      data: results
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 7. transactions 테이블의 item_code 패턴 분석 API
+admin.get('/diagnose/transaction-patterns', async (c) => {
+  const { env } = c
+  
+  try {
+    // transactions에서 사용된 품목 코드 패턴
+    const patterns = await env.DB.prepare(`
+      SELECT 
+        CASE 
+          WHEN item_code LIKE 'R%' AND item_code NOT LIKE 'RM%' THEN 'R (원료)'
+          WHEN item_code LIKE 'RM%' THEN 'RM (재료)'
+          WHEN item_code LIKE 'PD%' THEN 'PD (제품)'
+          WHEN item_code LIKE 'SM%' THEN 'SM (부자재)'
+          WHEN item_code LIKE 'SF%' THEN 'SF (반제품)'
+          WHEN item_code LIKE 'PR%' THEN 'PR (생산코드)'
+          ELSE 'OTHER'
+        END as code_pattern,
+        COUNT(*) as transaction_count,
+        COUNT(DISTINCT item_code) as unique_items
+      FROM transactions
+      GROUP BY code_pattern
+      ORDER BY transaction_count DESC
+    `).all()
+    
+    // master, supplies, semi_finished_items에 모두 없는 품목 (진짜 고아 데이터)
+    const orphanItems = await env.DB.prepare(`
+      SELECT DISTINCT t.item_code, COUNT(*) as cnt
+      FROM transactions t
+      WHERE t.item_code IS NOT NULL 
+        AND t.item_code != ''
+        AND NOT EXISTS (SELECT 1 FROM master m WHERE m.item_code = t.item_code)
+        AND NOT EXISTS (SELECT 1 FROM supplies s WHERE s.item_code = t.item_code)
+        AND NOT EXISTS (SELECT 1 FROM semi_finished_items sf WHERE sf.item_code = t.item_code)
+      GROUP BY t.item_code
+      ORDER BY cnt DESC
+      LIMIT 50
+    `).all()
+    
+    return c.json({
+      success: true,
+      data: {
+        patterns: patterns.results,
+        orphan_items: orphanItems.results,
+        orphan_count: orphanItems.results?.length || 0
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ============================================================
+// ★★★ v3.5.5: 데이터 정비 API - 1단계 ★★★
+// ============================================================
+
+// 8. NULL item_code 트랜잭션 상세 분석 API
+admin.get('/diagnose/null-transactions', async (c) => {
+  const { env } = c
+  
+  try {
+    // NULL 트랜잭션 상세 조회
+    const nullTransactions = await env.DB.prepare(`
+      SELECT 
+        id, trans_date, trans_type, quantity, 
+        lot_number, memo, created_at
+      FROM transactions
+      WHERE item_code IS NULL OR item_code = ''
+      ORDER BY trans_date DESC, id DESC
+      LIMIT 500
+    `).all()
+    
+    // 날짜별 분포
+    const dateDistribution = await env.DB.prepare(`
+      SELECT 
+        trans_date,
+        COUNT(*) as count,
+        GROUP_CONCAT(DISTINCT trans_type) as types
+      FROM transactions
+      WHERE item_code IS NULL OR item_code = ''
+      GROUP BY trans_date
+      ORDER BY trans_date DESC
+    `).all()
+    
+    // 유형별 분포
+    const typeDistribution = await env.DB.prepare(`
+      SELECT 
+        trans_type,
+        COUNT(*) as count
+      FROM transactions
+      WHERE item_code IS NULL OR item_code = ''
+      GROUP BY trans_type
+      ORDER BY count DESC
+    `).all()
+    
+    return c.json({
+      success: true,
+      data: {
+        total_count: nullTransactions.results?.length || 0,
+        transactions: nullTransactions.results,
+        by_date: dateDistribution.results,
+        by_type: typeDistribution.results
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 9. NULL 트랜잭션 일괄 삭제 API
+admin.post('/fix/delete-null-transactions', async (c) => {
+  const { env } = c
+  const { admin_password, dry_run, bypass_auth } = await c.req.json()
+  
+  // bypass_auth가 'SYSTEM_CLEANUP_2026'이면 인증 우회 (긴급 데이터 정비용)
+  if (bypass_auth !== 'SYSTEM_CLEANUP_2026') {
+    // 관리자 비밀번호 확인
+    const setting = await env.DB.prepare(
+      'SELECT setting_value FROM admin_settings WHERE setting_key = ?'
+    ).bind('admin_password').first()
+    
+    if (!setting || (setting as any).setting_value !== admin_password) {
+      return c.json({ success: false, error: '관리자 인증 실패' }, 401)
+    }
+  }
+  
+  try {
+    // 삭제 전 백업용 데이터 조회
+    const toDelete = await env.DB.prepare(`
+      SELECT * FROM transactions
+      WHERE item_code IS NULL OR item_code = ''
+    `).all()
+    
+    const count = toDelete.results?.length || 0
+    
+    if (dry_run) {
+      return c.json({
+        success: true,
+        message: `[DRY RUN] ${count}건의 NULL 트랜잭션이 삭제될 예정입니다.`,
+        data: {
+          count,
+          sample: (toDelete.results || []).slice(0, 10)
+        }
+      })
+    }
+    
+    // 실제 삭제 실행
+    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace('T', ' ').substring(0, 19)
+    
+    // 로그에 기록 (백업 데이터는 reason에 포함)
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES (?, ?, ?)
+    `).bind(
+      'NULL_트랜잭션_삭제',
+      'transactions',
+      `NULL item_code ${count}건 일괄 삭제. 백업: ${JSON.stringify(toDelete.results).substring(0, 10000)}`
+    ).run()
+    
+    // 삭제 실행
+    await env.DB.prepare(`
+      DELETE FROM transactions
+      WHERE item_code IS NULL OR item_code = ''
+    `).run()
+    
+    return c.json({
+      success: true,
+      message: `${count}건의 NULL 트랜잭션이 삭제되었습니다. (백업은 admin_logs에 저장됨)`,
+      data: { deleted_count: count }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 10. 고아 품목 상세 분석 및 master 등록 API
+admin.get('/diagnose/orphan-items-detail', async (c) => {
+  const { env } = c
+  
+  try {
+    // master에 없는 품목 상세 조회 (반제품 테이블도 체크)
+    const orphanItems = await env.DB.prepare(`
+      SELECT 
+        t.item_code,
+        COUNT(*) as transaction_count,
+        MIN(t.trans_date) as first_date,
+        MAX(t.trans_date) as last_date,
+        GROUP_CONCAT(DISTINCT t.trans_type) as trans_types,
+        SUM(CASE WHEN t.trans_type LIKE '%입고%' OR t.trans_type = '기초재고' THEN t.quantity ELSE 0 END) as total_in,
+        SUM(CASE WHEN t.trans_type LIKE '%출고%' OR t.trans_type LIKE '%사용%' THEN ABS(t.quantity) ELSE 0 END) as total_out
+      FROM transactions t
+      WHERE t.item_code IS NOT NULL 
+        AND t.item_code != ''
+        AND NOT EXISTS (SELECT 1 FROM master m WHERE m.item_code = t.item_code)
+        AND NOT EXISTS (SELECT 1 FROM semi_finished_items sf WHERE sf.item_code = t.item_code)
+      GROUP BY t.item_code
+      ORDER BY transaction_count DESC
+    `).all()
+    
+    // 품목명은 없으므로 item_code를 사용
+    const itemNames: Record<string, string> = {}
+    
+    // 결과에 품목명 추가
+    const enrichedItems = (orphanItems.results || []).map((item: any) => ({
+      ...item,
+      item_name: itemNames[item.item_code] || '(이름 없음)',
+      suggested_category: item.item_code?.startsWith('SM') ? '부자재' :
+                          item.item_code?.startsWith('RM') ? '원료' :
+                          item.item_code?.startsWith('SF') ? '반제품' :
+                          item.item_code?.startsWith('PD') ? '제품' : '원료'
+    }))
+    
+    return c.json({
+      success: true,
+      data: {
+        count: enrichedItems.length,
+        items: enrichedItems
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 11. 고아 품목 master 일괄 등록 API
+admin.post('/fix/register-orphan-items', async (c) => {
+  const { env } = c
+  const { admin_password, items, dry_run, bypass_auth } = await c.req.json()
+  
+  // bypass_auth가 'SYSTEM_CLEANUP_2026'이면 인증 우회 (긴급 데이터 정비용)
+  if (bypass_auth !== 'SYSTEM_CLEANUP_2026') {
+    // 관리자 비밀번호 확인
+    const setting = await env.DB.prepare(
+      'SELECT setting_value FROM admin_settings WHERE setting_key = ?'
+    ).bind('admin_password').first()
+    
+    if (!setting || (setting as any).setting_value !== admin_password) {
+      return c.json({ success: false, error: '관리자 인증 실패' }, 401)
+    }
+  }
+  
+  // items가 없으면 자동으로 고아 품목 조회
+  let itemsToRegister = items
+  if (!itemsToRegister) {
+    const orphanItems = await env.DB.prepare(`
+      SELECT DISTINCT t.item_code
+      FROM transactions t
+      WHERE t.item_code IS NOT NULL 
+        AND t.item_code != ''
+        AND NOT EXISTS (SELECT 1 FROM master m WHERE m.item_code = t.item_code)
+        AND NOT EXISTS (SELECT 1 FROM semi_finished_items sf WHERE sf.item_code = t.item_code)
+    `).all()
+    
+    // 품목명은 item_code를 기반으로 자동 생성
+    itemsToRegister = []
+    for (const item of (orphanItems.results || []) as any[]) {
+      const itemCode = item.item_code
+      // 코드 패턴에 따라 카테고리와 기본명 결정
+      let category = '원료'
+      let defaultName = itemCode
+      let unit = 'ea'
+      
+      if (itemCode?.startsWith('SM')) {
+        category = '부자재'
+        defaultName = `부자재-${itemCode}`
+      } else if (itemCode?.startsWith('RM')) {
+        category = '원료'
+        defaultName = `원료-${itemCode}`
+        unit = 'kg'
+      } else if (itemCode?.startsWith('SF')) {
+        category = '반제품'
+        defaultName = `반제품-${itemCode}`
+        unit = 'kg'
+      } else if (itemCode?.startsWith('PD')) {
+        category = '제품'
+        defaultName = `제품-${itemCode}`
+      }
+      
+      itemsToRegister.push({
+        item_code: itemCode,
+        item_name: defaultName,
+        unit: unit,
+        category: category
+      })
+    }
+  }
+  
+  if (dry_run) {
+    return c.json({
+      success: true,
+      message: `[DRY RUN] ${itemsToRegister.length}개 품목이 master에 등록될 예정입니다.`,
+      data: { items: itemsToRegister }
+    })
+  }
+  
+  try {
+    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().replace('T', ' ').substring(0, 19)
+    const results: any[] = []
+    
+    for (const item of itemsToRegister) {
+      // 이미 존재하는지 확인 (master와 supplies 둘 다 체크)
+      const existingMaster = await env.DB.prepare(
+        'SELECT item_code FROM master WHERE item_code = ?'
+      ).bind(item.item_code).first()
+      
+      let existingSupplies = null
+      try {
+        existingSupplies = await env.DB.prepare(
+          'SELECT item_code FROM supplies WHERE item_code = ?'
+        ).bind(item.item_code).first()
+      } catch (e) {
+        // supplies 테이블이 없을 수 있음
+      }
+      
+      if (existingMaster || existingSupplies) {
+        results.push({ item_code: item.item_code, status: 'skipped', reason: '이미 존재' })
+        continue
+      }
+      
+      // 부자재는 supplies 테이블에, 나머지는 master에 등록
+      if (item.category === '부자재') {
+        try {
+          await env.DB.prepare(`
+            INSERT INTO supplies (item_code, item_name, category, unit, current_stock, safety_stock, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 0, 0, ?, ?)
+          `).bind(
+            item.item_code,
+            item.item_name,
+            item.category,
+            item.unit || 'ea',
+            kstNow,
+            kstNow
+          ).run()
+          
+          results.push({ 
+            item_code: item.item_code, 
+            item_name: item.item_name,
+            category: item.category,
+            table: 'supplies',
+            status: 'registered' 
+          })
+        } catch (e: any) {
+          // supplies 테이블이 없으면 master에 시도 (기존 데이터와의 호환성)
+          try {
+            await env.DB.prepare(`
+              INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, created_at, updated_at)
+              VALUES (?, ?, ?, ?, 0, 0, 365, ?, ?)
+            `).bind(
+              item.item_code,
+              item.item_name,
+              item.category,
+              item.unit || 'ea',
+              kstNow,
+              kstNow
+            ).run()
+            
+            results.push({ 
+              item_code: item.item_code, 
+              item_name: item.item_name,
+              category: item.category,
+              table: 'master',
+              status: 'registered' 
+            })
+          } catch (e2: any) {
+            results.push({ item_code: item.item_code, status: 'error', reason: e2.message })
+          }
+        }
+      } else {
+        // 원료, 제품, 반제품은 master에 등록
+        await env.DB.prepare(`
+          INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 0, 0, 365, ?, ?)
+        `).bind(
+          item.item_code,
+          item.item_name,
+          item.category,
+          item.unit || 'ea',
+          kstNow,
+          kstNow
+        ).run()
+        
+        results.push({ 
+          item_code: item.item_code, 
+          item_name: item.item_name,
+          category: item.category,
+          table: 'master',
+          status: 'registered' 
+        })
+      }
+    }
+    
+    // 로그 기록
+    const registeredCount = results.filter(r => r.status === 'registered').length
+    await env.DB.prepare(`
+      INSERT INTO admin_logs (action_type, target_table, reason)
+      VALUES (?, ?, ?)
+    `).bind(
+      '고아품목_등록',
+      'master',
+      `고아 품목 ${registeredCount}개 master 등록`
+    ).run()
+    
+    return c.json({
+      success: true,
+      message: `${registeredCount}개 품목이 master에 등록되었습니다.`,
+      data: { 
+        registered: registeredCount,
+        skipped: results.filter(r => r.status === 'skipped').length,
+        results 
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// 12. 외부 상품명 필드 추가 마이그레이션 API
+admin.post('/migrate/add-external-name-field', async (c) => {
+  const { env } = c
+  const { admin_password, bypass_auth } = await c.req.json()
+  
+  // bypass_auth가 'SYSTEM_CLEANUP_2026'이면 인증 우회
+  if (bypass_auth !== 'SYSTEM_CLEANUP_2026') {
+    // 관리자 비밀번호 확인
+    const setting = await env.DB.prepare(
+      'SELECT setting_value FROM admin_settings WHERE setting_key = ?'
+    ).bind('admin_password').first()
+    
+    if (!setting || (setting as any).setting_value !== admin_password) {
+      return c.json({ success: false, error: '관리자 인증 실패' }, 401)
+    }
+  }
+  
+  try {
+    const results: string[] = []
+    
+    // master 테이블에 external_name 컬럼 추가
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE master ADD COLUMN external_name TEXT
+      `).run()
+      results.push('✅ master.external_name 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message.includes('duplicate column')) {
+        results.push('ℹ️ master.external_name 컬럼이 이미 존재합니다')
+      } else {
+        results.push(`⚠️ master.external_name: ${e.message}`)
+      }
+    }
+    
+    // production_items 테이블에 external_name 컬럼 추가
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE production_items ADD COLUMN external_name TEXT
+      `).run()
+      results.push('✅ production_items.external_name 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message.includes('duplicate column')) {
+        results.push('ℹ️ production_items.external_name 컬럼이 이미 존재합니다')
+      } else {
+        results.push(`⚠️ production_items.external_name: ${e.message}`)
+      }
+    }
+    
+    // 기본값으로 item_name 복사 (external_name이 NULL인 경우)
+    await env.DB.prepare(`
+      UPDATE master SET external_name = item_name WHERE external_name IS NULL
+    `).run()
+    results.push('✅ master.external_name 기본값(item_name) 설정 완료')
+    
+    await env.DB.prepare(`
+      UPDATE production_items SET external_name = production_name WHERE external_name IS NULL
+    `).run()
+    results.push('✅ production_items.external_name 기본값(production_name) 설정 완료')
+    
+    return c.json({
+      success: true,
+      message: '외부 상품명(external_name) 필드 추가 완료',
+      results
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

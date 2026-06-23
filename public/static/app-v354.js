@@ -18464,6 +18464,11 @@ function generateClosingPrintHtml(cache, date) {
       background: #f5f5f5;
       font-weight: bold;
     }
+    /* ★★★ v3.5.6: 합계행 - tfoot 대신 tbody 마지막 행으로 (인쇄 시 반복 방지) ★★★ */
+    .main-report-table .summary-row {
+      background: #f5f5f5;
+      font-weight: bold;
+    }
     
     /* ===== 부가 정보 테이블 ===== */
     .sub-table {
@@ -18612,14 +18617,12 @@ function generateClosingPrintHtml(cache, date) {
               '<td><span class="channel-badge ' + chClass + '">' + chKor + '</span></td>' +
             '</tr>';
           }).join('')}
-        </tbody>
-        <tfoot>
-          <tr>
-            <td colspan="4" class="text-right">총 생산건수: ${items.length}건</td>
-            <td class="text-right">${formatNumber(totalQty)}개</td>
+          <tr class="summary-row">
+            <td colspan="4" class="text-right"><strong>총 생산건수: ${items.length}건</strong></td>
+            <td class="text-right"><strong>${formatNumber(totalQty)}개</strong></td>
             <td colspan="2"></td>
           </tr>
-        </tfoot>
+        </tbody>
       </table>
       
       <div class="section-header">2. 원재료 사용 현황 <span>(총 ${filteredUsage.length}종)</span></div>
@@ -18732,16 +18735,14 @@ function generateClosingPrintHtml(cache, date) {
               '<td class="text-right color-green">' + formatNumber(currentStock, 2) + '</td>' +
             '</tr>';
           }).join('')}
-        </tbody>
-        <tfoot>
-          <tr>
+          <tr class="summary-row">
             <td colspan="2" class="text-right"><strong>합계</strong></td>
             <td class="text-right"><strong>${formatNumber(totalPrevStock, 2)}</strong></td>
             <td class="text-right color-blue"><strong>+${formatNumber(totalInbound, 2)}</strong></td>
             <td class="text-right color-red"><strong>-${formatNumber(totalUsage, 2)}</strong></td>
             <td class="text-right color-green"><strong>${formatNumber(totalCurrentStock, 2)}</strong></td>
           </tr>
-        </tfoot>
+        </tbody>
       </table>
       
       <div class="doc-footer">

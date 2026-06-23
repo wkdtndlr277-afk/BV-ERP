@@ -510,6 +510,44 @@ export async function getDailyStockReport(
     lot_numbers: string | null;
   }>();
   
+  // ★★★ v3.5.5: LOT null인 품목 목록 수집 (FEFO 기반 LOT 조회용) ★★★
+  const itemsNeedingLot: string[] = [];
+  for (const row of result.results || []) {
+    const usedQty = Number(row.used_qty) || 0;
+    const lotNumbers = row.lot_numbers?.trim();
+    // 사용량이 있는데 LOT가 없는 경우
+    if (usedQty > 0 && (!lotNumbers || lotNumbers === '' || lotNumbers === 'null')) {
+      itemsNeedingLot.push(row.item_code);
+    }
+  }
+  
+  // ★★★ LOT가 누락된 품목들의 FEFO 기반 LOT 조회 (기존 데이터 수정 없이 조회만) ★★★
+  const fefoLotMap: Record<string, string> = {};
+  if (itemsNeedingLot.length > 0) {
+    // 해당 날짜 기준으로 잔량이 있는 LOT를 FEFO 순서로 조회
+    const fefoQuery = `
+      SELECT 
+        i.item_code,
+        GROUP_CONCAT(i.lot_number ORDER BY i.expiry_date ASC, i.inbound_date ASC) as fefo_lots
+      FROM inbound i
+      WHERE i.item_code IN (${itemsNeedingLot.map(() => '?').join(',')})
+        AND i.quality_status = '합격'
+        AND i.inbound_date <= ?
+        AND i.remain_qty > 0
+      GROUP BY i.item_code
+    `;
+    const fefoResult = await db.prepare(fefoQuery).bind(...itemsNeedingLot, date).all<{
+      item_code: string;
+      fefo_lots: string;
+    }>();
+    
+    for (const row of fefoResult.results || []) {
+      if (row.fefo_lots) {
+        fefoLotMap[row.item_code] = row.fefo_lots;
+      }
+    }
+  }
+  
   // 정합성 검증 및 변환
   const items: StockBalance[] = [];
   const errors: Array<{ itemCode: string; itemName: string; expected: number; actual: number; difference: number }> = [];
@@ -526,6 +564,13 @@ export async function getDailyStockReport(
     const difference = Math.abs(expected - currentStock);
     const isValid = difference < 0.01; // 부동소수점 오차 허용
     
+    // ★★★ LOT 결정: transactions에 있으면 사용, 없으면 FEFO 기반 LOT 사용 ★★★
+    let lotNumbers = row.lot_numbers?.trim() || '';
+    if ((!lotNumbers || lotNumbers === 'null') && usedQty > 0) {
+      // FEFO 기반 LOT 매핑 (기존 데이터 변경 없이 조회 시점에만 적용)
+      lotNumbers = fefoLotMap[row.item_code] || '';
+    }
+    
     const item: StockBalance = {
       itemCode: row.item_code,
       itemName: row.item_name,
@@ -535,7 +580,7 @@ export async function getDailyStockReport(
       usedQty,
       adjustmentQty,
       currentStock,
-      lotNumbers: row.lot_numbers || '',
+      lotNumbers,
       isValid,
       difference
     };

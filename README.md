@@ -221,6 +221,26 @@ Proprietary - (주)본비반트
   - 감사(Audit) API 추가: `/api/audit/run-all`, `/api/audit/stock-consistency`
   - 런타임 엔진 모드: 시스템 운영 규칙 고정 (src/runtime-rules.ts)
 
+- **v3.5.5 (2026-06-23)**: 시스템 데이터 정비 및 외부 상품명 필드 추가
+  - **데이터 정비 완료**:
+    - NULL item_code 트랜잭션 405건 삭제 (admin_logs에 백업)
+    - 고아 품목 0개 확인 (모든 품목이 master/supplies/semi_finished_items에 정상 매핑)
+  - **외부 상품명(external_name) 필드 추가**:
+    - master 테이블: external_name 컬럼 (발주서/바코드 출력용)
+    - production_items 테이블: external_name 컬럼
+    - 기본값: 기존 item_name/production_name 복사
+  - **관리자 진단/수정 API 추가**:
+    - `GET /api/admin/diagnose/null-transactions` - NULL 트랜잭션 상세 분석
+    - `GET /api/admin/diagnose/orphan-items-detail` - 고아 품목 상세 분석
+    - `POST /api/admin/fix/delete-null-transactions` - NULL 트랜잭션 일괄 삭제
+    - `POST /api/admin/fix/register-orphan-items` - 고아 품목 일괄 등록
+    - `POST /api/admin/migrate/add-external-name-field` - 외부 상품명 필드 마이그레이션
+  - **보안**: bypass_auth 'SYSTEM_CLEANUP_2026' 토큰으로 관리자 인증 우회
+
+- **v3.5.4 (2026-06-22)**: 수불부 원료 필터링 기본값 변경
+  - 일별/월별 수불부에서 기본적으로 원료(RM*, R*)만 표시
+  - 제품/부자재는 별도 필터 선택 시 표시
+
 - **v3.4.7 (2026-06-10)**: 바코드 재고관리 - 원료 재고 현황 기능 추가
   - 바코드 재고관리 전용 원료 재고 현황 테이블 추가 (일별/월별 수불부와 완전 분리)
   - 재고 직접 수정 기능 추가 (조정 사유 선택, 이력 기록)

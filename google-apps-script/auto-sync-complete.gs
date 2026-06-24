@@ -38,8 +38,12 @@ const CONFIG = {
   AUTO: {
     FEFO_ON_PRODUCTION: true,      // 생산 시 FEFO 자동 실행
     SHIPMENT_ON_PRODUCTION: true,  // 생산 시 익일 출고 자동 생성
-    DAILY_STOCK_ON_PRODUCTION: true // 생산 시 일별수불부 자동 계산
-  }
+    DAILY_STOCK_ON_PRODUCTION: true, // 생산 시 일별수불부 자동 계산
+    VALIDATE_BEFORE_PRODUCTION: true // ★ 생산 전 검증 (v3.5.26)
+  },
+  
+  // API 서버 URL (정합성 검증용)
+  API_BASE_URL: 'https://bv-erp.pages.dev'
 };
 
 // =============== 트리거 설정 ===============
@@ -107,6 +111,16 @@ function onEditTrigger(e) {
         if (prodDate && productCode && quantity > 0) {
           Logger.log(`📦 생산실적 입력 감지: ${productCode} x ${quantity}`);
           
+          // ★ 0. 생산 전 검증 (v3.5.26)
+          if (CONFIG.AUTO.VALIDATE_BEFORE_PRODUCTION) {
+            const validationResult = validateBeforeProduction(prodDate, productCode, quantity);
+            if (!validationResult.valid) {
+              // 검증 실패 시 경고 표시
+              showValidationError(sheet, row, validationResult);
+              return; // 검증 실패 시 자동화 중단
+            }
+          }
+          
           // 1. FEFO 자동 실행
           if (CONFIG.AUTO.FEFO_ON_PRODUCTION) {
             processFEFOForProduction(prodDate, productCode, quantity, row);
@@ -127,6 +141,107 @@ function onEditTrigger(e) {
   } catch (error) {
     Logger.log('❌ onEditTrigger 오류: ' + error.message);
   }
+}
+
+// =============== FEFO 자동 실행 ===============
+
+// =============== 생산 전 검증 (v3.5.26) ===============
+
+/**
+ * 🛡️ 생산 전 검증 - BOM 존재 + 원료 재고 확인
+ */
+function validateBeforeProduction(prodDate, productCode, quantity) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const errors = [];
+  
+  // 1. BOM 존재 확인
+  const bomSheet = ss.getSheetByName(CONFIG.SHEETS.BOM);
+  if (!bomSheet) {
+    return { valid: false, errors: ['BOM마스터 시트가 없습니다'] };
+  }
+  
+  const bomData = bomSheet.getDataRange().getValues();
+  const productBOM = [];
+  
+  for (let i = 1; i < bomData.length; i++) {
+    if (bomData[i][0] === productCode) {
+      productBOM.push({
+        materialCode: bomData[i][2],
+        materialName: bomData[i][3],
+        ratioG: parseFloat(bomData[i][4]) || 0
+      });
+    }
+  }
+  
+  if (productBOM.length === 0) {
+    errors.push(`❌ ${productCode}에 BOM이 없습니다! 원료 사용량 계산 불가`);
+  }
+  
+  // 2. 원료 재고 확인
+  const inboundSheet = ss.getSheetByName(CONFIG.SHEETS.INBOUND);
+  if (!inboundSheet) {
+    return { valid: false, errors: ['원료입고 시트가 없습니다'] };
+  }
+  
+  const inboundData = inboundSheet.getDataRange().getValues();
+  const stockMap = new Map();
+  
+  for (let i = 1; i < inboundData.length; i++) {
+    const itemCode = inboundData[i][1];
+    const remainQty = parseFloat(inboundData[i][8]) || 0;
+    if (remainQty > 0) {
+      stockMap.set(itemCode, (stockMap.get(itemCode) || 0) + remainQty);
+    }
+  }
+  
+  // 3. 각 원료별 재고 충분 여부 확인
+  for (const bom of productBOM) {
+    if (CONFIG.EXCLUDE_MATERIALS.includes(bom.materialCode)) continue;
+    
+    const requiredKg = (bom.ratioG * quantity) / 1000;
+    const availableKg = stockMap.get(bom.materialCode) || 0;
+    
+    if (availableKg < requiredKg) {
+      const shortage = requiredKg - availableKg;
+      errors.push(`❌ ${bom.materialName}(${bom.materialCode}) 재고 부족: 필요 ${requiredKg.toFixed(2)}kg, 가용 ${availableKg.toFixed(2)}kg, 부족 ${shortage.toFixed(2)}kg`);
+    }
+  }
+  
+  return {
+    valid: errors.length === 0,
+    errors: errors,
+    bomCount: productBOM.length
+  };
+}
+
+/**
+ * ⚠️ 검증 오류 표시
+ */
+function showValidationError(sheet, row, validationResult) {
+  const errorMsg = validationResult.errors.join('\n');
+  
+  // 행에 빨간 배경색 적용
+  sheet.getRange(row, 1, 1, 10).setBackground('#ffcdd2');
+  
+  // 메모로 오류 내용 표시
+  sheet.getRange(row, 4).setNote('⚠️ 검증 실패:\n' + errorMsg);
+  
+  // 팝업 알림
+  SpreadsheetApp.getUi().alert(
+    '⚠️ 생산 검증 실패',
+    errorMsg + '\n\n원료 입고 후 다시 시도하세요.',
+    SpreadsheetApp.getUi().ButtonSet.OK
+  );
+  
+  Logger.log('❌ 검증 실패: ' + errorMsg);
+}
+
+/**
+ * ✅ 검증 성공 시 배경색 초기화
+ */
+function clearValidationError(sheet, row) {
+  sheet.getRange(row, 1, 1, 10).setBackground(null);
+  sheet.getRange(row, 4).clearNote();
 }
 
 // =============== FEFO 자동 실행 ===============

@@ -33,6 +33,7 @@ import auditRoutes from './routes/audit';
 import sheetsRoutes from './routes/sheets';
 import orderUploadRoutes from './routes/order-upload';
 import shipmentRoutes from './routes/shipment';
+import validateRoutes from './routes/validate';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -70,9 +71,10 @@ app.route('/api/audit', auditRoutes);
 app.route('/api/sheets', sheetsRoutes);
 app.route('/api/order', orderUploadRoutes);
 app.route('/api/shipment', shipmentRoutes);
+app.route('/api/validate', validateRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '3.5.25';
+const SYSTEM_VERSION = '3.5.26';
 const SYSTEM_BUILD_DATE = '2026-06-24';
 
 // Health check

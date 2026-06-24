@@ -72,7 +72,7 @@ app.route('/api/order', orderUploadRoutes);
 app.route('/api/shipment', shipmentRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '3.5.24';
+const SYSTEM_VERSION = '3.5.25';
 const SYSTEM_BUILD_DATE = '2026-06-24';
 
 // Health check

@@ -29,7 +29,11 @@ export const SHEET_NAMES = {
   
   // 출력 레이어
   OUTPUT_DAILY_STOCK: '일별수불부_출력',
-  OUTPUT_PRODUCTION_REPORT: '생산일보_출력'
+  OUTPUT_PRODUCTION_REPORT: '생산일보_출력',
+  
+  // 출고 관리 레이어 (v3.5.25 추가)
+  SHIPMENT_LOG: '출고일지',
+  PRODUCT_INVENTORY: '제품재고'
 } as const;
 
 // 데이터 유효성 검증
@@ -256,3 +260,98 @@ export default {
   INVENTORY_FORMULAS,
   BOM_LOOKUP_FORMULA
 };
+
+// =====================================================
+// 🚚 출고 자동화 타입 정의 (v3.5.25)
+// =====================================================
+
+/**
+ * 출고일지 레코드
+ */
+export interface ShipmentRecord {
+  shipment_date: string;     // 출고일 (생산일+1)
+  production_date: string;   // 생산일
+  product_code: string;      // 제품코드
+  product_name: string;      // 제품명
+  quantity: number;          // 수량
+  unit: string;              // 단위 (EA)
+  channel: string;           // 채널
+  lot_number: string;        // 생산LOT
+  status: ShipmentStatus;    // 출고상태
+  remark: string;            // 비고
+}
+
+export type ShipmentStatus = '출고예정' | '출고완료' | '출고취소';
+
+/**
+ * 제품재고 레코드
+ */
+export interface ProductInventoryRecord {
+  product_code: string;
+  product_name: string;
+  current_stock: number;
+  unit: string;
+  last_updated: string;
+}
+
+/**
+ * 출고 워크플로우 결과
+ */
+export interface ShipmentWorkflowResult {
+  success: boolean;
+  production_date: string;
+  shipment_date: string;
+  workflow: 'generate_only' | 'generate_and_confirm';
+  step1_generate: {
+    production_count: number;
+    shipment_created: number;
+  };
+  step2_confirm?: {
+    confirmed_count: number;
+    inventory_deducted: number;
+  };
+}
+
+/**
+ * 출고일지 시트 구조
+ * 
+ * A: 출고일 (생산일+1)
+ * B: 생산일
+ * C: 제품코드
+ * D: 제품명
+ * E: 수량
+ * F: 단위
+ * G: 채널
+ * H: 생산LOT
+ * I: 출고상태 (출고예정/출고완료/출고취소)
+ * J: 비고
+ */
+export const SHIPMENT_LOG_COLUMNS = {
+  SHIPMENT_DATE: 'A',
+  PRODUCTION_DATE: 'B',
+  PRODUCT_CODE: 'C',
+  PRODUCT_NAME: 'D',
+  QUANTITY: 'E',
+  UNIT: 'F',
+  CHANNEL: 'G',
+  LOT_NUMBER: 'H',
+  STATUS: 'I',
+  REMARK: 'J'
+} as const;
+
+/**
+ * 제품재고 시트 구조
+ * 
+ * A: 제품코드
+ * B: 제품명
+ * C: 현재고
+ * D: 단위
+ * E: 최종수정일
+ */
+export const PRODUCT_INVENTORY_COLUMNS = {
+  PRODUCT_CODE: 'A',
+  PRODUCT_NAME: 'B',
+  CURRENT_STOCK: 'C',
+  UNIT: 'D',
+  LAST_UPDATED: 'E'
+} as const;

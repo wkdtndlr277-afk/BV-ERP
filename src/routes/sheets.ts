@@ -1189,6 +1189,526 @@ sheets.get('/v2/output/daily-stock', async (c) => {
   }
 });
 
+// =====================================================
+// 🚚 출고 자동화 API (v2/shipment/)
+// 생산일보 기반 익일 출고 자동 생성
+// =====================================================
+
+/**
+ * 출고일지 자동 생성 - 생산일보 기반 익일 출고
+ * 
+ * 워크플로우:
+ * 1. 생산일 (N일): 생산실적 시트에 생산 완료 기록
+ * 2. 출고일 (N+1일): 자동으로 출고일지 생성 + 제품 재고 차감
+ * 
+ * POST /api/sheets/v2/shipment/generate
+ * Body: { production_date: "YYYY-MM-DD" }
+ * → 생산일 기준으로 익일(N+1) 출고일지 자동 생성
+ */
+sheets.post('/v2/shipment/generate', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { production_date } = body;
+
+    if (!production_date) {
+      return c.json({ success: false, error: 'production_date 필수 (YYYY-MM-DD)' }, 400);
+    }
+
+    // 1. 생산일 기준 생산실적 조회
+    const productions = await service.getProductionRecords(production_date);
+    
+    if (!productions || productions.length === 0) {
+      return c.json({ 
+        success: true, 
+        message: `${production_date} 생산실적이 없습니다.`,
+        shipment_count: 0 
+      });
+    }
+
+    // 2. 출고일 계산 (생산일 + 1일)
+    const prodDateObj = new Date(production_date);
+    prodDateObj.setDate(prodDateObj.getDate() + 1);
+    const shipmentDate = prodDateObj.toISOString().split('T')[0];
+
+    // 3. 출고일지 시트 헤더 확인/생성
+    const shipmentHeaders = [
+      '출고일', '생산일', '제품코드', '제품명', '수량', '단위', 
+      '채널', '생산LOT', '출고상태', '비고'
+    ];
+    
+    // 기존 출고일지 데이터 확인
+    let existingData: any[][] = [];
+    try {
+      existingData = await service.readSheet('출고일지', 'A2:J');
+    } catch (e) {
+      // 시트가 없으면 헤더 생성
+      await service.writeSheet('출고일지', 'A1:J1', [shipmentHeaders]);
+    }
+
+    // 4. 이미 생성된 출고건 확인 (중복 방지)
+    const existingShipments = new Set<string>();
+    for (const row of existingData) {
+      const key = `${row[0]}|${row[2]}|${row[7]}`; // 출고일|제품코드|생산LOT
+      existingShipments.add(key);
+    }
+
+    // 5. 출고일지 데이터 생성
+    const shipmentRows: any[][] = [];
+    let skippedCount = 0;
+
+    for (const prod of productions) {
+      const key = `${shipmentDate}|${prod.product_code}|${prod.lot_number}`;
+      
+      if (existingShipments.has(key)) {
+        skippedCount++;
+        continue;  // 이미 출고일지에 있으면 스킵
+      }
+
+      shipmentRows.push([
+        `'${shipmentDate}`,         // A: 출고일 (생산일+1)
+        `'${production_date}`,      // B: 생산일
+        prod.product_code,          // C: 제품코드
+        prod.product_name || '',    // D: 제품명
+        prod.quantity,              // E: 수량
+        'EA',                       // F: 단위
+        prod.channel || '',         // G: 채널
+        prod.lot_number || '',      // H: 생산LOT
+        '출고예정',                 // I: 출고상태
+        `${production_date} 생산분` // J: 비고
+      ]);
+    }
+
+    // 6. 출고일지 시트에 추가
+    if (shipmentRows.length > 0) {
+      await service.appendSheet('출고일지', shipmentRows);
+    }
+
+    return c.json({
+      success: true,
+      production_date,
+      shipment_date: shipmentDate,
+      production_count: productions.length,
+      shipment_created: shipmentRows.length,
+      skipped_duplicates: skippedCount,
+      message: `${production_date} 생산분 → ${shipmentDate} 출고일지 ${shipmentRows.length}건 생성`,
+      sample: shipmentRows.slice(0, 3).map(row => ({
+        shipment_date: row[0],
+        product_code: row[2],
+        product_name: row[3],
+        quantity: row[4],
+        channel: row[6],
+        status: row[8]
+      })),
+      note: '★ 생산완료 = 익일 자동 출고. 재고 차감은 출고 확정 시 진행됩니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * 출고 확정 및 제품 재고 차감
+ * 
+ * POST /api/sheets/v2/shipment/confirm
+ * Body: { shipment_date: "YYYY-MM-DD" }
+ * → 해당 출고일의 '출고예정' 건을 '출고완료'로 변경하고 제품재고 시트에서 차감
+ */
+sheets.post('/v2/shipment/confirm', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { shipment_date } = body;
+
+    if (!shipment_date) {
+      return c.json({ success: false, error: 'shipment_date 필수' }, 400);
+    }
+
+    // 1. 출고일지에서 해당 날짜의 '출고예정' 건 조회
+    const shipmentData = await service.readSheet('출고일지', 'A2:J');
+    
+    const pendingShipments: any[] = [];
+    const pendingRowIndices: number[] = [];
+    
+    shipmentData.forEach((row, idx) => {
+      let rowDate = row[0]?.toString().replace(/^'/, '');
+      const status = row[8];
+      
+      if (rowDate === shipment_date && status === '출고예정') {
+        pendingShipments.push({
+          row_index: idx + 2,  // 헤더 제외, 1-indexed
+          product_code: row[2],
+          product_name: row[3],
+          quantity: parseFloat(row[4]) || 0,
+          channel: row[6]
+        });
+        pendingRowIndices.push(idx + 2);
+      }
+    });
+
+    if (pendingShipments.length === 0) {
+      return c.json({
+        success: true,
+        message: `${shipment_date} 출고예정 건이 없습니다.`,
+        confirmed_count: 0
+      });
+    }
+
+    // 2. 제품재고 시트에서 재고 차감
+    let inventoryData: any[][] = [];
+    try {
+      inventoryData = await service.readSheet('제품재고', 'A2:E');
+    } catch (e) {
+      // 제품재고 시트가 없으면 생성
+      await service.writeSheet('제품재고', 'A1:E1', [
+        ['제품코드', '제품명', '현재고', '단위', '최종수정일']
+      ]);
+      inventoryData = [];
+    }
+
+    // 제품별 현재고 맵
+    const inventoryMap = new Map<string, { row_index: number, qty: number }>();
+    inventoryData.forEach((row, idx) => {
+      inventoryMap.set(row[0], {
+        row_index: idx + 2,
+        qty: parseFloat(row[2]) || 0
+      });
+    });
+
+    // 재고 차감 처리
+    const deductionResults: any[] = [];
+    const newInventoryItems: any[][] = [];
+
+    for (const shipment of pendingShipments) {
+      const inv = inventoryMap.get(shipment.product_code);
+      
+      if (inv) {
+        // 기존 재고 차감
+        const newQty = Math.max(0, inv.qty - shipment.quantity);
+        await service.writeSheet('제품재고', `C${inv.row_index}:E${inv.row_index}`, [
+          [newQty, 'EA', `'${shipment_date}`]
+        ]);
+        deductionResults.push({
+          product_code: shipment.product_code,
+          prev_qty: inv.qty,
+          deducted: shipment.quantity,
+          new_qty: newQty
+        });
+        inv.qty = newQty;  // 다음 차감을 위해 업데이트
+      } else {
+        // 새 제품 (재고 없이 출고 - 경고)
+        deductionResults.push({
+          product_code: shipment.product_code,
+          prev_qty: 0,
+          deducted: shipment.quantity,
+          new_qty: -shipment.quantity,
+          warning: '재고 부족'
+        });
+      }
+    }
+
+    // 3. 출고일지 상태 업데이트 (출고예정 → 출고완료)
+    for (const rowIdx of pendingRowIndices) {
+      await service.writeSheet('출고일지', `I${rowIdx}`, [['출고완료']]);
+    }
+
+    return c.json({
+      success: true,
+      shipment_date,
+      confirmed_count: pendingShipments.length,
+      inventory_deductions: deductionResults.length,
+      message: `${shipment_date} 출고 ${pendingShipments.length}건 확정, 재고 차감 완료`,
+      deductions: deductionResults,
+      note: '★ 출고확정과 동시에 제품재고가 차감되었습니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * 출고일지 조회
+ * 
+ * GET /api/sheets/v2/shipment/list?date=YYYY-MM-DD&status=출고예정
+ */
+sheets.get('/v2/shipment/list', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const date = c.req.query('date');
+    const status = c.req.query('status');
+
+    const shipmentData = await service.readSheet('출고일지', 'A2:J');
+    
+    let records = shipmentData.map(row => ({
+      shipment_date: row[0]?.toString().replace(/^'/, ''),
+      production_date: row[1]?.toString().replace(/^'/, ''),
+      product_code: row[2],
+      product_name: row[3],
+      quantity: parseFloat(row[4]) || 0,
+      unit: row[5],
+      channel: row[6],
+      lot_number: row[7],
+      status: row[8],
+      remark: row[9]
+    }));
+
+    // 필터링
+    if (date) {
+      records = records.filter(r => r.shipment_date === date);
+    }
+    if (status) {
+      records = records.filter(r => r.status === status);
+    }
+
+    // 요약 통계
+    const summary = {
+      total_count: records.length,
+      total_quantity: records.reduce((sum, r) => sum + r.quantity, 0),
+      by_status: {} as Record<string, number>,
+      by_channel: {} as Record<string, number>
+    };
+
+    for (const r of records) {
+      summary.by_status[r.status] = (summary.by_status[r.status] || 0) + 1;
+      if (r.channel) {
+        summary.by_channel[r.channel] = (summary.by_channel[r.channel] || 0) + r.quantity;
+      }
+    }
+
+    return c.json({
+      success: true,
+      filters: { date, status },
+      summary,
+      data: records
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * 제품재고 현황 조회
+ * 
+ * GET /api/sheets/v2/shipment/product-inventory?product_code=PR001
+ */
+sheets.get('/v2/shipment/product-inventory', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const productCode = c.req.query('product_code');
+
+    let inventoryData: any[][] = [];
+    try {
+      inventoryData = await service.readSheet('제품재고', 'A2:E');
+    } catch (e) {
+      return c.json({
+        success: true,
+        message: '제품재고 시트가 없습니다.',
+        data: []
+      });
+    }
+
+    let records = inventoryData.map(row => ({
+      product_code: row[0],
+      product_name: row[1],
+      current_stock: parseFloat(row[2]) || 0,
+      unit: row[3] || 'EA',
+      last_updated: row[4]?.toString().replace(/^'/, '')
+    }));
+
+    if (productCode) {
+      records = records.filter(r => r.product_code === productCode);
+    }
+
+    return c.json({
+      success: true,
+      total_items: records.length,
+      total_stock: records.reduce((sum, r) => sum + r.current_stock, 0),
+      data: records
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * 생산 → 출고 자동화 워크플로우 (원클릭)
+ * 
+ * POST /api/sheets/v2/shipment/auto-process
+ * Body: { production_date: "YYYY-MM-DD", auto_confirm: false }
+ * 
+ * 1. 생산일보 기준 출고일지 자동 생성 (생산일+1 = 출고일)
+ * 2. auto_confirm=true 시 즉시 출고확정 및 재고차감
+ */
+sheets.post('/v2/shipment/auto-process', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { production_date, auto_confirm = false } = body;
+
+    if (!production_date) {
+      return c.json({ success: false, error: 'production_date 필수' }, 400);
+    }
+
+    // Step 1: 출고일지 자동 생성
+    const generateResult = await (async () => {
+      const productions = await service.getProductionRecords(production_date);
+      
+      if (!productions || productions.length === 0) {
+        return { success: true, shipment_count: 0, shipment_date: null };
+      }
+
+      const prodDateObj = new Date(production_date);
+      prodDateObj.setDate(prodDateObj.getDate() + 1);
+      const shipmentDate = prodDateObj.toISOString().split('T')[0];
+
+      // 출고일지 헤더 확인
+      const shipmentHeaders = [
+        '출고일', '생산일', '제품코드', '제품명', '수량', '단위',
+        '채널', '생산LOT', '출고상태', '비고'
+      ];
+
+      let existingData: any[][] = [];
+      try {
+        existingData = await service.readSheet('출고일지', 'A2:J');
+      } catch (e) {
+        await service.writeSheet('출고일지', 'A1:J1', [shipmentHeaders]);
+      }
+
+      const existingKeys = new Set(
+        existingData.map(row => `${row[0]?.toString().replace(/^'/, '')}|${row[2]}|${row[7]}`)
+      );
+
+      const shipmentRows = productions
+        .filter(prod => !existingKeys.has(`${shipmentDate}|${prod.product_code}|${prod.lot_number}`))
+        .map(prod => [
+          `'${shipmentDate}`,
+          `'${production_date}`,
+          prod.product_code,
+          prod.product_name || '',
+          prod.quantity,
+          'EA',
+          prod.channel || '',
+          prod.lot_number || '',
+          '출고예정',
+          `${production_date} 생산분`
+        ]);
+
+      if (shipmentRows.length > 0) {
+        await service.appendSheet('출고일지', shipmentRows);
+      }
+
+      return {
+        success: true,
+        shipment_count: shipmentRows.length,
+        shipment_date: shipmentDate,
+        production_count: productions.length
+      };
+    })();
+
+    if (!generateResult.shipment_date) {
+      return c.json({
+        success: true,
+        production_date,
+        message: '생산실적이 없어 출고일지를 생성하지 않았습니다.',
+        step1_generate: { count: 0 },
+        step2_confirm: null
+      });
+    }
+
+    // Step 2: 자동 확정 (옵션)
+    let confirmResult = null;
+    if (auto_confirm) {
+      const shipmentDate = generateResult.shipment_date;
+      const shipmentData = await service.readSheet('출고일지', 'A2:J');
+      
+      const pendingRows = shipmentData
+        .map((row, idx) => ({ row, idx: idx + 2 }))
+        .filter(({ row }) => 
+          row[0]?.toString().replace(/^'/, '') === shipmentDate && 
+          row[8] === '출고예정'
+        );
+
+      // 제품재고 차감
+      let inventoryData: any[][] = [];
+      try {
+        inventoryData = await service.readSheet('제품재고', 'A2:E');
+      } catch (e) {
+        await service.writeSheet('제품재고', 'A1:E1', [
+          ['제품코드', '제품명', '현재고', '단위', '최종수정일']
+        ]);
+      }
+
+      const inventoryMap = new Map<string, { row_index: number, qty: number }>();
+      inventoryData.forEach((row, idx) => {
+        inventoryMap.set(row[0], { row_index: idx + 2, qty: parseFloat(row[2]) || 0 });
+      });
+
+      for (const { row, idx } of pendingRows) {
+        const productCode = row[2];
+        const qty = parseFloat(row[4]) || 0;
+        const inv = inventoryMap.get(productCode);
+
+        if (inv) {
+          const newQty = Math.max(0, inv.qty - qty);
+          await service.writeSheet('제품재고', `C${inv.row_index}:E${inv.row_index}`, [
+            [newQty, 'EA', `'${shipmentDate}`]
+          ]);
+          inv.qty = newQty;
+        }
+
+        await service.writeSheet('출고일지', `I${idx}`, [['출고완료']]);
+      }
+
+      confirmResult = {
+        confirmed_count: pendingRows.length,
+        inventory_deducted: pendingRows.length
+      };
+    }
+
+    return c.json({
+      success: true,
+      production_date,
+      shipment_date: generateResult.shipment_date,
+      workflow: auto_confirm ? '생성 + 확정 + 재고차감' : '생성만',
+      step1_generate: {
+        production_count: generateResult.production_count,
+        shipment_created: generateResult.shipment_count
+      },
+      step2_confirm: confirmResult,
+      message: auto_confirm 
+        ? `${production_date} 생산 → ${generateResult.shipment_date} 출고 ${generateResult.shipment_count}건 자동 처리 완료`
+        : `${production_date} 생산 → ${generateResult.shipment_date} 출고일지 ${generateResult.shipment_count}건 생성 (확정 대기)`,
+      note: '★ 생산완료 = 익일 자동 출고. auto_confirm=true 시 즉시 재고 차감.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// =====================================================
+// 📊 기존 출력 레이어 API
+// =====================================================
+
 // [3단계] 출력 레이어: 생산일보 데이터 (PDF용)
 sheets.get('/v2/output/production-report', async (c) => {
   const service = getSheetService(c);

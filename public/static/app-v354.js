@@ -28736,6 +28736,7 @@ async function saveBomMaterials() {
     await api('/admin/production-bom', 'POST', {
       production_code: productionCode,
       materials: materials.map(m => ({
+        material_code: m.code || '',  // v3.5.9: 원료코드도 전달
         material_name: m.name,
         quantity: m.quantity,
         unit: 'kg'
@@ -28955,8 +28956,9 @@ async function showEditBomModal(code) {
     const result = await api(`/admin/production-items/${code}`);
     const bom = result.data?.bom || [];
     
+    // v3.5.9: material_code도 저장 (SF 코드 등 직접 매칭용)
     window.bomMaterialsToAdd = bom.map(b => ({
-      code: '',
+      code: b.material_code || '',
       name: b.material_name,
       quantity: b.quantity
     }));

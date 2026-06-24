@@ -2827,13 +2827,17 @@ admin.post('/production-bom', async (c) => {
       return c.json({ success: false, error: '존재하지 않는 생산명입니다' }, 404)
     }
     
-    // 기존 원재료 마스터 조회 (매칭용)
+    // 기존 원재료 마스터 조회 (매칭용) - master + semi_finished_items 통합
     const materialsResult = await env.DB.prepare(`
       SELECT item_code, item_name FROM master WHERE category = '원료'
+      UNION ALL
+      SELECT item_code, item_name FROM semi_finished_items WHERE is_active = 1
     `).all()
     const materialMap = new Map<string, string>()
     for (const m of materialsResult.results as any[]) {
       materialMap.set(m.item_name.toLowerCase(), m.item_code)
+      // item_code로도 매칭 (예: SF001 직접 입력 시)
+      materialMap.set(m.item_code.toLowerCase(), m.item_code)
     }
     
     // 기존 BOM 삭제
@@ -2847,8 +2851,30 @@ admin.post('/production-bom', async (c) => {
       
       if (!materialName || quantity <= 0) continue
       
-      // 원재료 코드 찾기
-      let materialCode = materialMap.get(materialName.toLowerCase())
+      // ★ v3.5.9: 원재료 코드 찾기 (전달된 코드 우선, 없으면 이름으로 매칭)
+      let materialCode = mat.material_code?.trim() || ''
+      
+      // 전달된 코드가 있으면 유효성 검증
+      if (materialCode) {
+        // SF 코드는 semi_finished_items에서 확인
+        if (materialCode.startsWith('SF')) {
+          const sfExists = await env.DB.prepare(`
+            SELECT item_code FROM semi_finished_items WHERE item_code = ?
+          `).bind(materialCode).first()
+          if (!sfExists) materialCode = ''  // 존재하지 않으면 이름으로 재검색
+        } else {
+          // 일반 원료는 master에서 확인
+          const masterExists = await env.DB.prepare(`
+            SELECT item_code FROM master WHERE item_code = ?
+          `).bind(materialCode).first()
+          if (!masterExists) materialCode = ''  // 존재하지 않으면 이름으로 재검색
+        }
+      }
+      
+      // 코드가 없거나 검증 실패한 경우 이름으로 매칭
+      if (!materialCode) {
+        materialCode = materialMap.get(materialName.toLowerCase()) || ''
+      }
       
       // 매칭 안되면 새 원재료 등록
       if (!materialCode) {

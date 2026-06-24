@@ -635,6 +635,11 @@ app.get('/*', (c) => {
                     <span>출하 관리</span>
                 </a>
                 
+                <a href="#shipment-log" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="shipment-log">
+                    <i class="fas fa-file-invoice w-5 text-blue-500"></i>
+                    <span>출고일지</span>
+                </a>
+                
                 <!-- ========== 원료 관리 ========== -->
                 <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">🧪 원료 관리</p>
@@ -670,7 +675,7 @@ app.get('/*', (c) => {
                     <span>LOT 이력</span>
                 </a>
                 
-                <a href="https://docs.google.com/spreadsheets/d/1z8nkSEaP8PuKWKjVHozSO3_ghb2KY47QiQ-vDfB9Vfg" target="_blank" class="flex items-center gap-3 px-4 py-2 rounded-lg text-green-600 text-sm hover:bg-green-50 font-medium">
+                <a href="https://docs.google.com/spreadsheets/d/1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU" target="_blank" class="flex items-center gap-3 px-4 py-2 rounded-lg text-green-600 text-sm hover:bg-green-50 font-medium">
                     <i class="fas fa-table w-5"></i>
                     <span>📊 구글시트 바로가기</span>
                     <i class="fas fa-external-link-alt text-xs ml-auto"></i>

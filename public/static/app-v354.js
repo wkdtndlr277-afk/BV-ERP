@@ -1340,6 +1340,7 @@ function renderPage(page) {
     case 'barcode-inventory': renderBarcodeInventory(); break;
     case 'task-calendar': renderTaskCalendar(); break;
     case 'task-board': renderTaskBoard(); break;
+    case 'shipment-log': renderShipmentLog(); break;
     default: renderDashboard();
   }
 }
@@ -48426,29 +48427,98 @@ async function generateDailyReportPdf() {
   previewDiv.innerHTML = '<p class="text-center py-8"><i class="fas fa-spinner fa-spin mr-2"></i>PDF 생성 중...</p>';
   
   try {
-    // 기존 일별수불부 API 호출
-    const res = await axios.get(`/api/daily-report/stock-movement?date=${date}`);
-    if (res.data.success) {
-      // PDF 미리보기 또는 다운로드 링크 표시
+    // 올바른 생산일보 API 호출 (Google Sheets 기반)
+    const res = await axios.get(`/api/sheets/v2/output/production-report?date=${date}`);
+    if (res.data.success && res.data.report) {
+      const report = res.data.report;
+      const items = report.items || [];
+      const summary = report.summary || {};
+      
+      // 생산일보 미리보기 렌더링
       previewDiv.innerHTML = `
-        <div class="text-center py-8">
-          <p class="text-green-600 mb-4"><i class="fas fa-check-circle mr-2"></i>데이터 조회 완료</p>
-          <p class="text-gray-600">일별수불부 페이지에서 PDF 출력을 이용하세요</p>
-          <a href="#daily-report" class="inline-block mt-4 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
-            <i class="fas fa-arrow-right mr-2"></i>일별수불부로 이동
-          </a>
+        <div class="space-y-4">
+          <div class="flex items-center justify-between border-b pb-3">
+            <h3 class="text-lg font-bold text-gray-800">
+              <i class="fas fa-file-pdf text-red-500 mr-2"></i>생산일보 미리보기
+            </h3>
+            <div class="flex gap-2">
+              <button onclick="printDailyReportPdf('${date}')" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm">
+                <i class="fas fa-print mr-1"></i>인쇄
+              </button>
+              <a href="#daily-report" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 text-sm">
+                <i class="fas fa-table mr-1"></i>상세 수불부
+              </a>
+            </div>
+          </div>
+          
+          <div class="bg-blue-50 rounded-lg p-4">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+              <div>
+                <p class="text-xs text-gray-500">조회일자</p>
+                <p class="text-lg font-bold text-blue-600">${date}</p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500">생산 품목 수</p>
+                <p class="text-lg font-bold text-green-600">${items.length}건</p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500">총 생산량</p>
+                <p class="text-lg font-bold text-purple-600">${(summary.total_production || items.reduce((s,i) => s + (i.production_qty || 0), 0)).toLocaleString()}</p>
+              </div>
+              <div>
+                <p class="text-xs text-gray-500">총 출고량</p>
+                <p class="text-lg font-bold text-orange-600">${(summary.total_outbound || items.reduce((s,i) => s + (i.outbound_qty || 0), 0)).toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+          
+          ${items.length > 0 ? `
+          <div class="overflow-x-auto max-h-[400px] border rounded-lg">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-100 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-left">제품코드</th>
+                  <th class="px-3 py-2 text-left">제품명</th>
+                  <th class="px-3 py-2 text-right">생산</th>
+                  <th class="px-3 py-2 text-right">출고</th>
+                  <th class="px-3 py-2 text-right">재고</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${items.slice(0, 50).map(item => `
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-3 py-2 font-mono text-xs">${item.product_code || item.item_code || '-'}</td>
+                    <td class="px-3 py-2">${item.product_name || item.item_name || '-'}</td>
+                    <td class="px-3 py-2 text-right text-green-600">${(item.production_qty || 0).toLocaleString()}</td>
+                    <td class="px-3 py-2 text-right text-orange-600">${(item.outbound_qty || 0).toLocaleString()}</td>
+                    <td class="px-3 py-2 text-right font-medium">${(item.current_stock || item.closing_qty || 0).toLocaleString()}</td>
+                  </tr>
+                `).join('')}
+                ${items.length > 50 ? `<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ${items.length - 50}건</td></tr>` : ''}
+              </tbody>
+            </table>
+          </div>
+          ` : '<p class="text-center text-gray-500 py-8">해당 날짜에 생산 데이터가 없습니다.</p>'}
         </div>
       `;
     } else {
-      previewDiv.innerHTML = `<p class="text-red-500 text-center py-8">데이터 조회 실패: ${res.data.error}</p>`;
+      previewDiv.innerHTML = `<p class="text-red-500 text-center py-8">데이터 조회 실패: ${res.data.error || '데이터 없음'}</p>`;
     }
   } catch (error) {
-    previewDiv.innerHTML = `<p class="text-red-500 text-center py-8">오류: ${error.message}</p>`;
+    console.error('생산일보 PDF 조회 오류:', error);
+    previewDiv.innerHTML = `<p class="text-red-500 text-center py-8">오류: ${error.response?.data?.error || error.message}</p>`;
   }
+}
+
+// 생산일보 인쇄 기능
+function printDailyReportPdf(date) {
+  // 일별수불부 페이지로 이동 후 인쇄 트리거
+  window.location.hash = `daily-report?date=${date}&print=true`;
 }
 
 window.renderDailyReportPdf = renderDailyReportPdf;
 window.generateDailyReportPdf = generateDailyReportPdf;
+window.printDailyReportPdf = printDailyReportPdf;
 
 // ========================================
 // 발주 → 생산실적 자동 입력 페이지 (v3.5.18)
@@ -48608,3 +48678,229 @@ async function completeOrderProduction() {
 
 window.renderProductionFromOrder = renderProductionFromOrder;
 window.completeOrderProduction = completeOrderProduction;
+
+// ============================================
+// 출고일지 페이지
+// ============================================
+async function renderShipmentLog() {
+  const content = document.getElementById('page-content');
+  const today = formatDate(new Date());
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-shipping-fast mr-2 text-blue-600"></i>
+          출고일지
+        </h2>
+        <div class="flex gap-2">
+          <input type="date" id="shipment-date" value="${today}" 
+                 class="px-3 py-2 border rounded-lg" onchange="loadShipmentLog()">
+          <button onclick="generateShipmentLog()" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600">
+            <i class="fas fa-magic mr-1"></i> 자동 생성
+          </button>
+          <button onclick="printShipmentLog()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+            <i class="fas fa-print mr-1"></i> 인쇄
+          </button>
+        </div>
+      </div>
+      
+      <div class="bg-white rounded-xl shadow p-4">
+        <div id="shipment-summary" class="grid grid-cols-4 gap-4 mb-4">
+          <div class="bg-blue-50 p-3 rounded-lg text-center">
+            <div class="text-2xl font-bold text-blue-600" id="sum-total">0</div>
+            <div class="text-sm text-gray-600">총 출고건</div>
+          </div>
+          <div class="bg-green-50 p-3 rounded-lg text-center">
+            <div class="text-2xl font-bold text-green-600" id="sum-completed">0</div>
+            <div class="text-sm text-gray-600">출고완료</div>
+          </div>
+          <div class="bg-yellow-50 p-3 rounded-lg text-center">
+            <div class="text-2xl font-bold text-yellow-600" id="sum-pending">0</div>
+            <div class="text-sm text-gray-600">출고예정</div>
+          </div>
+          <div class="bg-purple-50 p-3 rounded-lg text-center">
+            <div class="text-2xl font-bold text-purple-600" id="sum-qty">0</div>
+            <div class="text-sm text-gray-600">총 수량</div>
+          </div>
+        </div>
+        
+        <div id="shipment-content" class="overflow-x-auto">
+          <div class="p-8 text-center text-gray-500">
+            <i class="fas fa-spinner fa-spin text-2xl"></i>
+            <p class="mt-2">로딩중...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadShipmentLog();
+}
+
+async function loadShipmentLog() {
+  const date = document.getElementById('shipment-date')?.value || formatDate(new Date());
+  const contentEl = document.getElementById('shipment-content');
+  
+  try {
+    const res = await axios.get(`/api/sheets/v2/shipment/list?date=${date}`);
+    const data = res.data.data || [];
+    const summary = res.data.summary || {};
+    
+    // 요약 업데이트
+    document.getElementById('sum-total').textContent = data.length;
+    document.getElementById('sum-completed').textContent = summary.by_status?.['출고완료'] || 0;
+    document.getElementById('sum-pending').textContent = summary.by_status?.['출고예정'] || 0;
+    document.getElementById('sum-qty').textContent = data.reduce((sum, r) => sum + (r.quantity || 0), 0);
+    
+    if (data.length === 0) {
+      contentEl.innerHTML = `
+        <div class="p-8 text-center text-gray-500">
+          <i class="fas fa-box-open text-4xl mb-3"></i>
+          <p>${date} 출고일지가 없습니다.</p>
+          <p class="text-sm mt-2">생산실적에서 자동 생성하려면 [자동 생성] 버튼을 클릭하세요.</p>
+        </div>
+      `;
+      return;
+    }
+    
+    contentEl.innerHTML = `
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100">
+          <tr>
+            <th class="p-2 text-left">출고일</th>
+            <th class="p-2 text-left">제품코드</th>
+            <th class="p-2 text-left">제품명</th>
+            <th class="p-2 text-right">수량</th>
+            <th class="p-2 text-left">채널</th>
+            <th class="p-2 text-left">LOT</th>
+            <th class="p-2 text-center">상태</th>
+            <th class="p-2 text-center">작업</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.map((r, idx) => `
+            <tr class="border-b hover:bg-gray-50">
+              <td class="p-2">${r.shipment_date || ''}</td>
+              <td class="p-2 font-mono">${r.product_code || ''}</td>
+              <td class="p-2">${r.product_name || ''}</td>
+              <td class="p-2 text-right font-bold">${r.quantity || 0}</td>
+              <td class="p-2">${r.channel || ''}</td>
+              <td class="p-2 font-mono text-xs">${r.lot_number || ''}</td>
+              <td class="p-2 text-center">
+                <span class="px-2 py-1 rounded text-xs ${r.status === '출고완료' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}">
+                  ${r.status || '출고예정'}
+                </span>
+              </td>
+              <td class="p-2 text-center">
+                ${r.status !== '출고완료' ? `
+                  <button onclick="confirmShipment('${r.shipment_date}', ${idx})" 
+                          class="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600">
+                    출고확정
+                  </button>
+                ` : '<span class="text-gray-400">-</span>'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    contentEl.innerHTML = `
+      <div class="p-8 text-center text-red-500">
+        <i class="fas fa-exclamation-triangle text-2xl mb-2"></i>
+        <p>데이터 로드 실패: ${e.message}</p>
+      </div>
+    `;
+  }
+}
+
+async function generateShipmentLog() {
+  const date = document.getElementById('shipment-date')?.value;
+  if (!date) {
+    showToast('날짜를 선택하세요', 'error');
+    return;
+  }
+  
+  // 출고일 기준으로 생산일 계산 (출고일 - 1 = 생산일)
+  const prodDate = new Date(date);
+  prodDate.setDate(prodDate.getDate() - 1);
+  const productionDate = formatDate(prodDate);
+  
+  if (!confirm(`${productionDate} 생산실적을 기반으로\n${date} 출고일지를 생성하시겠습니까?`)) {
+    return;
+  }
+  
+  try {
+    showLoading('출고일지 생성중...');
+    const res = await axios.post('/api/sheets/v2/shipment/auto-process', {
+      production_date: productionDate,
+      auto_confirm: false
+    });
+    hideLoading();
+    
+    if (res.data.success) {
+      showToast(`${res.data.step1_generate?.shipment_created || 0}건 출고일지 생성 완료!`, 'success');
+      loadShipmentLog();
+    } else {
+      showToast('생성 실패: ' + (res.data.error || ''), 'error');
+    }
+  } catch (e) {
+    hideLoading();
+    showToast('생성 실패: ' + e.message, 'error');
+  }
+}
+
+async function confirmShipment(date, idx) {
+  if (!confirm('출고를 확정하시겠습니까?\n(제품 재고가 차감됩니다)')) return;
+  
+  try {
+    const res = await axios.post('/api/sheets/v2/shipment/confirm', {
+      shipment_date: date
+    });
+    
+    if (res.data.success) {
+      showToast('출고 확정 완료!', 'success');
+      loadShipmentLog();
+    } else {
+      showToast('확정 실패: ' + res.data.error, 'error');
+    }
+  } catch (e) {
+    showToast('확정 실패: ' + e.message, 'error');
+  }
+}
+
+function printShipmentLog() {
+  const date = document.getElementById('shipment-date')?.value || formatDate(new Date());
+  const content = document.getElementById('shipment-content')?.innerHTML || '';
+  
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`
+    <html>
+    <head>
+      <title>출고일지 - ${date}</title>
+      <style>
+        body { font-family: 'Malgun Gothic', sans-serif; padding: 20px; }
+        h1 { font-size: 18px; margin-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+        th { background: #f5f5f5; }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        @media print { button { display: none; } }
+      </style>
+    </head>
+    <body>
+      <h1>📦 출고일지 - ${date}</h1>
+      ${content}
+      <script>window.print();</script>
+    </body>
+    </html>
+  `);
+  printWindow.document.close();
+}
+
+window.loadShipmentLog = loadShipmentLog;
+window.generateShipmentLog = generateShipmentLog;
+window.confirmShipment = confirmShipment;
+window.printShipmentLog = printShipmentLog;

@@ -251,6 +251,20 @@ Proprietary - (주)본비반트
   - closing-status API: 원재료 사용 시 LOT 번호 표시 추가
   - 바코드 입고 시 memo 컬럼 오류 수정
 
+- **v3.5.23 (2026-06-24)**: 3-Layer 아키텍처 + FEFO 자동 로트매칭
+  - **3-Layer 아키텍처 구현**: Input → Processing (SSOT) → Output 분리
+  - **v2 API 추가**: `/api/sheets/v2/*` - 입력 검증, SSOT 계산, 출력 전용
+    - `POST /v2/setup/inventory-master` - 재고마스터 시트 초기화
+    - `POST /v2/calculate/daily-stock` - 일별 수불부 계산 (BOM × 생산수량)
+    - `GET /v2/output/daily-stock?date=YYYY-MM-DD` - 일별수불부 출력
+    - `GET /v2/output/production-report?date=YYYY-MM-DD` - 생산일보 출력
+  - **ERP UI 업데이트**: v2 API 사용으로 입고(+)/출고(-) 컬럼 분리 표시
+  - **FEFO Google Apps Script**: `google-apps-script/fefo-lot-matching.gs`
+    - 유통기한 기준 자동 로트매칭
+    - 생산 시 원료 사용 LOT 자동 추적
+    - 로트별 재고 현황 자동 업데이트
+    - 만료 임박 알림 기능
+
 - **v3.4.5 (2026-06-10)**: 재고 부족 시 상세 사유 모달 UI 추가
   - 생산 등록 차단 시 품목별 현재고/필요량/부족분/사유 상세 표시
   - 입고 등록 페이지로 바로 이동 버튼 추가

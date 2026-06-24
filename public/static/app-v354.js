@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 2.2.0 Build: 20260528
-const APP_VERSION = '2.2.9';
-const APP_BUILD = '20260622';
+const APP_VERSION = '2.3.0';
+const APP_BUILD = '20260624';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -17990,26 +17990,33 @@ async function loadClosingStatus() {
     // 1. 생산 마감 현황 API 호출 (정식 DB JOIN)
     const closingResult = await api(`/production/closing-status?date=${date}`);
     
-    // 2. 일별 수불 현황 API 호출
-    let inventoryResult = { success: false, data: [] };
+    // 2. v2 API로 일별 수불 현황 조회 (3-Layer SSOT)
+    let inventoryV2Result = { success: false, data: [], summary: {} };
     try {
-      inventoryResult = await api(`/stock/daily-movement?date=${date}`);
+      inventoryV2Result = await api(`/sheets/v2/output/daily-stock?date=${date}`);
+      console.log('v2 일별수불 API 성공:', inventoryV2Result.summary);
     } catch (e) {
-      console.log('일별수불 API 없음, 생산데이터에서 계산');
+      console.log('v2 API 실패, 기존 데이터 사용:', e.message);
     }
     
-    // 캐시 저장
+    // 캐시 저장 - v2 API 결과 우선 사용
     window.closingStatusCache = {
       date: date,
       dailyReport: closingResult.production?.items || [],
-      inventoryMovement: inventoryResult.data || [],
+      inventoryMovement: inventoryV2Result.data || [],
       summary: closingResult.production?.summary || {},
-      materials: closingResult.materials || {}
+      materials: closingResult.materials || {},
+      // v2 API 결과 저장
+      inventoryV2: {
+        data: inventoryV2Result.data || [],
+        summary: inventoryV2Result.summary || {}
+      }
     };
     
-    // 카운트 업데이트
+    // 카운트 업데이트 - v2 데이터 우선
     const dailyCount = window.closingStatusCache.dailyReport.length;
-    const inventoryCount = window.closingStatusCache.materials?.usage?.length || 0;
+    const inventoryCount = window.closingStatusCache.inventoryV2?.summary?.total_items || 
+                           window.closingStatusCache.materials?.usage?.length || 0;
     
     document.getElementById('daily-report-count').textContent = dailyCount;
     document.getElementById('inventory-movement-count').textContent = inventoryCount;
@@ -18163,11 +18170,45 @@ function renderDailyReportTab(container, cache) {
 }
 
 // 일별 수불 현황 탭 렌더링
-// v3.5.4: 원료(R, RM으로 시작하는 품목)만 표시
+// v2.3.0: 3-Layer SSOT API 사용 (v2 API 우선)
 function renderInventoryMovementTab(container, cache) {
+  // v2.3.0: v2 API 결과 우선 사용
+  const v2Data = cache.inventoryV2?.data || [];
+  const v2Summary = cache.inventoryV2?.summary || {};
+  
+  // v2 API 데이터가 있으면 직접 사용 (SSOT)
+  if (v2Data.length > 0) {
+    console.log('v2 SSOT 데이터 사용:', v2Summary);
+    
+    // 원료만 필터링 (R, RM으로 시작하는 품목)
+    const isRawMaterial = (itemCode) => {
+      if (!itemCode) return false;
+      const code = itemCode.toUpperCase();
+      return code.startsWith('R') || code.startsWith('RM');
+    };
+    
+    const movementList = v2Data
+      .filter(item => isRawMaterial(item.item_code))
+      .map(item => ({
+        item_code: item.item_code,
+        item_name: item.item_name || item.item_code,
+        unit: item.unit || 'kg',
+        inbound_qty: item.inbound_qty || 0,
+        usage_qty: item.usage_qty || 0,
+        current_stock: item.current_stock || 0
+      }));
+    
+    const totalInbound = v2Summary.total_inbound || 0;
+    const totalUsage = v2Summary.total_usage || 0;
+    
+    renderInventoryTable(container, movementList, totalInbound, totalUsage);
+    return;
+  }
+  
+  // v2 API 없으면 기존 방식 사용 (fallback)
+  console.log('v2 API 없음, 기존 데이터 사용');
   const materials = cache.materials || {};
   
-  // v3.5.4: 원료만 필터링 (R 또는 RM으로 시작하는 item_code)
   const isRawMaterial = (itemCode) => {
     if (!itemCode) return false;
     const code = itemCode.toUpperCase();
@@ -18182,6 +18223,7 @@ function renderInventoryMovementTab(container, cache) {
       <div class="text-center py-8 text-gray-400">
         <i class="fas fa-exchange-alt text-4xl mb-3"></i>
         <p>당일 재고 변동 내역이 없습니다</p>
+        <p class="text-sm mt-1">생산 기록이 등록되면 BOM 기반으로 원료 사용량이 자동 계산됩니다</p>
       </div>
     `;
     return;
@@ -18220,6 +18262,21 @@ function renderInventoryMovementTab(container, cache) {
   const movementList = Array.from(movementMap.values());
   const totalInbound = movementList.reduce((sum, m) => sum + m.inbound_qty, 0);
   const totalUsage = movementList.reduce((sum, m) => sum + m.usage_qty, 0);
+  
+  renderInventoryTable(container, movementList, totalInbound, totalUsage);
+}
+
+// 재고 수불 테이블 렌더링 (공통 함수)
+function renderInventoryTable(container, movementList, totalInbound, totalUsage) {
+  if (movementList.length === 0) {
+    container.innerHTML = `
+      <div class="text-center py-8 text-gray-400">
+        <i class="fas fa-exchange-alt text-4xl mb-3"></i>
+        <p>당일 재고 변동 내역이 없습니다</p>
+      </div>
+    `;
+    return;
+  }
   
   container.innerHTML = `
     <!-- 요약 카드 -->

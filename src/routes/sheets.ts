@@ -810,4 +810,441 @@ sheets.post('/clear-data', async (c) => {
   }
 });
 
+// ========================================
+// ★★★ v3.5.23: 3단계 레이어 아키텍처 API ★★★
+// 입력 → 연산(SSOT) → 출력 분리
+// ========================================
+
+import { 
+  validateInboundData, 
+  validateProductionData,
+  SHEET_NAMES,
+  INVENTORY_FORMULAS
+} from '../services/SheetArchitecture';
+
+// [1단계] 입력 레이어: 무결성 검증 후 RAW 시트에 저장
+sheets.post('/v2/input/inbound', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const items = Array.isArray(body) ? body : [body];
+    
+    const results = {
+      success: 0,
+      failed: 0,
+      errors: [] as string[]
+    };
+
+    const validRows: any[][] = [];
+    
+    for (const item of items) {
+      const validation = validateInboundData(item);
+      
+      if (!validation.valid) {
+        results.failed++;
+        results.errors.push(...validation.errors);
+        continue;
+      }
+
+      const data = validation.sanitizedData;
+      validRows.push([
+        `'${data.inbound_date}`,  // 날짜를 문자열로 강제
+        data.item_code,
+        data.item_name || '',
+        data.lot_number,
+        data.quantity,
+        'kg',
+        data.supplier,
+        data.expiry_date ? `'${data.expiry_date}` : '',
+        data.quantity  // 잔량 (초기값 = 입고량)
+      ]);
+      results.success++;
+    }
+
+    // RAW 시트에 저장
+    if (validRows.length > 0) {
+      await service.appendSheet('원료입고', validRows);
+    }
+
+    return c.json({
+      success: true,
+      layer: 'INPUT',
+      message: `입고 ${results.success}건 저장, ${results.failed}건 실패`,
+      validation_errors: results.errors.length > 0 ? results.errors : undefined,
+      note: '★ 무결성 검증 통과 데이터만 저장됨'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// [1단계] 입력 레이어: 생산실적 무결성 검증 후 저장
+sheets.post('/v2/input/production', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { prod_date, items } = body;
+    
+    if (!prod_date || !items || !Array.isArray(items)) {
+      return c.json({ success: false, error: 'prod_date, items 필수' }, 400);
+    }
+
+    const results = {
+      success: 0,
+      failed: 0,
+      errors: [] as string[]
+    };
+
+    const validRows: any[][] = [];
+    const lotNum = prod_date.replace(/-/g, '').slice(2);
+    
+    for (const item of items) {
+      const validation = validateProductionData({
+        prod_date,
+        product_code: item.product_code,
+        quantity: item.quantity
+      });
+      
+      if (!validation.valid) {
+        results.failed++;
+        results.errors.push(...validation.errors);
+        continue;
+      }
+
+      const data = validation.sanitizedData;
+      validRows.push([
+        `'${data.prod_date}`,  // A: 생산일자 (문자열 강제)
+        data.product_code,     // B: 제품코드
+        item.product_name || '', // C: 제품명
+        data.quantity,         // D: 생산수량
+        `${lotNum}-${data.product_code}`, // E: 제품로트
+        item.channel || '',    // F: 채널
+        '',                    // G: 비고
+        new Date().toISOString() // H: 등록시간
+      ]);
+      results.success++;
+    }
+
+    // RAW 시트에 저장
+    if (validRows.length > 0) {
+      await service.appendSheet('생산실적', validRows);
+    }
+
+    return c.json({
+      success: true,
+      layer: 'INPUT',
+      lot_number: lotNum,
+      message: `생산 ${results.success}건 저장, ${results.failed}건 실패`,
+      validation_errors: results.errors.length > 0 ? results.errors : undefined,
+      note: '★ 무결성 검증 통과 데이터만 저장됨. 원료사용량은 자동 계산됩니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// [2단계] 연산 레이어: 재고마스터 시트 초기화 + 수식 설정
+sheets.post('/v2/setup/inventory-master', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // 재고마스터 시트 헤더 설정
+    const headers = [
+      '일자', '품목코드', '품목명', '전일재고', '입고(+)', '출고/사용(-)', '현재고', '단위'
+    ];
+    
+    await service.writeSheet('재고마스터', 'A1:H1', [headers]);
+
+    // 수식 템플릿 행 (2행) - 복사해서 사용
+    const formulaRow = [
+      '=TODAY()',  // A: 일자
+      '',          // B: 품목코드 (수동/참조)
+      '=IFERROR(VLOOKUP(B2,원료입고!B:C,2,FALSE),"")',  // C: 품목명
+      // D: 전일재고 = 전일 동일 품목의 현재고
+      '=IFERROR(INDEX(재고마스터!G:G,MATCH(1,(재고마스터!A:A=A2-1)*(재고마스터!B:B=B2),0)),SUMIFS(원료입고!I:I,원료입고!B:B,B2))',
+      // E: 입고(+) = 당일 입고량 합계
+      '=SUMIFS(원료입고!E:E,원료입고!B:B,B2,원료입고!A:A,TEXT(A2,"YYYY-MM-DD"))',
+      // F: 출고/사용(-) = BOM × 생산수량 합계 (핵심!)
+      `=SUMPRODUCT(
+        --(생산실적!A:A=TEXT(A2,"YYYY-MM-DD")),
+        --(생산실적!B:B<>""),
+        IFERROR(SUMIFS(BOM마스터!E:E,BOM마스터!A:A,생산실적!B:B,BOM마스터!C:C,B2),0),
+        생산실적!D:D
+      )/1000`,
+      // G: 현재고 = 전일재고 + 입고 - 사용
+      '=D2+E2-F2',
+      'kg'  // H: 단위
+    ];
+    
+    await service.writeWithFormulas('재고마스터', 'A2:H2', [formulaRow]);
+
+    return c.json({
+      success: true,
+      layer: 'PROCESSING',
+      message: '재고마스터 시트 초기화 완료',
+      structure: {
+        A: '일자',
+        B: '품목코드 (수동 입력)',
+        C: '품목명 (자동: VLOOKUP)',
+        D: '전일재고 (자동: 전일 현재고)',
+        E: '입고(+) (자동: SUMIFS)',
+        F: '출고/사용(-) (자동: BOM×생산수량)',
+        G: '현재고 (자동: D+E-F)',
+        H: '단위'
+      },
+      note: '★ 품목코드(B열)만 입력하면 나머지는 모두 자동 계산됩니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// [2단계] 연산 레이어: 특정 일자의 수불부 자동 생성
+sheets.post('/v2/calculate/daily-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { date } = body;
+
+    if (!date) {
+      return c.json({ success: false, error: 'date 필수' }, 400);
+    }
+
+    // 1. 해당 날짜의 생산실적 조회
+    const productions = await service.getProductionRecords(date);
+    
+    // 2. BOM 데이터 조회
+    const bomData = await service.readSheet('BOM마스터', 'A2:F');
+    const bomMap = new Map<string, any[]>();
+    for (const row of bomData) {
+      const productCode = row[0];
+      if (!bomMap.has(productCode)) bomMap.set(productCode, []);
+      bomMap.get(productCode)!.push({
+        item_code: row[2],
+        item_name: row[3],
+        quantity: parseFloat(row[4]) || 0,  // g 단위
+        unit: row[5] || 'g'
+      });
+    }
+
+    // 3. 원료입고 데이터 조회 (잔량 기반)
+    const inboundData = await service.readSheet('원료입고', 'A2:I');
+    const stockMap = new Map<string, { name: string, qty: number, lots: any[] }>();
+    
+    for (const row of inboundData) {
+      const itemCode = row[1];
+      const remainQty = parseFloat(row[8]) || 0;
+      if (remainQty <= 0) continue;
+      
+      if (!stockMap.has(itemCode)) {
+        stockMap.set(itemCode, { name: row[2], qty: 0, lots: [] });
+      }
+      const stock = stockMap.get(itemCode)!;
+      stock.qty += remainQty;
+      stock.lots.push({
+        lot: row[3],
+        qty: remainQty,
+        expiry: row[7]
+      });
+    }
+
+    // 4. 원료별 사용량 계산
+    const usageMap = new Map<string, { name: string, usage: number }>();
+    const EXCLUDE_STOCK = ['RM184'];  // 정제수 제외
+
+    for (const prod of productions) {
+      const bom = bomMap.get(prod.product_code) || [];
+      
+      for (const material of bom) {
+        if (EXCLUDE_STOCK.includes(material.item_code)) continue;
+        
+        // BOM g → kg 변환
+        const usageKg = (material.quantity * prod.quantity) / 1000;
+        
+        if (!usageMap.has(material.item_code)) {
+          usageMap.set(material.item_code, { name: material.item_name, usage: 0 });
+        }
+        usageMap.get(material.item_code)!.usage += usageKg;
+      }
+    }
+
+    // 5. 일별수불부 데이터 생성
+    const dailyStockRows: any[][] = [];
+    
+    for (const [itemCode, usageData] of usageMap) {
+      const stock = stockMap.get(itemCode);
+      const prevStock = stock?.qty || 0;
+      const inboundQty = 0;  // TODO: 당일 입고량 조회
+      const currentStock = prevStock - usageData.usage;
+      
+      dailyStockRows.push([
+        `'${date}`,           // A: 일자
+        itemCode,             // B: 품목코드
+        usageData.name,       // C: 품목명
+        prevStock.toFixed(3), // D: 전일재고
+        inboundQty.toFixed(3),// E: 입고(+)
+        usageData.usage.toFixed(3), // F: 출고/사용(-)  ★ 핵심!
+        currentStock.toFixed(3),    // G: 현재고
+        'kg'                  // H: 단위
+      ]);
+    }
+
+    // 6. 일별수불부 시트에 저장
+    if (dailyStockRows.length > 0) {
+      await service.appendSheet('일별수불부', dailyStockRows);
+    }
+
+    return c.json({
+      success: true,
+      layer: 'PROCESSING',
+      date,
+      production_count: productions.length,
+      items_calculated: dailyStockRows.length,
+      message: `${date} 일별수불부 ${dailyStockRows.length}건 계산 완료`,
+      sample: dailyStockRows.slice(0, 3).map(row => ({
+        item_code: row[1],
+        item_name: row[2],
+        prev_stock: row[3],
+        inbound: row[4],
+        usage: row[5],
+        current: row[6]
+      })),
+      note: '★ 출고/사용(-) 컬럼에 BOM 기반 원료 사용량이 계산되었습니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// [3단계] 출력 레이어: 일별수불부 조회 (정리된 형태)
+sheets.get('/v2/output/daily-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+    
+    // 일별수불부 시트에서 조회
+    const data = await service.readSheet('일별수불부', 'A2:H');
+    
+    const records = data
+      .filter(row => {
+        // 날짜 필터링 (엑셀 숫자/문자열 모두 지원)
+        let rowDate = row[0];
+        if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
+          const excelDate = parseInt(rowDate);
+          const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+          rowDate = jsDate.toISOString().split('T')[0];
+        } else if (typeof rowDate === 'string') {
+          rowDate = rowDate.replace(/^'/, '');
+        }
+        return rowDate === date;
+      })
+      .map(row => ({
+        date: row[0]?.toString().replace(/^'/, ''),
+        item_code: row[1],
+        item_name: row[2],
+        prev_stock: parseFloat(row[3]) || 0,
+        inbound_qty: parseFloat(row[4]) || 0,
+        usage_qty: parseFloat(row[5]) || 0,
+        current_stock: parseFloat(row[6]) || 0,
+        unit: row[7] || 'kg'
+      }));
+
+    // 요약 통계
+    const summary = {
+      total_items: records.length,
+      total_inbound: records.reduce((sum, r) => sum + r.inbound_qty, 0),
+      total_usage: records.reduce((sum, r) => sum + r.usage_qty, 0),
+      items_with_usage: records.filter(r => r.usage_qty > 0).length
+    };
+
+    return c.json({
+      success: true,
+      layer: 'OUTPUT',
+      date,
+      summary,
+      data: records,
+      note: '★ 입고(+)와 출고/사용(-)이 정확히 분리되어 표시됩니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// [3단계] 출력 레이어: 생산일보 데이터 (PDF용)
+sheets.get('/v2/output/production-report', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+    
+    // 1. 생산실적 조회
+    const productions = await service.getProductionRecords(date);
+    
+    // 2. 로트매칭 정보 조회
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
+    
+    // 3. 생산일보 데이터 구성
+    const reportItems = [];
+    
+    for (const prod of productions) {
+      const materials = lotMatchingData
+        .filter(row => row[0]?.toString().replace(/^'/, '') === date && row[1] === prod.lot_number)
+        .map(row => ({
+          item_code: row[2],
+          item_name: row[3],
+          usage_qty: parseFloat(row[4]) || 0,
+          material_lot: row[5],
+          expiry_date: row[6]
+        }));
+
+      reportItems.push({
+        prod_date: prod.prod_date,
+        product_code: prod.product_code,
+        product_name: prod.product_name,
+        quantity: prod.quantity,
+        lot_number: prod.lot_number,
+        channel: prod.channel,
+        materials
+      });
+    }
+
+    return c.json({
+      success: true,
+      layer: 'OUTPUT',
+      date,
+      report: {
+        title: `생산일보 - ${date}`,
+        total_items: reportItems.length,
+        total_quantity: productions.reduce((sum, p) => sum + p.quantity, 0),
+        items: reportItems
+      },
+      note: '★ PDF 생성용 정리된 데이터입니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;

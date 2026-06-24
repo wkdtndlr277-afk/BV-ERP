@@ -205,6 +205,87 @@ admin.delete('/inbound/:id', async (c) => {
 
 // ========== 트랜잭션 관리 ==========
 
+// ★★★ v3.5.12: 품목별 transactions 디버그 조회 ★★★
+admin.get('/debug/item-transactions', async (c) => {
+  const { env } = c
+  const itemCode = c.req.query('item_code')
+  const targetDate = c.req.query('date')
+  const limit = parseInt(c.req.query('limit') || '50')
+  
+  if (!itemCode) {
+    return c.json({ success: false, error: 'item_code 파라미터가 필요합니다.' }, 400)
+  }
+  
+  try {
+    let query = `
+      SELECT t.*, 
+             COALESCE(m.item_name, t.item_code) as item_name
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE t.item_code = ?
+    `
+    const params: any[] = [itemCode]
+    
+    if (targetDate) {
+      query += ` AND t.trans_date <= ?`
+      params.push(targetDate)
+    }
+    
+    query += ` ORDER BY t.trans_date DESC, t.id DESC LIMIT ?`
+    params.push(limit)
+    
+    const transactions = await env.DB.prepare(query).bind(...params).all<any>()
+    
+    // 합계 계산
+    const summaryQuery = `
+      SELECT 
+        SUM(CASE WHEN trans_type = '입고' THEN quantity ELSE 0 END) as total_inbound,
+        SUM(CASE WHEN trans_type = '사용' THEN ABS(quantity) ELSE 0 END) as total_usage,
+        SUM(quantity) as balance
+      FROM transactions
+      WHERE item_code = ?
+      ${targetDate ? 'AND trans_date <= ?' : ''}
+    `
+    const summaryParams = targetDate ? [itemCode, targetDate] : [itemCode]
+    const summary = await env.DB.prepare(summaryQuery).bind(...summaryParams).first<any>()
+    
+    // inbound 테이블 비교
+    const inboundQuery = `
+      SELECT 
+        SUM(origin_qty) as total_inbound,
+        SUM(remain_qty) as total_remain,
+        COUNT(*) as lot_count
+      FROM inbound
+      WHERE item_code = ?
+        AND quality_status = '합격'
+    `
+    const inboundSummary = await env.DB.prepare(inboundQuery).bind(itemCode).first<any>()
+    
+    return c.json({
+      success: true,
+      item_code: itemCode,
+      date_filter: targetDate || 'all',
+      transactions: {
+        count: transactions.results?.length || 0,
+        data: transactions.results || []
+      },
+      summary: {
+        transactions_total_inbound: summary?.total_inbound || 0,
+        transactions_total_usage: summary?.total_usage || 0,
+        transactions_balance: summary?.balance || 0
+      },
+      inbound_comparison: {
+        inbound_total: inboundSummary?.total_inbound || 0,
+        inbound_remain: inboundSummary?.total_remain || 0,
+        lot_count: inboundSummary?.lot_count || 0,
+        difference: (summary?.balance || 0) - (inboundSummary?.total_remain || 0)
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 // 트랜잭션 목록 조회
 admin.get('/transactions', async (c) => {
   const { env } = c
@@ -7389,6 +7470,177 @@ admin.post('/sync/fix-negative-inventory', async (c) => {
   }
 })
 
+// ★★★ v3.5.12: inbound 테이블 → transactions 테이블 동기화 API ★★★
+// 핵심 원칙: 모든 원료는 입고 기준으로 재고가 연동되어야 함
+// inbound 테이블에 있는 입고 기록 중 transactions에 없는 것을 동기화
+admin.post('/sync/inbound-to-transactions', async (c) => {
+  try {
+    const { env } = c
+    const body = await c.req.json<{ 
+      confirm?: boolean; 
+      target_date?: string;  // 특정 날짜만 동기화 (선택)
+      item_codes?: string[]; // 특정 품목만 동기화 (선택)
+    }>().catch(() => ({}))
+    const confirm = body?.confirm
+    const targetDate = body?.target_date
+    const itemCodes = body?.item_codes || []
+    
+    // R169-R172, RM266 구형/무효 코드 제외
+    const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172', 'RM266', 'RM184', 'R184']
+    
+    // 1. inbound 테이블에서 transactions에 없는 입고 기록 찾기
+    let inboundQuery = `
+      SELECT 
+        i.id,
+        i.item_code,
+        COALESCE(m.item_name, i.item_code) as item_name,
+        i.lot_number,
+        i.inbound_date,
+        i.origin_qty,
+        i.remain_qty,
+        i.supplier
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.quality_status = '합격'
+        AND (i.item_code LIKE 'R%' OR i.item_code LIKE 'RM%')
+        AND i.item_code NOT LIKE 'RT%'
+        AND i.item_code NOT LIKE 'SF%'
+        AND i.item_code NOT IN ('${EXCLUDE_CODES.join("','")}')
+        AND NOT EXISTS (
+          SELECT 1 FROM transactions t 
+          WHERE t.item_code = i.item_code 
+            AND t.lot_number = i.lot_number 
+            AND t.trans_type = '입고'
+            AND t.trans_date = i.inbound_date
+        )
+    `
+    
+    const params: any[] = []
+    
+    if (targetDate) {
+      inboundQuery += ` AND i.inbound_date = ?`
+      params.push(targetDate)
+    }
+    
+    if (itemCodes.length > 0) {
+      inboundQuery += ` AND i.item_code IN (${itemCodes.map(() => '?').join(',')})`
+      params.push(...itemCodes)
+    }
+    
+    inboundQuery += ` ORDER BY i.inbound_date ASC, i.item_code ASC`
+    
+    const missingInbound = await env.DB.prepare(inboundQuery).bind(...params).all<any>()
+    
+    const items = missingInbound.results || []
+    
+    // 분석 결과만 반환 (confirm=false 또는 미지정)
+    if (!confirm) {
+      // 품목별 집계
+      const summaryByItem: Record<string, { count: number; total_qty: number; dates: string[] }> = {}
+      for (const item of items) {
+        if (!summaryByItem[item.item_code]) {
+          summaryByItem[item.item_code] = { count: 0, total_qty: 0, dates: [] }
+        }
+        summaryByItem[item.item_code].count++
+        summaryByItem[item.item_code].total_qty += item.origin_qty || 0
+        if (!summaryByItem[item.item_code].dates.includes(item.inbound_date)) {
+          summaryByItem[item.item_code].dates.push(item.inbound_date)
+        }
+      }
+      
+      return c.json({
+        success: true,
+        mode: 'analysis',
+        message: `${items.length}개의 입고 기록이 transactions 테이블에 누락되어 있습니다. confirm: true로 동기화를 실행하세요.`,
+        totalMissing: items.length,
+        totalQty: items.reduce((sum, i) => sum + (i.origin_qty || 0), 0),
+        summaryByItem,
+        sampleItems: items.slice(0, 20).map(i => ({
+          item_code: i.item_code,
+          item_name: i.item_name,
+          lot_number: i.lot_number,
+          inbound_date: i.inbound_date,
+          origin_qty: i.origin_qty
+        }))
+      })
+    }
+    
+    // 동기화 실행 (confirm=true)
+    if (items.length === 0) {
+      return c.json({
+        success: true,
+        message: '동기화할 입고 기록이 없습니다. 모든 입고가 transactions에 정상 기록되어 있습니다.',
+        syncedCount: 0
+      })
+    }
+    
+    let syncedCount = 0
+    const errors: string[] = []
+    const syncedItems: any[] = []
+    
+    for (const item of items) {
+      try {
+        // transactions 테이블에 입고 기록 추가
+        await env.DB.prepare(`
+          INSERT INTO transactions (
+            trans_date, item_code, trans_type, quantity, lot_number, 
+            remain_qty, memo, created_at
+          ) VALUES (?, ?, '입고', ?, ?, ?, ?, datetime('now'))
+        `).bind(
+          item.inbound_date,
+          item.item_code,
+          item.origin_qty,  // 양수 (입고)
+          item.lot_number,
+          item.origin_qty,  // remain_qty = origin_qty (초기값)
+          `[v3.5.12 동기화] inbound #${item.id} → transactions (${item.supplier || ''})`
+        ).run()
+        
+        syncedCount++
+        syncedItems.push({
+          item_code: item.item_code,
+          lot_number: item.lot_number,
+          inbound_date: item.inbound_date,
+          quantity: item.origin_qty
+        })
+      } catch (e: any) {
+        errors.push(`${item.item_code} (${item.lot_number}): ${e.message}`)
+      }
+    }
+    
+    // 관리자 로그 기록
+    try {
+      await env.DB.prepare(`
+        INSERT INTO admin_logs (action_type, action_detail, result, created_at)
+        VALUES (?, ?, ?, datetime('now'))
+      `).bind(
+        'SYNC_INBOUND_TO_TRANSACTIONS',
+        JSON.stringify({ 
+          totalItems: items.length, 
+          syncedCount, 
+          targetDate,
+          itemCodes: itemCodes.length > 0 ? itemCodes : 'all'
+        }),
+        syncedCount > 0 ? 'SUCCESS' : 'NO_ACTION'
+      ).run()
+    } catch (logError) {
+      console.log('[sync/inbound-to-transactions] admin_logs 기록 실패 (무시):', logError)
+    }
+    
+    return c.json({
+      success: true,
+      message: `${syncedCount}개의 입고 기록이 transactions 테이블에 동기화되었습니다.`,
+      syncedCount,
+      errorCount: errors.length,
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
+      syncedItems: syncedItems.slice(0, 30)  // 샘플만 반환
+    })
+    
+  } catch (error: any) {
+    console.error('[sync/inbound-to-transactions] Error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 // ★★★ v3.5.11: 품목별 총 입고량 차이 분석 및 조정 API ★★★
 // 마이너스 재고 문제 해결을 위한 진단/보정 도구
 admin.post('/sync/inventory-gap-analysis', async (c) => {
@@ -7525,6 +7777,154 @@ admin.post('/sync/inventory-gap-analysis', async (c) => {
     })
   } catch (error: any) {
     console.error('[sync/inventory-gap-analysis] Error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.12: inbound remain_qty 기준으로 transactions 재고 보정 API ★★★
+// 핵심 원칙: "모든 원료는 입고 기준으로 재고가 연동되어야 함"
+// inbound 테이블의 remain_qty와 transactions balance의 차이를 재고조정으로 보정
+admin.post('/sync/align-stock-to-inbound', async (c) => {
+  try {
+    const { env } = c
+    const body = await c.req.json<{ 
+      confirm?: boolean; 
+      item_codes?: string[];  // 특정 품목만 (선택)
+      target_date?: string;   // 보정 트랜잭션 날짜 (기본: 오늘)
+    }>().catch(() => ({}))
+    const confirm = body?.confirm
+    const itemCodes = body?.item_codes || []
+    const targetDate = body?.target_date || new Date().toISOString().split('T')[0]
+    
+    // R169-R172, RM266 구형/무효 코드 제외
+    const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172', 'RM266', 'RM184', 'R184']
+    
+    // 1. inbound remain_qty vs transactions balance 비교
+    let query = `
+      SELECT 
+        m.item_code,
+        COALESCE(m.item_name, m.item_code) as item_name,
+        -- inbound 테이블: 현재 남은 재고량 합계
+        COALESCE(
+          (SELECT SUM(i.remain_qty) FROM inbound i 
+           WHERE i.item_code = m.item_code AND i.quality_status = '합격'),
+          0
+        ) as inbound_remain,
+        -- transactions 테이블: 현재까지 누적 balance
+        COALESCE(
+          (SELECT SUM(t.quantity) FROM transactions t 
+           WHERE t.item_code = m.item_code),
+          0
+        ) as transactions_balance
+      FROM master m
+      WHERE m.category = '원료'
+        AND (m.item_code LIKE 'R%' OR m.item_code LIKE 'RM%')
+        AND m.item_code NOT LIKE 'RT%'
+        AND m.item_code NOT LIKE 'SF%'
+        AND m.item_code NOT IN ('${EXCLUDE_CODES.join("','")}')
+    `
+    
+    if (itemCodes.length > 0) {
+      query += ` AND m.item_code IN (${itemCodes.map(() => '?').join(',')})`
+    }
+    
+    const params = itemCodes.length > 0 ? itemCodes : []
+    const result = await env.DB.prepare(query).bind(...params).all<any>()
+    
+    // 차이가 있는 품목만 필터링 (오차 0.01 이상)
+    const discrepancies = (result.results || [])
+      .map((item: any) => ({
+        item_code: item.item_code,
+        item_name: item.item_name,
+        inbound_remain: parseFloat(item.inbound_remain) || 0,
+        transactions_balance: parseFloat(item.transactions_balance) || 0,
+        difference: (parseFloat(item.inbound_remain) || 0) - (parseFloat(item.transactions_balance) || 0)
+      }))
+      .filter((item: any) => Math.abs(item.difference) > 0.01)
+    
+    // 분석 모드
+    if (!confirm) {
+      return c.json({
+        success: true,
+        mode: 'analysis',
+        message: `${discrepancies.length}개 품목에서 inbound와 transactions 재고 불일치가 발견되었습니다.`,
+        totalDiscrepancy: discrepancies.reduce((sum: number, i: any) => sum + i.difference, 0),
+        discrepancies: discrepancies.slice(0, 50),  // 최대 50개 표시
+        note: '보정을 실행하려면 confirm: true를 전달하세요. 재고조정 트랜잭션이 추가됩니다.'
+      })
+    }
+    
+    // 보정 실행
+    if (discrepancies.length === 0) {
+      return c.json({
+        success: true,
+        message: '보정할 품목이 없습니다. 모든 재고가 일치합니다.',
+        adjustedCount: 0
+      })
+    }
+    
+    let adjustedCount = 0
+    const errors: string[] = []
+    const adjustedItems: any[] = []
+    
+    for (const item of discrepancies) {
+      try {
+        // transactions에 재고조정 트랜잭션 추가
+        // difference가 양수면 재고 증가, 음수면 재고 감소
+        await env.DB.prepare(`
+          INSERT INTO transactions (
+            trans_date, item_code, trans_type, quantity, lot_number,
+            remain_qty, memo, created_at
+          ) VALUES (?, ?, '재고조정', ?, ?, 0, ?, datetime('now'))
+        `).bind(
+          targetDate,
+          item.item_code,
+          item.difference,  // 양수/음수 그대로
+          `ALIGN-${item.item_code}-${targetDate}`,
+          `[v3.5.12 inbound 동기화] inbound remain: ${item.inbound_remain.toFixed(2)}kg, transactions: ${item.transactions_balance.toFixed(2)}kg, 조정: ${item.difference > 0 ? '+' : ''}${item.difference.toFixed(2)}kg`
+        ).run()
+        
+        adjustedCount++
+        adjustedItems.push({
+          item_code: item.item_code,
+          item_name: item.item_name,
+          adjustment: item.difference,
+          new_balance: item.inbound_remain
+        })
+      } catch (e: any) {
+        errors.push(`${item.item_code}: ${e.message}`)
+      }
+    }
+    
+    // 관리자 로그
+    try {
+      await env.DB.prepare(`
+        INSERT INTO admin_logs (action_type, action_detail, result, created_at)
+        VALUES (?, ?, ?, datetime('now'))
+      `).bind(
+        'ALIGN_STOCK_TO_INBOUND',
+        JSON.stringify({ 
+          adjustedCount, 
+          totalAdjustment: discrepancies.reduce((sum: number, i: any) => sum + i.difference, 0),
+          targetDate
+        }),
+        adjustedCount > 0 ? 'SUCCESS' : 'NO_ACTION'
+      ).run()
+    } catch (logError) {
+      console.log('[align-stock-to-inbound] admin_logs 기록 실패:', logError)
+    }
+    
+    return c.json({
+      success: true,
+      message: `${adjustedCount}개 품목의 재고가 inbound 기준으로 보정되었습니다.`,
+      adjustedCount,
+      errorCount: errors.length,
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
+      adjustedItems: adjustedItems.slice(0, 30)
+    })
+    
+  } catch (error: any) {
+    console.error('[align-stock-to-inbound] Error:', error)
     return c.json({ success: false, error: error.message }, 500)
   }
 })

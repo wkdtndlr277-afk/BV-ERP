@@ -1,9 +1,11 @@
 // 생산 관리 API
 // v3.5.0: Service Layer 도입 - 재고 차감/트랜잭션 기록 원자적 처리
 // v3.5.1: 재고 정합성 보정 API 추가
+// v3.5.20: 단순화 API 추가 - 계산은 구글시트에서, ERP는 입력/출력만
 // 최적화: Atomic Transaction, FEFO 강제, MAX(0,...) 적용, 재고 부족 방어
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
+import { GoogleSheetsService } from '../services/GoogleSheetsService';
 import { 
   checkStockAvailability, 
   checkSemiFinishedAvailability,
@@ -3937,6 +3939,217 @@ productionRoutes.post('/update-barcode-expiry', async (c) => {
       channel: existing.channel,
       old_expiry_days: oldExpiryDays,
       new_expiry_days: expiry_days
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ========================================
+// ★★★ v3.5.20: 단순화된 생산 등록 API ★★★
+// 계산은 구글시트에서, ERP는 입력/기록만
+// ========================================
+
+// 구글시트 서비스 헬퍼
+function getSheetServiceForProduction(c: any): any {
+  const clientEmail = c.env.GOOGLE_CLIENT_EMAIL;
+  const privateKey = c.env.GOOGLE_PRIVATE_KEY;
+  if (!clientEmail || !privateKey) return null;
+  const formattedKey = privateKey.replace(/\\n/g, '\n');
+  return new GoogleSheetsService(clientEmail, formattedKey);
+}
+
+// ===== 단순 생산 등록 (시트 전송만, 계산 없음) =====
+productionRoutes.post('/simple', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { 
+      prod_date,
+      lot_number,
+      items
+    } = body;
+    
+    if (!prod_date || !items || !Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: 'prod_date, items 필수' }, 400);
+    }
+    
+    const lotNum = lot_number || prod_date.replace(/-/g, '').slice(2);
+    
+    // 1. 구글 시트에 생산실적 전송
+    const service = getSheetServiceForProduction(c);
+    let sheetSent = false;
+    
+    if (service) {
+      try {
+        const rows = items.map((item: any) => [
+          prod_date,
+          lotNum,
+          item.product_code,
+          item.product_name || '',
+          item.quantity || 0,
+          item.channel || ''
+        ]);
+        await service.appendSheet('생산실적', rows);
+        sheetSent = true;
+      } catch (sheetError: any) {
+        console.error('[production/simple] 시트 전송 실패:', sheetError.message);
+      }
+    }
+    
+    // 2. DB에 간단한 기록만 저장
+    let dbSaved = 0;
+    for (const item of items) {
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO production (product_code, quantity, prod_date, lot_number, channel, created_at)
+          VALUES (?, ?, ?, ?, ?, datetime('now'))
+        `).bind(
+          item.product_code,
+          item.quantity || 0,
+          prod_date,
+          lotNum,
+          item.channel || ''
+        ).run();
+        dbSaved++;
+      } catch (e: any) {
+        console.error('[production/simple] DB 저장 실패:', e.message);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      prod_date,
+      lot_number: lotNum,
+      items_count: items.length,
+      db_saved: dbSaved,
+      sheet_sent: sheetSent,
+      message: `${items.length}건 생산 등록 완료 (시트: ${sheetSent ? 'O' : 'X'})`,
+      note: '원료 사용량은 구글시트에서 자동 계산됩니다.'
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ===== 단순 일괄 생산 등록 (발주 기반, 계산 없음) =====
+productionRoutes.post('/simple-batch', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { prod_date, lot_number, items, order_date } = body;
+    
+    if (!prod_date || !items || !Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: 'prod_date, items 필수' }, 400);
+    }
+    
+    const lotNum = lot_number || prod_date.replace(/-/g, '').slice(2);
+    
+    // 1. 구글 시트에 생산실적 전송
+    const service = getSheetServiceForProduction(c);
+    let sheetSent = false;
+    
+    if (service) {
+      try {
+        const rows = items.map((item: any) => [
+          prod_date,
+          lotNum,
+          item.product_code,
+          item.product_name || '',
+          item.quantity || 0,
+          item.channel || item.channels || ''
+        ]);
+        await service.appendSheet('생산실적', rows);
+        sheetSent = true;
+      } catch (sheetError: any) {
+        console.error('[production/simple-batch] 시트 전송 실패:', sheetError.message);
+      }
+    }
+    
+    // 2. DB에 간단한 기록만 저장
+    let dbSaved = 0;
+    for (const item of items) {
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO production (product_code, quantity, prod_date, lot_number, channel, created_at)
+          VALUES (?, ?, ?, ?, ?, datetime('now'))
+        `).bind(
+          item.product_code,
+          item.quantity || 0,
+          prod_date,
+          lotNum,
+          item.channel || item.channels || ''
+        ).run();
+        dbSaved++;
+      } catch (e: any) {
+        console.error('[production/simple-batch] DB 저장 실패:', e.message);
+      }
+    }
+    
+    // 3. 발주 상태 업데이트
+    let ordersUpdated = 0;
+    if (order_date) {
+      try {
+        const result = await c.env.DB.prepare(`
+          UPDATE orders SET status = '완료', updated_at = CURRENT_TIMESTAMP 
+          WHERE order_date = ? AND status = '대기'
+        `).bind(order_date).run();
+        ordersUpdated = result.meta?.changes || 0;
+      } catch (e: any) {
+        console.error('[production/simple-batch] 발주 상태 업데이트 실패:', e.message);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      prod_date,
+      lot_number: lotNum,
+      items_count: items.length,
+      db_saved: dbSaved,
+      sheet_sent: sheetSent,
+      orders_updated: ordersUpdated,
+      message: `${items.length}건 생산 등록 완료`,
+      note: '원료 사용량, FEFO 로트매칭은 구글시트에서 자동 계산됩니다.'
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ===== 생산 현황 조회 (단순) =====
+productionRoutes.get('/simple-list', async (c) => {
+  try {
+    const prod_date = c.req.query('prod_date');
+    const lot_number = c.req.query('lot_number');
+    
+    let query = `
+      SELECT p.id, p.product_code, p.quantity, p.prod_date, p.lot_number, p.channel, p.created_at,
+             COALESCE(pi.production_name, p.product_code) as product_name
+      FROM production p
+      LEFT JOIN production_items pi ON p.product_code = pi.production_code
+      WHERE 1=1
+    `;
+    const params: any[] = [];
+    
+    if (prod_date) {
+      query += ' AND p.prod_date = ?';
+      params.push(prod_date);
+    }
+    if (lot_number) {
+      query += ' AND p.lot_number = ?';
+      params.push(lot_number);
+    }
+    
+    query += ' ORDER BY p.created_at DESC LIMIT 500';
+    
+    const result = await c.env.DB.prepare(query).bind(...params).all<any>();
+    
+    return c.json({
+      success: true,
+      total_items: result.results?.length || 0,
+      total_quantity: result.results?.reduce((sum: number, item: any) => sum + (item.quantity || 0), 0) || 0,
+      items: result.results || []
     });
     
   } catch (error: any) {

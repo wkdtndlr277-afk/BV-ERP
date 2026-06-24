@@ -655,6 +655,7 @@ orderUpload.post('/to-production', async (c) => {
 });
 
 // ===== 생산 완료 처리 (발주 상태 변경 + 생산실적 등록 + 시트 전송) =====
+// ★ v3.5.20: DB 기록 추가, 계산은 시트에서
 orderUpload.post('/complete-production', async (c) => {
   try {
     const body = await c.req.json();
@@ -676,23 +677,46 @@ orderUpload.post('/complete-production', async (c) => {
     
     // 2. 구글 시트에 생산실적 전송
     const service = getSheetService(c);
+    let sheetSent = false;
     if (service && items.length > 0) {
-      // 생산실적 시트에 추가
-      const productionRows = items.map((item: any) => [
-        prodDate,
-        lotNum,
-        item.product_code,
-        item.product_name || '',
-        item.production_qty || item.order_qty || 0,
-        item.channels || ''
-      ]);
-      await service.appendSheet('생산실적', productionRows);
-      
-      // BOM 기반 원료 사용량 계산 요청
-      // (시트에서 수식으로 자동 계산됨)
+      try {
+        const productionRows = items.map((item: any) => [
+          prodDate,
+          lotNum,
+          item.product_code,
+          item.product_name || '',
+          item.production_qty || item.order_qty || 0,
+          item.channels || ''
+        ]);
+        await service.appendSheet('생산실적', productionRows);
+        sheetSent = true;
+      } catch (sheetError: any) {
+        console.error('[complete-production] 시트 전송 실패:', sheetError.message);
+      }
     }
     
-    // 3. 결과 반환
+    // 3. ★ v3.5.20: production 테이블에도 기록 (간단히)
+    let dbSaved = 0;
+    for (const item of items) {
+      try {
+        const qty = item.production_qty || item.order_qty || 0;
+        await c.env.DB.prepare(`
+          INSERT INTO production (product_code, quantity, prod_date, lot_number, channel, created_at)
+          VALUES (?, ?, ?, ?, ?, datetime('now'))
+        `).bind(
+          item.product_code,
+          qty,
+          prodDate,
+          lotNum,
+          item.channels || ''
+        ).run();
+        dbSaved++;
+      } catch (e: any) {
+        console.error('[complete-production] DB 저장 실패:', e.message);
+      }
+    }
+    
+    // 4. 결과 반환
     const totalProduced = items.reduce((sum: number, item: any) => 
       sum + (item.production_qty || item.order_qty || 0), 0);
     
@@ -703,7 +727,10 @@ orderUpload.post('/complete-production', async (c) => {
       lot_number: lotNum,
       completed_products: items.length,
       total_quantity: totalProduced,
-      message: `${items.length}개 제품 생산완료 처리됨. 구글시트에서 원료 사용량을 확인하세요.`
+      db_saved: dbSaved,
+      sheet_sent: sheetSent,
+      message: `${items.length}개 제품 생산완료 처리됨. 구글시트에서 원료 사용량을 확인하세요.`,
+      note: '원료 사용량, FEFO 로트매칭은 구글시트에서 자동 계산됩니다.'
     });
     
   } catch (error: any) {

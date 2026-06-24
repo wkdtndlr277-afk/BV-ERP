@@ -32,11 +32,15 @@ function getSheetService(c: any): GoogleSheetsService | null {
 // ==========================================
 
 /**
- * GET /api/validate/bom
+ * GET /api/validate/bom?active_only=true
  * BOM 전체 정합성 검증
+ * - active_only=true: 실제 생산 이력이 있는 제품만 검증 (기본값)
+ * - active_only=false: 모든 제품 검증
  */
 validateRoutes.get('/bom', async (c) => {
   try {
+    const activeOnly = c.req.query('active_only') !== 'false'; // 기본값 true
+    
     // DB에서 데이터 조회
     const bomData = await c.env.DB.prepare(`
       SELECT 
@@ -51,9 +55,20 @@ validateRoutes.get('/bom', async (c) => {
       LEFT JOIN master m ON pb.material_code = m.item_code
     `).all<any>();
     
-    const productData = await c.env.DB.prepare(`
-      SELECT production_code FROM production_items
-    `).all<any>();
+    // 실제 사용 제품만 조회 (생산실적이 있는 제품)
+    let productData;
+    if (activeOnly) {
+      productData = await c.env.DB.prepare(`
+        SELECT DISTINCT pi.production_code 
+        FROM production_items pi
+        INNER JOIN production pr ON pi.production_code = pr.product_code
+        WHERE pr.prod_date >= date('now', '-90 days')
+      `).all<any>();
+    } else {
+      productData = await c.env.DB.prepare(`
+        SELECT production_code FROM production_items
+      `).all<any>();
+    }
     
     const materialData = await c.env.DB.prepare(`
       SELECT item_code FROM master WHERE category = '원료' OR item_code LIKE 'R%' OR item_code LIKE 'RM%'
@@ -76,6 +91,8 @@ validateRoutes.get('/bom', async (c) => {
     return c.json({
       success: true,
       validation_type: 'BOM',
+      filter: activeOnly ? '실제 사용 제품만 (최근 90일 생산 이력)' : '전체 제품',
+      products_checked: productCodes.length,
       ...result,
       message: result.valid 
         ? '✅ BOM 정합성 검증 통과' 
@@ -91,8 +108,10 @@ validateRoutes.get('/bom', async (c) => {
 // ==========================================
 
 /**
- * GET /api/validate/daily-stock?date=YYYY-MM-DD
+ * GET /api/validate/daily-stock?date=YYYY-MM-DD&start_date=YYYY-MM-DD
  * 일별 재고 정합성 검증
+ * - date: 특정 날짜만 검증
+ * - start_date: 이 날짜 이후만 검증 (기본값: 최근 30일)
  */
 validateRoutes.get('/daily-stock', async (c) => {
   const service = getSheetService(c);
@@ -102,6 +121,12 @@ validateRoutes.get('/daily-stock', async (c) => {
   
   try {
     const date = c.req.query('date');
+    const startDate = c.req.query('start_date');
+    
+    // 기본값: 최근 30일
+    const defaultStartDate = new Date();
+    defaultStartDate.setDate(defaultStartDate.getDate() - 30);
+    const filterStartDate = startDate || defaultStartDate.toISOString().split('T')[0];
     
     // 구글 시트에서 일별수불부 조회
     const sheetData = await service.readSheet('일별수불부', 'A2:H');
@@ -116,8 +141,11 @@ validateRoutes.get('/daily-stock', async (c) => {
       current_stock: parseFloat(row[6]) || 0
     }));
     
+    // 날짜 필터링
     if (date) {
       records = records.filter(r => r.date === date);
+    } else {
+      records = records.filter(r => r.date >= filterStartDate);
     }
     
     const result = DataValidator.validateDailyStock(records);
@@ -125,7 +153,7 @@ validateRoutes.get('/daily-stock', async (c) => {
     return c.json({
       success: true,
       validation_type: 'DAILY_STOCK',
-      date: date || 'ALL',
+      filter: date ? `날짜: ${date}` : `${filterStartDate} 이후`,
       records_checked: records.length,
       ...result,
       message: result.valid 
@@ -138,8 +166,9 @@ validateRoutes.get('/daily-stock', async (c) => {
 });
 
 /**
- * GET /api/validate/stock-continuity
+ * GET /api/validate/stock-continuity?start_date=YYYY-MM-DD
  * 이월 재고 연속성 검증
+ * - start_date: 이 날짜 이후만 검증 (기본값: 최근 30일)
  */
 validateRoutes.get('/stock-continuity', async (c) => {
   const service = getSheetService(c);
@@ -148,9 +177,16 @@ validateRoutes.get('/stock-continuity', async (c) => {
   }
   
   try {
+    const startDate = c.req.query('start_date');
+    
+    // 기본값: 최근 30일
+    const defaultStartDate = new Date();
+    defaultStartDate.setDate(defaultStartDate.getDate() - 30);
+    const filterStartDate = startDate || defaultStartDate.toISOString().split('T')[0];
+    
     const sheetData = await service.readSheet('일별수불부', 'A2:H');
     
-    const records = sheetData.map(row => ({
+    let records = sheetData.map(row => ({
       date: row[0]?.toString().replace(/^'/, '') || '',
       item_code: row[1] || '',
       item_name: row[2] || '',
@@ -158,13 +194,14 @@ validateRoutes.get('/stock-continuity', async (c) => {
       inbound_qty: parseFloat(row[4]) || 0,
       usage_qty: parseFloat(row[5]) || 0,
       current_stock: parseFloat(row[6]) || 0
-    }));
+    })).filter(r => r.date >= filterStartDate);
     
     const result = DataValidator.validateStockContinuity(records);
     
     return c.json({
       success: true,
       validation_type: 'STOCK_CONTINUITY',
+      filter: `${filterStartDate} 이후`,
       records_checked: records.length,
       ...result,
       message: result.valid 
@@ -408,8 +445,9 @@ validateRoutes.post('/production', async (c) => {
 // ==========================================
 
 /**
- * GET /api/validate/full-report
+ * GET /api/validate/full-report?start_date=YYYY-MM-DD
  * 전체 시스템 정합성 리포트
+ * - 기본값: 실제 사용 제품만 + 최근 30일 데이터
  */
 validateRoutes.get('/full-report', async (c) => {
   const service = getSheetService(c);
@@ -418,6 +456,13 @@ validateRoutes.get('/full-report', async (c) => {
   }
   
   try {
+    const startDate = c.req.query('start_date');
+    
+    // 기본값: 최근 30일
+    const defaultStartDate = new Date();
+    defaultStartDate.setDate(defaultStartDate.getDate() - 30);
+    const filterStartDate = startDate || defaultStartDate.toISOString().split('T')[0];
+    
     // 1. BOM 데이터
     const bomData = await c.env.DB.prepare(`
       SELECT 
@@ -441,14 +486,20 @@ validateRoutes.get('/full-report', async (c) => {
       unit: r.unit || 'g'
     }));
     
-    // 2. 제품/원료 코드
-    const productData = await c.env.DB.prepare(`SELECT production_code FROM production_items`).all<any>();
+    // 2. 실제 사용 제품만 (최근 90일 생산 이력)
+    const productData = await c.env.DB.prepare(`
+      SELECT DISTINCT pi.production_code 
+      FROM production_items pi
+      INNER JOIN production pr ON pi.production_code = pr.product_code
+      WHERE pr.prod_date >= date('now', '-90 days')
+    `).all<any>();
+    
     const materialData = await c.env.DB.prepare(`SELECT item_code FROM master WHERE item_code LIKE 'R%'`).all<any>();
     
     const productCodes = (productData.results || []).map(r => r.production_code);
     const materialCodes = (materialData.results || []).map(r => r.item_code);
     
-    // 3. 일별수불부
+    // 3. 일별수불부 (필터 적용)
     const dailyStockData = await service.readSheet('일별수불부', 'A2:H');
     const dailyStockRecords = dailyStockData.map(row => ({
       date: row[0]?.toString().replace(/^'/, '') || '',
@@ -458,7 +509,7 @@ validateRoutes.get('/full-report', async (c) => {
       inbound_qty: parseFloat(row[4]) || 0,
       usage_qty: parseFloat(row[5]) || 0,
       current_stock: parseFloat(row[6]) || 0
-    }));
+    })).filter(r => r.date >= filterStartDate);
     
     // 4. 원료입고
     const inboundData = await service.readSheet('원료입고', 'A2:I');
@@ -484,10 +535,14 @@ validateRoutes.get('/full-report', async (c) => {
     return c.json({
       success: true,
       validation_type: 'FULL_REPORT',
+      filter: {
+        products: '실제 사용 제품만 (최근 90일 생산 이력)',
+        data: `${filterStartDate} 이후`
+      },
       generated_at: new Date().toISOString(),
       data_counts: {
         bom_records: bomRecords.length,
-        products: productCodes.length,
+        active_products: productCodes.length,
         materials: materialCodes.length,
         daily_stock_records: dailyStockRecords.length,
         inbound_lots: inboundRecords.length

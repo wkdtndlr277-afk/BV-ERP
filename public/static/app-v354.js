@@ -6456,10 +6456,17 @@ async function renderDailyReport() {
               <input type="date" id="daily-date" class="w-full border rounded-lg px-3 py-2 text-sm" value="${today}">
             </div>
             <div>
+              <label class="block text-xs text-gray-500 mb-1">데이터 소스</label>
+              <select id="daily-source" class="w-full border rounded-lg px-3 py-2 text-sm">
+                <option value="sheets" selected>📊 구글시트 (SSOT)</option>
+                <option value="db">💾 DB (로컬)</option>
+              </select>
+            </div>
+            <div>
               <label class="block text-xs text-gray-500 mb-1">보기 방식</label>
               <select id="daily-view-type" class="w-full border rounded-lg px-3 py-2 text-sm">
-                <option value="summary">품목 요약</option>
-                <option value="lot-detail" selected>LOT 상세</option>
+                <option value="summary" selected>품목 요약</option>
+                <option value="lot-detail">LOT 상세</option>
                 <option value="fifo">선입선출 현황</option>
               </select>
             </div>
@@ -6520,11 +6527,12 @@ async function loadDailyLedger() {
   }
   
   const date = document.getElementById('daily-date')?.value || formatDate(new Date());
-  const viewType = document.getElementById('daily-view-type')?.value || 'lot-detail';
+  const viewType = document.getElementById('daily-view-type')?.value || 'summary';
+  const dataSource = document.getElementById('daily-source')?.value || 'sheets';
   const search = document.getElementById('daily-search')?.value?.trim() || '';
   const category = window.dailyCategory || '';
   
-  console.log('loadDailyLedger:', { date, viewType, search, category });
+  console.log('loadDailyLedger:', { date, viewType, dataSource, search, category });
   
   // 로딩 상태 표시 (경과 시간 포함)
   const startTime = Date.now();
@@ -6538,6 +6546,27 @@ async function loadDailyLedger() {
   }, 1000);
   
   try {
+    // ★ 구글시트 기반 조회 (SSOT)
+    if (dataSource === 'sheets') {
+      const params = new URLSearchParams({ date });
+      if (category) params.append('category', category);
+      if (search) params.append('search', search);
+      
+      const result = await api(`/sheets/v2/output/daily-stock?${params.toString()}`);
+      console.log('Sheets daily-stock result:', result);
+      
+      clearInterval(loadingTimer);
+      
+      // 전역 저장
+      window.dailyLedgerData = result.data || [];
+      window.dailyLedgerPeriod = { start_date: date };
+      window.dailyLedgerSummary = result.summary || {};
+      
+      renderSheetsDailyStock(result, date, search, category);
+      return;
+    }
+    
+    // ★ 기존 DB 기반 조회
     const params = new URLSearchParams({ date });
     if (category) params.append('category', category);
     if (search) params.append('search', search);
@@ -6585,6 +6614,106 @@ async function loadDailyLedger() {
       </button>
     </div>`;
   }
+}
+
+// ★ 구글시트 기반 일별수불부 렌더링 (SSOT)
+function renderSheetsDailyStock(result, date, search, category) {
+  let data = result.data || [];
+  const contentEl = document.getElementById('daily-content');
+  
+  if (!contentEl) return;
+  
+  // 카테고리 필터링 (원료: R/RM, 부자재: SM, 제품: PR/PD)
+  if (category === '원료') {
+    data = data.filter(d => d.item_code?.startsWith('R') || d.item_code?.startsWith('RM'));
+  } else if (category === '부자재') {
+    data = data.filter(d => d.item_code?.startsWith('SM'));
+  } else if (category === '제품') {
+    data = data.filter(d => d.item_code?.startsWith('PR') || d.item_code?.startsWith('PD'));
+  }
+  
+  // 검색 필터링
+  if (search) {
+    const s = search.toLowerCase();
+    data = data.filter(d => 
+      d.item_code?.toLowerCase().includes(s) || 
+      d.item_name?.toLowerCase().includes(s)
+    );
+  }
+  
+  // 합계 계산
+  const summary = {
+    prev_stock: data.reduce((sum, d) => sum + (d.prev_stock || 0), 0),
+    inbound_qty: data.reduce((sum, d) => sum + (d.inbound_qty || 0), 0),
+    usage_qty: data.reduce((sum, d) => sum + (d.usage_qty || 0), 0),
+    current_stock: data.reduce((sum, d) => sum + (d.current_stock || 0), 0)
+  };
+  
+  if (data.length === 0) {
+    contentEl.innerHTML = `
+      <div class="p-8 text-center text-gray-500">
+        <i class="fas fa-inbox text-4xl mb-3"></i>
+        <p>${date} 수불부 데이터가 없습니다.</p>
+        <p class="text-sm mt-2">생산실적 등록 후 구글시트에서 자동 계산됩니다.</p>
+      </div>
+    `;
+    return;
+  }
+  
+  contentEl.innerHTML = `
+    <div class="p-3 border-b bg-gradient-to-r from-green-50 to-white flex justify-between items-center flex-wrap gap-2">
+      <div class="flex items-center gap-3">
+        <span class="text-lg font-bold text-gray-700">${date}</span>
+        <span class="text-sm text-gray-500">품목 ${data.length}건</span>
+        <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">📊 구글시트 SSOT</span>
+      </div>
+      <div class="flex items-center gap-4 text-sm">
+        <span class="text-purple-600"><b>전일재고</b> ${formatNumber(summary.prev_stock)}</span>
+        <span class="text-blue-600"><b>입고</b> +${formatNumber(summary.inbound_qty)}</span>
+        <span class="text-red-600"><b>사용</b> -${formatNumber(summary.usage_qty)}</span>
+        <span class="text-gray-800 font-bold"><b>현재고</b> ${formatNumber(summary.current_stock)}</span>
+      </div>
+    </div>
+    
+    <div class="overflow-auto" style="max-height: 600px;">
+      <table class="w-full text-sm">
+        <thead class="bg-gray-100 sticky top-0">
+          <tr>
+            <th class="p-2 text-left font-medium">품목코드</th>
+            <th class="p-2 text-left font-medium">품목명</th>
+            <th class="p-2 text-right font-medium">전일재고</th>
+            <th class="p-2 text-right font-medium text-blue-600">입고</th>
+            <th class="p-2 text-right font-medium text-red-600">사용</th>
+            <th class="p-2 text-right font-medium">현재고</th>
+            <th class="p-2 text-center font-medium">단위</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.map(item => `
+            <tr class="border-b hover:bg-gray-50">
+              <td class="p-2 font-mono text-xs">${item.item_code || ''}</td>
+              <td class="p-2">${item.item_name || ''}</td>
+              <td class="p-2 text-right">${formatNumber(item.prev_stock || 0)}</td>
+              <td class="p-2 text-right text-blue-600">${item.inbound_qty ? '+' + formatNumber(item.inbound_qty) : '-'}</td>
+              <td class="p-2 text-right text-red-600">${item.usage_qty ? '-' + formatNumber(item.usage_qty) : '-'}</td>
+              <td class="p-2 text-right font-bold">${formatNumber(item.current_stock || 0)}</td>
+              <td class="p-2 text-center text-gray-500">${item.unit || ''}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+        <tfoot class="bg-gray-100 font-bold">
+          <tr>
+            <td class="p-2" colspan="2">합계</td>
+            <td class="p-2 text-right">${formatNumber(summary.prev_stock)}</td>
+            <td class="p-2 text-right text-blue-600">+${formatNumber(summary.inbound_qty)}</td>
+            <td class="p-2 text-right text-red-600">-${formatNumber(summary.usage_qty)}</td>
+            <td class="p-2 text-right">${formatNumber(summary.current_stock)}</td>
+            <td class="p-2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
 }
 
 // 일별 품목 요약 렌더링

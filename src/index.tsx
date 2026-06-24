@@ -589,6 +589,22 @@ app.get('/*', (c) => {
                     <span id="alert-badge" class="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full alert-badge hidden">0</span>
                 </a>
                 
+                <!-- ========== 업무 관리 (상단 배치) ========== -->
+                <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">📋 업무 관리</p>
+                </div>
+                
+                <a href="#task-calendar" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-calendar">
+                    <i class="fas fa-calendar-alt w-5"></i>
+                    <span>업무 캘린더</span>
+                    <span id="task-badge" class="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full hidden">0</span>
+                </a>
+                
+                <a href="#task-board" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-board">
+                    <i class="fas fa-chart-line w-5"></i>
+                    <span>업무 현황판</span>
+                </a>
+                
                 <!-- ========== 생산 관리 (핵심) ========== -->
                 <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-blue-600 uppercase tracking-wider px-4">📦 생산 관리</p>
@@ -669,22 +685,6 @@ app.get('/*', (c) => {
                 <a href="#microbial-test" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="microbial-test">
                     <i class="fas fa-microscope w-5"></i>
                     <span>미생물 검사</span>
-                </a>
-                
-                <!-- ========== 업무 관리 ========== -->
-                <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">📋 업무 관리</p>
-                </div>
-                
-                <a href="#task-calendar" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-calendar">
-                    <i class="fas fa-calendar-alt w-5"></i>
-                    <span>업무 캘린더</span>
-                    <span id="task-badge" class="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full hidden">0</span>
-                </a>
-                
-                <a href="#task-board" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-board">
-                    <i class="fas fa-chart-line w-5"></i>
-                    <span>업무 현황판</span>
                 </a>
                 
                 <!-- ========== 바코드 관리 ========== -->

@@ -3372,8 +3372,13 @@ productionRoutes.post('/preview', async (c) => {
           // ★ 가상 데이터 금지: stockInfo가 없으면 0으로 처리하고 경고 발생
           const availableStock = stockInfo?.available || 0;
           const itemName = stockInfo?.item_name || bom.item_name || itemCode;
-          const unit = stockInfo?.unit || bom.unit || 'kg';
+          // ★★★ v3.5.9: BOM unit 우선 사용 - 필요량과 재고 비교 시 단위 통일 ★★★
+          const bomUnit = bom.unit || 'g';  // BOM 단위 (보통 g)
+          const stockUnit = stockInfo?.unit || 'kg';  // 재고 단위 (보통 kg)
           const stockSource = stockInfo?.source || 'NOT_FOUND';
+          
+          // 필요량을 kg으로 변환 (BOM이 g 단위인 경우)
+          const requiredQtyInKg = bomUnit === 'g' ? requiredQty / 1000 : requiredQty;
           
           // DB에 재고 출처가 없으면 상세 경고 표시
           if (!stockInfo) {
@@ -3387,30 +3392,32 @@ productionRoutes.post('/preview', async (c) => {
           
           const isSF = itemCode.startsWith('SF');
           // ★★★ v3.4.28: SF 원료는 자동생산이므로 항상 충분한 것으로 처리 ★★★
-          const isSufficient = isSF ? true : (availableStock >= requiredQty);
+          // ★★★ v3.5.9: 재고 비교는 kg 단위로 통일 ★★★
+          const isSufficient = isSF ? true : (availableStock >= requiredQtyInKg);
           
           materialDetails.push({
             item_code: itemCode,
             item_name: itemName,
-            required_qty: requiredQty,
+            // ★★★ v3.5.9: 필요량을 kg 단위로 저장 (표시 통일) ★★★
+            required_qty: requiredQtyInKg,
             // SF 원료는 필요량을 가용량으로 표시 (자동생산)
-            available_stock: isSF ? requiredQty : availableStock,
-            unit: unit,
+            available_stock: isSF ? requiredQtyInKg : availableStock,
+            unit: 'kg',  // 항상 kg 단위로 통일
             is_sufficient: isSufficient,
             is_sf: isSF,
             stock_source: isSF ? 'auto_production' : stockSource  // SF는 자동생산으로 표시
           });
           
-          // 총 소요량 누적
+          // 총 소요량 누적 (kg 단위로 통일)
           if (totalMaterialRequirements.has(itemCode)) {
             const existing = totalMaterialRequirements.get(itemCode)!;
-            existing.required += requiredQty;
+            existing.required += requiredQtyInKg;
           } else {
             totalMaterialRequirements.set(itemCode, {
               item_name: itemName,
-              required: requiredQty,
+              required: requiredQtyInKg,
               available: availableStock,
-              unit: unit,
+              unit: 'kg',  // 항상 kg 단위로 통일
               is_sf: isSF,
               stock_source: stockSource
             });

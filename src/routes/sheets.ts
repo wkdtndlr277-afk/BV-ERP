@@ -139,6 +139,91 @@ sheets.post('/sync/bom', async (c) => {
   }
 });
 
+// ===== 제품마스터 동기화 (D1 production_barcodes → 구글시트) =====
+sheets.post('/sync/product-master', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // D1 DB에서 production_barcodes 데이터 조회
+    const barcodeData = await c.env.DB.prepare(`
+      SELECT 
+        pb.production_code,
+        COALESCE(pi.production_name, pb.production_code) as production_name,
+        pb.barcode,
+        pb.product_name as order_product_name,
+        pb.channel,
+        COALESCE(pb.expiry_days, 24) as expiry_days,
+        COALESCE(pb.box_quantity, 1) as box_quantity,
+        pb.created_at
+      FROM production_barcodes pb
+      LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+      ORDER BY pb.production_code, pb.channel, pb.barcode
+    `).all<any>();
+
+    const result = await service.syncProductMaster(barcodeData.results || []);
+    
+    return c.json({ 
+      success: result.success, 
+      message: `제품마스터 ${result.count}건 동기화 완료`,
+      count: result.count
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 제품마스터 조회 (구글시트에서)
+sheets.get('/product-master', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const productCode = c.req.query('product_code');
+    const products = await service.getProductMaster(productCode);
+    
+    return c.json({ 
+      success: true, 
+      data: products,
+      count: products.length
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 제품 소비기한 조회 (생산일보용)
+sheets.get('/product-expiry', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const productCode = c.req.query('product_code');
+    const channel = c.req.query('channel');
+    
+    if (!productCode) {
+      return c.json({ success: false, error: 'product_code 필수' }, 400);
+    }
+    
+    const expiryDays = await service.getProductExpiryDays(productCode, channel);
+    
+    return c.json({ 
+      success: true, 
+      product_code: productCode,
+      channel: channel || null,
+      expiry_days: expiryDays
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 발주서 데이터 동기화 (production_report 기준)
 sheets.post('/sync/orders', async (c) => {
   const service = getSheetService(c);
@@ -1781,7 +1866,21 @@ sheets.get('/v2/output/production-report', async (c) => {
     // 2. 로트매칭 정보 조회
     const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
     
-    // 3. 생산일보 데이터 구성
+    // 3. 제품마스터에서 소비기한 정보 조회 (SSOT)
+    const productMaster = await service.getProductMaster();
+    const expiryMap = new Map<string, number>();
+    
+    // 제품코드+채널별 소비기한 매핑
+    for (const pm of productMaster) {
+      const key = `${pm.product_code}|${pm.channel || ''}`;
+      expiryMap.set(key, pm.expiry_days || 24);
+      // 채널 없는 기본값도 설정
+      if (!expiryMap.has(pm.product_code)) {
+        expiryMap.set(pm.product_code, pm.expiry_days || 24);
+      }
+    }
+    
+    // 4. 생산일보 데이터 구성
     const reportItems = [];
     
     for (const prod of productions) {
@@ -1795,6 +1894,11 @@ sheets.get('/v2/output/production-report', async (c) => {
           expiry_date: row[6]
         }));
 
+      // 제품별 소비기한 조회 (채널 우선, 없으면 기본값)
+      const expiryDays = expiryMap.get(`${prod.product_code}|${prod.channel || ''}`) 
+                      || expiryMap.get(prod.product_code) 
+                      || 24;
+
       reportItems.push({
         prod_date: prod.prod_date,
         product_code: prod.product_code,
@@ -1802,6 +1906,7 @@ sheets.get('/v2/output/production-report', async (c) => {
         quantity: prod.quantity,
         lot_number: prod.lot_number,
         channel: prod.channel,
+        expiry_days: expiryDays,  // ★ 소비기한(일) 추가
         materials
       });
     }
@@ -1816,7 +1921,7 @@ sheets.get('/v2/output/production-report', async (c) => {
         total_quantity: productions.reduce((sum, p) => sum + p.quantity, 0),
         items: reportItems
       },
-      note: '★ PDF 생성용 정리된 데이터입니다.'
+      note: '★ PDF 생성용 정리된 데이터입니다. 소비기한은 제품마스터(구글시트) 참조.'
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

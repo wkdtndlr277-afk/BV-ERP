@@ -48638,19 +48638,29 @@ async function generateDailyReportPdf() {
                   <th class="px-3 py-2 text-right">생산</th>
                   <th class="px-3 py-2 text-left">제품LOT</th>
                   <th class="px-3 py-2 text-left">판매처</th>
+                  <th class="px-3 py-2 text-center">소비기한</th>
                 </tr>
               </thead>
               <tbody class="divide-y">
-                ${items.slice(0, 50).map(item => `
+                ${items.slice(0, 50).map(item => {
+                  // 소비기한 계산 (생산일 + expiry_days)
+                  const expiryDays = item.expiry_days || 24;
+                  const prodDate = new Date(date);
+                  prodDate.setDate(prodDate.getDate() + expiryDays);
+                  const expiryDate = prodDate.toISOString().split('T')[0];
+                  
+                  return \`
                   <tr class="hover:bg-gray-50">
-                    <td class="px-3 py-2 font-mono text-xs">${item.product_code || item.item_code || '-'}</td>
-                    <td class="px-3 py-2">${item.product_name || item.item_name || '-'}</td>
-                    <td class="px-3 py-2 text-right text-green-600 font-bold">${(item.quantity || item.production_qty || 0).toLocaleString()}</td>
-                    <td class="px-3 py-2 font-mono text-xs text-blue-600">${item.lot_number || '-'}</td>
-                    <td class="px-3 py-2">${item.channel || '-'}</td>
+                    <td class="px-3 py-2 font-mono text-xs">\${item.product_code || item.item_code || '-'}</td>
+                    <td class="px-3 py-2">\${item.product_name || item.item_name || '-'}</td>
+                    <td class="px-3 py-2 text-right text-green-600 font-bold">\${(item.quantity || item.production_qty || 0).toLocaleString()}</td>
+                    <td class="px-3 py-2 font-mono text-xs text-blue-600">\${item.lot_number || '-'}</td>
+                    <td class="px-3 py-2">\${item.channel || '-'}</td>
+                    <td class="px-3 py-2 text-center text-orange-600 font-medium">\${expiryDate}</td>
                   </tr>
-                `).join('')}
-                ${items.length > 50 ? `<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ${items.length - 50}건</td></tr>` : ''}
+                \`;
+                }).join('')}
+                ${items.length > 50 ? \`<tr><td colspan="6" class="px-3 py-2 text-center text-gray-500">... 외 \${items.length - 50}건</td></tr>\` : ''}
               </tbody>
             </table>
           </div>
@@ -48668,7 +48678,7 @@ async function generateDailyReportPdf() {
                     <th class="px-3 py-2 text-left">원료명</th>
                     <th class="px-3 py-2 text-right">사용량</th>
                     <th class="px-3 py-2 text-left">원료 LOT</th>
-                    <th class="px-3 py-2 text-left">유통기한</th>
+                    <th class="px-3 py-2 text-left">소비기한</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y">

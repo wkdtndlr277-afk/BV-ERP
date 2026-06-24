@@ -222,7 +222,8 @@ export class GoogleSheetsService {
         '일별수불부',
         '로트매칭',
         '출고일지',
-        '제품재고'
+        '제품재고',
+        '제품마스터'  // ★ 바코드별 제품 정보 + 소비기한
       ];
 
       // 기존 시트 정보 조회
@@ -266,7 +267,8 @@ export class GoogleSheetsService {
         'BOM마스터': ['제품코드', '제품명', '원료코드', '원료명', '배합비(kg)', '단위'],
         '생산실적': ['생산일자', '제품코드', '제품명', '생산수량', '제품로트', '채널', '비고', '등록시간'],
         '일별수불부': ['일자', '원료코드', '원료명', '전일재고', '입고량', '사용량', '현재고', '단위'],
-        '로트매칭': ['생산일자', '제품로트', '원료코드', '원료명', '사용량', '원료로트', '유통기한']
+        '로트매칭': ['생산일자', '제품로트', '원료코드', '원료명', '사용량', '원료로트', '유통기한'],
+        '제품마스터': ['제품코드', '제품명', '바코드', '발주상품명', '판매채널', '소비기한(일)', '박스수량', '등록일']
       };
 
       for (const [sheetName, headerRow] of Object.entries(headers)) {
@@ -584,6 +586,97 @@ export class GoogleSheetsService {
     } catch (error: any) {
       return { success: false, message: error.message };
     }
+  }
+
+  // ===== 제품마스터 관련 =====
+
+  // 제품마스터 시트 초기화 (바코드별 1행)
+  async initProductMaster(): Promise<{ success: boolean; message: string }> {
+    try {
+      // 시트 생성
+      await this.createSheetIfNotExists('제품마스터');
+      
+      // 헤더 설정
+      const headers = [
+        '제품코드', '제품명', '바코드', '발주상품명', 
+        '판매채널', '소비기한(일)', '박스수량', '등록일'
+      ];
+      await this.writeSheet('제품마스터', 'A1:H1', [headers]);
+      
+      return { success: true, message: '제품마스터 시트 초기화 완료' };
+    } catch (error: any) {
+      return { success: false, message: error.message };
+    }
+  }
+
+  // 제품마스터 데이터 동기화 (D1 production_barcodes → 구글시트)
+  async syncProductMaster(barcodeData: any[]): Promise<{ success: boolean; count: number; message?: string }> {
+    try {
+      // 시트가 없으면 생성
+      await this.initProductMaster();
+      
+      // 데이터 변환 (바코드별 1행)
+      const rows = barcodeData.map(item => [
+        item.production_code || item.product_code || '',
+        item.production_name || item.product_name || '',
+        item.barcode || '',
+        item.order_product_name || item.product_name || '',
+        item.channel || '',
+        item.expiry_days || 24,  // 기본값 24일
+        item.box_quantity || 1,
+        item.created_at || new Date().toISOString().split('T')[0]
+      ]);
+
+      if (rows.length > 0) {
+        // 기존 데이터 삭제 후 새로 작성 (헤더 제외)
+        await this.writeSheet('제품마스터', 'A2', rows);
+      }
+      
+      return { success: true, count: rows.length };
+    } catch (error: any) {
+      return { success: false, count: 0, message: error.message };
+    }
+  }
+
+  // 제품마스터 조회 (구글시트 → 앱)
+  async getProductMaster(productCode?: string): Promise<any[]> {
+    const data = await this.readSheet('제품마스터', 'A2:H');
+    
+    const products = data.map(row => ({
+      product_code: row[0],
+      product_name: row[1],
+      barcode: row[2],
+      order_product_name: row[3],
+      channel: row[4],
+      expiry_days: parseInt(row[5]) || 24,
+      box_quantity: parseInt(row[6]) || 1,
+      created_at: row[7]
+    }));
+
+    if (productCode) {
+      return products.filter(p => p.product_code === productCode);
+    }
+    return products;
+  }
+
+  // 제품별 소비기한 조회 (생산일보용)
+  async getProductExpiryDays(productCode: string, channel?: string): Promise<number> {
+    const products = await this.getProductMaster(productCode);
+    
+    if (products.length === 0) {
+      return 24; // 기본값
+    }
+    
+    // 채널 일치하는 것 우선
+    if (channel) {
+      const matched = products.find(p => 
+        p.channel && p.channel.toLowerCase().includes(channel.toLowerCase())
+      );
+      if (matched) return matched.expiry_days;
+    }
+    
+    // 첫 번째 결과 반환
+    return products[0].expiry_days;
   }
 
   // 원료별 현재고 조회 (시트 수식 기반)

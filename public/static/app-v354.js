@@ -48636,8 +48636,8 @@ async function generateDailyReportPdf() {
                   <th class="px-3 py-2 text-left">제품코드</th>
                   <th class="px-3 py-2 text-left">제품명</th>
                   <th class="px-3 py-2 text-right">생산</th>
-                  <th class="px-3 py-2 text-right">출고</th>
-                  <th class="px-3 py-2 text-right">재고</th>
+                  <th class="px-3 py-2 text-left">제품LOT</th>
+                  <th class="px-3 py-2 text-left">판매처</th>
                 </tr>
               </thead>
               <tbody class="divide-y">
@@ -48645,9 +48645,9 @@ async function generateDailyReportPdf() {
                   <tr class="hover:bg-gray-50">
                     <td class="px-3 py-2 font-mono text-xs">${item.product_code || item.item_code || '-'}</td>
                     <td class="px-3 py-2">${item.product_name || item.item_name || '-'}</td>
-                    <td class="px-3 py-2 text-right text-green-600">${(item.quantity || item.production_qty || 0).toLocaleString()}</td>
-                    <td class="px-3 py-2 text-right text-orange-600">${(item.outbound_qty || 0).toLocaleString()}</td>
-                    <td class="px-3 py-2 text-right font-medium">${(item.current_stock || item.closing_qty || 0).toLocaleString()}</td>
+                    <td class="px-3 py-2 text-right text-green-600 font-bold">${(item.quantity || item.production_qty || 0).toLocaleString()}</td>
+                    <td class="px-3 py-2 font-mono text-xs text-blue-600">${item.lot_number || '-'}</td>
+                    <td class="px-3 py-2">${item.channel || '-'}</td>
                   </tr>
                 `).join('')}
                 ${items.length > 50 ? `<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ${items.length - 50}건</td></tr>` : ''}
@@ -48706,15 +48706,13 @@ async function generateDailyReportPdf() {
                         const d = new Date((parseInt(expDate) - 25569) * 86400000);
                         expDate = d.toISOString().split('T')[0];
                       }
-                      return \`
-                        <tr class="hover:bg-gray-50">
-                          <td class="px-3 py-2 font-mono text-xs">\${mat.item_code}</td>
-                          <td class="px-3 py-2">\${mat.item_name || '-'}</td>
-                          <td class="px-3 py-2 text-right text-purple-600">\${mat.usage_qty.toFixed(3)}</td>
-                          <td class="px-3 py-2 font-mono text-xs">\${mat.material_lot}</td>
-                          <td class="px-3 py-2 text-xs">\${expDate}</td>
-                        </tr>
-                      \`;
+                      return '<tr class="hover:bg-gray-50">' +
+                        '<td class="px-3 py-2 font-mono text-xs">' + mat.item_code + '</td>' +
+                        '<td class="px-3 py-2">' + (mat.item_name || '-') + '</td>' +
+                        '<td class="px-3 py-2 text-right text-purple-600">' + mat.usage_qty.toFixed(3) + '</td>' +
+                        '<td class="px-3 py-2 font-mono text-xs">' + mat.material_lot + '</td>' +
+                        '<td class="px-3 py-2 text-xs">' + expDate + '</td>' +
+                        '</tr>';
                     }).join('') + (materialList.length > 100 ? '<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ' + (materialList.length - 100) + '건</td></tr>' : '');
                   })()}
                 </tbody>

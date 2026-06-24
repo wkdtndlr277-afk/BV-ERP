@@ -900,6 +900,8 @@ app.get('/*', (c) => {
       // 업무 알림 관련 전역 변수
       let currentPopupTask = null;
       let notificationTasks = [];
+      let currentCoopNotif = null;
+      let currentPopupType = 'task';
       let cooperationNotifications = []; // ★ v3.4.25: 협조 알림
       
       // 로그인 후 알림 체크
@@ -949,9 +951,14 @@ app.get('/*', (c) => {
             taskBadge.classList.remove('hidden');
           }
           
-          // 오늘 숨기기 체크 (업무 알림만)
+          // 오늘 숨기기 체크
           const hiddenToday = localStorage.getItem('task_popup_hidden_' + new Date().toISOString().split('T')[0]);
-          if (!hiddenToday && notificationTasks.length > 0) {
+          const coopHiddenToday = localStorage.getItem('coop_popup_hidden_' + new Date().toISOString().split('T')[0]);
+          
+          // ★ v3.5.15: 협조 알림도 팝업으로 표시
+          if (!coopHiddenToday && cooperationNotifications.length > 0) {
+            showCoopPopup(cooperationNotifications[0]);
+          } else if (!hiddenToday && notificationTasks.length > 0) {
             showTaskPopup(notificationTasks[0]);
           }
         } else {
@@ -962,6 +969,7 @@ app.get('/*', (c) => {
       
       function showTaskPopup(task) {
         currentPopupTask = task;
+        currentPopupType = 'task';
         const popup = document.getElementById('task-notification-popup');
         const header = document.getElementById('popup-header');
         const icon = document.getElementById('popup-icon');
@@ -985,20 +993,59 @@ app.get('/*', (c) => {
         popup.classList.remove('hidden');
       }
       
+      // ★ v3.5.15: 협조 알림 팝업 표시
+      function showCoopPopup(coop) {
+        currentCoopNotif = coop;
+        currentPopupType = 'coop';
+        const popup = document.getElementById('task-notification-popup');
+        const header = document.getElementById('popup-header');
+        const icon = document.getElementById('popup-icon');
+        const badge = document.getElementById('popup-type-badge');
+        
+        header.className = 'p-5 text-white bg-gradient-to-r from-purple-500 to-purple-600';
+        icon.className = 'fas fa-handshake text-2xl';
+        badge.textContent = '🤝 협조 요청';
+        
+        document.getElementById('popup-title').textContent = coop.title || '협조 요청';
+        document.getElementById('popup-date').textContent = coop.created_at || '';
+        document.getElementById('popup-content').textContent = coop.message || '(내용 없음)';
+        document.getElementById('popup-dont-show-today').checked = false;
+        
+        popup.classList.remove('hidden');
+      }
+      
       function closeTaskPopup() {
         const popup = document.getElementById('task-notification-popup');
         const dontShow = document.getElementById('popup-dont-show-today').checked;
         
         if (dontShow) {
-          localStorage.setItem('task_popup_hidden_' + new Date().toISOString().split('T')[0], 'true');
+          // ★ v3.5.15: 협조 알림과 업무 알림 구분
+          if (currentPopupType === 'coop') {
+            localStorage.setItem('coop_popup_hidden_' + new Date().toISOString().split('T')[0], 'true');
+          } else {
+            localStorage.setItem('task_popup_hidden_' + new Date().toISOString().split('T')[0], 'true');
+          }
         }
         
         popup.classList.add('hidden');
         currentPopupTask = null;
+        currentCoopNotif = null;
       }
       
       function goToTaskDetail() {
         closeTaskPopup();
+        // ★ v3.5.15: 협조 알림이면 협조 상세로 이동
+        if (currentPopupType === 'coop' && currentCoopNotif) {
+          window.pendingCoopNotifId = currentCoopNotif.id;
+          window.location.hash = 'task-management';
+          setTimeout(() => {
+            if (typeof window.showCooperationDetailModal === 'function') {
+              window.showCooperationDetailModal(currentCoopNotif.cooperation_id);
+            }
+          }, 500);
+          return;
+        }
+        
         if (currentPopupTask) {
           window.location.hash = 'task-calendar';
           // 잠시 후 상세 모달 열기

@@ -3257,6 +3257,9 @@ productionRoutes.post('/preview', async (c) => {
     
     const productionDate = prod_date || new Date().toISOString().split('T')[0];
     
+    // ★★★ v3.5.17: 재고 검증 제외 원료 - 물 등 무한 공급 원료 ★★★
+    const STOCK_CHECK_EXCLUDE = ['RM184'];  // 정제수(물)
+    
     // ===== 1단계: 모든 데이터를 실제 DB에서 JOIN으로 조회 =====
     
     // 바코드 → 생산코드 매핑 (실제 DB JOIN)
@@ -3287,22 +3290,21 @@ productionRoutes.post('/preview', async (c) => {
       FROM production_bom
     `).all<any>();
     
-    // ★ v3.4.1 개선: 원재료 재고 - inbound 테이블에서 필터 완화 (remain_qty > 0만 체크)
-    // quality_status 필터 제거 - 모든 재고 합산
-    const inboundStockData = await c.env.DB.prepare(`
-      SELECT item_code, SUM(remain_qty) as available_stock
-      FROM inbound
-      WHERE remain_qty > 0
-      GROUP BY item_code
-    `).all<any>();
+    // ★★★ v3.5.16: transactions 기반 재고 조회 (SSOT - Single Source of Truth) ★★★
+    // 해당 생산일 기준으로 재고 계산 = SUM(quantity) WHERE trans_date <= 생산일
+    const transactionsStockData = await c.env.DB.prepare(`
+      SELECT 
+        t.item_code, 
+        COALESCE(SUM(t.quantity), 0) as available_stock,
+        m.item_name,
+        COALESCE(m.unit, 'kg') as unit
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE t.trans_date <= ?
+      GROUP BY t.item_code
+    `).bind(productionDate).all<any>();
     
-    // 마스터 재고 (inbound에 없는 경우 대비) - current_stock도 함께 조회
-    const masterStockData = await c.env.DB.prepare(`
-      SELECT item_code, item_name, current_stock, unit FROM master
-      WHERE current_stock > 0 OR item_code IS NOT NULL
-    `).all<any>();
-    
-    // SF계열 재고 - 실제 semi_finished_lots 테이블 (가상 아님!)
+    // SF계열 재고 - semi_finished_lots 테이블 (반제품은 별도 관리)
     const sfStockData = await c.env.DB.prepare(`
       SELECT sf.item_code, sf.item_name, sf.unit,
              COALESCE(SUM(sfl.remain_qty), 0) as available_stock
@@ -3338,40 +3340,20 @@ productionRoutes.post('/preview', async (c) => {
       }
     }
     
-    // 재고 맵 (실제 DB 데이터 - inbound + master + SF)
+    // ★★★ v3.5.16: 재고 맵 - transactions 기반 (SSOT) ★★★
     const stockMap = new Map<string, { available: number, source: string, item_name: string, unit: string }>();
     
-    // 1차: 마스터 재고
-    for (const row of masterStockData.results || []) {
+    // 1차: transactions 기반 재고 (해당 날짜까지의 입고-사용 합계)
+    for (const row of transactionsStockData.results || []) {
       stockMap.set(row.item_code, { 
-        available: row.current_stock || 0, 
-        source: 'master', 
-        item_name: row.item_name,
+        available: row.available_stock || 0, 
+        source: 'transactions',
+        item_name: row.item_name || row.item_code,
         unit: row.unit || 'kg'
       });
     }
     
-    // ★★★ v3.4.16 수정: 입고 가용재고 - 마스터 재고와 비교하여 큰 값 사용 ★★★
-    // 문제: inbound에 LOT가 없거나 remain_qty=0이면 마스터 재고가 있어도 0으로 덮어씀
-    // 해결: inbound 재고가 0보다 클 때만 덮어씀, 또는 둘 중 큰 값 사용
-    for (const row of inboundStockData.results || []) {
-      const existing = stockMap.get(row.item_code);
-      const inboundStock = row.available_stock || 0;
-      const masterStock = existing?.available || 0;
-      
-      // 입고 재고가 있으면 입고 재고 사용, 없으면 마스터 재고 유지
-      if (inboundStock > 0) {
-        stockMap.set(row.item_code, { 
-          available: inboundStock, 
-          source: 'inbound',
-          item_name: existing?.item_name || row.item_code,
-          unit: existing?.unit || 'kg'
-        });
-      }
-      // inboundStock이 0이면 기존 마스터 재고 유지 (덮어쓰지 않음)
-    }
-    
-    // 3차: SF계열 재고 (실제 semi_finished_lots 데이터)
+    // 2차: SF계열 재고 (반제품은 semi_finished_lots 사용)
     for (const row of sfStockData.results || []) {
       stockMap.set(row.item_code, { 
         available: row.available_stock || 0, 
@@ -3450,9 +3432,12 @@ productionRoutes.post('/preview', async (c) => {
           }
           
           const isSF = itemCode.startsWith('SF');
+          // ★★★ v3.5.17: 재고 검증 제외 원료 (정제수 등 무한 공급) ★★★
+          const isExcluded = STOCK_CHECK_EXCLUDE.includes(itemCode);
           // ★★★ v3.4.28: SF 원료는 자동생산이므로 항상 충분한 것으로 처리 ★★★
           // ★★★ v3.5.9: 재고 비교는 kg 단위로 통일 ★★★
-          const isSufficient = isSF ? true : (availableStock >= requiredQtyInKg);
+          // ★★★ v3.5.17: 제외 원료는 항상 충분한 것으로 처리 ★★★
+          const isSufficient = isSF || isExcluded ? true : (availableStock >= requiredQtyInKg);
           
           materialDetails.push({
             item_code: itemCode,
@@ -3460,11 +3445,13 @@ productionRoutes.post('/preview', async (c) => {
             // ★★★ v3.5.9: 필요량을 kg 단위로 저장 (표시 통일) ★★★
             required_qty: requiredQtyInKg,
             // SF 원료는 필요량을 가용량으로 표시 (자동생산)
-            available_stock: isSF ? requiredQtyInKg : availableStock,
+            // ★★★ v3.5.17: 제외 원료는 무한(∞)으로 표시 ★★★
+            available_stock: isSF ? requiredQtyInKg : (isExcluded ? 999999 : availableStock),
             unit: 'kg',  // 항상 kg 단위로 통일
             is_sufficient: isSufficient,
             is_sf: isSF,
-            stock_source: isSF ? 'auto_production' : stockSource  // SF는 자동생산으로 표시
+            is_excluded: isExcluded,  // v3.5.17: 제외 원료 표시
+            stock_source: isSF ? 'auto_production' : (isExcluded ? 'unlimited' : stockSource)
           });
           
           // 총 소요량 누적 (kg 단위로 통일)
@@ -3475,10 +3462,12 @@ productionRoutes.post('/preview', async (c) => {
             totalMaterialRequirements.set(itemCode, {
               item_name: itemName,
               required: requiredQtyInKg,
-              available: availableStock,
+              // ★★★ v3.5.17: 제외 원료는 무한(∞)으로 표시 ★★★
+              available: isExcluded ? 999999 : availableStock,
               unit: 'kg',  // 항상 kg 단위로 통일
               is_sf: isSF,
-              stock_source: stockSource
+              is_excluded: isExcluded,  // v3.5.17: 제외 원료 표시
+              stock_source: isExcluded ? 'unlimited' : stockSource
             });
           }
         }

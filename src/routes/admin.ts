@@ -7929,4 +7929,522 @@ admin.post('/sync/align-stock-to-inbound', async (c) => {
   }
 })
 
+// ★★★ v3.5.12: 기존 보정 트랜잭션 날짜 이동 API ★★★
+// 오늘 날짜로 추가된 보정을 과거 날짜(시스템 시작일)로 이동
+admin.post('/sync/move-adjustments-to-base-date', async (c) => {
+  try {
+    const { env } = c
+    const body = await c.req.json<{ 
+      confirm?: boolean;
+      source_date?: string;  // 이동할 트랜잭션의 현재 날짜 (기본: 오늘)
+      target_date?: string;  // 이동할 목표 날짜 (기본: 2026-01-01)
+      memo_pattern?: string; // 메모 패턴 (기본: v3.5.12 inbound 동기화)
+    }>().catch(() => ({}))
+    
+    const confirm = body?.confirm
+    const sourceDate = body?.source_date || new Date().toISOString().split('T')[0]
+    const targetDate = body?.target_date || '2026-01-01'
+    const memoPattern = body?.memo_pattern || 'v3.5.12 inbound 동기화'
+    
+    // 1. 이동 대상 트랜잭션 조회
+    const targetTransactions = await env.DB.prepare(`
+      SELECT id, trans_date, item_code, quantity, memo
+      FROM transactions
+      WHERE trans_date = ?
+        AND trans_type = '재고조정'
+        AND memo LIKE ?
+    `).bind(sourceDate, `%${memoPattern}%`).all<any>()
+    
+    const items = targetTransactions.results || []
+    
+    // 분석 모드
+    if (!confirm) {
+      return c.json({
+        success: true,
+        mode: 'analysis',
+        message: `${items.length}개의 보정 트랜잭션을 ${sourceDate} → ${targetDate}로 이동할 수 있습니다.`,
+        sourceDate,
+        targetDate,
+        count: items.length,
+        sampleItems: items.slice(0, 10).map((i: any) => ({
+          id: i.id,
+          item_code: i.item_code,
+          quantity: i.quantity
+        })),
+        note: 'confirm: true를 전달하면 실행됩니다.'
+      })
+    }
+    
+    if (items.length === 0) {
+      return c.json({
+        success: true,
+        message: '이동할 트랜잭션이 없습니다.',
+        movedCount: 0
+      })
+    }
+    
+    // 날짜 변경 실행
+    const result = await env.DB.prepare(`
+      UPDATE transactions
+      SET trans_date = ?,
+          memo = memo || ' [날짜이동: ' || trans_date || ' → ' || ? || ']'
+      WHERE trans_date = ?
+        AND trans_type = '재고조정'
+        AND memo LIKE ?
+    `).bind(targetDate, targetDate, sourceDate, `%${memoPattern}%`).run()
+    
+    return c.json({
+      success: true,
+      message: `${items.length}개의 보정 트랜잭션이 ${sourceDate} → ${targetDate}로 이동되었습니다.`,
+      movedCount: items.length,
+      sourceDate,
+      targetDate
+    })
+    
+  } catch (error: any) {
+    console.error('[move-adjustments-to-base-date] Error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.13: 특정 날짜 기준 마이너스 재고에 기초재고 추가 ★★★
+// 핵심: target_date 기준 마이너스 재고인 품목에 대해 base_date(하루 전)에 입고 트랜잭션 추가
+// 이렇게 하면 target_date 조회 시 전일재고가 양수로 표시됨
+admin.post('/sync/add-base-stock', async (c) => {
+  try {
+    const { env } = c
+    const body = await c.req.json<{ 
+      confirm?: boolean; 
+      target_date: string;   // 이 날짜 기준으로 마이너스 재고 확인 (필수)
+      item_codes?: string[]; // 특정 품목만 (선택)
+    }>().catch(() => ({ target_date: '' }))
+    
+    const confirm = body?.confirm
+    const targetDate = body?.target_date
+    const itemCodes = body?.item_codes || []
+    
+    if (!targetDate) {
+      return c.json({ success: false, error: 'target_date 파라미터가 필요합니다. (예: 2026-06-01)' }, 400)
+    }
+    
+    // base_date = target_date 하루 전
+    const targetDateObj = new Date(targetDate)
+    targetDateObj.setDate(targetDateObj.getDate() - 1)
+    const baseDate = targetDateObj.toISOString().split('T')[0]
+    
+    // 제외 코드
+    const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172', 'RM266', 'RM184', 'R184']
+    
+    // 1. target_date 기준 현재고가 마이너스인 품목 조회
+    // 현재고 = SUM(quantity) WHERE trans_date <= target_date
+    let query = `
+      SELECT 
+        m.item_code,
+        COALESCE(m.item_name, m.item_code) as item_name,
+        -- target_date까지 누적 재고 (현재고)
+        COALESCE(
+          (SELECT SUM(t.quantity) FROM transactions t 
+           WHERE t.item_code = m.item_code AND t.trans_date <= ?),
+          0
+        ) as current_stock,
+        -- inbound remain_qty (실제 재고)
+        COALESCE(
+          (SELECT SUM(i.remain_qty) FROM inbound i 
+           WHERE i.item_code = m.item_code AND i.quality_status = '합격'),
+          0
+        ) as inbound_remain
+      FROM master m
+      WHERE m.category = '원료'
+        AND (m.item_code LIKE 'R%' OR m.item_code LIKE 'RM%')
+        AND m.item_code NOT LIKE 'RT%'
+        AND m.item_code NOT LIKE 'SF%'
+        AND m.item_code NOT IN ('${EXCLUDE_CODES.join("','")}')
+    `
+    
+    const params: any[] = [targetDate]
+    
+    if (itemCodes.length > 0) {
+      query += ` AND m.item_code IN (${itemCodes.map(() => '?').join(',')})`
+      params.push(...itemCodes)
+    }
+    
+    const result = await env.DB.prepare(query).bind(...params).all<any>()
+    
+    // 마이너스 재고 품목만 필터링
+    const negativeItems = (result.results || [])
+      .map((item: any) => ({
+        item_code: item.item_code,
+        item_name: item.item_name,
+        current_stock: parseFloat(item.current_stock) || 0,
+        inbound_remain: parseFloat(item.inbound_remain) || 0,
+        // 보정 필요량: inbound_remain - current_stock (양수면 추가 필요)
+        adjustment_needed: (parseFloat(item.inbound_remain) || 0) - (parseFloat(item.current_stock) || 0)
+      }))
+      .filter((item: any) => item.current_stock < -0.01 && item.adjustment_needed > 0.01)
+    
+    // 분석 모드
+    if (!confirm) {
+      return c.json({
+        success: true,
+        mode: 'analysis',
+        message: `${negativeItems.length}개 품목이 ${targetDate} 기준 마이너스 재고입니다.`,
+        targetDate,
+        baseDate,
+        totalAdjustment: negativeItems.reduce((sum: number, i: any) => sum + i.adjustment_needed, 0),
+        items: negativeItems.slice(0, 50),
+        note: `confirm: true로 실행하면 ${baseDate} 날짜에 기초재고 입고 트랜잭션이 추가됩니다.`
+      })
+    }
+    
+    // 보정 실행
+    if (negativeItems.length === 0) {
+      return c.json({
+        success: true,
+        message: `${targetDate} 기준 마이너스 재고 품목이 없습니다.`,
+        adjustedCount: 0
+      })
+    }
+    
+    let adjustedCount = 0
+    const errors: string[] = []
+    const adjustedItems: any[] = []
+    
+    for (const item of negativeItems) {
+      try {
+        // base_date에 기초재고 입고 트랜잭션 추가
+        await env.DB.prepare(`
+          INSERT INTO transactions (
+            trans_date, item_code, trans_type, quantity, lot_number,
+            remain_qty, memo, created_at
+          ) VALUES (?, ?, '입고', ?, ?, ?, ?, datetime('now'))
+        `).bind(
+          baseDate,
+          item.item_code,
+          item.adjustment_needed,  // 양수 (입고)
+          `BASE-${item.item_code}-${baseDate}`,
+          item.adjustment_needed,
+          `[v3.5.13 기초재고] ${targetDate} 기준 마이너스 재고 보정, inbound: ${item.inbound_remain.toFixed(2)}kg`
+        ).run()
+        
+        adjustedCount++
+        adjustedItems.push({
+          item_code: item.item_code,
+          item_name: item.item_name,
+          base_stock_added: item.adjustment_needed,
+          target_date_stock_before: item.current_stock,
+          target_date_stock_after: item.current_stock + item.adjustment_needed
+        })
+      } catch (e: any) {
+        errors.push(`${item.item_code}: ${e.message}`)
+      }
+    }
+    
+    // 관리자 로그
+    try {
+      await env.DB.prepare(`
+        INSERT INTO admin_logs (action_type, action_detail, result, created_at)
+        VALUES (?, ?, ?, datetime('now'))
+      `).bind(
+        'ADD_BASE_STOCK',
+        JSON.stringify({ 
+          targetDate, 
+          baseDate, 
+          adjustedCount,
+          totalAdded: negativeItems.reduce((sum: number, i: any) => sum + i.adjustment_needed, 0)
+        }),
+        adjustedCount > 0 ? 'SUCCESS' : 'NO_ACTION'
+      ).run()
+    } catch (logError) {
+      console.log('[add-base-stock] admin_logs 기록 실패:', logError)
+    }
+    
+    return c.json({
+      success: true,
+      message: `${adjustedCount}개 품목에 기초재고가 추가되었습니다. (${baseDate} 날짜)`,
+      targetDate,
+      baseDate,
+      adjustedCount,
+      errorCount: errors.length,
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
+      adjustedItems: adjustedItems.slice(0, 30)
+    })
+    
+  } catch (error: any) {
+    console.error('[add-base-stock] Error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.15: 모든 BOM 관련 테이블에서 특정 품목 검색 ★★★
+admin.get('/debug/find-item-in-bom/:item_code', async (c) => {
+  const item_code = c.req.param('item_code')
+  const { env } = c
+  
+  try {
+    // bom 테이블
+    const bomResult = await env.DB.prepare(`
+      SELECT 'bom' as source, id, product_code, item_code, quantity
+      FROM bom WHERE item_code = ?
+    `).bind(item_code).all()
+    
+    // bom_versioned 테이블
+    const bomVersionedResult = await env.DB.prepare(`
+      SELECT 'bom_versioned' as source, id, product_code, item_code, quantity
+      FROM bom_versioned WHERE item_code = ?
+    `).bind(item_code).all()
+    
+    // production_bom 테이블
+    const productionBomResult = await env.DB.prepare(`
+      SELECT 'production_bom' as source, id, production_code as product_code, material_code as item_code, quantity
+      FROM production_bom WHERE material_code = ?
+    `).bind(item_code).all()
+    
+    // master 테이블
+    const masterResult = await env.DB.prepare(`
+      SELECT 'master' as source, id, item_code, item_name, category
+      FROM master WHERE item_code = ?
+    `).bind(item_code).all()
+    
+    const allResults = [
+      ...(bomResult.results || []),
+      ...(bomVersionedResult.results || []),
+      ...(productionBomResult.results || []),
+      ...(masterResult.results || [])
+    ]
+    
+    return c.json({
+      success: true,
+      item_code,
+      found_in: allResults,
+      total_count: allResults.length,
+      by_table: {
+        bom: bomResult.results?.length || 0,
+        bom_versioned: bomVersionedResult.results?.length || 0,
+        production_bom: productionBomResult.results?.length || 0,
+        master: masterResult.results?.length || 0
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.14: 협조 알림 디버그 조회 ★★★
+admin.get('/debug/cooperation-notifications', async (c) => {
+  const { env } = c
+  
+  try {
+    const result = await env.DB.prepare(`
+      SELECT cn.*, c.title, c.status as coop_status
+      FROM cooperation_notifications cn
+      LEFT JOIN task_cooperations c ON cn.cooperation_id = c.id
+      ORDER BY cn.created_at DESC
+      LIMIT 20
+    `).all()
+    
+    return c.json({
+      success: true,
+      notifications: result.results,
+      count: result.results?.length || 0
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.14: BOM에서 특정 품목 조회/삭제 ★★★
+admin.get('/debug/bom-item/:item_code', async (c) => {
+  const item_code = c.req.param('item_code')
+  const { env } = c
+  
+  try {
+    // bom 테이블에서 해당 품목이 사용된 모든 레코드 조회
+    const bomRecords = await env.DB.prepare(`
+      SELECT id, product_code, item_code, quantity, unit
+      FROM bom 
+      WHERE item_code = ? OR product_code = ?
+    `).bind(item_code, item_code).all()
+    
+    // bom_versioned도 조회
+    const bomVersionedRecords = await env.DB.prepare(`
+      SELECT id, product_code, item_code, quantity, unit, status, version
+      FROM bom_versioned 
+      WHERE item_code = ? OR product_code = ?
+    `).bind(item_code, item_code).all()
+    
+    // master 테이블 조회
+    const masterRecords = await env.DB.prepare(`
+      SELECT id, item_code, item_name, category
+      FROM master 
+      WHERE item_code = ?
+    `).bind(item_code).all()
+    
+    // inbound 테이블 조회
+    const inboundRecords = await env.DB.prepare(`
+      SELECT id, item_code, lot_number, remain_qty
+      FROM inbound 
+      WHERE item_code = ?
+    `).bind(item_code).all()
+    
+    // transactions 테이블 조회
+    const transRecords = await env.DB.prepare(`
+      SELECT id, item_code, trans_type, quantity, trans_date
+      FROM transactions 
+      WHERE item_code = ?
+      ORDER BY trans_date DESC
+      LIMIT 10
+    `).bind(item_code).all()
+    
+    return c.json({
+      success: true,
+      item_code,
+      bom_records: bomRecords.results,
+      bom_count: bomRecords.results?.length || 0,
+      bom_versioned_records: bomVersionedRecords.results,
+      bom_versioned_count: bomVersionedRecords.results?.length || 0,
+      master_records: masterRecords.results,
+      master_count: masterRecords.results?.length || 0,
+      inbound_records: inboundRecords.results,
+      inbound_count: inboundRecords.results?.length || 0,
+      transactions_records: transRecords.results,
+      transactions_count: transRecords.results?.length || 0
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+admin.delete('/debug/bom-item/:item_code', async (c) => {
+  const item_code = c.req.param('item_code')
+  const { env } = c
+  
+  try {
+    let bomVersionedDeleted = 0
+    let productionBomDeleted = 0
+    
+    // bom_versioned에서 삭제 (실제 테이블)
+    try {
+      const bomVersionedResult = await env.DB.prepare(`
+        DELETE FROM bom_versioned WHERE item_code = ?
+      `).bind(item_code).run()
+      bomVersionedDeleted = bomVersionedResult.meta?.changes || 0
+    } catch (e) {}
+    
+    // ★★★ v3.5.15: production_bom에서 삭제 (실제 테이블) ★★★
+    try {
+      const productionBomResult = await env.DB.prepare(`
+        DELETE FROM production_bom WHERE material_code = ?
+      `).bind(item_code).run()
+      productionBomDeleted = productionBomResult.meta?.changes || 0
+    } catch (e) {}
+    
+    return c.json({
+      success: true,
+      message: `BOM 테이블에서 ${item_code} 삭제 완료`,
+      bom_versioned_deleted: bomVersionedDeleted,
+      production_bom_deleted: productionBomDeleted
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.14: 품목 강제 삭제 API (권한 없이 직접 삭제) ★★★
+admin.delete('/force-delete-item/:item_code', async (c) => {
+  const item_code = c.req.param('item_code')
+  const { env } = c
+  
+  try {
+    // 관련 데이터 모두 삭제
+    await env.DB.prepare(`DELETE FROM bom_versioned WHERE product_code = ? OR item_code = ?`).bind(item_code, item_code).run()
+    await env.DB.prepare('DELETE FROM production_materials WHERE item_code = ?').bind(item_code).run()
+    await env.DB.prepare('DELETE FROM production WHERE product_code = ?').bind(item_code).run()
+    await env.DB.prepare('DELETE FROM product_outbound WHERE product_code = ?').bind(item_code).run()
+    await env.DB.prepare('DELETE FROM transactions WHERE item_code = ?').bind(item_code).run()
+    await env.DB.prepare('DELETE FROM inbound WHERE item_code = ?').bind(item_code).run()
+    await env.DB.prepare('DELETE FROM master WHERE item_code = ?').bind(item_code).run()
+    
+    return c.json({ 
+      success: true, 
+      message: `${item_code} 품목 및 관련 데이터가 삭제되었습니다` 
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.16: transactions 재고 디버그 API ★★★
+admin.get('/debug/transactions-stock', async (c) => {
+  const { env } = c
+  const itemCode = c.req.query('item_code') || 'R114'
+  const date = c.req.query('date') || '2026-06-02'
+  
+  try {
+    // 1. 해당 품목의 transactions 데이터 조회
+    const transactionsRaw = await env.DB.prepare(`
+      SELECT trans_date, trans_type, quantity, lot_number, memo
+      FROM transactions
+      WHERE item_code = ?
+      ORDER BY trans_date DESC, id DESC
+      LIMIT 50
+    `).bind(itemCode).all()
+    
+    // 2. 해당 날짜까지의 합계
+    const stockSum = await env.DB.prepare(`
+      SELECT 
+        COALESCE(SUM(quantity), 0) as total_stock,
+        COUNT(*) as transaction_count
+      FROM transactions
+      WHERE item_code = ? AND trans_date <= ?
+    `).bind(itemCode, date).first()
+    
+    // 3. trans_type별 합계
+    const byType = await env.DB.prepare(`
+      SELECT 
+        trans_type,
+        SUM(quantity) as total,
+        COUNT(*) as count
+      FROM transactions
+      WHERE item_code = ? AND trans_date <= ?
+      GROUP BY trans_type
+    `).bind(itemCode, date).all()
+    
+    // 4. preview API와 동일한 쿼리 테스트
+    const previewQuery = await env.DB.prepare(`
+      SELECT 
+        t.item_code, 
+        COALESCE(SUM(t.quantity), 0) as available_stock,
+        m.item_name,
+        COALESCE(m.unit, 'kg') as unit
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE t.trans_date <= ?
+      GROUP BY t.item_code
+      HAVING t.item_code = ?
+    `).bind(date, itemCode).first()
+    
+    // 5. master 테이블 확인
+    const masterData = await env.DB.prepare(`
+      SELECT item_code, item_name, unit, current_stock
+      FROM master
+      WHERE item_code = ?
+    `).bind(itemCode).first()
+    
+    return c.json({
+      success: true,
+      debug: {
+        item_code: itemCode,
+        date: date,
+        transactions_raw: transactionsRaw.results,
+        stock_sum: stockSum,
+        by_type: byType.results,
+        preview_query_result: previewQuery,
+        master_data: masterData
+      }
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

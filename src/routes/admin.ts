@@ -7169,4 +7169,364 @@ admin.post('/migrate/add-external-name-field', async (c) => {
   }
 })
 
+// ★★★ v3.5.10: inbound → transactions 동기화 (누락된 입고 트랜잭션 복구) ★★★
+// 방식 1: LOT 번호 기준 (기존)
+admin.post('/sync/inbound-transactions', async (c) => {
+  try {
+    const { env } = c
+    const body = await c.req.json<{ confirm?: boolean }>().catch(() => ({}))
+    const confirm = body?.confirm
+    
+    // inbound에는 있지만 transactions에 '입고' 기록이 없는 것들 조회
+    const missingResult = await env.DB.prepare(`
+      SELECT 
+        i.id,
+        i.lot_number,
+        i.item_code,
+        COALESCE(m.item_name, i.item_code) as item_name,
+        i.inbound_date,
+        i.origin_qty,
+        i.quality_status,
+        i.supplier
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.quality_status = '합격'
+        AND NOT EXISTS (
+          SELECT 1 FROM transactions t 
+          WHERE t.item_code = i.item_code 
+            AND t.lot_number = i.lot_number 
+            AND t.trans_type = '입고'
+        )
+      ORDER BY i.inbound_date ASC, i.item_code ASC
+    `).all<any>()
+    
+    const items = missingResult.results || []
+    
+    // 프리뷰 모드 (confirm 없으면)
+    if (!confirm) {
+      // 품목별 합계
+      const summaryByItem: Record<string, { item_code: string; item_name: string; total_qty: number; count: number }> = {}
+      for (const item of items) {
+        if (!summaryByItem[item.item_code]) {
+          summaryByItem[item.item_code] = {
+            item_code: item.item_code,
+            item_name: item.item_name,
+            total_qty: 0,
+            count: 0
+          }
+        }
+        summaryByItem[item.item_code].total_qty += item.origin_qty
+        summaryByItem[item.item_code].count++
+      }
+      
+      return c.json({
+        success: true,
+        mode: 'preview',
+        message: `${items.length}건의 누락된 입고 트랜잭션 발견. 실행하려면 confirm: true 전달`,
+        totalCount: items.length,
+        totalQty: items.reduce((sum: number, i: any) => sum + i.origin_qty, 0),
+        summaryByItem: Object.values(summaryByItem).sort((a, b) => b.total_qty - a.total_qty),
+        details: items.slice(0, 50)
+      })
+    }
+    
+    // 실제 동기화 실행
+    if (items.length === 0) {
+      return c.json({
+        success: true,
+        message: '동기화할 데이터가 없습니다.',
+        syncedCount: 0
+      })
+    }
+    
+    // 배치로 INSERT
+    let syncedCount = 0
+    for (const item of items) {
+      await env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, supplier, memo)
+        VALUES (?, ?, '입고', ?, ?, ?, ?, ?)
+      `).bind(
+        item.inbound_date,
+        item.item_code,
+        item.origin_qty,
+        item.lot_number,
+        item.origin_qty,
+        item.supplier || null,
+        'inbound 동기화 (v3.5.10)'
+      ).run()
+      syncedCount++
+    }
+    
+    // 관리자 로그 (테이블 구조 오류 시 무시)
+    try {
+      await env.DB.prepare(`
+        INSERT INTO admin_logs (action_type, target_table, reason)
+        VALUES (?, ?, ?)
+      `).bind('데이터동기화', 'transactions', `inbound→transactions 동기화: ${syncedCount}건`).run()
+    } catch (logError) {
+      console.log('[sync/inbound-transactions] admin_logs 기록 실패 (무시):', logError)
+    }
+    
+    return c.json({
+      success: true,
+      message: `${syncedCount}건의 입고 트랜잭션이 동기화되었습니다.`,
+      syncedCount
+    })
+  } catch (error: any) {
+    console.error('[sync/inbound-transactions] Error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.11: 마이너스 재고 보정 API ★★★
+// 마이너스 재고인 품목에 대해 기초재고 입고 처리
+admin.post('/sync/fix-negative-inventory', async (c) => {
+  try {
+    const { env } = c
+    const body = await c.req.json<{ confirm?: boolean; date?: string }>().catch(() => ({}))
+    const confirm = body?.confirm
+    const targetDate = body?.date || new Date().toISOString().split('T')[0]
+    
+    // 1. 마이너스 재고 품목 조회 (특정 날짜 기준)
+    // 전일재고(targetDate 이전 트랜잭션 합계)가 마이너스인 품목
+    const negativeItems = await env.DB.prepare(`
+      SELECT 
+        t.item_code,
+        COALESCE(m.item_name, t.item_code) as item_name,
+        SUM(CASE WHEN t.trans_date < ? THEN t.quantity ELSE 0 END) as prev_stock,
+        SUM(t.quantity) as current_stock,
+        SUM(CASE WHEN t.trans_type = '입고' THEN t.quantity ELSE 0 END) as total_inbound,
+        SUM(CASE WHEN t.trans_type = '사용' THEN ABS(t.quantity) ELSE 0 END) as total_used
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE (t.item_code LIKE 'R%' OR t.item_code LIKE 'RM%')
+        AND t.item_code NOT LIKE 'RT%'
+        AND t.item_code NOT LIKE 'SF%'
+        AND t.item_code != 'RM184'
+        AND t.item_code != 'RM266'
+      GROUP BY t.item_code
+      HAVING SUM(CASE WHEN t.trans_date < ? THEN t.quantity ELSE 0 END) < -0.01
+      ORDER BY SUM(CASE WHEN t.trans_date < ? THEN t.quantity ELSE 0 END) ASC
+    `).bind(targetDate, targetDate, targetDate).all<any>()
+    
+    const items = negativeItems.results || []
+    
+    // 프리뷰 모드
+    if (!confirm) {
+      return c.json({
+        success: true,
+        mode: 'preview',
+        message: `${items.length}개 품목이 마이너스 재고입니다 (${targetDate} 기준 전일재고)`,
+        targetDate,
+        totalNegativeQty: items.reduce((s: number, i: any) => s + Math.abs(i.prev_stock), 0),
+        items: items.map((i: any) => ({
+          item_code: i.item_code,
+          item_name: i.item_name,
+          prev_stock: i.prev_stock,
+          adjustment_needed: Math.abs(i.prev_stock),  // 보정 필요량 (양수)
+          total_inbound: i.total_inbound,
+          total_used: i.total_used
+        })),
+        note: `마이너스분을 기초재고(입고)로 보정하려면 confirm: true 전달. 입고일은 ${targetDate} 이전 날짜로 설정됩니다.`
+      })
+    }
+    
+    // 실제 보정 실행
+    if (items.length === 0) {
+      return c.json({
+        success: true,
+        message: '보정할 마이너스 재고 품목이 없습니다.',
+        adjustedCount: 0
+      })
+    }
+    
+    let adjustedCount = 0
+    // 기초재고 입고일 = targetDate 하루 전
+    const baseDate = new Date(targetDate)
+    baseDate.setDate(baseDate.getDate() - 1)
+    const baseDateStr = baseDate.toISOString().split('T')[0]
+    
+    for (const item of items) {
+      const adjustQty = Math.abs(item.prev_stock)  // 양수로 변환
+      
+      await env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, memo)
+        VALUES (?, ?, '입고', ?, ?, ?, ?)
+      `).bind(
+        baseDateStr,  // 기준일 하루 전
+        item.item_code,
+        adjustQty,
+        `BASE-${item.item_code}-${baseDateStr}`,
+        adjustQty,
+        `기초재고 보정 (v3.5.11) - 마이너스 재고 ${item.prev_stock.toFixed(2)}kg → 0kg`
+      ).run()
+      adjustedCount++
+    }
+    
+    // 로그 기록
+    try {
+      await env.DB.prepare(`
+        INSERT INTO admin_logs (action_type, target_table, reason)
+        VALUES (?, ?, ?)
+      `).bind('데이터보정', 'transactions', `마이너스 재고 기초재고 보정: ${adjustedCount}건 (${targetDate} 기준)`).run()
+    } catch (logError) {
+      console.log('[fix-negative-inventory] admin_logs 기록 실패 (무시):', logError)
+    }
+    
+    return c.json({
+      success: true,
+      message: `${adjustedCount}개 품목의 마이너스 재고가 기초재고로 보정되었습니다.`,
+      adjustedCount,
+      baseDate: baseDateStr,
+      adjustedItems: items.map((i: any) => ({
+        item_code: i.item_code,
+        adjustment: Math.abs(i.prev_stock)
+      }))
+    })
+  } catch (error: any) {
+    console.error('[fix-negative-inventory] Error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.11: 품목별 총 입고량 차이 분석 및 조정 API ★★★
+// 마이너스 재고 문제 해결을 위한 진단/보정 도구
+admin.post('/sync/inventory-gap-analysis', async (c) => {
+  try {
+    const { env } = c
+    const body = await c.req.json<{ confirm?: boolean; target_item?: string }>().catch(() => ({}))
+    const confirm = body?.confirm
+    const targetItem = body?.target_item
+    
+    // 1. inbound 테이블에서 품목별 총 입고량 (합격만)
+    const inboundTotals = await env.DB.prepare(`
+      SELECT 
+        i.item_code,
+        COALESCE(m.item_name, i.item_code) as item_name,
+        SUM(i.origin_qty) as total_inbound,
+        COUNT(*) as lot_count,
+        MIN(i.inbound_date) as first_inbound,
+        MAX(i.inbound_date) as last_inbound
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.quality_status = '합격'
+        ${targetItem ? "AND i.item_code = ?" : ""}
+      GROUP BY i.item_code
+      ORDER BY SUM(i.origin_qty) DESC
+    `).bind(...(targetItem ? [targetItem] : [])).all<any>()
+    
+    // 2. transactions 테이블에서 품목별 총 입고량
+    const transTotals = await env.DB.prepare(`
+      SELECT 
+        t.item_code,
+        SUM(CASE WHEN t.trans_type = '입고' THEN t.quantity ELSE 0 END) as trans_inbound,
+        SUM(t.quantity) as current_stock,
+        COUNT(CASE WHEN t.trans_type = '입고' THEN 1 END) as inbound_count
+      FROM transactions t
+      WHERE 1=1
+        ${targetItem ? "AND t.item_code = ?" : ""}
+      GROUP BY t.item_code
+    `).bind(...(targetItem ? [targetItem] : [])).all<any>()
+    
+    // 3. 품목별 차이 분석
+    const transMap: Record<string, any> = {}
+    for (const t of transTotals.results || []) {
+      transMap[t.item_code] = t
+    }
+    
+    const gapItems: any[] = []
+    for (const inb of inboundTotals.results || []) {
+      const trans = transMap[inb.item_code] || { trans_inbound: 0, current_stock: 0, inbound_count: 0 }
+      const gap = (inb.total_inbound || 0) - (trans.trans_inbound || 0)
+      
+      // 갭이 0.01kg 이상인 경우만 (부동소수점 오차 제외)
+      if (Math.abs(gap) >= 0.01) {
+        gapItems.push({
+          item_code: inb.item_code,
+          item_name: inb.item_name,
+          inbound_total: inb.total_inbound,
+          trans_inbound: trans.trans_inbound,
+          gap: gap,  // 양수면 transactions에 부족, 음수면 초과
+          current_stock: trans.current_stock,
+          inbound_lots: inb.lot_count,
+          trans_inbound_count: trans.inbound_count,
+          first_inbound: inb.first_inbound,
+          last_inbound: inb.last_inbound
+        })
+      }
+    }
+    
+    // 프리뷰 모드
+    if (!confirm) {
+      const positiveGaps = gapItems.filter(g => g.gap > 0)  // 입고 부족
+      const negativeGaps = gapItems.filter(g => g.gap < 0)  // 입고 초과
+      
+      return c.json({
+        success: true,
+        mode: 'preview',
+        message: `${gapItems.length}개 품목에서 입고량 차이 발견`,
+        summary: {
+          total_items: gapItems.length,
+          shortage_items: positiveGaps.length,  // 입고 부족 (transactions에 더 필요)
+          excess_items: negativeGaps.length,    // 입고 초과
+          total_shortage_qty: positiveGaps.reduce((s, g) => s + g.gap, 0),
+          total_excess_qty: Math.abs(negativeGaps.reduce((s, g) => s + g.gap, 0))
+        },
+        shortage_items: positiveGaps.slice(0, 30),
+        excess_items: negativeGaps.slice(0, 10),
+        note: '입고 부족(shortage) 품목에 대해 재고조정 트랜잭션을 추가하려면 confirm: true'
+      })
+    }
+    
+    // 실제 보정 실행 - 입고 부족분에 대해 재고조정 추가
+    const positiveGaps = gapItems.filter(g => g.gap > 0)
+    if (positiveGaps.length === 0) {
+      return c.json({
+        success: true,
+        message: '보정할 입고 부족 항목이 없습니다.',
+        adjustedCount: 0
+      })
+    }
+    
+    let adjustedCount = 0
+    const today = new Date().toISOString().split('T')[0]
+    
+    for (const item of positiveGaps) {
+      // 재고조정으로 갭 보정 (첫 입고일 기준)
+      await env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, remain_qty, memo)
+        VALUES (?, ?, '입고', ?, ?, ?, ?)
+      `).bind(
+        item.first_inbound || today,
+        item.item_code,
+        item.gap,
+        `GAP-ADJ-${item.item_code}`,
+        item.gap,
+        `inbound-transactions 갭 보정 (v3.5.11) - inbound: ${item.inbound_total}kg, trans: ${item.trans_inbound}kg`
+      ).run()
+      adjustedCount++
+    }
+    
+    // 로그 기록
+    try {
+      await env.DB.prepare(`
+        INSERT INTO admin_logs (action_type, target_table, reason)
+        VALUES (?, ?, ?)
+      `).bind('데이터보정', 'transactions', `입고량 갭 보정: ${adjustedCount}건, 총 ${positiveGaps.reduce((s, g) => s + g.gap, 0).toFixed(2)}kg`).run()
+    } catch (logError) {
+      console.log('[sync/inventory-gap-analysis] admin_logs 기록 실패 (무시):', logError)
+    }
+    
+    return c.json({
+      success: true,
+      message: `${adjustedCount}개 품목의 입고량 갭이 보정되었습니다.`,
+      adjustedCount,
+      adjustedItems: positiveGaps.map(g => ({ item_code: g.item_code, gap: g.gap }))
+    })
+  } catch (error: any) {
+    console.error('[sync/inventory-gap-analysis] Error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 export default admin

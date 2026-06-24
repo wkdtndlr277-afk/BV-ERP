@@ -1312,6 +1312,7 @@ function renderPage(page) {
     case 'outbound': renderOutbound(); break;
     case 'quick-stock': renderQuickStock(); break;
     case 'production': renderProduction(); break;
+    case 'order-upload': renderOrderUpload(); break;
     case 'production-plan': renderProductionPlan(); break;
     case 'bom': renderBOM(); break;
     case 'product-outbound': renderProductOutbound(); break;
@@ -47552,3 +47553,350 @@ async function updateAllBarcodeExpiryFromValidation() {
 window.showExpiryValidationModal = showExpiryValidationModal;
 window.updateBarcodeExpiryFromValidation = updateBarcodeExpiryFromValidation;
 window.updateAllBarcodeExpiryFromValidation = updateAllBarcodeExpiryFromValidation;
+
+// ==================== 발주서 업로드 페이지 ====================
+function renderOrderUpload() {
+  const content = document.getElementById('page-content');
+  const today = new Date().toISOString().split('T')[0];
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <!-- 헤더 -->
+      <div class="flex justify-between items-center">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-file-upload mr-3 text-blue-600"></i>발주서 업로드
+        </h2>
+        <span class="text-sm text-gray-500">엑셀(쿠팡/컬리) · PDF(배민/오아시스) 자동 감지</span>
+      </div>
+      
+      <!-- 업로드 카드 -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- 파일 업로드 -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+          <h3 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-file-excel mr-2 text-green-600"></i>파일 업로드 (엑셀)
+          </h3>
+          
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">발주일</label>
+              <input type="date" id="order-upload-date" value="${today}" 
+                class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
+            </div>
+            
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">채널</label>
+              <select id="order-upload-channel" 
+                class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
+                <option value="쿠팡">쿠팡</option>
+                <option value="컬리">컬리</option>
+                <option value="배민">배민</option>
+                <option value="오아시스">오아시스</option>
+                <option value="기타">기타</option>
+              </select>
+            </div>
+            
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">엑셀 파일 (CSV/TSV)</label>
+              <input type="file" id="order-upload-file" accept=".csv,.tsv,.txt,.xlsx,.xls"
+                class="w-full px-3 py-2 border rounded-lg">
+              <p class="text-xs text-gray-500 mt-1">※ 1열: 제품명, 2열: 수량 (탭 구분)</p>
+            </div>
+            
+            <button onclick="handleOrderFileUpload()" 
+              class="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 font-medium">
+              <i class="fas fa-upload mr-2"></i>엑셀 업로드
+            </button>
+          </div>
+        </div>
+        
+        <!-- 텍스트 직접 입력 (PDF 복사 붙여넣기용) -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+          <h3 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-paste mr-2 text-purple-600"></i>텍스트 붙여넣기 (PDF용)
+          </h3>
+          
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">발주 내용 (PDF에서 복사)</label>
+              <textarea id="order-upload-text" rows="8" 
+                placeholder="PDF에서 복사한 내용을 붙여넣기&#10;예시:&#10;플틴플러스 300g 50개&#10;잡곡빵 밋슈디 100개"
+                class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 font-mono text-sm"></textarea>
+              <p class="text-xs text-gray-500 mt-1">※ 형식: 제품명 수량개 (예: 플틴플러스 50개)</p>
+            </div>
+            
+            <button onclick="handleOrderTextUpload()" 
+              class="w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 font-medium">
+              <i class="fas fa-paper-plane mr-2"></i>텍스트 업로드
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      <!-- JSON 직접 입력 (고급) -->
+      <div class="bg-white rounded-xl shadow-md p-6">
+        <details>
+          <summary class="text-lg font-semibold text-gray-800 cursor-pointer">
+            <i class="fas fa-code mr-2 text-blue-600"></i>고급: JSON 직접 입력
+          </summary>
+          
+          <div class="mt-4 space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">제품 목록 (JSON 배열)</label>
+              <textarea id="order-upload-json" rows="6" 
+                placeholder='[&#10;  {"product_code": "PR001", "quantity": 100},&#10;  {"product_code": "PR010", "quantity": 50}&#10;]'
+                class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm"></textarea>
+              <p class="text-xs text-gray-500 mt-1">※ product_code 또는 product_name + quantity</p>
+            </div>
+            
+            <button onclick="handleOrderJsonUpload()" 
+              class="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 font-medium">
+              <i class="fas fa-database mr-2"></i>JSON 업로드
+            </button>
+          </div>
+        </details>
+      </div>
+      
+      <!-- 결과 영역 -->
+      <div id="order-upload-result" class="hidden">
+        <div class="bg-white rounded-xl shadow-md p-6">
+          <h3 class="text-lg font-semibold text-gray-800 mb-4">
+            <i class="fas fa-check-circle mr-2 text-green-600"></i>업로드 결과
+          </h3>
+          <div id="order-upload-result-content"></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// 엑셀 파일 업로드 처리
+async function handleOrderFileUpload() {
+  const fileInput = document.getElementById('order-upload-file');
+  const dateInput = document.getElementById('order-upload-date');
+  const channelSelect = document.getElementById('order-upload-channel');
+  
+  if (!fileInput.files || fileInput.files.length === 0) {
+    showToast('파일을 선택하세요', 'warning');
+    return;
+  }
+  
+  const file = fileInput.files[0];
+  showLoading('파일 분석 중...');
+  
+  try {
+    // 파일 내용 읽기
+    const text = await file.text();
+    
+    // 탭 또는 쉼표로 구분된 데이터 파싱
+    const lines = text.split('\\n').filter(line => line.trim());
+    const items = [];
+    
+    for (let i = 1; i < lines.length; i++) { // 첫 줄은 헤더로 스킵
+      const cols = lines[i].split(/[\\t,]/);
+      if (cols.length >= 2) {
+        const productName = cols[0]?.trim();
+        const quantity = parseInt(cols[1]?.trim()) || 0;
+        if (productName && quantity > 0) {
+          items.push({ product_name: productName, quantity });
+        }
+      }
+    }
+    
+    if (items.length === 0) {
+      hideLoading();
+      showToast('파싱된 데이터가 없습니다. 파일 형식을 확인하세요.', 'error');
+      return;
+    }
+    
+    // JSON API로 업로드 (제품명 매칭)
+    const result = await api('/order/upload-json', 'POST', {
+      items: items.map(i => ({ product_name: i.product_name, quantity: i.quantity })),
+      channel: channelSelect.value,
+      order_date: dateInput.value
+    });
+    
+    hideLoading();
+    displayOrderUploadResult(result, items.length);
+    
+  } catch (error) {
+    hideLoading();
+    showToast('업로드 실패: ' + error.message, 'error');
+  }
+}
+
+// 텍스트 업로드 처리
+async function handleOrderTextUpload() {
+  const textInput = document.getElementById('order-upload-text');
+  const dateInput = document.getElementById('order-upload-date');
+  const channelSelect = document.getElementById('order-upload-channel');
+  
+  const text = textInput.value.trim();
+  if (!text) {
+    showToast('텍스트를 입력하세요', 'warning');
+    return;
+  }
+  
+  showLoading('텍스트 분석 중...');
+  
+  try {
+    const result = await api('/order/upload-text', 'POST', {
+      text: text,
+      channel: channelSelect.value,
+      order_date: dateInput.value
+    });
+    
+    hideLoading();
+    displayOrderUploadResult(result, result.summary?.total_parsed || 0);
+    
+  } catch (error) {
+    hideLoading();
+    showToast('업로드 실패: ' + error.message, 'error');
+  }
+}
+
+// JSON 업로드 처리
+async function handleOrderJsonUpload() {
+  const jsonInput = document.getElementById('order-upload-json');
+  const dateInput = document.getElementById('order-upload-date');
+  const channelSelect = document.getElementById('order-upload-channel');
+  
+  const jsonText = jsonInput.value.trim();
+  if (!jsonText) {
+    showToast('JSON을 입력하세요', 'warning');
+    return;
+  }
+  
+  let items;
+  try {
+    items = JSON.parse(jsonText);
+    if (!Array.isArray(items)) {
+      throw new Error('배열 형식이어야 합니다');
+    }
+  } catch (e) {
+    showToast('JSON 형식 오류: ' + e.message, 'error');
+    return;
+  }
+  
+  showLoading('업로드 중...');
+  
+  try {
+    const result = await api('/order/upload-json', 'POST', {
+      items: items,
+      channel: channelSelect.value,
+      order_date: dateInput.value
+    });
+    
+    hideLoading();
+    displayOrderUploadResult(result, items.length);
+    
+  } catch (error) {
+    hideLoading();
+    showToast('업로드 실패: ' + error.message, 'error');
+  }
+}
+
+// 업로드 결과 표시
+function displayOrderUploadResult(result, totalParsed) {
+  const resultDiv = document.getElementById('order-upload-result');
+  const contentDiv = document.getElementById('order-upload-result-content');
+  
+  resultDiv.classList.remove('hidden');
+  
+  if (!result.success) {
+    contentDiv.innerHTML = `
+      <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+        <p class="text-red-800"><i class="fas fa-exclamation-circle mr-2"></i>${result.error || '업로드 실패'}</p>
+      </div>
+    `;
+    return;
+  }
+  
+  const summary = result.summary || {};
+  const matched = result.matched_items || result.registered_items || [];
+  const unmatched = result.unmatched_items || [];
+  
+  contentDiv.innerHTML = `
+    <div class="space-y-4">
+      <!-- 요약 -->
+      <div class="grid grid-cols-4 gap-4">
+        <div class="bg-blue-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-blue-700">${totalParsed}</p>
+          <p class="text-sm text-gray-600">파싱된 항목</p>
+        </div>
+        <div class="bg-green-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-green-700">${summary.matched || summary.registered || matched.length}</p>
+          <p class="text-sm text-gray-600">매칭 성공</p>
+        </div>
+        <div class="bg-red-50 rounded-lg p-4 text-center">
+          <p class="text-2xl font-bold text-red-700">${summary.unmatched || unmatched.length}</p>
+          <p class="text-sm text-gray-600">매칭 실패</p>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-4 text-center">
+          <p class="text-sm font-medium text-gray-700">${result.channel || '-'}</p>
+          <p class="text-sm text-gray-600">${result.order_date || '-'}</p>
+        </div>
+      </div>
+      
+      <!-- 매칭 성공 목록 -->
+      ${matched.length > 0 ? `
+        <div>
+          <h4 class="font-medium text-green-800 mb-2"><i class="fas fa-check mr-2"></i>등록 완료 (${matched.length}건)</h4>
+          <div class="max-h-60 overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-green-100 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-left">제품코드</th>
+                  <th class="px-3 py-2 text-left">제품명</th>
+                  <th class="px-3 py-2 text-right">수량</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${matched.map(item => `
+                  <tr class="hover:bg-green-50">
+                    <td class="px-3 py-2 font-mono">${item.product_code}</td>
+                    <td class="px-3 py-2">${item.product_name}</td>
+                    <td class="px-3 py-2 text-right font-medium">${item.quantity?.toLocaleString()}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
+      
+      <!-- 매칭 실패 목록 -->
+      ${unmatched.length > 0 ? `
+        <div>
+          <h4 class="font-medium text-red-800 mb-2"><i class="fas fa-times mr-2"></i>매칭 실패 (${unmatched.length}건)</h4>
+          <div class="max-h-40 overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-red-100 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-left">입력된 제품명</th>
+                  <th class="px-3 py-2 text-right">수량</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+                ${unmatched.map(item => `
+                  <tr class="hover:bg-red-50">
+                    <td class="px-3 py-2">${item.product_name}</td>
+                    <td class="px-3 py-2 text-right">${item.quantity?.toLocaleString()}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">※ 매칭 실패 항목은 제품 마스터에 등록 후 다시 시도하세요</p>
+        </div>
+      ` : ''}
+    </div>
+  `;
+  
+  showToast(result.message || '업로드 완료', 'success');
+}
+
+window.renderOrderUpload = renderOrderUpload;
+window.handleOrderFileUpload = handleOrderFileUpload;
+window.handleOrderTextUpload = handleOrderTextUpload;
+window.handleOrderJsonUpload = handleOrderJsonUpload;

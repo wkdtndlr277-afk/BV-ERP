@@ -30,6 +30,8 @@ import semiFinishedRoutes from './routes/semi-finished';
 import barcodeRoutes from './routes/barcode';
 import taskRoutes from './routes/task';
 import auditRoutes from './routes/audit';
+import sheetsRoutes from './routes/sheets';
+import orderUploadRoutes from './routes/order-upload';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -64,10 +66,12 @@ app.route('/api/semi-finished', semiFinishedRoutes);
 app.route('/api/barcode', barcodeRoutes);
 app.route('/api/task', taskRoutes);
 app.route('/api/audit', auditRoutes);
+app.route('/api/sheets', sheetsRoutes);
+app.route('/api/order', orderUploadRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '3.5.4';
-const SYSTEM_BUILD_DATE = '2026-06-22';
+const SYSTEM_VERSION = '3.5.18';
+const SYSTEM_BUILD_DATE = '2026-06-24';
 
 // Health check
 app.get('/api/health', (c) => {
@@ -651,6 +655,11 @@ app.get('/*', (c) => {
                 <a href="#production" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production">
                     <i class="fas fa-industry w-5"></i>
                     <span>생산 등록</span>
+                </a>
+                
+                <a href="#order-upload" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="order-upload">
+                    <i class="fas fa-file-upload w-5"></i>
+                    <span>발주서 업로드</span>
                 </a>
                 
                 <a href="#production-plan" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production-plan">

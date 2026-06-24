@@ -468,12 +468,13 @@ export async function getDailyStockReport(
     ? `AND t.item_code NOT IN (${excludeCodes.map(() => '?').join(',')})` 
     : '';
   
-  // ★★★ v3.5.5: 원료만 필터링 - R*, RM* 코드 패턴만 포함 ★★★
-  // SF*(반제품), SM*(부자재), RT*(기타), PD*(제품), PR*(제품) 제외
+  // ★★★ v3.5.10: 원료만 필터링 (SF는 closing-status에서 BOM 기반 계산) ★★★
+  // SF*(반제품)는 BOM 기반 사용량으로 별도 계산하므로 여기서 제외
+  // SM*(부자재), RT*(기타), PD*(제품), PR*(제품) 제외
   const rawMaterialFilter = `AND (t.item_code LIKE 'R%' OR t.item_code LIKE 'RM%') 
                              AND t.item_code NOT LIKE 'RT%'`;
   
-  // transactions 테이블 기반 수불부 쿼리 (CTE 없이)
+  // ★★★ v3.5.10: transactions 테이블 기반 수불부 쿼리 (원료만) ★★★
   const query = `
     SELECT 
       t.item_code,
@@ -521,21 +522,20 @@ export async function getDailyStockReport(
     }
   }
   
-  // ★★★ v3.5.7: FEFO 기반 LOT 매칭 - 사용량에 맞게 필요한 LOT만 순차적으로 선택 ★★★
+  // ★★★ v3.5.10: FEFO 기반 LOT 매칭 - 가장 오래된 LOT 하나만 선택 ★★★
+  // 원칙: 하루 사용량은 보통 하나의 LOT에서 소진되므로, FEFO 순 첫번째 LOT만 표시
   const fefoLotMap: Record<string, string> = {};
   if (itemsNeedingLot.length > 0) {
-    // 각 품목별로 FEFO 순서(유통기한 빠른 순)로 LOT 조회
+    // 각 품목별로 FEFO 순서(유통기한 빠른 순)로 가장 오래된 LOT 1개만 조회
     const fefoQuery = `
       SELECT 
         i.item_code,
         i.lot_number,
-        i.remain_qty,
         i.expiry_date
       FROM inbound i
       WHERE i.item_code IN (${itemsNeedingLot.map(() => '?').join(',')})
         AND i.quality_status = '합격'
         AND i.inbound_date <= ?
-        AND i.remain_qty > 0
       ORDER BY i.item_code, i.expiry_date ASC, i.inbound_date ASC
     `;
     const fefoResult = await db.prepare(fefoQuery).bind(
@@ -544,35 +544,23 @@ export async function getDailyStockReport(
     ).all<{
       item_code: string;
       lot_number: string;
-      remain_qty: number;
       expiry_date: string;
     }>();
     
-    // 품목별로 그룹화
-    const lotsByItem: Record<string, Array<{ lot: string; qty: number }>> = {};
+    // ★★★ v3.5.10: 품목별 첫번째 LOT만 선택 (FEFO 원칙) ★★★
+    const firstLotByItem: Record<string, string> = {};
     for (const row of fefoResult.results || []) {
-      if (!lotsByItem[row.item_code]) {
-        lotsByItem[row.item_code] = [];
+      // 이미 해당 품목의 LOT가 있으면 스킵 (첫번째 = 가장 오래된 것만 사용)
+      if (!firstLotByItem[row.item_code]) {
+        firstLotByItem[row.item_code] = row.lot_number;
       }
-      lotsByItem[row.item_code].push({ lot: row.lot_number, qty: row.remain_qty });
     }
     
-    // 사용량에 맞게 필요한 LOT만 선택 (FEFO 순서)
+    // LOT 매핑 저장 (하나의 LOT만)
     for (const item of itemsNeedingLot) {
-      const lots = lotsByItem[item.item_code] || [];
-      let remainingUsage = item.used_qty;
-      const usedLots: string[] = [];
-      
-      for (const lot of lots) {
-        if (remainingUsage <= 0) break;
-        usedLots.push(lot.lot);
-        remainingUsage -= lot.qty;
-      }
-      
-      // 중복 제거 후 저장
-      const uniqueLots = [...new Set(usedLots)];
-      if (uniqueLots.length > 0) {
-        fefoLotMap[item.item_code] = uniqueLots.join(',');
+      const lot = firstLotByItem[item.item_code];
+      if (lot) {
+        fefoLotMap[item.item_code] = lot;
       }
     }
   }

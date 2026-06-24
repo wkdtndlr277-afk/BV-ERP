@@ -232,21 +232,77 @@ productionRoutes.get('/closing-status', async (c) => {
     // ★★★ 2. transactions 테이블 기반 수불부 데이터 (Single Source of Truth) ★★★
     const stockReport = await getDailyStockReport(c.env.DB, date, EXCLUDE_CODES);
     
-    // ⚠️ v3.5.1: 반제품 수불부는 스키마 차이로 현재 지원하지 않음
-    // TODO: semi_finished_transactions 테이블 마이그레이션 후 활성화
-    // const sfReport = await getSemiFinishedDailyReport(c.env.DB, date);
+    // ★★★ v3.5.10: SF 원료 사용량 계산 - 생산내역 + BOM 기반 ★★★
+    // SF 원료는 입고가 아닌 자체 생산이므로, 당일 생산 내역의 BOM에서 SF 사용량을 계산
+    const sfUsageMap: Record<string, { item_code: string; item_name: string; used_qty: number }> = {};
+    
+    // 당일 생산된 제품들의 BOM에서 SF 원료 사용량 집계
+    for (const prod of productionData.results || []) {
+      const productCode = prod.product_code;
+      const quantity = prod.quantity || 0;
+      
+      // production_bom에서 해당 제품의 SF 원료 조회
+      const bomResult = await c.env.DB.prepare(`
+        SELECT pb.material_code, pb.material_name, pb.quantity as bom_qty, pb.unit,
+               COALESCE(sf.item_name, pb.material_name) as sf_name
+        FROM production_bom pb
+        LEFT JOIN semi_finished_items sf ON pb.material_code = sf.item_code
+        WHERE pb.production_code = ?
+          AND pb.material_code LIKE 'SF%'
+      `).bind(productCode).all<any>();
+      
+      for (const bom of bomResult.results || []) {
+        const sfCode = bom.material_code;
+        const sfName = bom.sf_name || bom.material_name || sfCode;
+        const bomQty = bom.bom_qty || 0;
+        const bomUnit = (bom.unit || 'g').toLowerCase();
+        
+        // ★★★ v3.5.10: 단위에 따른 변환 - 최종 결과는 kg ★★★
+        // BOM quantity * 생산수량 = 총 사용량
+        let usedQtyKg: number;
+        if (bomUnit === 'kg') {
+          // BOM이 kg 단위면 그대로 사용
+          usedQtyKg = bomQty * quantity;
+        } else {
+          // BOM이 g 단위면 kg로 변환 (g * 수량 / 1000)
+          usedQtyKg = (bomQty * quantity) / 1000;
+        }
+        
+        if (!sfUsageMap[sfCode]) {
+          sfUsageMap[sfCode] = { item_code: sfCode, item_name: sfName, used_qty: 0 };
+        }
+        sfUsageMap[sfCode].used_qty += usedQtyKg;
+      }
+    }
+    
+    // SF 사용량 배열로 변환
+    const sfUsageItems = Object.values(sfUsageMap).filter(sf => sf.used_qty > 0);
+    
+    // sfReport 형식으로 변환 (기존 API 호환)
     const sfReport = { 
-      items: [], 
+      items: sfUsageItems.map(sf => ({
+        itemCode: sf.item_code,
+        itemName: sf.item_name,
+        unit: 'kg',
+        prevStock: 0,  // SF는 수불부 개념이 아님
+        inboundQty: 0,
+        usedQty: sf.used_qty,
+        adjustmentQty: 0,
+        currentStock: 0,
+        lotNumbers: '',  // SF는 LOT 추적 안함 (자체생산)
+        isValid: true,
+        difference: 0
+      })),
       summary: { 
-        totalItems: 0, 
+        totalItems: sfUsageItems.length, 
         totalPrevStock: 0, 
         totalInbound: 0, 
-        totalUsed: 0, 
+        totalUsed: sfUsageItems.reduce((sum, sf) => sum + sf.used_qty, 0),
         totalAdjustment: 0, 
         totalCurrentStock: 0,
-        errorCount: 0  // v3.5.4: 누락된 필드 추가
+        errorCount: 0
       },
-      errors: []  // v3.5.4: 누락된 필드 추가
+      errors: []
     };
     
     // 4. 당일 입고 현황 (참고용 - 원천은 transactions)
@@ -276,9 +332,12 @@ productionRoutes.get('/closing-status', async (c) => {
     const totalProducts = productionData.results?.length || 0;
     const totalQuantity = (productionData.results || []).reduce((sum: number, p: any) => sum + (p.quantity || 0), 0);
     
-    // 일반 원료 + 반제품 합산
+    // ★★★ v3.5.10: 일반 원료(SF 제외) + 반제품(SF) 합산 ★★★
+    // stockReport에서 SF 코드 제외 (sfReport에서 BOM 기반으로 계산)
+    const rawMaterialItems = stockReport.items.filter(i => !i.itemCode.startsWith('SF'));
+    
     const allMaterials = [
-      ...stockReport.items.map(i => ({ ...i, type: '원료' })),
+      ...rawMaterialItems.map(i => ({ ...i, type: '원료' })),
       ...sfReport.items.map(i => ({ ...i, type: '반제품' }))
     ];
     

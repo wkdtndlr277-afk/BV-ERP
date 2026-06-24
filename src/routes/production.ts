@@ -1322,8 +1322,23 @@ productionRoutes.get('/lot/:lotNumber', async (c) => {
   });
 });
 
-// ★★★ v3.4.5: 생산 등록 - 재고 0 품목 강제 차단 + 상세 사유 로그 ★★★
+// ★★★ v3.5.21: 기존 복잡한 생산 등록 API 비활성화 ★★★
+// 이유: ERP에서 BOM 계산/재고 차감하면 구글시트와 데이터 불일치 발생
+// 대안: /api/production/simple 또는 /api/sheets/add-production-simple 사용
 productionRoutes.post('/', async (c) => {
+  return c.json({
+    success: false,
+    error: '⚠️ 이 API는 비활성화되었습니다 (v3.5.21)',
+    reason: 'ERP 계산 로직 완전 분리 - 계산은 구글 시트에서만 수행',
+    alternative: {
+      simple: 'POST /api/production/simple - 단순 생산 등록 (시트 전송만)',
+      sheets: 'POST /api/sheets/add-production-simple - 시트 기반 생산 등록',
+      batch: 'POST /api/production/simple-batch - 일괄 등록 (발주 기반)'
+    },
+    migration_guide: '프론트엔드에서 /api/production/simple API를 사용하세요'
+  }, 410);  // 410 Gone - 더 이상 지원하지 않음
+
+  /* ===== 아래는 기존 코드 (비활성화됨) =====
   const body = await c.req.json();
   const { prod_date, product_code, quantity, lot_number, memo, created_by, force_approve } = body;
   
@@ -1609,11 +1624,24 @@ productionRoutes.post('/', async (c) => {
     console.error('Production error:', error);
     return c.json({ success: false, error: '생산 등록 중 오류가 발생했습니다.' }, 500);
   }
+  ===== 기존 코드 끝 (비활성화됨) ===== */
 });
 
-// 빠른 일괄 생산 등록 (발주서 업로드용 - 원재료 차감 포함)
-// 주의: Cloudflare Workers CPU 제한으로 인해 한 번에 최대 30개까지만 처리
+// ★★★ v3.5.21: 기존 복잡한 일괄 등록 API 비활성화 ★★★
+// 이유: ERP에서 BOM 계산/재고 차감하면 구글시트와 데이터 불일치 발생
+// 대안: /api/production/simple-batch 사용
 productionRoutes.post('/batch', async (c) => {
+  return c.json({
+    success: false,
+    error: '⚠️ 이 API는 비활성화되었습니다 (v3.5.21)',
+    reason: 'ERP 계산 로직 완전 분리 - 계산은 구글 시트에서만 수행',
+    alternative: {
+      simple_batch: 'POST /api/production/simple-batch - 단순 일괄 등록',
+      sheets: 'POST /api/sheets/add-production-batch - 시트 기반 일괄 등록'
+    }
+  }, 410);
+
+  /* ===== 아래는 기존 코드 (비활성화됨) =====
   try {
     const body = await c.req.json();
     const { items, prod_date, production_date, memo, channel: defaultChannel } = body;
@@ -2409,6 +2437,7 @@ productionRoutes.post('/batch', async (c) => {
       detail: error.message || String(error)
     }, 500);
   }
+  ===== 기존 코드 끝 (비활성화됨) ===== */
 });
 
 // production_usage 백필 API (기존 생산 데이터에서 BOM 기반으로 사용량 복구)

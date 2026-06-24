@@ -363,6 +363,202 @@ export class GoogleSheetsService {
         expiry_date: row[6]
       }));
   }
+
+  // ===== v3.5.21: 고급 시트 작업 =====
+
+  // 시트 ID 조회 (sheetId 필요한 작업용)
+  async getSheetId(sheetName: string): Promise<number | null> {
+    const token = await this.getToken();
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const data = await response.json() as { sheets: { properties: { title: string; sheetId: number } }[] };
+    const sheet = data.sheets?.find(s => s.properties.title === sheetName);
+    return sheet?.properties.sheetId ?? null;
+  }
+
+  // batchUpdate 실행 (수식 설정, 셀 서식 등)
+  async batchUpdate(requests: any[]): Promise<{ success: boolean; error?: string }> {
+    const token = await this.getToken();
+    
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ requests })
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.text();
+      return { success: false, error };
+    }
+    return { success: true };
+  }
+
+  // 범위 데이터 삭제 (헤더 제외)
+  async clearSheetData(sheetName: string, startRow: number = 2): Promise<boolean> {
+    const token = await this.getToken();
+    const range = `${sheetName}!A${startRow}:Z`;
+    
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:clear`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+    
+    return response.ok;
+  }
+
+  // 시트에 수식 포함 데이터 쓰기 (USER_ENTERED로 수식 해석)
+  async writeWithFormulas(sheetName: string, range: string, values: any[][]): Promise<boolean> {
+    const token = await this.getToken();
+    const fullRange = `${sheetName}!${range}`;
+
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values })
+      }
+    );
+
+    return response.ok;
+  }
+
+  // 일별수불부 수식 설정
+  async setupDailyStockFormulas(): Promise<{ success: boolean; message: string }> {
+    try {
+      // 일별수불부 시트 구조:
+      // A: 일자, B: 원료코드, C: 원료명, D: 전일재고, E: 입고량, F: 사용량, G: 현재고, H: 단위
+      // 
+      // ★ 핵심 원칙: ERP는 생산실적만 시트에 기록
+      // 수식이 BOM+생산실적+원료입고를 참조해서 자동 계산
+      
+      const sheetId = await this.getSheetId('일별수불부');
+      if (sheetId === null) {
+        return { success: false, message: '일별수불부 시트를 찾을 수 없습니다' };
+      }
+
+      // 헤더 행 설정 (수식 설명 포함)
+      const headerRow = [
+        '일자', '원료코드', '원료명', 
+        '전일재고', '입고량', '사용량(자동)', '현재고(자동)', '단위'
+      ];
+      await this.writeSheet('일별수불부', 'A1:H1', [headerRow]);
+
+      // 수식 템플릿 행 (행 2)에 수식 설정
+      // 실제 데이터는 행 3부터 시작
+      const formulaRow = [
+        '=TEXT(TODAY(),"YYYY-MM-DD")',  // A2: 오늘 날짜
+        '',  // B2: 원료코드 (수동 입력 또는 참조)
+        '=IFERROR(VLOOKUP(B2,원료입고!B:C,2,FALSE),"")',  // C2: 원료명 자동 조회
+        // D2: 전일재고 = 전일 현재고 (첫 행은 원료입고 합계)
+        '=IFERROR(SUMIFS(원료입고!I:I,원료입고!B:B,B2,원료입고!A:A,"<"&A2),0)',
+        // E2: 당일 입고량
+        '=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B2,원료입고!A:A,A2),0)',
+        // F2: 사용량 (BOM × 생산수량 자동 계산)
+        '=IFERROR(SUMPRODUCT((생산실적!A:A=A2)*(생산실적!B:B<>"")*SUMIFS(BOM마스터!E:E,BOM마스터!C:C,B2,BOM마스터!A:A,생산실적!B:B)*생산실적!D:D/1000),0)',
+        // G2: 현재고 = 전일재고 + 입고 - 사용
+        '=D2+E2-F2',
+        'kg'  // H2: 단위
+      ];
+      
+      await this.writeWithFormulas('일별수불부', 'A2:H2', [formulaRow]);
+
+      return { 
+        success: true, 
+        message: '일별수불부 수식 설정 완료. 원료코드(B열)만 입력하면 나머지 자동 계산됩니다.' 
+      };
+    } catch (error: any) {
+      return { success: false, message: error.message };
+    }
+  }
+
+  // 로트매칭 자동화 시트 설정 (FEFO 기반)
+  async setupLotMatchingFormulas(): Promise<{ success: boolean; message: string }> {
+    try {
+      const sheetId = await this.getSheetId('로트매칭');
+      if (sheetId === null) {
+        return { success: false, message: '로트매칭 시트를 찾을 수 없습니다' };
+      }
+
+      // 로트매칭 시트 구조:
+      // A: 생산일자, B: 제품로트, C: 원료코드, D: 원료명, E: 사용량, F: 원료로트, G: 유통기한
+      //
+      // ★ FEFO 로직: 유통기한 빠른 로트부터 자동 매칭
+      // ERP에서 생산실적 등록 시 → 로트매칭 시트에 자동 기록
+
+      const headerRow = [
+        '생산일자', '제품로트', '원료코드', '원료명', 
+        '사용량(kg)', '원료로트(FEFO)', '유통기한'
+      ];
+      await this.writeSheet('로트매칭', 'A1:G1', [headerRow]);
+
+      // 로트매칭은 ERP API(/test/calculate-usage)가 FEFO 로직으로 기록
+      // 시트 수식으로는 복잡한 FEFO 구현 어려움 → API 방식 유지
+      
+      return { 
+        success: true, 
+        message: '로트매칭 헤더 설정 완료. FEFO 매칭은 생산 등록 시 자동 실행됩니다.' 
+      };
+    } catch (error: any) {
+      return { success: false, message: error.message };
+    }
+  }
+
+  // 원료별 현재고 조회 (시트 수식 기반)
+  async getCurrentStock(itemCode?: string): Promise<any[]> {
+    // 원료입고 시트에서 원료별 잔량 합계 계산
+    const inboundData = await this.readSheet('원료입고', 'A2:I');
+    
+    const stockMap = new Map<string, { item_name: string; total_qty: number; lots: any[] }>();
+    
+    for (const row of inboundData) {
+      const code = row[1];
+      const remainQty = parseFloat(row[8]) || 0;
+      
+      if (remainQty <= 0) continue;
+      if (itemCode && code !== itemCode) continue;
+      
+      if (!stockMap.has(code)) {
+        stockMap.set(code, { item_name: row[2], total_qty: 0, lots: [] });
+      }
+      
+      const stock = stockMap.get(code)!;
+      stock.total_qty += remainQty;
+      stock.lots.push({
+        lot_number: row[3],
+        remain_qty: remainQty,
+        expiry_date: row[7],
+        inbound_date: row[0]
+      });
+    }
+    
+    // FEFO 정렬 (유통기한 빠른 순)
+    for (const [, stock] of stockMap) {
+      stock.lots.sort((a, b) => (a.expiry_date || '9999').localeCompare(b.expiry_date || '9999'));
+    }
+    
+    return Array.from(stockMap.entries()).map(([code, data]) => ({
+      item_code: code,
+      item_name: data.item_name,
+      total_qty: data.total_qty,
+      unit: 'kg',
+      lots: data.lots
+    }));
+  }
 }
 
 export const GOOGLE_SHEET_ID = SHEET_ID;

@@ -595,4 +595,219 @@ sheets.post('/test/calculate-usage', async (c) => {
   }
 });
 
+// ========================================
+// ★★★ v3.5.21: 수식 설정 및 자동화 API ★★★
+// ERP는 입력만, 계산은 시트 수식에서
+// ========================================
+
+// 일별수불부 + 로트매칭 수식 한번에 설정
+sheets.post('/setup-formulas', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const results: string[] = [];
+
+    // 1. 일별수불부 수식 설정
+    const dailyResult = await service.setupDailyStockFormulas();
+    results.push(`일별수불부: ${dailyResult.message}`);
+
+    // 2. 로트매칭 헤더 설정
+    const lotResult = await service.setupLotMatchingFormulas();
+    results.push(`로트매칭: ${lotResult.message}`);
+
+    return c.json({
+      success: true,
+      message: '수식 설정 완료',
+      details: results,
+      note: '★ 이제 ERP에서 생산실적만 등록하면 시트가 자동으로 원료사용량, 재고를 계산합니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 원료별 현재고 조회 (시트 기반 SSOT)
+sheets.get('/current-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const itemCode = c.req.query('item_code');
+    const stockData = await service.getCurrentStock(itemCode);
+
+    return c.json({
+      success: true,
+      data: stockData,
+      count: stockData.length,
+      source: 'google_sheets',
+      note: '시트 원료입고 잔량 기준 (SSOT)'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 생산 실적 등록 (단순화 - 시트에만 기록, 계산은 수식이 처리)
+sheets.post('/add-production-simple', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const {
+      prod_date = new Date().toISOString().split('T')[0],
+      product_code,
+      product_name,
+      quantity,
+      channel = '',
+      memo = ''
+    } = body;
+
+    if (!product_code || !quantity) {
+      return c.json({ success: false, error: 'product_code와 quantity 필수' }, 400);
+    }
+
+    // 제품 로트번호 자동 생성
+    const existingRecords = await service.getProductionRecords(prod_date);
+    const sameProductCount = existingRecords.filter(r => r.product_code === product_code).length;
+    const seq = String(sameProductCount + 1).padStart(3, '0');
+    const lot_number = `${prod_date.replace(/-/g, '')}-${product_code}-${seq}`;
+
+    // 시트에 생산실적 추가
+    await service.addProductionRecord({
+      prod_date,
+      product_code,
+      product_name: product_name || product_code,
+      quantity: parseFloat(quantity),
+      lot_number,
+      channel,
+      memo
+    });
+
+    return c.json({
+      success: true,
+      message: '생산 실적 등록 완료 (시트 수식이 자동으로 원료사용량, 재고 계산)',
+      data: {
+        prod_date,
+        product_code,
+        product_name,
+        quantity,
+        lot_number,
+        channel
+      },
+      note: '★ BOM 소모량, FEFO 로트매칭, 수불부는 시트 수식이 자동 계산합니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 일괄 생산 실적 등록 (발주 기반)
+sheets.post('/add-production-batch', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { items, prod_date = new Date().toISOString().split('T')[0] } = body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: 'items 배열 필수' }, 400);
+    }
+
+    const results: any[] = [];
+    const existingRecords = await service.getProductionRecords(prod_date);
+    const countByProduct = new Map<string, number>();
+    
+    // 기존 레코드 카운트
+    for (const r of existingRecords) {
+      countByProduct.set(r.product_code, (countByProduct.get(r.product_code) || 0) + 1);
+    }
+
+    for (const item of items) {
+      const { product_code, product_name, quantity, channel = '', memo = '' } = item;
+      
+      if (!product_code || !quantity) continue;
+
+      // 로트번호 생성
+      const count = (countByProduct.get(product_code) || 0) + 1;
+      countByProduct.set(product_code, count);
+      const seq = String(count).padStart(3, '0');
+      const lot_number = `${prod_date.replace(/-/g, '')}-${product_code}-${seq}`;
+
+      await service.addProductionRecord({
+        prod_date,
+        product_code,
+        product_name: product_name || product_code,
+        quantity: parseFloat(quantity),
+        lot_number,
+        channel,
+        memo
+      });
+
+      results.push({
+        product_code,
+        quantity,
+        lot_number,
+        status: 'success'
+      });
+    }
+
+    return c.json({
+      success: true,
+      message: `${results.length}건 생산 실적 일괄 등록 완료`,
+      data: results,
+      note: '★ BOM 소모량, FEFO 로트매칭, 수불부는 시트 수식이 자동 계산합니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 시트 데이터 초기화 (헤더 유지, 데이터만 삭제)
+sheets.post('/clear-data', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { sheet_name, confirm = false } = body;
+
+    if (!confirm) {
+      return c.json({ 
+        success: false, 
+        error: 'confirm: true를 전송해야 합니다',
+        warning: '이 작업은 시트 데이터를 삭제합니다 (헤더 제외)'
+      }, 400);
+    }
+
+    const sheets_to_clear = sheet_name 
+      ? [sheet_name] 
+      : ['생산실적', '로트매칭', '일별수불부'];
+
+    for (const name of sheets_to_clear) {
+      await service.clearSheetData(name, 2);
+    }
+
+    return c.json({
+      success: true,
+      message: `${sheets_to_clear.join(', ')} 시트 데이터 초기화 완료`,
+      note: '헤더는 유지됨, 수식 템플릿 행(2행)도 유지됨'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;

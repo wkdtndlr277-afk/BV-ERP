@@ -70,7 +70,7 @@ app.route('/api/sheets', sheetsRoutes);
 app.route('/api/order', orderUploadRoutes);
 
 // 시스템 버전
-const SYSTEM_VERSION = '3.5.18';
+const SYSTEM_VERSION = '3.5.21';
 const SYSTEM_BUILD_DATE = '2026-06-24';
 
 // Health check

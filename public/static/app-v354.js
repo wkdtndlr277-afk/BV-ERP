@@ -17910,7 +17910,8 @@ async function submitProduction() {
   showLoading('생산 데이터를 등록 중입니다...');
   
   try {
-    const result = await api('/production', 'POST', data);
+    // ★★★ v3.5.21: simple API 사용 (계산은 구글시트에서) ★★★
+    const result = await api('/production/simple', 'POST', data);
     
     // 성공 메시지 (초록색)
     showToast(`✅ 생산 등록 완료! LOT: ${result.data?.lot_number}`, 'success');
@@ -23709,7 +23710,8 @@ async function registerDailyReportById(reportId) {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000);
         
-        const registerResult = await api('/production/batch', 'POST', {
+        // ★★★ v3.5.21: simple-batch API 사용 (계산은 구글시트에서) ★★★
+        const registerResult = await api('/production/simple-batch', 'POST', {
           production_date: report.report_date,
           items: chunk
         });
@@ -23834,8 +23836,9 @@ async function registerProductionFromDailyReport() {
       showLoading(`생산등록 처리 중... (${i + 1}/${chunks.length})`);
       
       try {
+        // ★★★ v3.5.21: simple-batch API 사용 (계산은 구글시트에서) ★★★
         // axios 직접 호출 (api 함수의 에러 처리 우회)
-        const response = await axios.post(`${API_BASE}/production/batch`, {
+        const response = await axios.post(`${API_BASE}/production/simple-batch`, {
           items: chunk,
           prod_date: productionDate,
           memo: `생산일보 자동등록 (${reportData.report_no})`,

@@ -589,8 +589,91 @@ app.get('/*', (c) => {
                     <span id="alert-badge" class="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full alert-badge hidden">0</span>
                 </a>
                 
+                <!-- ========== 생산 관리 (핵심) ========== -->
                 <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">업무 관리</p>
+                    <p class="text-xs font-semibold text-blue-600 uppercase tracking-wider px-4">📦 생산 관리</p>
+                </div>
+                
+                <a href="#order-upload" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium bg-blue-50 border-l-4 border-blue-500" data-page="order-upload">
+                    <i class="fas fa-file-upload w-5 text-blue-600"></i>
+                    <span class="font-semibold">발주서 업로드</span>
+                    <span class="ml-auto text-xs bg-blue-500 text-white px-2 py-0.5 rounded">NEW</span>
+                </a>
+                
+                <a href="#order-list" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="order-list">
+                    <i class="fas fa-clipboard-list w-5"></i>
+                    <span>발주 목록</span>
+                </a>
+                
+                <a href="#production" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production">
+                    <i class="fas fa-industry w-5"></i>
+                    <span>생산실적 등록</span>
+                </a>
+                
+                <a href="#product-outbound" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="product-outbound">
+                    <i class="fas fa-shipping-fast w-5"></i>
+                    <span>출하 관리</span>
+                </a>
+                
+                <!-- ========== 원료 관리 ========== -->
+                <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">🧪 원료 관리</p>
+                </div>
+                
+                <a href="#inbound" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="inbound">
+                    <i class="fas fa-truck-loading w-5"></i>
+                    <span>원료 입고</span>
+                </a>
+                
+                <a href="#inbound-query" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="inbound-query">
+                    <i class="fas fa-clipboard-list w-5"></i>
+                    <span>입고 조회</span>
+                </a>
+                
+                <!-- ========== 재고 조회 (시트 기반) ========== -->
+                <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">📊 재고 조회</p>
+                </div>
+                
+                <a href="#inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="inventory">
+                    <i class="fas fa-boxes w-5"></i>
+                    <span>재고 현황</span>
+                </a>
+                
+                <a href="#daily-report" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="daily-report">
+                    <i class="fas fa-calendar-day w-5"></i>
+                    <span>일별 수불부</span>
+                </a>
+                
+                <a href="#lot-history" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="lot-history">
+                    <i class="fas fa-barcode w-5"></i>
+                    <span>LOT 이력</span>
+                </a>
+                
+                <a href="https://docs.google.com/spreadsheets/d/1z8nkSEaP8PuKWKjVHozSO3_ghb2KY47QiQ-vDfB9Vfg" target="_blank" class="flex items-center gap-3 px-4 py-2 rounded-lg text-green-600 text-sm hover:bg-green-50 font-medium">
+                    <i class="fas fa-table w-5"></i>
+                    <span>📊 구글시트 바로가기</span>
+                    <i class="fas fa-external-link-alt text-xs ml-auto"></i>
+                </a>
+                
+                <!-- ========== 보고서 ========== -->
+                <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">📄 보고서</p>
+                </div>
+                
+                <a href="#daily-report-pdf" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="daily-report-pdf">
+                    <i class="fas fa-file-pdf w-5 text-red-500"></i>
+                    <span>생산일보 PDF</span>
+                </a>
+                
+                <a href="#microbial-test" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="microbial-test">
+                    <i class="fas fa-microscope w-5"></i>
+                    <span>미생물 검사</span>
+                </a>
+                
+                <!-- ========== 업무 관리 ========== -->
+                <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">📋 업무 관리</p>
                 </div>
                 
                 <a href="#task-calendar" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="task-calendar">
@@ -604,8 +687,9 @@ app.get('/*', (c) => {
                     <span>업무 현황판</span>
                 </a>
                 
+                <!-- ========== 바코드 관리 ========== -->
                 <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">바코드 관리</p>
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">📱 바코드</p>
                 </div>
                 
                 <a href="#barcode-inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="barcode-inventory">
@@ -613,146 +697,19 @@ app.get('/*', (c) => {
                     <span>바코드 재고관리</span>
                 </a>
                 
-                <a href="/scanner-setup.html" target="_blank" class="flex items-center gap-3 px-4 py-2 rounded-lg text-gray-500 text-sm hover:bg-blue-50 hover:text-blue-600">
-                    <i class="fas fa-book w-5"></i>
-                    <span>스캐너 설정 가이드</span>
-                    <i class="fas fa-external-link-alt text-xs ml-auto"></i>
-                </a>
-                
+                <!-- ========== 기준정보 ========== -->
                 <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">입출고 관리</p>
-                </div>
-                
-                <a href="#inbound" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="inbound">
-                    <i class="fas fa-truck-loading w-5"></i>
-                    <span>입고 등록</span>
-                </a>
-                
-                <a href="#inbound-query" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="inbound-query">
-                    <i class="fas fa-clipboard-list w-5"></i>
-                    <span>입고 조회</span>
-                </a>
-                
-                <a href="#usage" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="usage">
-                    <i class="fas fa-mortar-pestle w-5"></i>
-                    <span>사용량 입력</span>
-                </a>
-                
-                <a href="#usage-history" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="usage-history">
-                    <i class="fas fa-history w-5"></i>
-                    <span>사용내역 조회</span>
-                </a>
-                
-                <a href="#outbound" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="outbound">
-                    <i class="fas fa-truck w-5"></i>
-                    <span>출고 등록</span>
-                </a>
-                
-                <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">생산 관리</p>
-                </div>
-                
-                <a href="#production" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production">
-                    <i class="fas fa-industry w-5"></i>
-                    <span>생산 등록</span>
-                </a>
-                
-                <a href="#order-upload" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="order-upload">
-                    <i class="fas fa-file-upload w-5"></i>
-                    <span>발주서 업로드</span>
-                </a>
-                
-                <a href="#production-plan" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production-plan">
-                    <i class="fas fa-calendar-check w-5"></i>
-                    <span>생산계획</span>
-                </a>
-                
-                <a href="#bom" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="bom">
-                    <i class="fas fa-list-alt w-5"></i>
-                    <span>BOM (배합표)</span>
-                </a>
-                
-                <a href="#product-outbound" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="product-outbound">
-                    <i class="fas fa-shipping-fast w-5"></i>
-                    <span>제품 출고</span>
-                </a>
-                
-                <a href="#cost-calc" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="cost-calc">
-                    <i class="fas fa-calculator w-5"></i>
-                    <span>원가 계산</span>
-                </a>
-                
-                <a href="#semi-finished" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="semi-finished">
-                    <i class="fas fa-mortar-pestle w-5"></i>
-                    <span>반제품 관리</span>
-                </a>
-                
-                <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">조회/검색</p>
-                </div>
-                
-                <a href="#inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="inventory">
-                    <i class="fas fa-boxes w-5"></i>
-                    <span>재고 현황</span>
-                </a>
-                
-
-                <a href="#sample-inventory" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="sample-inventory">
-                    <i class="fas fa-flask w-5"></i>
-                    <span>샘플 재고</span>
-                </a>
-                
-                <a href="#stock-ledger" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="stock-ledger">
-                    <i class="fas fa-book w-5"></i>
-                    <span>재고 수불부</span>
-                </a>
-                
-                <a href="#transaction-search" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="transaction-search">
-                    <i class="fas fa-search w-5"></i>
-                    <span>수불 통합검색</span>
-                </a>
-                
-                <a href="#lot-history" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="lot-history">
-                    <i class="fas fa-barcode w-5"></i>
-                    <span>LOT 이력</span>
-                </a>
-                
-                <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">보고서</p>
-                </div>
-                
-                <a href="#daily-report" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="daily-report">
-                    <i class="fas fa-calendar-day w-5"></i>
-                    <span>일별 수불부</span>
-                </a>
-                
-                <a href="#monthly-report" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="monthly-report">
-                    <i class="fas fa-calendar-alt w-5"></i>
-                    <span>월별 수불부</span>
-                </a>
-                
-                <a href="#quality-kpi" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="quality-kpi">
-                    <i class="fas fa-chart-line w-5"></i>
-                    <span>품질 KPI</span>
-                </a>
-                
-                <a href="#process-quality" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="process-quality">
-                    <i class="fas fa-flask w-5"></i>
-                    <span>반제품 공정품질</span>
-                </a>
-                
-                <a href="#microbial-test" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="microbial-test">
-                    <i class="fas fa-microscope w-5"></i>
-                    <span>미생물 검사</span>
-                </a>
-                
-                <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">기준정보</p>
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">⚙️ 기준정보</p>
                 </div>
                 
                 <a href="#master" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="master">
                     <i class="fas fa-database w-5"></i>
                     <span>품목 관리</span>
+                </a>
+                
+                <a href="#bom" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="bom">
+                    <i class="fas fa-list-alt w-5"></i>
+                    <span>BOM (배합표)</span>
                 </a>
                 
                 <a href="#suppliers" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="suppliers">
@@ -762,16 +719,22 @@ app.get('/*', (c) => {
                 
                 <a href="#product-catalog" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="product-catalog">
                     <i class="fas fa-box-open w-5"></i>
-                    <span>제품 현황 관리</span>
+                    <span>제품 관리</span>
                 </a>
                 
+                <!-- ========== 시스템 관리 ========== -->
                 <div class="pt-4 pb-2">
-                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">시스템 관리</p>
+                    <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">🔧 시스템</p>
                 </div>
                 
                 <a href="#admin" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="admin">
                     <i class="fas fa-user-shield w-5"></i>
                     <span>관리자 모드</span>
+                </a>
+                
+                <a href="#sheets-config" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="sheets-config">
+                    <i class="fas fa-cog w-5"></i>
+                    <span>구글시트 연동</span>
                 </a>
                 
                 <!-- 버전 정보 -->

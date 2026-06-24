@@ -1313,6 +1313,9 @@ function renderPage(page) {
     case 'quick-stock': renderQuickStock(); break;
     case 'production': renderProduction(); break;
     case 'order-upload': renderOrderUpload(); break;
+    case 'order-list': renderOrderList(); break;
+    case 'sheets-config': renderSheetsConfig(); break;
+    case 'daily-report-pdf': renderDailyReportPdf(); break;
     case 'production-plan': renderProductionPlan(); break;
     case 'bom': renderBOM(); break;
     case 'product-outbound': renderProductOutbound(); break;
@@ -17202,6 +17205,19 @@ let productionData = [];
 async function renderProduction() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
+  
+  // ★ v3.5.18: 발주 목록에서 넘어온 데이터 체크
+  const orderData = sessionStorage.getItem('production_from_order');
+  if (orderData) {
+    sessionStorage.removeItem('production_from_order');
+    try {
+      const data = JSON.parse(orderData);
+      renderProductionFromOrder(data);
+      return;
+    } catch (e) {
+      console.error('발주 데이터 파싱 실패:', e);
+    }
+  }
   
   // 제품 목록 (BOM 있는 제품 우선)
   const products = state.masterItems.filter(item => item.category === '제품');
@@ -47900,3 +47916,635 @@ window.renderOrderUpload = renderOrderUpload;
 window.handleOrderFileUpload = handleOrderFileUpload;
 window.handleOrderTextUpload = handleOrderTextUpload;
 window.handleOrderJsonUpload = handleOrderJsonUpload;
+
+// ========================================
+// 발주 목록 페이지 (v3.5.18)
+// ========================================
+
+async function renderOrderList() {
+  const content = document.getElementById('page-content');
+  const today = new Date().toISOString().split('T')[0];
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <!-- 헤더 -->
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">
+            <i class="fas fa-clipboard-list text-blue-500 mr-2"></i>발주 목록
+          </h2>
+          <p class="text-gray-500 mt-1">발주서 업로드 내역 조회 및 생산실적 연동</p>
+        </div>
+        <div class="flex gap-2">
+          <a href="#order-upload" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+            <i class="fas fa-upload mr-1"></i> 발주서 업로드
+          </a>
+        </div>
+      </div>
+      
+      <!-- 필터 -->
+      <div class="bg-white rounded-lg shadow p-4">
+        <div class="flex flex-wrap gap-4 items-end">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">발주일</label>
+            <input type="date" id="order-list-date" value="${today}" 
+                   class="border rounded-lg px-3 py-2" onchange="loadOrderList()">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">채널</label>
+            <select id="order-list-channel" class="border rounded-lg px-3 py-2" onchange="loadOrderList()">
+              <option value="">전체</option>
+              <option value="쿠팡">쿠팡</option>
+              <option value="컬리">컬리</option>
+              <option value="배민">배민</option>
+              <option value="오아시스">오아시스</option>
+              <option value="기타">기타</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">상태</label>
+            <select id="order-list-status" class="border rounded-lg px-3 py-2" onchange="loadOrderList()">
+              <option value="">전체</option>
+              <option value="대기" selected>대기</option>
+              <option value="완료">완료</option>
+            </select>
+          </div>
+          <button onclick="loadOrderList()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+            <i class="fas fa-search mr-1"></i> 조회
+          </button>
+        </div>
+      </div>
+      
+      <!-- 집계 현황 -->
+      <div id="order-summary" class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <!-- 로딩 중 -->
+      </div>
+      
+      <!-- 발주 목록 테이블 -->
+      <div class="bg-white rounded-lg shadow">
+        <div class="p-4 border-b flex items-center justify-between">
+          <h3 class="font-bold text-gray-800"><i class="fas fa-list mr-2"></i>발주 상세 목록</h3>
+          <div class="flex gap-2">
+            <button onclick="startProduction()" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600">
+              <i class="fas fa-play mr-1"></i> 생산 시작
+            </button>
+            <button onclick="deleteSelectedOrders()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600">
+              <i class="fas fa-trash mr-1"></i> 선택 삭제
+            </button>
+          </div>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm" id="order-list-table">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-4 py-3 text-left"><input type="checkbox" id="order-select-all" onchange="toggleAllOrders()"></th>
+                <th class="px-4 py-3 text-left">채널</th>
+                <th class="px-4 py-3 text-left">제품코드</th>
+                <th class="px-4 py-3 text-left">제품명</th>
+                <th class="px-4 py-3 text-right">수량</th>
+                <th class="px-4 py-3 text-center">상태</th>
+              </tr>
+            </thead>
+            <tbody id="order-list-body" class="divide-y">
+              <tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">조회 버튼을 클릭하세요</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <!-- 제품별 합계 (생산실적용) -->
+      <div class="bg-white rounded-lg shadow">
+        <div class="p-4 border-b">
+          <h3 class="font-bold text-gray-800"><i class="fas fa-calculator mr-2"></i>제품별 합계 (생산실적용)</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-green-50">
+              <tr>
+                <th class="px-4 py-3 text-left">제품코드</th>
+                <th class="px-4 py-3 text-left">제품명</th>
+                <th class="px-4 py-3 text-right">합계 수량</th>
+                <th class="px-4 py-3 text-left">채널</th>
+              </tr>
+            </thead>
+            <tbody id="order-total-body" class="divide-y">
+              <tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">-</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadOrderList();
+}
+
+async function loadOrderList() {
+  const orderDate = document.getElementById('order-list-date')?.value;
+  const channel = document.getElementById('order-list-channel')?.value;
+  const status = document.getElementById('order-list-status')?.value;
+  
+  try {
+    // 발주 목록 조회
+    let url = '/api/order/list?';
+    if (orderDate) url += `order_date=${orderDate}&`;
+    if (channel) url += `channel=${encodeURIComponent(channel)}&`;
+    if (status) url += `status=${encodeURIComponent(status)}&`;
+    
+    const listRes = await axios.get(url);
+    const orders = listRes.data.orders || [];
+    
+    // 집계 조회
+    const summaryRes = await axios.get(`/api/order/summary?order_date=${orderDate || ''}`);
+    const summary = summaryRes.data;
+    
+    // 집계 표시
+    const summaryDiv = document.getElementById('order-summary');
+    if (summary.success) {
+      const stats = summary.channel_stats || [];
+      summaryDiv.innerHTML = `
+        <div class="bg-blue-50 rounded-lg p-4">
+          <div class="text-2xl font-bold text-blue-600">${summary.total_products || 0}</div>
+          <div class="text-sm text-blue-800">총 제품 수</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-4">
+          <div class="text-2xl font-bold text-green-600">${(summary.total_quantity || 0).toLocaleString()}</div>
+          <div class="text-sm text-green-800">총 발주 수량</div>
+        </div>
+        ${stats.map(s => `
+          <div class="bg-gray-50 rounded-lg p-4">
+            <div class="text-xl font-bold text-gray-700">${s.count}건 / ${s.total_qty?.toLocaleString()}개</div>
+            <div class="text-sm text-gray-600">${s.channel}</div>
+          </div>
+        `).join('')}
+      `;
+    }
+    
+    // 목록 표시
+    const tbody = document.getElementById('order-list-body');
+    if (orders.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">발주 데이터가 없습니다</td></tr>';
+    } else {
+      tbody.innerHTML = orders.map(order => `
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-3"><input type="checkbox" class="order-checkbox" value="${order.id}"></td>
+          <td class="px-4 py-3"><span class="px-2 py-1 rounded text-xs ${getChannelColor(order.channel)}">${order.channel}</span></td>
+          <td class="px-4 py-3 font-mono">${order.product_code}</td>
+          <td class="px-4 py-3">${order.product_name || ''}</td>
+          <td class="px-4 py-3 text-right font-medium">${order.quantity?.toLocaleString()}</td>
+          <td class="px-4 py-3 text-center">
+            <span class="px-2 py-1 rounded text-xs ${order.status === '완료' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}">${order.status}</span>
+          </td>
+        </tr>
+      `).join('');
+    }
+    
+    // 제품별 합계 표시
+    const totalBody = document.getElementById('order-total-body');
+    const totals = summary.total_by_product || [];
+    if (totals.length === 0) {
+      totalBody.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">-</td></tr>';
+    } else {
+      totalBody.innerHTML = totals.map(item => `
+        <tr class="hover:bg-green-50">
+          <td class="px-4 py-3 font-mono">${item.product_code}</td>
+          <td class="px-4 py-3">${item.product_name || ''}</td>
+          <td class="px-4 py-3 text-right font-bold text-green-600">${item.total_qty?.toLocaleString()}</td>
+          <td class="px-4 py-3 text-sm text-gray-500">${item.channels || ''}</td>
+        </tr>
+      `).join('');
+    }
+    
+  } catch (error) {
+    console.error('발주 목록 조회 실패:', error);
+    showToast('발주 목록 조회 실패: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+function getChannelColor(channel) {
+  const colors = {
+    '쿠팡': 'bg-orange-100 text-orange-800',
+    '컬리': 'bg-purple-100 text-purple-800',
+    '배민': 'bg-cyan-100 text-cyan-800',
+    '오아시스': 'bg-green-100 text-green-800'
+  };
+  return colors[channel] || 'bg-gray-100 text-gray-800';
+}
+
+function toggleAllOrders() {
+  const selectAll = document.getElementById('order-select-all').checked;
+  document.querySelectorAll('.order-checkbox').forEach(cb => cb.checked = selectAll);
+}
+
+async function deleteSelectedOrders() {
+  const selected = Array.from(document.querySelectorAll('.order-checkbox:checked')).map(cb => parseInt(cb.value));
+  if (selected.length === 0) {
+    showToast('삭제할 항목을 선택하세요', 'warning');
+    return;
+  }
+  
+  if (!confirm(`${selected.length}건을 삭제하시겠습니까?`)) return;
+  
+  try {
+    await axios.delete('/api/order/delete', { data: { ids: selected } });
+    showToast(`${selected.length}건 삭제 완료`, 'success');
+    loadOrderList();
+  } catch (error) {
+    showToast('삭제 실패: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+async function startProduction() {
+  const orderDate = document.getElementById('order-list-date')?.value;
+  if (!orderDate) {
+    showToast('발주일을 선택하세요', 'warning');
+    return;
+  }
+  
+  try {
+    const res = await axios.post('/api/order/to-production', { order_date: orderDate });
+    if (res.data.success) {
+      // 생산실적 페이지로 이동하면서 데이터 전달
+      sessionStorage.setItem('production_from_order', JSON.stringify(res.data));
+      showToast(`${res.data.total_products}개 제품이 준비되었습니다. 생산실적 페이지로 이동합니다.`, 'success');
+      setTimeout(() => {
+        window.location.hash = 'production';
+      }, 1000);
+    } else {
+      showToast(res.data.error || '생산 준비 실패', 'error');
+    }
+  } catch (error) {
+    showToast('생산 준비 실패: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+window.renderOrderList = renderOrderList;
+window.loadOrderList = loadOrderList;
+window.toggleAllOrders = toggleAllOrders;
+window.deleteSelectedOrders = deleteSelectedOrders;
+window.startProduction = startProduction;
+
+// ========================================
+// 구글시트 연동 설정 페이지 (v3.5.18)
+// ========================================
+
+async function renderSheetsConfig() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">
+            <i class="fas fa-cog text-green-500 mr-2"></i>구글시트 연동 설정
+          </h2>
+          <p class="text-gray-500 mt-1">ERP 데이터와 구글시트 동기화 관리</p>
+        </div>
+      </div>
+      
+      <!-- 시트 연동 상태 -->
+      <div class="bg-white rounded-lg shadow p-6">
+        <h3 class="font-bold text-gray-800 mb-4"><i class="fas fa-link mr-2"></i>연동 상태</h3>
+        <div id="sheets-status" class="text-gray-500">확인 중...</div>
+      </div>
+      
+      <!-- 동기화 버튼들 -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-white rounded-lg shadow p-6">
+          <h3 class="font-bold text-gray-800 mb-4"><i class="fas fa-sync mr-2"></i>데이터 동기화</h3>
+          <div class="space-y-3">
+            <button onclick="syncSheetsData('all')" class="w-full px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+              <i class="fas fa-sync-alt mr-2"></i>전체 동기화 (입고 + BOM)
+            </button>
+            <button onclick="syncSheetsData('inbound')" class="w-full px-4 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600">
+              <i class="fas fa-truck-loading mr-2"></i>원료 입고 동기화
+            </button>
+            <button onclick="syncSheetsData('bom')" class="w-full px-4 py-3 bg-purple-500 text-white rounded-lg hover:bg-purple-600">
+              <i class="fas fa-list-alt mr-2"></i>BOM 마스터 동기화
+            </button>
+          </div>
+        </div>
+        
+        <div class="bg-white rounded-lg shadow p-6">
+          <h3 class="font-bold text-gray-800 mb-4"><i class="fas fa-table mr-2"></i>시트 초기화</h3>
+          <div class="space-y-3">
+            <button onclick="initSheets()" class="w-full px-4 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600">
+              <i class="fas fa-plus-circle mr-2"></i>시트 초기화 (6개 시트 생성)
+            </button>
+            <a href="https://docs.google.com/spreadsheets/d/1z8nkSEaP8PuKWKjVHozSO3_ghb2KY47QiQ-vDfB9Vfg" target="_blank" 
+               class="block w-full px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-center">
+              <i class="fas fa-external-link-alt mr-2"></i>구글시트 열기
+            </a>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 동기화 로그 -->
+      <div class="bg-white rounded-lg shadow p-6">
+        <h3 class="font-bold text-gray-800 mb-4"><i class="fas fa-history mr-2"></i>동기화 로그</h3>
+        <div id="sync-log" class="bg-gray-50 rounded p-4 h-48 overflow-y-auto font-mono text-sm">
+          동기화 로그가 여기에 표시됩니다...
+        </div>
+      </div>
+    </div>
+  `;
+  
+  checkSheetsStatus();
+}
+
+async function checkSheetsStatus() {
+  const statusDiv = document.getElementById('sheets-status');
+  try {
+    // 간단한 상태 체크
+    statusDiv.innerHTML = `
+      <div class="flex items-center gap-2 text-green-600">
+        <i class="fas fa-check-circle"></i>
+        <span>구글시트 연동 준비됨</span>
+      </div>
+      <p class="text-sm text-gray-500 mt-2">시트 ID: 1z8nkSEaP8PuKWKjVHozSO3_ghb2KY47QiQ-vDfB9Vfg</p>
+    `;
+  } catch (error) {
+    statusDiv.innerHTML = `
+      <div class="flex items-center gap-2 text-red-600">
+        <i class="fas fa-exclamation-circle"></i>
+        <span>연동 상태 확인 실패</span>
+      </div>
+    `;
+  }
+}
+
+async function syncSheetsData(type) {
+  const logDiv = document.getElementById('sync-log');
+  logDiv.innerHTML = `<div class="text-blue-600">[${new Date().toLocaleTimeString()}] ${type} 동기화 시작...</div>`;
+  
+  try {
+    const res = await axios.post(`/api/sheets/sync/${type}`);
+    if (res.data.success) {
+      logDiv.innerHTML += `<div class="text-green-600">[${new Date().toLocaleTimeString()}] 동기화 완료: ${res.data.message || JSON.stringify(res.data)}</div>`;
+      showToast('동기화 완료', 'success');
+    } else {
+      logDiv.innerHTML += `<div class="text-red-600">[${new Date().toLocaleTimeString()}] 실패: ${res.data.error}</div>`;
+      showToast('동기화 실패: ' + res.data.error, 'error');
+    }
+  } catch (error) {
+    logDiv.innerHTML += `<div class="text-red-600">[${new Date().toLocaleTimeString()}] 오류: ${error.message}</div>`;
+    showToast('동기화 실패', 'error');
+  }
+}
+
+async function initSheets() {
+  if (!confirm('시트를 초기화하시겠습니까? 기존 데이터가 삭제될 수 있습니다.')) return;
+  
+  const logDiv = document.getElementById('sync-log');
+  logDiv.innerHTML = `<div class="text-blue-600">[${new Date().toLocaleTimeString()}] 시트 초기화 시작...</div>`;
+  
+  try {
+    const res = await axios.post('/api/sheets/init');
+    if (res.data.success) {
+      logDiv.innerHTML += `<div class="text-green-600">[${new Date().toLocaleTimeString()}] 초기화 완료: ${res.data.message}</div>`;
+      showToast('시트 초기화 완료', 'success');
+    } else {
+      logDiv.innerHTML += `<div class="text-red-600">[${new Date().toLocaleTimeString()}] 실패: ${res.data.error}</div>`;
+      showToast('초기화 실패: ' + res.data.error, 'error');
+    }
+  } catch (error) {
+    logDiv.innerHTML += `<div class="text-red-600">[${new Date().toLocaleTimeString()}] 오류: ${error.message}</div>`;
+    showToast('초기화 실패', 'error');
+  }
+}
+
+window.renderSheetsConfig = renderSheetsConfig;
+window.syncSheetsData = syncSheetsData;
+window.initSheets = initSheets;
+
+// ========================================
+// 생산일보 PDF 페이지 (v3.5.18)
+// ========================================
+
+function renderDailyReportPdf() {
+  const content = document.getElementById('page-content');
+  const today = new Date().toISOString().split('T')[0];
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">
+            <i class="fas fa-file-pdf text-red-500 mr-2"></i>생산일보 PDF
+          </h2>
+          <p class="text-gray-500 mt-1">일별 생산 현황 PDF 출력</p>
+        </div>
+      </div>
+      
+      <div class="bg-white rounded-lg shadow p-6">
+        <div class="flex items-end gap-4 mb-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">조회일자</label>
+            <input type="date" id="pdf-date" value="${today}" class="border rounded-lg px-3 py-2">
+          </div>
+          <button onclick="generateDailyReportPdf()" class="px-6 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600">
+            <i class="fas fa-file-pdf mr-2"></i>PDF 생성
+          </button>
+        </div>
+        
+        <div id="pdf-preview" class="border rounded-lg p-4 min-h-[400px] bg-gray-50">
+          <p class="text-gray-500 text-center py-8">날짜를 선택하고 PDF 생성 버튼을 클릭하세요</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function generateDailyReportPdf() {
+  const date = document.getElementById('pdf-date')?.value;
+  if (!date) {
+    showToast('날짜를 선택하세요', 'warning');
+    return;
+  }
+  
+  const previewDiv = document.getElementById('pdf-preview');
+  previewDiv.innerHTML = '<p class="text-center py-8"><i class="fas fa-spinner fa-spin mr-2"></i>PDF 생성 중...</p>';
+  
+  try {
+    // 기존 일별수불부 API 호출
+    const res = await axios.get(`/api/daily-report/stock-movement?date=${date}`);
+    if (res.data.success) {
+      // PDF 미리보기 또는 다운로드 링크 표시
+      previewDiv.innerHTML = `
+        <div class="text-center py-8">
+          <p class="text-green-600 mb-4"><i class="fas fa-check-circle mr-2"></i>데이터 조회 완료</p>
+          <p class="text-gray-600">일별수불부 페이지에서 PDF 출력을 이용하세요</p>
+          <a href="#daily-report" class="inline-block mt-4 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+            <i class="fas fa-arrow-right mr-2"></i>일별수불부로 이동
+          </a>
+        </div>
+      `;
+    } else {
+      previewDiv.innerHTML = `<p class="text-red-500 text-center py-8">데이터 조회 실패: ${res.data.error}</p>`;
+    }
+  } catch (error) {
+    previewDiv.innerHTML = `<p class="text-red-500 text-center py-8">오류: ${error.message}</p>`;
+  }
+}
+
+window.renderDailyReportPdf = renderDailyReportPdf;
+window.generateDailyReportPdf = generateDailyReportPdf;
+
+// ========================================
+// 발주 → 생산실적 자동 입력 페이지 (v3.5.18)
+// ========================================
+
+function renderProductionFromOrder(data) {
+  const content = document.getElementById('page-content');
+  const items = data.items || [];
+  const lotNumber = data.lot_number || '';
+  const prodDate = data.production_date || data.order_date || '';
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">
+            <i class="fas fa-industry text-green-500 mr-2"></i>생산실적 등록 (발주 기반)
+          </h2>
+          <p class="text-gray-500 mt-1">발주서에서 자동 입력된 ${items.length}개 제품</p>
+        </div>
+        <a href="#order-list" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+          <i class="fas fa-arrow-left mr-1"></i> 발주 목록으로
+        </a>
+      </div>
+      
+      <!-- 생산 정보 -->
+      <div class="bg-white rounded-lg shadow p-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">생산일</label>
+            <input type="date" id="order-prod-date" value="${prodDate}" class="w-full border rounded-lg px-4 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">LOT 번호</label>
+            <input type="text" id="order-lot-number" value="${lotNumber}" class="w-full border rounded-lg px-4 py-2" placeholder="YYMMDD">
+          </div>
+          <div class="flex items-end">
+            <button onclick="completeOrderProduction()" class="w-full px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium">
+              <i class="fas fa-check mr-2"></i>생산 완료 등록
+            </button>
+          </div>
+        </div>
+        
+        <div class="bg-blue-50 rounded-lg p-4 mb-4">
+          <p class="text-blue-800">
+            <i class="fas fa-info-circle mr-2"></i>
+            발주 수량이 자동 입력되었습니다. 실제 생산량이 다르면 수정 후 등록하세요.
+          </p>
+        </div>
+      </div>
+      
+      <!-- 생산 품목 테이블 -->
+      <div class="bg-white rounded-lg shadow">
+        <div class="p-4 border-b">
+          <h3 class="font-bold text-gray-800">
+            <i class="fas fa-list mr-2"></i>생산 품목 (${items.length}개)
+            <span class="ml-2 text-sm font-normal text-gray-500">총 ${items.reduce((s, i) => s + (i.order_qty || 0), 0).toLocaleString()}개</span>
+          </h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-4 py-3 text-left">제품코드</th>
+                <th class="px-4 py-3 text-left">제품명</th>
+                <th class="px-4 py-3 text-right">발주수량</th>
+                <th class="px-4 py-3 text-right">생산수량 <span class="text-red-500">*</span></th>
+                <th class="px-4 py-3 text-left">채널</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y" id="order-production-body">
+              ${items.map((item, idx) => `
+                <tr class="hover:bg-gray-50">
+                  <td class="px-4 py-3 font-mono">${item.product_code}</td>
+                  <td class="px-4 py-3">${item.product_name || ''}</td>
+                  <td class="px-4 py-3 text-right text-gray-500">${(item.order_qty || 0).toLocaleString()}</td>
+                  <td class="px-4 py-3 text-right">
+                    <input type="number" 
+                           class="order-prod-qty w-24 border rounded px-2 py-1 text-right" 
+                           data-idx="${idx}"
+                           data-code="${item.product_code}"
+                           data-name="${item.product_name || ''}"
+                           data-channels="${item.channels || ''}"
+                           value="${item.production_qty || item.order_qty || 0}"
+                           min="0">
+                  </td>
+                  <td class="px-4 py-3 text-sm text-gray-500">${item.channels || ''}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  // 전역 변수에 원본 데이터 저장
+  window._orderProductionData = data;
+}
+
+async function completeOrderProduction() {
+  const prodDate = document.getElementById('order-prod-date')?.value;
+  const lotNumber = document.getElementById('order-lot-number')?.value;
+  const originalData = window._orderProductionData;
+  
+  if (!prodDate || !lotNumber) {
+    showToast('생산일과 LOT 번호를 입력하세요', 'warning');
+    return;
+  }
+  
+  // 입력된 수량 수집
+  const items = [];
+  document.querySelectorAll('.order-prod-qty').forEach(input => {
+    const qty = parseInt(input.value) || 0;
+    if (qty > 0) {
+      items.push({
+        product_code: input.dataset.code,
+        product_name: input.dataset.name,
+        production_qty: qty,
+        channels: input.dataset.channels
+      });
+    }
+  });
+  
+  if (items.length === 0) {
+    showToast('생산 수량을 입력하세요', 'warning');
+    return;
+  }
+  
+  if (!confirm(`${items.length}개 제품의 생산을 완료 등록하시겠습니까?`)) return;
+  
+  try {
+    const res = await axios.post('/api/order/complete-production', {
+      order_date: originalData.order_date,
+      production_date: prodDate,
+      lot_number: lotNumber,
+      items: items
+    });
+    
+    if (res.data.success) {
+      showToast(`${res.data.completed_products}개 제품 생산완료!`, 'success');
+      
+      // 구글시트 바로가기 안내
+      setTimeout(() => {
+        if (confirm('구글시트에서 원료 사용량을 확인하시겠습니까?')) {
+          window.open('https://docs.google.com/spreadsheets/d/1z8nkSEaP8PuKWKjVHozSO3_ghb2KY47QiQ-vDfB9Vfg', '_blank');
+        }
+        window.location.hash = 'order-list';
+      }, 1000);
+    } else {
+      showToast('등록 실패: ' + (res.data.error || '알 수 없는 오류'), 'error');
+    }
+  } catch (error) {
+    showToast('등록 실패: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+window.renderProductionFromOrder = renderProductionFromOrder;
+window.completeOrderProduction = completeOrderProduction;

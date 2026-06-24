@@ -1767,4 +1767,180 @@ sheets.get('/v2/output/production-report', async (c) => {
   }
 });
 
+// =====================================================
+// 📦 반제품(SF) 마스터 동기화 API
+// =====================================================
+
+/**
+ * Google Sheets 품목마스터에서 반제품(SF) 데이터를 D1에 동기화
+ * 
+ * POST /api/sheets/sync/semi-finished
+ * 
+ * Google Sheets 품목마스터 시트에서 SF로 시작하는 반제품 코드를 
+ * D1 master 테이블에 동기화합니다.
+ */
+sheets.post('/sync/semi-finished', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // 1. Google Sheets 품목마스터에서 전체 데이터 읽기
+    // 시트 구조: A=품목코드, B=품목명, C=카테고리, D=단위, E=안전재고, F=유통기한일수
+    const masterData = await service.readSheet('품목마스터', 'A2:F');
+    
+    // 2. SF로 시작하는 반제품만 필터링
+    const sfItems = masterData.filter(row => {
+      const itemCode = row[0]?.toString().trim();
+      return itemCode && itemCode.startsWith('SF');
+    });
+
+    if (sfItems.length === 0) {
+      return c.json({
+        success: true,
+        message: '품목마스터에 반제품(SF) 데이터가 없습니다.',
+        synced: 0
+      });
+    }
+
+    // 3. D1에 upsert
+    let insertedCount = 0;
+    let updatedCount = 0;
+    const errors: string[] = [];
+
+    for (const row of sfItems) {
+      const itemCode = row[0]?.toString().trim();
+      const itemName = row[1]?.toString().trim() || itemCode;
+      // Note: D1 master table has CHECK constraint (category IN ('원료', '제품'))
+      // So we use '원료' category for semi-finished products (SF)
+      const category = '원료'; // SF는 master 제약조건으로 '원료'로 저장
+      const unit = row[3]?.toString().trim() || 'kg';
+      const safetyStock = parseFloat(row[4]) || 0;
+      const expiryDays = parseInt(row[5]) || 30;
+
+      try {
+        // 기존 데이터 확인
+        const existing = await c.env.DB.prepare(
+          'SELECT id FROM master WHERE item_code = ?'
+        ).bind(itemCode).first();
+
+        if (existing) {
+          // UPDATE
+          await c.env.DB.prepare(`
+            UPDATE master 
+            SET item_name = ?, unit = ?, safety_stock = ?, expiry_days = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE item_code = ?
+          `).bind(itemName, unit, safetyStock, expiryDays, itemCode).run();
+          updatedCount++;
+        } else {
+          // INSERT
+          await c.env.DB.prepare(`
+            INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
+            VALUES (?, ?, ?, ?, 0, ?, ?)
+          `).bind(itemCode, itemName, category, unit, safetyStock, expiryDays).run();
+          insertedCount++;
+        }
+      } catch (err: any) {
+        errors.push(`${itemCode}: ${err.message}`);
+      }
+    }
+
+    return c.json({
+      success: true,
+      message: `반제품(SF) 동기화 완료`,
+      summary: {
+        total_sf_in_sheets: sfItems.length,
+        inserted: insertedCount,
+        updated: updatedCount,
+        errors: errors.length
+      },
+      errors: errors.length > 0 ? errors : undefined,
+      synced_items: sfItems.map(r => ({
+        item_code: r[0],
+        item_name: r[1],
+        unit: r[3] || 'kg'
+      }))
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * D1 master 테이블에 반제품(SF) 직접 추가/업데이트
+ * 
+ * POST /api/sheets/sync/semi-finished/manual
+ * Body: { items: [{ item_code, item_name, unit?, expiry_days? }] }
+ * 
+ * Google Sheets에 데이터가 없거나 수동으로 추가할 때 사용
+ */
+sheets.post('/sync/semi-finished/manual', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { items } = body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: 'items 배열이 필요합니다.' }, 400);
+    }
+
+    let insertedCount = 0;
+    let updatedCount = 0;
+    const errors: string[] = [];
+
+    for (const item of items) {
+      const itemCode = item.item_code?.toString().trim();
+      const itemName = item.item_name?.toString().trim() || itemCode;
+      
+      if (!itemCode || !itemCode.startsWith('SF')) {
+        errors.push(`${itemCode || '(없음)'}: SF로 시작하는 코드만 가능`);
+        continue;
+      }
+
+      const unit = item.unit || 'kg';
+      const expiryDays = item.expiry_days || 30;
+
+      try {
+        const existing = await c.env.DB.prepare(
+          'SELECT id FROM master WHERE item_code = ?'
+        ).bind(itemCode).first();
+
+        // Note: D1 master table has CHECK constraint (category IN ('원료', '제품'))
+        // So we use '원료' category for semi-finished products (SF)
+        // This is acceptable because BOM validation only checks item_code existence
+        if (existing) {
+          await c.env.DB.prepare(`
+            UPDATE master 
+            SET item_name = ?, unit = ?, expiry_days = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE item_code = ?
+          `).bind(itemName, unit, expiryDays, itemCode).run();
+          updatedCount++;
+        } else {
+          await c.env.DB.prepare(`
+            INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
+            VALUES (?, ?, '원료', ?, 0, 0, ?)
+          `).bind(itemCode, itemName, unit, expiryDays).run();
+          insertedCount++;
+        }
+      } catch (err: any) {
+        errors.push(`${itemCode}: ${err.message}`);
+      }
+    }
+
+    return c.json({
+      success: true,
+      message: `반제품(SF) 수동 등록 완료`,
+      summary: {
+        requested: items.length,
+        inserted: insertedCount,
+        updated: updatedCount,
+        errors: errors.length
+      },
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;

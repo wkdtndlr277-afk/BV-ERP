@@ -71,7 +71,10 @@ validateRoutes.get('/bom', async (c) => {
     }
     
     const materialData = await c.env.DB.prepare(`
-      SELECT item_code FROM master WHERE category = '원료' OR item_code LIKE 'R%' OR item_code LIKE 'RM%'
+      SELECT item_code FROM master 
+      WHERE item_code LIKE 'R%' 
+         OR item_code LIKE 'RM%'
+         OR item_code LIKE 'SF%'
     `).all<any>();
     
     const bomRecords = (bomData.results || []).map(r => ({
@@ -494,7 +497,12 @@ validateRoutes.get('/full-report', async (c) => {
       WHERE pr.prod_date >= date('now', '-90 days')
     `).all<any>();
     
-    const materialData = await c.env.DB.prepare(`SELECT item_code FROM master WHERE item_code LIKE 'R%'`).all<any>();
+    const materialData = await c.env.DB.prepare(`
+      SELECT item_code FROM master 
+      WHERE item_code LIKE 'R%' 
+         OR item_code LIKE 'RM%'
+         OR item_code LIKE 'SF%'
+    `).all<any>();
     
     const productCodes = (productData.results || []).map(r => r.production_code);
     const materialCodes = (materialData.results || []).map(r => r.item_code);

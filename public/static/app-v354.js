@@ -28745,7 +28745,20 @@ async function saveBomMaterials() {
     
     showToast('BOM이 등록되었습니다', 'success');
     closeModal();
-    loadProductionManagementData();
+    
+    // v3.5.9: 현재 페이지에 맞는 데이터 리로드
+    if (document.getElementById('smgmt-tab-content')) {
+      // 시스템 관리 탭 (관리자 > 시스템 > 생산명/BOM)
+      await loadSystemMgmtData();
+      switchSystemMgmtTab('production');
+    } else if (document.getElementById('sys-tab-content')) {
+      // 통합 시스템 관리 페이지
+      await loadSystemManagementData();
+      switchSystemTab('production-items');
+    } else {
+      // 생산계획 페이지 등
+      loadProductionManagementData();
+    }
   } catch (e) {
     showToast('등록 실패: ' + (e.message || '오류 발생'), 'error');
   }

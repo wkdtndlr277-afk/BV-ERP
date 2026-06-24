@@ -640,6 +640,11 @@ app.get('/*', (c) => {
                     <span>출고일지</span>
                 </a>
                 
+                <a href="#daily-report-pdf" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="daily-report-pdf">
+                    <i class="fas fa-file-pdf w-5 text-red-500"></i>
+                    <span>생산일보</span>
+                </a>
+                
                 <!-- ========== 원료 관리 ========== -->
                 <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">🧪 원료 관리</p>
@@ -685,11 +690,6 @@ app.get('/*', (c) => {
                 <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">📄 보고서</p>
                 </div>
-                
-                <a href="#daily-report-pdf" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="daily-report-pdf">
-                    <i class="fas fa-file-pdf w-5 text-red-500"></i>
-                    <span>생산일보 PDF</span>
-                </a>
                 
                 <a href="#microbial-test" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="microbial-test">
                     <i class="fas fa-microscope w-5"></i>

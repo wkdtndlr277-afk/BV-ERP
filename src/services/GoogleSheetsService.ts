@@ -138,11 +138,14 @@ export class GoogleSheetsService {
   }
 
   // 시트에 데이터 추가 (Append)
-  async appendSheet(sheetName: string, values: any[][]): Promise<boolean> {
+  async appendSheet(sheetName: string, values: any[][]): Promise<{ success: boolean; updates?: any; error?: string }> {
     const token = await this.getToken();
 
+    // ★ Google Sheets API append는 범위 지정 필요 (시트명!A:Z 형태)
+    const range = `${sheetName}!A:Z`;
+    
     const response = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(sheetName)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
       {
         method: 'POST',
         headers: {
@@ -153,7 +156,56 @@ export class GoogleSheetsService {
       }
     );
 
-    return response.ok;
+    const result = await response.json() as any;
+    
+    if (!response.ok) {
+      console.error('[appendSheet] API 오류:', result);
+      return { success: false, error: result.error?.message || 'Unknown error' };
+    }
+    
+    console.log('[appendSheet] 성공:', result.updates);
+    return { success: true, updates: result.updates };
+  }
+
+  // 시트 생성 (없으면 생성)
+  async createSheetIfNotExists(sheetName: string): Promise<boolean> {
+    const token = await this.getToken();
+    
+    // 먼저 시트 존재 여부 확인
+    const infoResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    
+    if (!infoResponse.ok) return false;
+    
+    const info = await infoResponse.json();
+    const existingSheets = info.sheets?.map((s: any) => s.properties?.title) || [];
+    
+    if (existingSheets.includes(sheetName)) {
+      return true; // 이미 존재
+    }
+    
+    // 시트 생성
+    const createResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          requests: [{
+            addSheet: {
+              properties: { title: sheetName }
+            }
+          }]
+        })
+      }
+    );
+    
+    return createResponse.ok;
   }
 
   // 시트 초기화 (헤더 포함)
@@ -168,7 +220,9 @@ export class GoogleSheetsService {
         'BOM마스터',
         '생산실적',
         '일별수불부',
-        '로트매칭'
+        '로트매칭',
+        '출고일지',
+        '제품재고'
       ];
 
       // 기존 시트 정보 조회

@@ -43,6 +43,31 @@ sheets.post('/init', async (c) => {
   }
 });
 
+// ===== 디버그용 시트 직접 읽기 =====
+sheets.get('/debug/raw-read', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const sheetName = c.req.query('sheet') || '출고일지';
+    const range = c.req.query('range') || 'A1:J20';
+    
+    const data = await service.readSheet(sheetName, range);
+    
+    return c.json({
+      success: true,
+      sheet: sheetName,
+      range,
+      row_count: data.length,
+      data
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ===== ERP → 시트 동기화 =====
 
 // 원료 입고 데이터 동기화 (원료 R/RM만, 부자재/제품 제외)
@@ -1587,10 +1612,29 @@ sheets.post('/v2/shipment/auto-process', async (c) => {
         '채널', '생산LOT', '출고상태', '비고'
       ];
 
+      // 출고일지 시트 존재 확인 및 헤더 생성
       let existingData: any[][] = [];
+      let needsHeader = false;
+      
       try {
+        // A1:J1 읽어서 헤더 확인
+        const headerRow = await service.readSheet('출고일지', 'A1:J1');
+        if (!headerRow || headerRow.length === 0 || !headerRow[0] || headerRow[0][0] !== '출고일') {
+          needsHeader = true;
+        }
+        // 기존 데이터 읽기
         existingData = await service.readSheet('출고일지', 'A2:J');
-      } catch (e) {
+      } catch (e: any) {
+        // 시트가 없으면 생성
+        console.log('출고일지 시트 없음, 시트 생성 시도');
+        await service.createSheetIfNotExists('출고일지');
+        needsHeader = true;
+        existingData = [];
+      }
+      
+      // 헤더가 없으면 추가
+      if (needsHeader) {
+        console.log('출고일지 헤더 추가');
         await service.writeSheet('출고일지', 'A1:J1', [shipmentHeaders]);
       }
 
@@ -1613,15 +1657,25 @@ sheets.post('/v2/shipment/auto-process', async (c) => {
           `${production_date} 생산분`
         ]);
 
+      let appendDetails: any = null;
       if (shipmentRows.length > 0) {
-        await service.appendSheet('출고일지', shipmentRows);
+        console.log(`[출고일지] ${shipmentRows.length}건 시트에 추가 시도`);
+        console.log(`[출고일지] 첫 번째 행 데이터:`, shipmentRows[0]);
+        const appendResult = await service.appendSheet('출고일지', shipmentRows);
+        console.log(`[출고일지] appendSheet 결과:`, JSON.stringify(appendResult));
+        appendDetails = appendResult;
+        if (!appendResult.success) {
+          console.error('[출고일지] appendSheet 실패:', appendResult.error);
+        }
       }
 
       return {
         success: true,
         shipment_count: shipmentRows.length,
         shipment_date: shipmentDate,
-        production_count: productions.length
+        production_count: productions.length,
+        append_result: appendDetails,
+        first_row_sample: shipmentRows.length > 0 ? shipmentRows[0] : null
       };
     })();
 
@@ -1692,7 +1746,9 @@ sheets.post('/v2/shipment/auto-process', async (c) => {
       workflow: auto_confirm ? '생성 + 확정 + 재고차감' : '생성만',
       step1_generate: {
         production_count: generateResult.production_count,
-        shipment_created: generateResult.shipment_count
+        shipment_created: generateResult.shipment_count,
+        append_result: generateResult.append_result,
+        first_row_sample: generateResult.first_row_sample
       },
       step2_confirm: confirmResult,
       message: auto_confirm 

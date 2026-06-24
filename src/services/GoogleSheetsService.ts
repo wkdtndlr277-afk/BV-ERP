@@ -312,16 +312,30 @@ export class GoogleSheetsService {
   async getProductionRecords(date?: string): Promise<any[]> {
     const data = await this.readSheet('생산실적', 'A2:H');
     
-    const records = data.map(row => ({
-      prod_date: row[0],
-      product_code: row[1],
-      product_name: row[2],
-      quantity: parseFloat(row[3]) || 0,
-      lot_number: row[4],
-      channel: row[5],
-      memo: row[6],
-      created_at: row[7]
-    }));
+    const records = data.map(row => {
+      // ★ 날짜 처리: 엑셀 숫자 또는 문자열 모두 지원
+      let prodDate = row[0];
+      if (typeof prodDate === 'number' || /^\d+$/.test(prodDate)) {
+        // 엑셀 날짜 숫자를 YYYY-MM-DD로 변환
+        const excelDate = parseInt(prodDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        prodDate = jsDate.toISOString().split('T')[0];
+      } else if (typeof prodDate === 'string') {
+        // 앞의 ' 제거 (문자열 강제 마커)
+        prodDate = prodDate.replace(/^'/, '');
+      }
+      
+      return {
+        prod_date: prodDate,
+        product_code: row[1],
+        product_name: row[2],
+        quantity: parseFloat(row[3]) || 0,
+        lot_number: row[4],
+        channel: row[5],
+        memo: row[6],
+        created_at: row[7]
+      };
+    });
 
     if (date) {
       return records.filter(r => r.prod_date === date);

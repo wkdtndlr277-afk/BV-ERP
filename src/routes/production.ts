@@ -4011,13 +4011,18 @@ productionRoutes.post('/simple', async (c) => {
     
     if (service) {
       try {
+        // ★ v3.5.22: 시트 헤더 순서에 맞춤
+        // 헤더: 생산일자, 제품코드, 제품명, 생산수량, 제품로트, 채널, 비고, 등록시간
+        // ★ 날짜는 문자열로 명시 (시트가 숫자로 변환하지 않도록)
         const rows = items.map((item: any) => [
-          prod_date,
-          lotNum,
-          item.product_code,
-          item.product_name || '',
-          item.quantity || 0,
-          item.channel || ''
+          `'${prod_date}`,              // A: 생산일자 (앞에 '로 문자열 강제)
+          item.product_code,            // B: 제품코드
+          item.product_name || '',      // C: 제품명
+          item.quantity || 0,           // D: 생산수량
+          `${lotNum}-${item.product_code}`, // E: 제품로트
+          item.channel || '',           // F: 채널
+          '',                           // G: 비고
+          new Date().toISOString()      // H: 등록시간
         ]);
         await service.appendSheet('생산실적', rows);
         sheetSent = true;
@@ -4080,13 +4085,18 @@ productionRoutes.post('/simple-batch', async (c) => {
     
     if (service) {
       try {
+        // ★ v3.5.22: 시트 헤더 순서에 맞춤
+        // 헤더: 생산일자, 제품코드, 제품명, 생산수량, 제품로트, 채널, 비고, 등록시간
+        // ★ 날짜는 문자열로 명시 (시트가 숫자로 변환하지 않도록)
         const rows = items.map((item: any) => [
-          prod_date,
-          lotNum,
-          item.product_code,
-          item.product_name || '',
-          item.quantity || 0,
-          item.channel || item.channels || ''
+          `'${prod_date}`,              // A: 생산일자 (앞에 '로 문자열 강제)
+          item.product_code,            // B: 제품코드
+          item.product_name || '',      // C: 제품명
+          item.quantity || 0,           // D: 생산수량
+          `${lotNum}-${item.product_code}`, // E: 제품로트
+          item.channel || item.channels || '', // F: 채널
+          '',                           // G: 비고
+          new Date().toISOString()      // H: 등록시간
         ]);
         await service.appendSheet('생산실적', rows);
         sheetSent = true;

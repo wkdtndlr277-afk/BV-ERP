@@ -48922,6 +48922,9 @@ async function renderShipmentLog() {
           <button onclick="generateShipmentLog()" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600">
             <i class="fas fa-magic mr-1"></i> 자동 생성
           </button>
+          <button onclick="confirmAllShipments()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+            <i class="fas fa-check-double mr-1"></i> 일괄 확정
+          </button>
           <button onclick="printShipmentLog()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
             <i class="fas fa-print mr-1"></i> 인쇄
           </button>
@@ -49093,6 +49096,46 @@ async function confirmShipment(date, idx) {
   }
 }
 
+// ★ 일괄 출고 확정
+async function confirmAllShipments() {
+  const date = document.getElementById('shipment-date')?.value;
+  if (!date) {
+    showToast('날짜를 선택하세요', 'warning');
+    return;
+  }
+  
+  // 출고예정 건수 확인
+  const pendingCount = parseInt(document.getElementById('sum-pending')?.textContent || '0');
+  
+  if (pendingCount === 0) {
+    showToast('확정할 출고예정 건이 없습니다.', 'info');
+    return;
+  }
+  
+  if (!confirm(`${date} 출고예정 ${pendingCount}건을 모두 확정하시겠습니까?\n\n⚠️ 제품 재고가 차감됩니다.`)) {
+    return;
+  }
+  
+  try {
+    showLoading('일괄 출고 확정 중...');
+    const res = await axios.post('/api/sheets/v2/shipment/confirm', {
+      shipment_date: date
+    });
+    hideLoading();
+    
+    if (res.data.success) {
+      const confirmedCount = res.data.confirmed_count || 0;
+      showToast(`${confirmedCount}건 출고 확정 완료! (재고 차감됨)`, 'success');
+      loadShipmentLog();
+    } else {
+      showToast('확정 실패: ' + (res.data.error || ''), 'error');
+    }
+  } catch (e) {
+    hideLoading();
+    showToast('확정 실패: ' + e.message, 'error');
+  }
+}
+
 function printShipmentLog() {
   const date = document.getElementById('shipment-date')?.value || formatDate(new Date());
   const contentEl = document.getElementById('shipment-content');
@@ -49134,4 +49177,5 @@ function printShipmentLog() {
 window.loadShipmentLog = loadShipmentLog;
 window.generateShipmentLog = generateShipmentLog;
 window.confirmShipment = confirmShipment;
+window.confirmAllShipments = confirmAllShipments;
 window.printShipmentLog = printShipmentLog;

@@ -307,3 +307,82 @@ POST https://bv-erp.pages.dev/api/audit/run-all
 시스템은 `src/runtime-rules.ts`에 정의된 규칙만 실행합니다:
 - 규칙에 없는 상황 발생 시: 작업 중단 + 에러 반환
 - AI가 자의적으로 추론하지 않음
+
+---
+
+## v3.5.25 업데이트 (2026-06-24)
+
+### 🚚 출고 자동화 시스템 구현
+
+**핵심 워크플로우:**
+```
+생산일(N) → 출고일지 자동생성 → 출고일(N+1) → 제품재고 자동차감
+```
+
+### 새 API 엔드포인트 (`/api/sheets/v2/shipment/`)
+
+| API | 메서드 | 설명 |
+|-----|--------|------|
+| `/v2/shipment/generate` | POST | 생산일보 기반 익일 출고일지 자동 생성 |
+| `/v2/shipment/confirm` | POST | 출고 확정 및 제품 재고 차감 |
+| `/v2/shipment/list` | GET | 출고일지 조회 (날짜/상태 필터) |
+| `/v2/shipment/product-inventory` | GET | 제품재고 현황 조회 |
+| `/v2/shipment/auto-process` | POST | 원클릭 자동화 (생성+확정) |
+
+### 사용 예시
+
+**1. 출고일지 자동 생성:**
+```bash
+curl -X POST "https://bv-erp.pages.dev/api/sheets/v2/shipment/generate" \
+  -H "Content-Type: application/json" \
+  -d '{"production_date": "2026-06-05"}'
+```
+
+**2. 원클릭 자동화 (생성 + 확정 + 재고차감):**
+```bash
+curl -X POST "https://bv-erp.pages.dev/api/sheets/v2/shipment/auto-process" \
+  -H "Content-Type: application/json" \
+  -d '{"production_date": "2026-06-05", "auto_confirm": true}'
+```
+
+### Google Sheets 시트 구조
+
+**출고일지 시트:**
+| 열 | 내용 |
+|----|------|
+| A | 출고일 (생산일+1) |
+| B | 생산일 |
+| C | 제품코드 |
+| D | 제품명 |
+| E | 수량 |
+| F | 단위 |
+| G | 채널 |
+| H | 생산LOT |
+| I | 출고상태 (출고예정/출고완료) |
+| J | 비고 |
+
+**제품재고 시트:**
+| 열 | 내용 |
+|----|------|
+| A | 제품코드 |
+| B | 제품명 |
+| C | 현재고 |
+| D | 단위 |
+| E | 최종수정일 |
+
+---
+
+## 3-Layer Architecture (v2 API)
+
+```
+[입력 레이어]          [연산 레이어 (SSOT)]       [출력 레이어]
+원료입고_RAW    →     재고마스터            →    일별수불부_출력
+생산실적_RAW    →     BOM마스터             →    생산일보_출력
+                      로트매칭              →    출고일지
+                                            →    제품재고
+```
+
+### 핵심 원칙
+- **일별수불부 = 원료** (BOM × 생산수량 = 원료 사용량)
+- **출고일지 = 제품** (생산일+1 = 출고일)
+- **모든 계산 = Google Sheets 자동** (LOOKUP, SUMIFS, SUMPRODUCT)

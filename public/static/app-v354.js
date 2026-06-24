@@ -48872,7 +48872,14 @@ async function confirmShipment(date, idx) {
 
 function printShipmentLog() {
   const date = document.getElementById('shipment-date')?.value || formatDate(new Date());
-  const content = document.getElementById('shipment-content')?.innerHTML || '';
+  const contentEl = document.getElementById('shipment-content');
+  const content = contentEl?.innerHTML || '';
+  
+  // 데이터가 없는 경우 확인
+  if (content.includes('출고일지가 없습니다')) {
+    showToast('인쇄할 출고일지가 없습니다. [자동 생성] 버튼을 먼저 클릭하세요.', 'warning');
+    return;
+  }
   
   const printWindow = window.open('', '_blank');
   printWindow.document.write(`
@@ -48887,6 +48894,7 @@ function printShipmentLog() {
         th { background: #f5f5f5; }
         .text-right { text-align: right; }
         .text-center { text-align: center; }
+        button { display: none; }
         @media print { button { display: none; } }
       </style>
     </head>

@@ -6623,6 +6623,30 @@ function renderSheetsDailyStock(result, date, search, category) {
   
   if (!contentEl) return;
   
+  // ★ 중복 데이터 집계 (같은 item_code는 합산)
+  const aggregatedMap = new Map();
+  data.forEach(d => {
+    const key = d.item_code;
+    if (!key) return;
+    
+    if (aggregatedMap.has(key)) {
+      const existing = aggregatedMap.get(key);
+      existing.usage_qty = (existing.usage_qty || 0) + (d.usage_qty || 0);
+      existing.inbound_qty = (existing.inbound_qty || 0) + (d.inbound_qty || 0);
+      // prev_stock, current_stock은 첫 번째 값 유지 (또는 마지막 값으로 덮어쓰기)
+      // 재고 계산: prev_stock + inbound - usage = current_stock
+    } else {
+      aggregatedMap.set(key, { ...d });
+    }
+  });
+  
+  // 집계된 데이터로 재계산
+  data = Array.from(aggregatedMap.values()).map(d => ({
+    ...d,
+    // 현재고 재계산: 전일재고 + 입고 - 사용
+    current_stock: (d.prev_stock || 0) + (d.inbound_qty || 0) - (d.usage_qty || 0)
+  }));
+  
   // 카테고리 필터링 (원료: R/RM, 부자재: SM, 제품: PR/PD)
   if (category === '원료') {
     data = data.filter(d => d.item_code?.startsWith('R') || d.item_code?.startsWith('RM'));
@@ -6640,6 +6664,9 @@ function renderSheetsDailyStock(result, date, search, category) {
       d.item_name?.toLowerCase().includes(s)
     );
   }
+  
+  // item_code 기준 정렬
+  data.sort((a, b) => (a.item_code || '').localeCompare(b.item_code || ''));
   
   // 합계 계산
   const summary = {
@@ -48592,11 +48619,11 @@ async function generateDailyReportPdf() {
               </div>
               <div>
                 <p class="text-xs text-gray-500">총 생산량</p>
-                <p class="text-lg font-bold text-purple-600">${(summary.total_production || items.reduce((s,i) => s + (i.production_qty || 0), 0)).toLocaleString()}</p>
+                <p class="text-lg font-bold text-purple-600">${(summary.total_production || items.reduce((s,i) => s + (i.quantity || i.production_qty || 0), 0)).toLocaleString()}</p>
               </div>
               <div>
                 <p class="text-xs text-gray-500">총 출고량</p>
-                <p class="text-lg font-bold text-orange-600">${(summary.total_outbound || items.reduce((s,i) => s + (i.outbound_qty || 0), 0)).toLocaleString()}</p>
+                <p class="text-lg font-bold text-orange-600">${(summary.total_outbound || 0).toLocaleString()}</p>
               </div>
             </div>
           </div>
@@ -48618,7 +48645,7 @@ async function generateDailyReportPdf() {
                   <tr class="hover:bg-gray-50">
                     <td class="px-3 py-2 font-mono text-xs">${item.product_code || item.item_code || '-'}</td>
                     <td class="px-3 py-2">${item.product_name || item.item_name || '-'}</td>
-                    <td class="px-3 py-2 text-right text-green-600">${(item.production_qty || 0).toLocaleString()}</td>
+                    <td class="px-3 py-2 text-right text-green-600">${(item.quantity || item.production_qty || 0).toLocaleString()}</td>
                     <td class="px-3 py-2 text-right text-orange-600">${(item.outbound_qty || 0).toLocaleString()}</td>
                     <td class="px-3 py-2 text-right font-medium">${(item.current_stock || item.closing_qty || 0).toLocaleString()}</td>
                   </tr>
@@ -48626,6 +48653,73 @@ async function generateDailyReportPdf() {
                 ${items.length > 50 ? `<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ${items.length - 50}건</td></tr>` : ''}
               </tbody>
             </table>
+          </div>
+          
+          <!-- 원료 사용 현황 (LOT 정보 포함) -->
+          <div class="mt-6">
+            <h4 class="font-bold text-gray-700 mb-2">
+              <i class="fas fa-flask text-purple-500 mr-2"></i>원료 사용 현황 (LOT별)
+            </h4>
+            <div class="overflow-x-auto max-h-[300px] border rounded-lg">
+              <table class="w-full text-sm">
+                <thead class="bg-purple-50 sticky top-0">
+                  <tr>
+                    <th class="px-3 py-2 text-left">원료코드</th>
+                    <th class="px-3 py-2 text-left">원료명</th>
+                    <th class="px-3 py-2 text-right">사용량</th>
+                    <th class="px-3 py-2 text-left">원료 LOT</th>
+                    <th class="px-3 py-2 text-left">유통기한</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y">
+                  ${(() => {
+                    // 모든 원료 사용 데이터를 집계 (LOT별)
+                    const materialMap = new Map();
+                    items.forEach(item => {
+                      (item.materials || []).forEach(mat => {
+                        const key = mat.item_code + '|' + (mat.material_lot || '-');
+                        if (materialMap.has(key)) {
+                          materialMap.get(key).usage_qty += mat.usage_qty || 0;
+                        } else {
+                          materialMap.set(key, {
+                            item_code: mat.item_code,
+                            item_name: mat.item_name,
+                            usage_qty: mat.usage_qty || 0,
+                            material_lot: mat.material_lot || '-',
+                            expiry_date: mat.expiry_date || '-'
+                          });
+                        }
+                      });
+                    });
+                    const materialList = Array.from(materialMap.values())
+                      .filter(m => m.usage_qty > 0)
+                      .sort((a, b) => a.item_code.localeCompare(b.item_code));
+                    
+                    if (materialList.length === 0) {
+                      return '<tr><td colspan="5" class="px-3 py-4 text-center text-gray-500">원료 사용 데이터가 없습니다.</td></tr>';
+                    }
+                    
+                    return materialList.slice(0, 100).map(mat => {
+                      // 유통기한 형식 변환 (엑셀 시리얼 날짜 → YYYY-MM-DD)
+                      let expDate = mat.expiry_date;
+                      if (expDate && !isNaN(expDate) && parseInt(expDate) > 40000) {
+                        const d = new Date((parseInt(expDate) - 25569) * 86400000);
+                        expDate = d.toISOString().split('T')[0];
+                      }
+                      return \`
+                        <tr class="hover:bg-gray-50">
+                          <td class="px-3 py-2 font-mono text-xs">\${mat.item_code}</td>
+                          <td class="px-3 py-2">\${mat.item_name || '-'}</td>
+                          <td class="px-3 py-2 text-right text-purple-600">\${mat.usage_qty.toFixed(3)}</td>
+                          <td class="px-3 py-2 font-mono text-xs">\${mat.material_lot}</td>
+                          <td class="px-3 py-2 text-xs">\${expDate}</td>
+                        </tr>
+                      \`;
+                    }).join('') + (materialList.length > 100 ? '<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ' + (materialList.length - 100) + '건</td></tr>' : '');
+                  })()}
+                </tbody>
+              </table>
+            </div>
           </div>
           ` : '<p class="text-center text-gray-500 py-8">해당 날짜에 생산 데이터가 없습니다.</p>'}
         </div>

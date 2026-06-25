@@ -34,6 +34,7 @@ import sheetsRoutes from './routes/sheets';
 import orderUploadRoutes from './routes/order-upload';
 import shipmentRoutes from './routes/shipment';
 import validateRoutes from './routes/validate';
+import debugMasterRoutes from './routes/debug-master';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -72,6 +73,7 @@ app.route('/api/sheets', sheetsRoutes);
 app.route('/api/order', orderUploadRoutes);
 app.route('/api/shipment', shipmentRoutes);
 app.route('/api/validate', validateRoutes);
+app.route('/api/debug-master', debugMasterRoutes);
 
 // 시스템 버전
 const SYSTEM_VERSION = '3.5.26';
@@ -632,10 +634,7 @@ app.get('/*', (c) => {
                     <span>발주 목록</span>
                 </a>
                 
-                <a href="#production" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production">
-                    <i class="fas fa-industry w-5"></i>
-                    <span>생산실적 등록</span>
-                </a>
+                <!-- 생산실적 등록 메뉴 제거: 발주목록에서 생산시작→생산완료 플로우로 대체 -->
                 
                 <a href="#product-outbound" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="product-outbound">
                     <i class="fas fa-shipping-fast w-5"></i>

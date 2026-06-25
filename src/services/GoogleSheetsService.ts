@@ -397,6 +397,7 @@ export class GoogleSheetsService {
   }
 
   // 생산 실적 조회 (시트 → ERP)
+  // ★ 실제 생산실적 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
   async getProductionRecords(date?: string): Promise<any[]> {
     const data = await this.readSheet('생산실적', 'A2:H');
     
@@ -413,15 +414,17 @@ export class GoogleSheetsService {
         prodDate = prodDate.replace(/^'/, '');
       }
       
+      // ★ 실제 시트 구조에 맞춤 (단위 컬럼 없음)
+      // A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
       return {
         prod_date: prodDate,
-        product_code: row[1],
-        product_name: row[2],
+        product_code: row[1]?.toString() || '',
+        product_name: row[2]?.toString() || '',
         quantity: parseFloat(row[3]) || 0,
-        lot_number: row[4],
-        channel: row[5],
-        memo: row[6],
-        created_at: row[7]
+        lot_number: row[4]?.toString() || '',
+        channel: row[5]?.toString() || '',
+        memo: row[6]?.toString() || '',
+        created_at: row[7]?.toString() || ''
       };
     });
 
@@ -751,6 +754,108 @@ export class GoogleSheetsService {
       unit: 'kg',
       lots: data.lots
     }));
+  }
+
+  // ★ BOM(배합표) 조회 - 제품코드별 원료 목록
+  // BOM마스터 시트 구조: A:제품코드, B:제품명, C:원료코드, D:원료명, E:배합비(kg), F:단위
+  async getBOM(productCode: string): Promise<any[]> {
+    const data = await this.readSheet('BOM마스터', 'A2:F');
+    
+    return data
+      .filter(row => row[0] === productCode)
+      .map(row => ({
+        product_code: row[0],
+        product_name: row[1],
+        material_code: row[2],
+        material_name: row[3],
+        ratio_kg: parseFloat(row[4]) || 0,  // 제품 1개당 원료 사용량 (kg)
+        unit: row[5] || 'kg'
+      }));
+  }
+
+  // ★ 전체 BOM 조회 (캐싱용)
+  async getAllBOM(): Promise<Map<string, any[]>> {
+    const data = await this.readSheet('BOM마스터', 'A2:F');
+    const bomMap = new Map<string, any[]>();
+    
+    for (const row of data) {
+      const productCode = row[0]?.toString() || '';
+      if (!productCode) continue;
+      
+      if (!bomMap.has(productCode)) {
+        bomMap.set(productCode, []);
+      }
+      
+      bomMap.get(productCode)!.push({
+        product_code: row[0],
+        product_name: row[1],
+        material_code: row[2]?.toString() || '',
+        material_name: row[3]?.toString() || '',
+        ratio_kg: parseFloat(row[4]) || 0,
+        unit: row[5] || 'kg'
+      });
+    }
+    
+    return bomMap;
+  }
+
+  // ★ FEFO 기반 원료 LOT 자동 할당 (선입선출)
+  // 필요한 원료량을 유통기한 빠른 순으로 차감
+  async allocateMaterialLotsFEFO(
+    materialCode: string, 
+    requiredQty: number
+  ): Promise<{ lot_number: string; used_qty: number; expiry_date: string }[]> {
+    const inboundData = await this.readSheet('원료입고', 'A2:I');
+    
+    // 해당 원료의 LOT 목록 (잔량 > 0, 유통기한 빠른 순 정렬)
+    const availableLots = inboundData
+      .filter(row => row[1] === materialCode && (parseFloat(row[8]) || 0) > 0)
+      .map(row => ({
+        row_index: inboundData.indexOf(row),
+        lot_number: row[3]?.toString() || '',
+        remain_qty: parseFloat(row[8]) || 0,
+        expiry_date: row[7]?.toString() || ''
+      }))
+      .sort((a, b) => (a.expiry_date || '9999').localeCompare(b.expiry_date || '9999'));
+    
+    const allocations: { lot_number: string; used_qty: number; expiry_date: string }[] = [];
+    let remaining = requiredQty;
+    
+    for (const lot of availableLots) {
+      if (remaining <= 0) break;
+      
+      const useQty = Math.min(lot.remain_qty, remaining);
+      allocations.push({
+        lot_number: lot.lot_number,
+        used_qty: useQty,
+        expiry_date: lot.expiry_date
+      });
+      remaining -= useQty;
+    }
+    
+    return allocations;
+  }
+
+  // ★ 원료입고 잔량 차감 (생산 시 사용)
+  async updateMaterialRemainQty(
+    materialCode: string, 
+    lotNumber: string, 
+    usedQty: number
+  ): Promise<boolean> {
+    const inboundData = await this.readSheet('원료입고', 'A2:I');
+    
+    for (let i = 0; i < inboundData.length; i++) {
+      const row = inboundData[i];
+      if (row[1] === materialCode && row[3] === lotNumber) {
+        const currentRemain = parseFloat(row[8]) || 0;
+        const newRemain = Math.max(0, currentRemain - usedQty);
+        
+        // I열 (잔량) 업데이트
+        await this.writeSheet('원료입고', `I${i + 2}`, [[newRemain]]);
+        return true;
+      }
+    }
+    return false;
   }
 }
 

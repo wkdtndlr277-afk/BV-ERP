@@ -388,6 +388,76 @@ sheets.get('/lot-matching', async (c) => {
   }
 });
 
+// ★ 제품 LOT로 원료 사용량 조회 (HACCP 추적성용)
+// 로트매칭 시트 구조: A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한
+sheets.get('/lot-trace/:product_lot', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const productLot = c.req.param('product_lot');
+    
+    if (!productLot) {
+      return c.json({ success: false, error: '제품 LOT 번호가 필요합니다' }, 400);
+    }
+
+    // 1. 로트매칭 시트에서 해당 제품 LOT 조회
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
+    const materials = lotMatchingData
+      .filter(row => row[1]?.toString() === productLot)
+      .map(row => ({
+        prod_date: row[0]?.toString().replace(/^'/, '') || '',
+        product_lot: row[1]?.toString() || '',
+        item_code: row[2]?.toString() || '',
+        item_name: row[3]?.toString() || '',
+        usage_qty: parseFloat(row[4]) || 0,
+        material_lot: row[5]?.toString() || '-',
+        expiry_date: row[6]?.toString() || '-'
+      }));
+
+    // 2. 생산실적 시트에서 해당 LOT의 제품 정보 조회
+    const productionData = await service.readSheet('생산실적', 'A2:H');
+    const production = productionData
+      .filter(row => row[4]?.toString() === productLot)
+      .map(row => ({
+        prod_date: row[0]?.toString().replace(/^'/, '') || '',
+        product_code: row[1]?.toString() || '',
+        product_name: row[2]?.toString() || '',
+        quantity: parseFloat(row[3]) || 0,
+        lot_number: row[4]?.toString() || '',
+        channel: row[5]?.toString() || '',
+        status: row[6]?.toString() || ''
+      }));
+
+    // 3. 원료별 집계
+    const materialSummary = new Map<string, { code: string; name: string; total_qty: number; lots: string[] }>();
+    for (const m of materials) {
+      if (!materialSummary.has(m.item_code)) {
+        materialSummary.set(m.item_code, { code: m.item_code, name: m.item_name, total_qty: 0, lots: [] });
+      }
+      const summary = materialSummary.get(m.item_code)!;
+      summary.total_qty += m.usage_qty;
+      if (m.material_lot !== '-' && !summary.lots.includes(m.material_lot)) {
+        summary.lots.push(m.material_lot);
+      }
+    }
+
+    return c.json({
+      success: true,
+      product_lot: productLot,
+      production: production[0] || null,
+      materials: materials,
+      material_summary: Array.from(materialSummary.values()),
+      count: materials.length,
+      note: 'HACCP 추적성: 제품 LOT → 사용 원료 LOT 추적'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ===== 생산일보 출력용 데이터 조합 =====
 
 // 시트에서 계산된 결과 + ERP 로트번호 부여 → 생산일보 데이터
@@ -1183,8 +1253,8 @@ sheets.post('/v2/calculate/daily-stock', async (c) => {
       for (const material of bom) {
         if (EXCLUDE_STOCK.includes(material.item_code)) continue;
         
-        // BOM g → kg 변환
-        const usageKg = (material.quantity * prod.quantity) / 1000;
+        // ★★★ BOM 단위가 이미 kg이므로 변환 없이 그대로 사용 ★★★
+        const usageKg = material.quantity * prod.quantity;
         
         if (!usageMap.has(material.item_code)) {
           usageMap.set(material.item_code, { name: material.item_name, usage: 0 });
@@ -1559,9 +1629,12 @@ sheets.post('/v2/shipment/confirm', async (c) => {
 });
 
 /**
- * 출고일지 조회
+ * 출고일지 조회 - ★ 생산실적 시트 기반으로 조회 (SSOT)
  * 
  * GET /api/sheets/v2/shipment/list?date=YYYY-MM-DD&status=출고예정
+ * 
+ * 출고일 = 생산일 + 1일 (익일 출고)
+ * 따라서 출고일로 조회 시 → 생산일(출고일-1)의 생산실적을 가져옴
  */
 sheets.get('/v2/shipment/list', async (c) => {
   const service = getSheetService(c);
@@ -1570,28 +1643,51 @@ sheets.get('/v2/shipment/list', async (c) => {
   }
 
   try {
-    const date = c.req.query('date');
+    const shipmentDate = c.req.query('date');  // 출고일
     const status = c.req.query('status');
 
-    const shipmentData = await service.readSheet('출고일지', 'A2:J');
-    
-    let records = shipmentData.map(row => ({
-      shipment_date: row[0]?.toString().replace(/^'/, ''),
-      production_date: row[1]?.toString().replace(/^'/, ''),
-      product_code: row[2],
-      product_name: row[3],
-      quantity: parseFloat(row[4]) || 0,
-      unit: row[5],
-      channel: row[6],
-      lot_number: row[7],
-      status: row[8],
-      remark: row[9]
-    }));
-
-    // 필터링
-    if (date) {
-      records = records.filter(r => r.shipment_date === date);
+    if (!shipmentDate) {
+      return c.json({ success: false, error: 'date 파라미터 필수' }, 400);
     }
+
+    // ★ 출고일 - 1일 = 생산일
+    const shipDateObj = new Date(shipmentDate);
+    shipDateObj.setDate(shipDateObj.getDate() - 1);
+    const productionDate = shipDateObj.toISOString().split('T')[0];
+
+    // ★ 생산실적 시트에서 직접 조회 (SSOT - Single Source of Truth)
+    // 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
+    const productionData = await service.readSheet('생산실적', 'A2:H');
+    
+    let records = productionData
+      .map(row => {
+        // 날짜 처리
+        let prodDate = row[0];
+        if (typeof prodDate === 'number' || /^\d+$/.test(prodDate)) {
+          const excelDate = parseInt(prodDate);
+          const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+          prodDate = jsDate.toISOString().split('T')[0];
+        } else if (typeof prodDate === 'string') {
+          prodDate = prodDate.replace(/^'/, '');
+        }
+        
+        // ★ 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
+        return {
+          shipment_date: shipmentDate,  // 출고일 (조회 기준일)
+          production_date: prodDate,     // 생산일
+          product_code: row[1]?.toString() || '',
+          product_name: row[2]?.toString() || '',
+          quantity: parseFloat(row[3]) || 0,
+          unit: 'EA',
+          lot_number: row[4]?.toString() || '',
+          channel: row[5]?.toString() || '',
+          status: '출고예정',
+          remark: row[6]?.toString() || `${prodDate} 생산분`
+        };
+      })
+      .filter(r => r.production_date === productionDate);  // 생산일 기준 필터
+
+    // 상태 필터링
     if (status) {
       records = records.filter(r => r.status === status);
     }
@@ -1600,12 +1696,14 @@ sheets.get('/v2/shipment/list', async (c) => {
     const summary = {
       total_count: records.length,
       total_quantity: records.reduce((sum, r) => sum + r.quantity, 0),
+      production_date: productionDate,
       by_status: {} as Record<string, number>,
       by_channel: {} as Record<string, number>
     };
 
     for (const r of records) {
-      summary.by_status[r.status] = (summary.by_status[r.status] || 0) + 1;
+      const st = r.status || '출고예정';
+      summary.by_status[st] = (summary.by_status[st] || 0) + 1;
       if (r.channel) {
         summary.by_channel[r.channel] = (summary.by_channel[r.channel] || 0) + r.quantity;
       }
@@ -1613,9 +1711,10 @@ sheets.get('/v2/shipment/list', async (c) => {
 
     return c.json({
       success: true,
-      filters: { date, status },
+      filters: { date: shipmentDate, production_date: productionDate, status },
       summary,
-      data: records
+      data: records,
+      note: `★ 출고일 ${shipmentDate} = 생산일 ${productionDate}의 생산실적 기반`
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
@@ -2113,6 +2212,116 @@ sheets.post('/sync/semi-finished/manual', async (c) => {
       },
       errors: errors.length > 0 ? errors : undefined
     });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// =====================================================
+// 🗑️ 특정 날짜 데이터 삭제 API
+// =====================================================
+
+/**
+ * 특정 날짜의 시트 데이터 삭제
+ * 
+ * POST /api/sheets/delete-by-date
+ * Body: { dates: ["2026-06-01", "2026-06-02"], sheets: ["생산실적", "일별수불부", "로트매칭"] }
+ */
+sheets.post('/delete-by-date', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { dates, sheets: targetSheets } = body;
+
+    if (!dates || !Array.isArray(dates) || dates.length === 0) {
+      return c.json({ success: false, error: 'dates 배열 필수' }, 400);
+    }
+
+    const sheetsToClean = targetSheets || ['생산실적', '일별수불부', '로트매칭'];
+    const results: any[] = [];
+
+    for (const sheetName of sheetsToClean) {
+      try {
+        // 시트 데이터 읽기
+        const data = await service.readSheet(sheetName, 'A2:Z');
+        
+        if (!data || data.length === 0) {
+          results.push({ sheet: sheetName, deleted: 0, message: '데이터 없음' });
+          continue;
+        }
+
+        // 삭제할 행 번호 찾기 (역순으로 - 아래에서부터 삭제해야 행 번호가 밀리지 않음)
+        const rowsToDelete: number[] = [];
+        
+        for (let i = 0; i < data.length; i++) {
+          let rowDate = data[i][0];
+          
+          // 날짜 처리
+          if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
+            const excelDate = parseInt(rowDate);
+            const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+            rowDate = jsDate.toISOString().split('T')[0];
+          } else if (typeof rowDate === 'string') {
+            rowDate = rowDate.replace(/^'/, '');
+          }
+          
+          if (dates.includes(rowDate)) {
+            rowsToDelete.push(i + 2);  // +2: 헤더(1) + 0-index 보정
+          }
+        }
+
+        if (rowsToDelete.length === 0) {
+          results.push({ sheet: sheetName, deleted: 0, message: '해당 날짜 데이터 없음' });
+          continue;
+        }
+
+        // 역순으로 정렬 (아래에서부터 삭제)
+        rowsToDelete.sort((a, b) => b - a);
+
+        // 행 삭제 (batchUpdate 사용)
+        const sheetId = await service.getSheetId(sheetName);
+        if (sheetId === null) {
+          results.push({ sheet: sheetName, deleted: 0, error: '시트 ID를 찾을 수 없음' });
+          continue;
+        }
+
+        // 삭제 요청 생성
+        const deleteRequests = rowsToDelete.map(rowNum => ({
+          deleteDimension: {
+            range: {
+              sheetId: sheetId,
+              dimension: 'ROWS',
+              startIndex: rowNum - 1,  // 0-indexed
+              endIndex: rowNum         // exclusive
+            }
+          }
+        }));
+
+        // batchUpdate로 삭제 실행
+        await service.batchUpdate(deleteRequests);
+
+        results.push({ 
+          sheet: sheetName, 
+          deleted: rowsToDelete.length, 
+          message: `${rowsToDelete.length}행 삭제 완료` 
+        });
+
+      } catch (err: any) {
+        results.push({ sheet: sheetName, deleted: 0, error: err.message });
+      }
+    }
+
+    return c.json({
+      success: true,
+      dates,
+      results,
+      message: `${dates.join(', ')} 날짜 데이터 삭제 완료`
+    });
+
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }

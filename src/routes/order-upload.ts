@@ -8,6 +8,7 @@ type Bindings = {
   DB: D1Database;
   GOOGLE_CLIENT_EMAIL?: string;
   GOOGLE_PRIVATE_KEY?: string;
+  GEMINI_API_KEY?: string;  // AI PDF 파싱용
 };
 
 const orderUpload = new Hono<{ Bindings: Bindings }>();
@@ -185,10 +186,10 @@ function parsePdfText(text: string, channel: string): { product_name: string; qu
   return results;
 }
 
-// ★ Google Sheets 제품마스터 기반 매칭 (SSOT) - 바코드 우선 매칭
+// ★ Google Sheets 제품마스터 기반 매칭 (SSOT) - SKU코드/바코드 우선 매칭
 async function matchProductCodesFromSheets(
   service: GoogleSheetsService,
-  items: { product_name: string; quantity: number; barcode?: string }[]
+  items: { product_name: string; quantity: number; barcode?: string; sku_code?: string }[]
 ): Promise<{
   matched: { product_code: string; product_name: string; quantity: number; matched_name: string; match_type: string }[];
   unmatched: { product_name: string; quantity: number; fail_reason: string; similar_products: string[] }[];
@@ -197,7 +198,9 @@ async function matchProductCodesFromSheets(
   const unmatched: any[] = [];
   
   // 제품마스터 시트에서 전체 데이터 로드
-  // 컬럼: A=제품코드, B=제품명, C=바코드, D=발주상품명, E=판매채널, F=소비기한, G=박스수량, H=등록일
+  // ★ 실제 시트 구조 (2026년 확인):
+  // A=제품코드(PR003), B=제품명, C=바코드(SKU코드), D=발주상품명, E=판매채널, F=소비기한, G=박스수량, H=등록일
+  // ★ 배민 SKU코드: C컬럼에 S0015619, A21017171 등 저장됨
   let productMaster: any[][] = [];
   try {
     productMaster = await service.readSheet('제품마스터', 'A2:H');
@@ -216,39 +219,71 @@ async function matchProductCodesFromSheets(
   
   console.log('[매칭] 제품마스터 로드 완료:', productMaster.length, '개 제품');
   
+  // ★ 디버깅: 처음 5개 행 출력
+  console.log('[매칭] 제품마스터 샘플 (처음 5개):');
+  for (let i = 0; i < Math.min(5, productMaster.length); i++) {
+    const row = productMaster[i];
+    console.log(`  [${i}] A=${row[0]}, B=${row[1]}, C=${row[2]}, D=${row[3]}`);
+  }
+  
   // 매칭용 맵 생성
   const barcodeToProduct = new Map<string, { code: string; name: string }>();  // 바코드 → 제품
+  const skuCodeToProduct = new Map<string, { code: string; name: string }>();  // ★ SKU코드 → 제품 (배민용)
   const orderNameToProduct = new Map<string, { code: string; name: string }>();  // 발주상품명 → 제품
   const productNameToProduct = new Map<string, { code: string; name: string }>();  // 제품명 → 제품
   const allProductNames: string[] = [];
   const allOrderNames: string[] = [];
   
   for (const row of productMaster) {
-    const productCode = row[0]?.toString().trim() || '';
-    const productName = row[1]?.toString().trim() || '';
-    const barcode = row[2]?.toString().trim() || '';
-    const orderProductName = row[3]?.toString().trim() || '';  // 발주상품명 (쿠팡 제품명)
+    // ★ 실제 시트 구조 (2026년 확인):
+    // A=제품코드(PR003), B=제품명, C=바코드(SKU코드), D=발주상품명, E=판매채널, F=소비기한, G=박스수량, H=등록일
+    const productCode = row[0]?.toString().trim() || '';       // A컬럼: 제품코드 (PR003, PR004...)
+    const productName = row[1]?.toString().trim() || '';       // B컬럼: 제품명
+    const barcode = row[2]?.toString().trim() || '';           // C컬럼: 바코드/SKU코드 (S0015619, A21017171...)
+    const orderProductName = row[3]?.toString().trim() || '';  // D컬럼: 발주상품명
+    const channel = row[4]?.toString().trim() || '';           // E컬럼: 판매채널
     
-    if (!productCode || !productName) continue;
+    if (!productCode && !productName) continue;
+    
+    const finalProductCode = productCode || productName;
     
     allProductNames.push(productName);
     
-    // 바코드 매핑 (최우선)
-    if (barcode && /^\d{8,14}$/.test(barcode)) {
-      barcodeToProduct.set(barcode, { code: productCode, name: productName });
+    // ★ SKU코드/바코드 매핑 (C컬럼) - 배민 SKU코드 포함
+    if (barcode) {
+      // SKU코드 (S 또는 A로 시작)
+      if (/^[SA]\d+/.test(barcode)) {
+        skuCodeToProduct.set(barcode, { code: finalProductCode, name: productName });
+        console.log('[매핑] SKU코드 등록:', barcode, '→', finalProductCode, productName);
+      }
+      // 숫자 바코드 (8~14자리)
+      if (/^\d{8,14}$/.test(barcode)) {
+        barcodeToProduct.set(barcode, { code: finalProductCode, name: productName });
+      }
     }
     
-    // 발주상품명 매핑 (쿠팡 제품명)
+    // 발주상품명 매핑 - D컬럼
     if (orderProductName) {
       allOrderNames.push(orderProductName);
-      orderNameToProduct.set(orderProductName.toLowerCase(), { code: productCode, name: productName });
+      orderNameToProduct.set(orderProductName.toLowerCase(), { code: finalProductCode, name: productName });
     }
     
-    // 제품명 매핑
-    productNameToProduct.set(productName.toLowerCase(), { code: productCode, name: productName });
+    // 제품명 매핑 - B컬럼
+    if (productName) {
+      productNameToProduct.set(productName.toLowerCase(), { code: finalProductCode, name: productName });
+    }
   }
   
-  console.log('[매칭] 바코드 등록:', barcodeToProduct.size, '개, 발주상품명 등록:', orderNameToProduct.size, '개');
+  console.log('[매칭] 바코드 등록:', barcodeToProduct.size, '개, SKU코드 등록:', skuCodeToProduct.size, '개, 발주상품명 등록:', orderNameToProduct.size, '개');
+  
+  // ★ 디버깅: 등록된 SKU코드 전체 확인
+  const registeredSkus = Array.from(skuCodeToProduct.keys());
+  console.log('[매칭] 등록된 SKU코드 전체:', registeredSkus.length, '개');
+  console.log('[매칭] SKU코드 목록:', registeredSkus.join(', '));
+  
+  // ★ 특정 SKU 검색 테스트
+  console.log('[매칭] S0009835 등록여부:', skuCodeToProduct.has('S0009835'));
+  console.log('[매칭] S0009837 등록여부:', skuCodeToProduct.has('S0009837'));
   
   // 아이템 매칭
   for (const item of items) {
@@ -256,25 +291,67 @@ async function matchProductCodesFromSheets(
     let found: { code: string; name: string } | undefined;
     let matchType = '';
     
-    // ★ 1. 바코드 매칭 (최우선)
-    if (item.barcode && barcodeToProduct.has(item.barcode)) {
-      found = barcodeToProduct.get(item.barcode);
-      matchType = '바코드매칭(' + item.barcode + ')';
-      console.log('[매칭] 바코드 매칭 성공:', item.barcode, '→', found?.code);
+    console.log('[매칭] === 아이템 매칭 시작 ===');
+    console.log('[매칭] product_name:', item.product_name);
+    console.log('[매칭] sku_code:', item.sku_code);
+    console.log('[매칭] searchName:', searchName);
+    
+    // ★ 0. SKU코드 매칭 (배민용 - 최우선)
+    if (item.sku_code) {
+      console.log('[매칭] SKU코드 검색 시도:', item.sku_code, ', 등록여부:', skuCodeToProduct.has(item.sku_code));
+      if (skuCodeToProduct.has(item.sku_code)) {
+        found = skuCodeToProduct.get(item.sku_code);
+        matchType = 'SKU코드매칭(' + item.sku_code + ')';
+        console.log('[매칭] SKU코드 매칭 성공:', item.sku_code, '→', found?.name);
+      }
     }
     
-    // ★ 2. 발주상품명 정확 매칭 (쿠팡 제품명)
+    // ★ 1. 바코드 매칭
+    if (!found && item.barcode) {
+      console.log('[매칭] 바코드 검색 시도:', item.barcode, ', 등록여부:', barcodeToProduct.has(item.barcode));
+      if (barcodeToProduct.has(item.barcode)) {
+        found = barcodeToProduct.get(item.barcode);
+        matchType = '바코드매칭(' + item.barcode + ')';
+        console.log('[매칭] 바코드 매칭 성공:', item.barcode, '→', found?.code);
+      }
+    }
+    
+    // ★ 2. 발주상품명 정확 매칭
     if (!found) {
       found = orderNameToProduct.get(searchName);
-      if (found) matchType = '발주상품명_정확매칭';
+      if (found) {
+        matchType = '발주상품명_정확매칭';
+        console.log('[매칭] 발주상품명 정확매칭 성공:', searchName);
+      }
     }
     
-    // ★ 3. 발주상품명 부분 매칭
+    // ★ 3. 발주상품명 부분 매칭 (핵심 키워드 추출하여 매칭)
     if (!found) {
+      // 배민 SKU명에서 브랜드+제품 핵심 키워드 추출
+      // 예: "브로드카세 비엔나 쿠키 커피 100g" → "비엔나 쿠키 커피" 또는 "브로드카세"
       for (const [key, value] of orderNameToProduct) {
+        // 양방향 포함 매칭
         if (key.includes(searchName) || searchName.includes(key)) {
           found = value;
           matchType = '발주상품명_부분매칭';
+          console.log('[매칭] 발주상품명 부분매칭 성공:', searchName, '↔', key);
+          break;
+        }
+      }
+    }
+    
+    // ★ 3.5. 제품명 핵심 키워드 매칭 (용량 제거 후 매칭)
+    if (!found) {
+      // 용량 정보 제거: "100g", "300g", "80g" 등
+      const nameWithoutSize = searchName.replace(/\s*\d+g\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+      console.log('[매칭] 용량 제거 후 검색:', nameWithoutSize);
+      
+      for (const [key, value] of orderNameToProduct) {
+        const keyWithoutSize = key.replace(/\s*\d+g\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+        if (keyWithoutSize.includes(nameWithoutSize) || nameWithoutSize.includes(keyWithoutSize)) {
+          found = value;
+          matchType = '발주상품명_용량제거매칭';
+          console.log('[매칭] 용량제거 매칭 성공:', nameWithoutSize, '↔', keyWithoutSize);
           break;
         }
       }
@@ -626,7 +703,7 @@ orderUpload.post('/upload-json', async (c) => {
     
     const service = getSheetService(c);
     const directItems: any[] = [];
-    const needMatch: { product_name: string; quantity: number; barcode?: string }[] = [];
+    const needMatch: { product_name: string; quantity: number; barcode?: string; sku_code?: string }[] = [];
     
     // 제품코드가 있는 항목과 매칭이 필요한 항목 분리
     for (const item of items) {
@@ -641,7 +718,8 @@ orderUpload.post('/upload-json', async (c) => {
         needMatch.push({ 
           product_name: item.product_name, 
           quantity: item.quantity,
-          barcode: item.barcode || undefined
+          barcode: item.barcode || undefined,
+          sku_code: item.sku_code || undefined  // ★ SKU코드 추가
         });
       }
     }
@@ -759,7 +837,7 @@ orderUpload.get('/summary', async (c) => {
     // 채널별 집계
     const byChannel: Record<string, any[]> = {};
     // 제품별 전체 합계
-    const totalByProduct: Record<string, { product_code: string; product_name: string; total_qty: number; channels: Set<string> }> = {};
+    const totalByProduct: Record<string, { product_code: string; product_name: string; total_qty: number; order_qty?: number; channels: Set<string> }> = {};
     
     for (const row of filtered) {
       const productCode = row[1] || '';
@@ -806,6 +884,241 @@ orderUpload.get('/summary', async (c) => {
 });
 
 // ===== 발주 → 생산실적 변환 =====
+// ★ 별칭 라우트 - 프론트엔드 호환용
+orderUpload.post('/to-production', async (c) => {
+  const body = await c.req.json();
+  const { order_date, production_date } = body;
+  const orderDate = order_date || new Date().toISOString().split('T')[0];
+  const prodDate = production_date || orderDate;
+  
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    // 발주서 시트 구조: A=날짜, B=제품코드, C=제품명, D=수량, E=납품일, F=채널, G=비고, H=상태
+    const data = await service.readSheet('발주서', 'A2:H');
+    
+    const filtered = data.filter(row => {
+      const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+      const rowStatus = row[7] || '대기';
+      return rowDate === orderDate && rowStatus === '대기';
+    });
+    
+    if (filtered.length === 0) {
+      return c.json({ 
+        success: true, 
+        message: '변환할 발주가 없습니다', 
+        total_products: 0,
+        items: []
+      });
+    }
+    
+    // 제품별 합계 및 채널 수집
+    const productTotals: Record<string, { 
+      product_code: string; 
+      product_name: string; 
+      order_qty: number;
+      channels: Set<string>;
+    }> = {};
+    
+    for (const row of filtered) {
+      const productCode = row[1]?.toString() || '';
+      const productName = row[2]?.toString() || '';
+      const quantity = parseInt(row[3]) || 0;
+      const channel = row[5]?.toString() || '';
+      
+      if (!productCode) continue;
+      
+      if (!productTotals[productCode]) {
+        productTotals[productCode] = { 
+          product_code: productCode, 
+          product_name: productName, 
+          order_qty: 0,
+          channels: new Set()
+        };
+      }
+      productTotals[productCode].order_qty += quantity;
+      if (channel) {
+        productTotals[productCode].channels.add(channel);
+      }
+    }
+    
+    // Set을 문자열로 변환
+    const items = Object.values(productTotals).map(p => ({
+      product_code: p.product_code,
+      product_name: p.product_name,
+      order_qty: p.order_qty,
+      channels: Array.from(p.channels).join(', ')
+    }));
+    
+    return c.json({
+      success: true,
+      order_date: orderDate,
+      production_date: prodDate,
+      total_products: items.length,
+      items: items,
+      message: items.length + '개 제품이 준비되었습니다'
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+
+// ★ 생산 완료 등록 API (v3.5.56 - BOM 기반 원료사용량 자동 계산 + 로트매칭)
+orderUpload.post('/complete-production', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { order_date, production_date, lot_number, items } = body;
+    
+    if (!production_date || !lot_number || !items || items.length === 0) {
+      return c.json({ success: false, error: '생산일, LOT번호, 품목 정보가 필요합니다' }, 400);
+    }
+    
+    const service = getSheetService(c);
+    if (!service) {
+      return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+    }
+    
+    // 생산실적 시트에 추가
+    // ★ 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
+    const productionRows = items.map((item: any) => [
+      "'" + production_date,           // A: 생산일
+      item.product_code,               // B: 제품코드
+      item.product_name,               // C: 제품명
+      item.production_qty,             // D: 수량
+      lot_number,                      // E: LOT번호
+      item.channels || '',             // F: 채널
+      '완료',                          // G: 비고/상태
+      new Date().toISOString()         // H: 생성일
+    ]);
+    
+    await service.appendSheet('생산실적', productionRows);
+    
+    // ★★★ BOM 기반 원료사용량 자동 계산 + 로트매칭 시트 저장 ★★★
+    // 로트매칭 시트 구조: A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한
+    const lotMatchingRows: any[][] = [];
+    const materialUsageSummary: { code: string; name: string; total: number }[] = [];
+    
+    try {
+      // 1. 전체 BOM 조회 (한 번만)
+      const bomMap = await service.getAllBOM();
+      
+      // 2. 제품별 원료 사용량 계산
+      for (const item of items) {
+        const productCode = item.product_code;
+        const productionQty = item.production_qty || 0;
+        const bom = bomMap.get(productCode) || [];
+        
+        if (bom.length === 0) continue;  // BOM 없으면 스킵
+        
+        for (const bomItem of bom) {
+          // 원료 사용량 = 배합비(kg) × 생산수량
+          const usageQty = (bomItem.ratio_kg || 0) * productionQty;
+          if (usageQty <= 0) continue;
+          
+          // FEFO 기반 원료 LOT 자동 할당
+          const allocations = await service.allocateMaterialLotsFEFO(
+            bomItem.material_code, 
+            usageQty
+          );
+          
+          if (allocations.length > 0) {
+            // LOT별로 로트매칭 행 추가
+            for (const alloc of allocations) {
+              lotMatchingRows.push([
+                "'" + production_date,      // A: 생산일
+                lot_number,                 // B: 제품LOT
+                bomItem.material_code,      // C: 원료코드
+                bomItem.material_name,      // D: 원료명
+                alloc.used_qty,             // E: 사용량
+                alloc.lot_number,           // F: 원료LOT
+                alloc.expiry_date           // G: 유통기한
+              ]);
+            }
+          } else {
+            // 할당 가능한 LOT 없으면 기본 행 추가 (추적용)
+            lotMatchingRows.push([
+              "'" + production_date,
+              lot_number,
+              bomItem.material_code,
+              bomItem.material_name,
+              usageQty,
+              '-',  // 원료LOT 미할당
+              '-'
+            ]);
+          }
+          
+          // 요약용
+          const existing = materialUsageSummary.find(m => m.code === bomItem.material_code);
+          if (existing) {
+            existing.total += usageQty;
+          } else {
+            materialUsageSummary.push({ 
+              code: bomItem.material_code, 
+              name: bomItem.material_name, 
+              total: usageQty 
+            });
+          }
+        }
+      }
+      
+      // 3. 로트매칭 시트에 일괄 저장
+      if (lotMatchingRows.length > 0) {
+        await service.appendSheet('로트매칭', lotMatchingRows);
+      }
+      
+    } catch (bomError: any) {
+      console.error('BOM 기반 로트매칭 생성 오류:', bomError.message);
+      // BOM 오류는 생산완료 처리를 막지 않음 (로그만)
+    }
+    
+    // 발주서 상태 업데이트 (대기 → 생산완료)
+    if (order_date) {
+      const orderData = await service.readSheet('발주서', 'A2:H');
+      const updates: { sheetName: string; range: string; values: any[][] }[] = [];
+      
+      for (let i = 0; i < orderData.length; i++) {
+        const row = orderData[i];
+        const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+        const productCode = row[1]?.toString() || '';
+        const currentStatus = row[7] || '대기';
+        
+        if (rowDate === order_date && currentStatus === '대기') {
+          const matchedItem = items.find((item: any) => item.product_code === productCode);
+          if (matchedItem) {
+            updates.push({ 
+              sheetName: '발주서', 
+              range: `H${i + 2}`, 
+              values: [['생산완료']] 
+            });
+          }
+        }
+      }
+      
+      // ★ batchWriteSheet로 일괄 업데이트 (subrequest 제한 해결)
+      if (updates.length > 0) {
+        await service.batchWriteSheet(updates);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      production_date,
+      lot_number,
+      completed_products: items.length,
+      lot_matching_rows: lotMatchingRows.length,
+      material_usage: materialUsageSummary,
+      message: `${items.length}개 제품 생산완료 + ${lotMatchingRows.length}건 로트매칭 등록`
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
 orderUpload.post('/convert-to-production', async (c) => {
   try {
     const body = await c.req.json();
@@ -832,7 +1145,7 @@ orderUpload.post('/convert-to-production', async (c) => {
     }
     
     // 제품별 합계
-    const productTotals: Record<string, { product_code: string; product_name: string; total_qty: number }> = {};
+    const productTotals: Record<string, { product_code: string; product_name: string; total_qty: number; order_qty?: number }> = {};
     
     for (const row of filtered) {
       const productCode = row[1] || '';
@@ -843,6 +1156,7 @@ orderUpload.post('/convert-to-production', async (c) => {
         productTotals[productCode] = { product_code: productCode, product_name: productName, total_qty: 0 };
       }
       productTotals[productCode].total_qty += quantity;
+      productTotals[productCode].order_qty = productTotals[productCode].total_qty;
     }
     
     // 생산실적 시트에 추가
@@ -1292,6 +1606,200 @@ orderUpload.post('/products/:productCode/alias', async (c) => {
     });
     
   } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ===== AI 기반 PDF 파싱 (Gemini Vision) =====
+// 배민 입고확인서 등 테이블 구조 PDF를 AI로 분석
+orderUpload.post('/ai-parse', async (c) => {
+  try {
+    const apiKey = c.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return c.json({ 
+        success: false, 
+        error: 'GEMINI_API_KEY 환경변수가 설정되지 않았습니다. Cloudflare Dashboard에서 설정하세요.' 
+      }, 400);
+    }
+
+    // multipart/form-data로 PDF 파일 또는 base64 데이터 받기
+    const contentType = c.req.header('Content-Type') || '';
+    let pdfBase64: string = '';
+    let fileName: string = '';
+    
+    if (contentType.includes('multipart/form-data')) {
+      const formData = await c.req.formData();
+      const file = formData.get('file') as File | null;
+      if (!file) {
+        return c.json({ success: false, error: 'PDF 파일이 필요합니다' }, 400);
+      }
+      fileName = file.name;
+      const arrayBuffer = await file.arrayBuffer();
+      pdfBase64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    } else if (contentType.includes('application/json')) {
+      const body = await c.req.json();
+      pdfBase64 = body.pdf_base64;
+      fileName = body.file_name || 'document.pdf';
+      if (!pdfBase64) {
+        return c.json({ success: false, error: 'pdf_base64 필드가 필요합니다' }, 400);
+      }
+    } else {
+      return c.json({ success: false, error: '지원하지 않는 Content-Type' }, 400);
+    }
+
+    console.log('[AI파싱] 파일명:', fileName, ', Base64 길이:', pdfBase64.length);
+
+    // Gemini API 호출 (gemini-2.0-flash 모델 사용)
+    const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    
+    const prompt = `이 PDF는 배달의민족(배민) 입고확인서입니다.
+테이블에서 다음 정보를 추출하세요:
+1. 바코드 (13자리 숫자, 880942453으로 시작)
+2. 상품명 (한글 제품명)
+3. 입고수량 (박스/낱개 중 "낱개" 컬럼의 숫자가 실제 입고수량)
+
+주의사항:
+- 바코드가 두 줄로 나뉘어 있을 수 있음 (예: 8809424537 / 176 → 8809424537176)
+- "박스입수량", "박스", "낱개" 컬럼 중 "낱개" 컬럼 값이 실제 입고수량
+- 페이지 번호(1/2, 2/2 등)는 무시
+- 동일 바코드가 여러 번 나오면 수량 합산
+
+JSON 배열 형식으로만 응답하세요 (다른 텍스트 없이):
+[{"barcode": "8809424537176", "product_name": "제품명", "quantity": 20}, ...]`;
+
+    const geminiResponse = await fetch(geminiEndpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { text: prompt },
+            {
+              inline_data: {
+                mime_type: 'application/pdf',
+                data: pdfBase64
+              }
+            }
+          ]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 4096
+        }
+      })
+    });
+
+    if (!geminiResponse.ok) {
+      const errorText = await geminiResponse.text();
+      console.error('[AI파싱] Gemini API 오류:', errorText);
+      return c.json({ 
+        success: false, 
+        error: `Gemini API 오류: ${geminiResponse.status}`,
+        detail: errorText 
+      }, 500);
+    }
+
+    const geminiResult = await geminiResponse.json() as any;
+    console.log('[AI파싱] Gemini 응답 수신');
+
+    // 응답에서 텍스트 추출
+    const responseText = geminiResult?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    console.log('[AI파싱] 응답 텍스트:', responseText.substring(0, 500));
+
+    // JSON 배열 파싱 (```json ... ``` 감싸기 처리)
+    let items: { barcode: string; product_name: string; quantity: number }[] = [];
+    try {
+      // JSON 블록 추출
+      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        items = JSON.parse(jsonMatch[0]);
+      }
+    } catch (parseError) {
+      console.error('[AI파싱] JSON 파싱 실패:', parseError);
+      return c.json({ 
+        success: false, 
+        error: 'AI 응답을 파싱할 수 없습니다',
+        raw_response: responseText.substring(0, 1000)
+      }, 500);
+    }
+
+    // 유효성 검증 및 정제
+    const validItems = items.filter(item => 
+      item.barcode && 
+      /^\d{12,14}$/.test(item.barcode) &&
+      item.quantity > 0
+    ).map(item => ({
+      barcode: item.barcode.trim(),
+      product_name: (item.product_name || item.barcode).trim(),
+      quantity: parseInt(String(item.quantity)) || 1
+    }));
+
+    // 중복 바코드 합산
+    const merged = new Map<string, { barcode: string; product_name: string; quantity: number }>();
+    for (const item of validItems) {
+      if (merged.has(item.barcode)) {
+        merged.get(item.barcode)!.quantity += item.quantity;
+      } else {
+        merged.set(item.barcode, { ...item });
+      }
+    }
+
+    const result = Array.from(merged.values());
+    console.log('[AI파싱] 최종 결과:', result.length, '건');
+
+    return c.json({
+      success: true,
+      items: result,
+      count: result.length,
+      message: `AI 분석 완료: ${result.length}건 추출`
+    });
+
+  } catch (error: any) {
+    console.error('[AI파싱] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ===== AI 파싱 후 제품 매칭 =====
+// AI로 추출한 바코드/수량을 제품마스터와 매칭
+orderUpload.post('/ai-match', async (c) => {
+  try {
+    const { items } = await c.req.json() as { 
+      items: { barcode: string; product_name: string; quantity: number }[] 
+    };
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: '매칭할 아이템이 없습니다' }, 400);
+    }
+
+    const service = getSheetService(c);
+    if (!service) {
+      return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+    }
+
+    // 바코드 필드를 갖도록 변환
+    const itemsWithBarcode = items.map(item => ({
+      product_name: item.product_name || item.barcode,
+      quantity: item.quantity,
+      barcode: item.barcode
+    }));
+
+    // 기존 매칭 함수 사용
+    const { matched, unmatched } = await matchProductCodesFromSheets(service, itemsWithBarcode);
+
+    return c.json({
+      success: true,
+      matched,
+      unmatched,
+      summary: {
+        total: items.length,
+        matched: matched.length,
+        unmatched: unmatched.length
+      }
+    });
+
+  } catch (error: any) {
+    console.error('[AI매칭] 오류:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });

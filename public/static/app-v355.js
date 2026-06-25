@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
-// Version: 2.2.0 Build: 20260528
-const APP_VERSION = '2.3.3';
-const APP_BUILD = '20260625';
+// Version: 3.5.60 Build: 20260625
+const APP_VERSION = '3.5.60';
+const APP_BUILD = '20260625-2';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -18531,29 +18531,28 @@ function printProductionClosing() {
   }, 500);
 }
 
-// ★★★ v3.4.4 HACCP - DOM 분리 및 결재란 레이아웃 고정 ★★★
+// ★★★ v3.5.60 HACCP - 생산일보: 생산량/소비기한만 + 구글시트 일별수불부 사용량 ★★★
 function generateClosingPrintHtml(cache, date) {
   const items = cache.dailyReport || [];
-  const materials = cache.materials || {};
-  const usage = materials.usage || [];
-  const inbound = materials.inbound || [];
-  const summary = cache.summary || {};
   
-  // 정제수(물), 무효 원료(R169~R172) 제외
+  // ★★★ 구글시트 일별수불부에서 사용량 가져오기 (SSOT) ★★★
+  const inventoryV2 = cache.inventoryV2 || {};
+  const dailyStockData = inventoryV2.data || [];
+  
+  // 정제수(물), 무효 원료(R169~R172), 반제품(SF) 제외
   const excludeCodes = ['R184', 'RM184', 'R169', 'R170', 'R171', 'R172'];
-  const filteredUsage = usage.filter(item => {
-    const code = item.item_code?.toUpperCase() || '';
+  const filteredUsage = dailyStockData.filter(item => {
+    const code = (item.item_code || '').toUpperCase();
     const name = (item.item_name || '').toLowerCase();
     if (name.includes('정제수') || name.includes('물') || code === 'R184' || code === 'RM184') return false;
     if (excludeCodes.includes(code)) return false;
+    if (code.startsWith('SF')) return false; // 반제품 제외
+    if ((item.usage_qty || 0) <= 0) return false; // 사용량 없는 항목 제외
     return true;
   });
   
   const totalQty = items.reduce((sum, i) => sum + (i.quantity || 0), 0);
-  const totalUsage = filteredUsage.reduce((sum, m) => sum + Math.abs(m.total_used || 0), 0);
-  const totalInbound = filteredUsage.reduce((sum, m) => sum + (m.inbound_qty || 0), 0);
-  const totalPrevStock = filteredUsage.reduce((sum, m) => sum + (m.prev_stock || 0), 0);
-  const totalCurrentStock = filteredUsage.reduce((sum, m) => sum + (m.current_stock || 0), 0);
+  const totalUsage = filteredUsage.reduce((sum, m) => sum + Math.abs(m.usage_qty || 0), 0);
   
   const printDateTime = new Date().toLocaleString('ko-KR');
   const docNo = `DR-${date.replace(/-/g, '')}-${String(Math.floor(Math.random() * 9000) + 1000)}`;
@@ -18833,23 +18832,34 @@ function generateClosingPrintHtml(cache, date) {
           </tr>
         </thead>
         <tbody>
-          ${items.map((item, idx) => {
-            const ch = item.channel || '';
-            const chKor = channelKorean[ch] || ch || '-';
-            const chClass = ch === 'coupang' ? 'ch-coupang' : (ch === 'kurly' ? 'ch-kurly' : 'ch-default');
-            const lotNo = item.lot_number || 'PRD-' + date.replace(/-/g, '') + '-' + item.product_code + '-' + String(idx+1).padStart(4,'0');
-            return '<tr>' +
-              '<td>' + (idx + 1) + '</td>' +
-              '<td>' + (item.expiry_date || '-') + '</td>' +
-              '<td>' + (item.product_code || '-') + '</td>' +
-              '<td class="text-left">' + (item.product_name || '-') +
-                (item.spec ? '<div class="product-detail">[' + (item.recipe_name || '로켓프레시') + '][' + (item.facility || '실온') + '] ' + item.spec + '</div>' : '') +
-              '</td>' +
-              '<td class="text-right">' + formatNumber(item.quantity) + '개</td>' +
-              '<td class="font-small">' + lotNo + '</td>' +
-              '<td><span class="channel-badge ' + chClass + '">' + chKor + '</span></td>' +
-            '</tr>';
-          }).join('')}
+          ${(() => {
+            // ★ 제품코드별 순번 추적을 위한 카운터
+            const lotCounters = {};
+            return items.map((item, idx) => {
+              const ch = item.channel || '';
+              const chKor = channelKorean[ch] || ch || '-';
+              const chClass = ch === 'coupang' ? 'ch-coupang' : (ch === 'kurly' ? 'ch-kurly' : 'ch-default');
+              
+              // ★★★ 제품 LOT 형식: 20260601-PR253-001 (날짜-제품코드-순번) ★★★
+              let lotNo = item.lot_number;
+              if (!lotNo || lotNo === '260601' || lotNo.length < 10) {
+                const pcode = item.product_code || 'PRD';
+                if (!lotCounters[pcode]) lotCounters[pcode] = 0;
+                lotCounters[pcode]++;
+                lotNo = date.replace(/-/g, '') + '-' + pcode + '-' + String(lotCounters[pcode]).padStart(3, '0');
+              }
+              
+              return '<tr>' +
+                '<td>' + (idx + 1) + '</td>' +
+                '<td>' + (item.expiry_date || '-') + '</td>' +
+                '<td>' + (item.product_code || '-') + '</td>' +
+                '<td class="text-left">' + (item.product_name || '-') + '</td>' +
+                '<td class="text-right">' + formatNumber(item.quantity) + '개</td>' +
+                '<td class="font-small">' + lotNo + '</td>' +
+                '<td><span class="channel-badge ' + chClass + '">' + chKor + '</span></td>' +
+              '</tr>';
+            }).join('');
+          })()}
           <tr class="summary-row">
             <td colspan="4" class="text-right"><strong>총 생산건수: ${items.length}건</strong></td>
             <td class="text-right"><strong>${formatNumber(totalQty)}개</strong></td>
@@ -18863,27 +18873,22 @@ function generateClosingPrintHtml(cache, date) {
       <table class="sub-table">
         <thead>
           <tr>
-            <th style="width:5%">No</th>
-            <th style="width:10%">품목코드</th>
-            <th style="width:30%" class="text-left">원재료명</th>
-            <th style="width:12%">총사용량</th>
-            <th style="width:8%">단위</th>
-            <th style="width:35%" class="text-left">원료LOT</th>
+            <th style="width:6%">No</th>
+            <th style="width:12%">품목코드</th>
+            <th style="width:50%" class="text-left">원재료명</th>
+            <th style="width:16%">사용량</th>
+            <th style="width:16%">단위</th>
           </tr>
         </thead>
         <tbody>
           ${filteredUsage.map((item, idx) => {
-            // ★★★ v2.2.12: LOT 정보 표시 개선 - 전체 표시 (20개 제한 제거) ★★★
-            const lotDisplay = (item.lot_numbers && item.lot_numbers.trim() && item.lot_numbers !== 'null') 
-              ? item.lot_numbers 
-              : (item.used_lots || '-');
+            // ★★★ v3.5.60: 구글시트 일별수불부의 usage_qty 사용 ★★★
             return '<tr>' +
               '<td>' + (idx + 1) + '</td>' +
-              '<td>' + item.item_code + '</td>' +
-              '<td class="text-left">' + (item.item_name || item.item_code) + '</td>' +
-              '<td class="text-right">' + formatNumber(Math.abs(item.total_used || 0), 4) + '</td>' +
+              '<td>' + (item.item_code || '-') + '</td>' +
+              '<td class="text-left">' + (item.item_name || item.item_code || '-') + '</td>' +
+              '<td class="text-right">' + formatNumber(Math.abs(item.usage_qty || 0), 3) + '</td>' +
               '<td>' + (item.unit || 'kg') + '</td>' +
-              '<td class="text-left font-small">' + lotDisplay + '</td>' +
             '</tr>';
           }).join('')}
         </tbody>
@@ -18954,27 +18959,34 @@ function generateClosingPrintHtml(cache, date) {
         </thead>
         <tbody>
           ${filteredUsage.map((item, idx) => {
+            // ★★★ v3.5.60: 구글시트 일별수불부 필드명 사용 ★★★
             const prevStock = parseFloat(item.prev_stock) || 0;
             const inboundQty = parseFloat(item.inbound_qty) || 0;
-            const usedQty = Math.abs(parseFloat(item.total_used) || 0);
+            const usedQty = Math.abs(parseFloat(item.usage_qty) || 0);
             const currentStock = parseFloat(item.current_stock) || 0;
             
             return '<tr>' +
-              '<td>' + item.item_code + '</td>' +
-              '<td class="text-left">' + (item.item_name || item.item_code) + '</td>' +
+              '<td>' + (item.item_code || '-') + '</td>' +
+              '<td class="text-left">' + (item.item_name || item.item_code || '-') + '</td>' +
               '<td class="text-right">' + formatNumber(prevStock, 2) + '</td>' +
               '<td class="text-right color-blue">' + (inboundQty > 0 ? '+' + formatNumber(inboundQty, 2) : '-') + '</td>' +
               '<td class="text-right color-red">' + (usedQty > 0 ? '-' + formatNumber(usedQty, 2) : '-') + '</td>' +
               '<td class="text-right color-green">' + formatNumber(currentStock, 2) + '</td>' +
             '</tr>';
           }).join('')}
-          <tr class="summary-row">
-            <td colspan="2" class="text-right"><strong>합계</strong></td>
-            <td class="text-right"><strong>${formatNumber(totalPrevStock, 2)}</strong></td>
-            <td class="text-right color-blue"><strong>+${formatNumber(totalInbound, 2)}</strong></td>
-            <td class="text-right color-red"><strong>-${formatNumber(totalUsage, 2)}</strong></td>
-            <td class="text-right color-green"><strong>${formatNumber(totalCurrentStock, 2)}</strong></td>
-          </tr>
+          ${(() => {
+            // 합계 계산
+            const totalPrevStock = filteredUsage.reduce((sum, m) => sum + (parseFloat(m.prev_stock) || 0), 0);
+            const totalInbound = filteredUsage.reduce((sum, m) => sum + (parseFloat(m.inbound_qty) || 0), 0);
+            const totalCurrentStock = filteredUsage.reduce((sum, m) => sum + (parseFloat(m.current_stock) || 0), 0);
+            return '<tr class="summary-row">' +
+              '<td colspan="2" class="text-right"><strong>합계</strong></td>' +
+              '<td class="text-right"><strong>' + formatNumber(totalPrevStock, 2) + '</strong></td>' +
+              '<td class="text-right color-blue"><strong>' + (totalInbound > 0 ? '+' + formatNumber(totalInbound, 2) : '-') + '</strong></td>' +
+              '<td class="text-right color-red"><strong>-' + formatNumber(totalUsage, 2) + '</strong></td>' +
+              '<td class="text-right color-green"><strong>' + formatNumber(totalCurrentStock, 2) + '</strong></td>' +
+            '</tr>';
+          })()}
         </tbody>
       </table>
       
@@ -47907,15 +47919,13 @@ function renderOrderUpload() {
 // PDF 텍스트 파싱 함수 - 발주서에서 제품명과 수량 추출
 // ============================================================
 
-// ★ 배민(배달의민족) 입고확인서 전용 파서
-// PDF에서 바코드가 두 줄로 나뉘어 추출됨:
-//   - 첫째 줄: 8809424530 (10자리)
-//   - 둘째 줄: 535 (3자리)
-//   - 합쳐야 함: 8809424530535 (13자리)
-// ★ 바코드 공통 앞자리: 880942453 (9자리 고정) + 뒷 4자리
-// ★ 바코드 기반 매칭만 사용 (SKU 코드 사용 안 함)
+// ★ 배민(배달의민족) 입고확인서 전용 파서 v4
+// PDF 테이블 구조:
+//   바코드(2줄): 8809424537 / 176 → 결합하면 8809424537176
+//   입고수량: 박스입수량(20) | 박스(1) | 낱개(20) → 낱개 컬럼이 실제 입고수량
+// ★ 바코드 기반 매칭만 사용
 function parseBaeminPdf(text) {
-  console.log('★ 배민 입고확인서 전용 파싱 시작');
+  console.log('★ 배민 입고확인서 전용 파싱 시작 (v4)');
   const items = [];
   
   // 배민 감지
@@ -47931,97 +47941,80 @@ function parseBaeminPdf(text) {
   const tokens = text.split(/\s+/).filter(t => t.trim());
   console.log('토큰 수:', tokens.length);
   
-  // 바코드 앞부분 패턴 (880942453으로 시작하는 10자리)
-  const barcodeFrontPattern = /^880942453\d$/;
-  // 바코드 뒷부분 패턴 (3자리 숫자)
-  const barcodeBackPattern = /^\d{3}$/;
-  
-  // 1단계: 바코드 앞부분(10자리) + 뒷부분(3자리) 결합
-  const barcodeList = [];  // { pos, barcode, backPos }
+  // ★ 1단계: 바코드 앞부분(10자리)과 모든 숫자 수집
+  const barcodeFronts = [];  // 10자리 바코드 앞부분들 (위치 포함)
+  const allNumbers = [];     // 모든 1~3자리 숫자들 (위치 포함)
   
   for (let i = 0; i < tokens.length; i++) {
-    if (barcodeFrontPattern.test(tokens[i])) {
-      const front = tokens[i];  // 8809424530
-      // 뒷부분 찾기 (근처 토큰에서 3자리 숫자)
-      for (let j = i + 1; j < Math.min(i + 25, tokens.length); j++) {
-        if (barcodeBackPattern.test(tokens[j])) {
-          const back = tokens[j];  // 535
-          const fullBarcode = front + back;  // 8809424530535
-          barcodeList.push({ pos: i, barcode: fullBarcode, backPos: j });
-          console.log(`  바코드 결합: ${front} + ${back} = ${fullBarcode}`);
-          break;
-        }
-      }
+    const token = tokens[i];
+    // 10자리 바코드 앞부분 (880942453X)
+    if (/^880942453\d$/.test(token)) {
+      barcodeFronts.push({ pos: i, front: token });
+    }
+    // 1~3자리 숫자 (수량 후보)
+    if (/^\d{1,3}$/.test(token)) {
+      allNumbers.push({ pos: i, num: parseInt(token), raw: token });
     }
   }
   
-  console.log('바코드 발견:', barcodeList.length, '개');
+  console.log('바코드 앞부분(10자리):', barcodeFronts.length, '개');
+  console.log('숫자 토큰:', allNumbers.length, '개');
   
-  if (barcodeList.length === 0) {
-    console.log('바코드 미발견, 일반 파싱으로 전환');
-    return null;
-  }
-  
-  // 2단계: 각 바코드에 대해 수량 추출
-  for (let idx = 0; idx < barcodeList.length; idx++) {
-    const { pos: barcodePos, barcode, backPos } = barcodeList[idx];
-    const nextBarcodePos = idx + 1 < barcodeList.length ? barcodeList[idx + 1].pos : tokens.length;
+  // ★ 2단계: 각 바코드 앞부분에 대해 뒤따르는 숫자들 분석
+  // PDF 순서: [바코드앞10] ... [바코드뒤3] ... [박스입수량] [박스] [낱개]
+  for (let i = 0; i < barcodeFronts.length; i++) {
+    const { pos: frontPos, front } = barcodeFronts[i];
+    const nextFrontPos = i + 1 < barcodeFronts.length ? barcodeFronts[i + 1].pos : tokens.length;
     
-    // 바코드 뒷부분(backPos) 이후에서 보관온도 및 수량 찾기
-    let tempPos = -1;
-    let tempType = '';
-    for (let j = backPos + 1; j < Math.min(backPos + 40, nextBarcodePos); j++) {
-      if (['냉동', '냉장', '상온'].includes(tokens[j])) {
-        tempPos = j;
-        tempType = tokens[j];
-        break;
-      }
-    }
+    // 이 바코드 앞부분 뒤에 나오는 숫자들만 필터
+    const numsAfter = allNumbers.filter(n => n.pos > frontPos && n.pos < nextFrontPos);
     
-    if (tempPos < 0) {
-      console.log(`  바코드 ${barcode}: 보관온도 미발견, 스킵`);
+    console.log(`\n  바코드앞 ${front} (pos=${frontPos}):`);
+    console.log(`    뒤따르는 숫자들:`, numsAfter.map(n => n.raw).join(', '));
+    
+    if (numsAfter.length === 0) {
+      console.log(`    → 숫자 없음, 스킵`);
       continue;
     }
     
-    // 보관온도 이후 숫자들에서 수량 추출
-    // 패턴: 보관온도 박스입수량 낱개단위 입고박스수 입고낱개수
-    const nums = [];
-    for (let j = tempPos + 1; j < Math.min(tempPos + 12, nextBarcodePos); j++) {
-      const numStr = tokens[j].replace(/,/g, '');
-      if (/^\d+$/.test(numStr)) {
-        nums.push(parseInt(numStr));
-      } else if (['냉동', '냉장', '상온', '/', '페이지'].includes(tokens[j]) || barcodeFrontPattern.test(tokens[j])) {
-        break;
-      }
+    // 첫 번째 3자리 숫자가 바코드 뒷부분
+    const backCandidate = numsAfter.find(n => n.raw.length === 3);
+    if (!backCandidate) {
+      console.log(`    → 3자리 숫자 없음, 스킵`);
+      continue;
     }
     
-    // 수량 계산
-    // nums = [박스입수량, 낱개단위, 입고박스수, 입고낱개수] 예: [20, 1, 1, 20]
-    // 총 수량 = 입고박스수 * 박스입수량 + 입고낱개수
-    let quantity = 0;
-    if (nums.length >= 4) {
-      const boxQty = nums[0];      // 박스입수량 (예: 20)
-      const boxCount = nums[2];    // 입고 박스 수
-      const looseCount = nums[3];  // 입고 낱개 수
-      quantity = boxCount * boxQty + looseCount;
-      console.log(`  수량계산: ${boxCount}박스 × ${boxQty}개 + ${looseCount}낱개 = ${quantity}`);
-    } else if (nums.length >= 3) {
-      const boxQty = nums[0];
-      const inQty = nums[2];
-      quantity = inQty >= boxQty ? inQty : inQty * boxQty;
-    } else if (nums.length >= 1) {
-      quantity = nums[nums.length - 1];
+    const fullBarcode = front + backCandidate.raw;
+    console.log(`    → 바코드 결합: ${front} + ${backCandidate.raw} = ${fullBarcode}`);
+    
+    // 바코드 뒷부분 이후의 숫자들에서 수량 추출
+    // 패턴: [박스입수량] [박스] [낱개] - 낱개가 실제 입고수량
+    const numsAfterBack = numsAfter.filter(n => n.pos > backCandidate.pos);
+    console.log(`    바코드 뒤 숫자들:`, numsAfterBack.map(n => n.raw).join(', '));
+    
+    let quantity = 1;
+    if (numsAfterBack.length >= 3) {
+      // [박스입수량, 박스, 낱개] 패턴 - 마지막(낱개)이 수량
+      quantity = numsAfterBack[2].num;
+      console.log(`    → 수량(낱개): ${quantity}`);
+    } else if (numsAfterBack.length >= 1) {
+      // 숫자가 부족하면 마지막 숫자를 수량으로
+      quantity = numsAfterBack[numsAfterBack.length - 1].num;
+      console.log(`    → 수량(마지막): ${quantity}`);
     }
     
-    console.log(`  → 바코드=${barcode} ${tempType} 수량=${quantity}`);
-    
-    if (quantity > 0 && barcode) {
-      items.push({
-        product_name: barcode,  // 바코드를 제품명으로 (백엔드에서 바코드로 매칭)
-        quantity: quantity,
-        barcode: barcode
-      });
-    }
+    items.push({
+      product_name: fullBarcode,
+      quantity: quantity > 0 ? quantity : 1,
+      barcode: fullBarcode
+    });
+  }
+  
+  console.log('\n최종 파싱:', items.length, '건');
+  
+  if (items.length === 0) {
+    console.log('바코드 미발견, 일반 파싱으로 전환');
+    return null;
   }
   
   // 중복 제거 (바코드 기준, 수량 합산)
@@ -48189,19 +48182,80 @@ async function handleOrderFileUpload() {
       let pdfText = '';  // PDF 텍스트 저장용
       
       // ============================================================
-      // PDF 파일 처리 - pdf.js 사용
+      // PDF 파일 처리 - 배민: AI 파싱 / 기타: pdf.js
       // ============================================================
       if (fileName.endsWith('.pdf')) {
         console.log('★ PDF 파일 감지:', file.name);
         
-        if (typeof pdfjsLib === 'undefined') {
-          console.error('PDF.js 라이브러리가 로드되지 않았습니다');
-          showToast('PDF 처리 라이브러리 로드 실패. 페이지를 새로고침 해주세요.', 'error');
-          continue;
-        }
-        
         try {
           const arrayBuffer = await file.arrayBuffer();
+          
+          // ★★★ 배민 PDF 감지 및 AI 파싱 우선 시도 ★★★
+          // 채널이 배민이거나 파일명에 배민 관련 키워드가 있으면 AI 파싱 사용
+          const selectedChannel = channelSelect?.value || '';
+          const isBaeminFile = selectedChannel === '배민' || 
+                               fileName.includes('배민') || 
+                               fileName.includes('baemin') ||
+                               fileName.includes('입고확인서') ||
+                               fileName.includes('우아한');
+          
+          if (isBaeminFile) {
+            console.log('★★★ 배민 PDF 감지 → AI 파싱 시도 ★★★');
+            showLoading('AI 분석 중... (배민 입고확인서)');
+            
+            try {
+              // Base64 변환
+              const uint8Array = new Uint8Array(arrayBuffer);
+              let binary = '';
+              for (let i = 0; i < uint8Array.length; i++) {
+                binary += String.fromCharCode(uint8Array[i]);
+              }
+              const pdfBase64 = btoa(binary);
+              
+              // AI 파싱 API 호출
+              const aiResponse = await axios.post(`${API_BASE}/order-upload/ai-parse`, {
+                pdf_base64: pdfBase64,
+                file_name: file.name
+              }, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 60000  // AI 분석은 시간이 걸릴 수 있음
+              });
+              
+              if (aiResponse.data.success && aiResponse.data.items?.length > 0) {
+                const aiItems = aiResponse.data.items;
+                console.log('★ AI 파싱 성공:', aiItems.length, '건');
+                console.log('AI 추출 결과:', aiItems);
+                
+                // allItems에 추가 (barcode 포함)
+                for (const item of aiItems) {
+                  allItems.push({
+                    product_name: item.product_name || item.barcode,
+                    quantity: item.quantity,
+                    barcode: item.barcode
+                  });
+                }
+                
+                showToast(`AI 분석 완료: ${aiItems.length}건 추출`, 'success');
+                console.log('배민 PDF AI 처리 완료:', file.name);
+                continue;  // 다음 파일로
+              } else {
+                console.warn('AI 파싱 결과 없음, PDF.js로 폴백:', aiResponse.data);
+                // AI 파싱 실패 시 PDF.js로 폴백
+              }
+            } catch (aiError) {
+              console.error('AI 파싱 오류 (PDF.js로 폴백):', aiError);
+              showToast('AI 파싱 실패, 기본 파싱으로 전환', 'warning');
+              // AI 파싱 실패 시 PDF.js로 폴백 계속 진행
+            }
+          }
+          
+          // ★★★ PDF.js 기본 파싱 (배민 아니거나 AI 파싱 실패 시) ★★★
+          if (typeof pdfjsLib === 'undefined') {
+            console.error('PDF.js 라이브러리가 로드되지 않았습니다');
+            showToast('PDF 처리 라이브러리 로드 실패. 페이지를 새로고침 해주세요.', 'error');
+            continue;
+          }
+          
           const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
           console.log('PDF 페이지 수:', pdf.numPages);
           
@@ -48460,7 +48514,124 @@ async function handleOrderFileUpload() {
       }
       
       // ============================================================
-      // 일반 엑셀 형식 처리 (쿠팡 아닌 경우)
+      // ★★★ 배민 발주서 감지 (엑셀 형식) ★★★
+      // 배민 발주서 구조:
+      //   - 1행: 헤더 (발주유형, 발주ID, ..., SKU코드(R), SKU명(S), ..., 입고진행수량(X), ...)
+      //   - 2행+: 데이터
+      // 핵심 컬럼: R=SKU코드, S=SKU명, X=입고진행수량
+      // ============================================================
+      const headerRow = rows[0] || [];
+      const headerStr = headerRow.map(c => String(c || '')).join('|');
+      
+      // ★ 채널 선택값 확인
+      const selectedChannel = channelSelect?.value || '';
+      
+      console.log('=== 배민 형식 감지 체크 ===');
+      console.log('선택된 채널:', selectedChannel);
+      console.log('헤더 문자열:', headerStr.substring(0, 300));
+      console.log('SKU코드 포함:', headerStr.includes('SKU코드'));
+      console.log('SKU명 포함:', headerStr.includes('SKU명'));
+      console.log('입고진행수량 포함:', headerStr.includes('입고진행수량'));
+      
+      // ★ 채널이 "배민"이거나 헤더에 SKU코드/SKU명이 있으면 배민 형식
+      const isBaeminFormat = (selectedChannel === '배민') || 
+                             (headerStr.includes('SKU코드') && headerStr.includes('SKU명'));
+      
+      if (isBaeminFormat) {
+        console.log('★★★ 배민 발주서 형식 감지됨! ★★★');
+        
+        // 헤더에서 컬럼 인덱스 찾기 (정확한 매칭)
+        let skuCodeIdx = -1;
+        let skuNameIdx = -1;
+        let qtyIdx = -1;
+        
+        console.log('헤더 컬럼 수:', headerRow.length);
+        for (let i = 0; i < headerRow.length; i++) {
+          const h = String(headerRow[i] || '').trim();
+          if (h === 'SKU코드') {
+            skuCodeIdx = i;
+            console.log('✓ 배민 SKU코드 컬럼 발견:', i, '=', h);
+          }
+          if (h === 'SKU명') {
+            skuNameIdx = i;
+            console.log('✓ 배민 SKU명 컬럼 발견:', i, '=', h);
+          }
+          if (h === '입고진행수량') {
+            qtyIdx = i;
+            console.log('✓ 배민 입고진행수량 컬럼 발견:', i, '=', h);
+          }
+        }
+        
+        // 기본값 (실패 시)
+        if (skuCodeIdx < 0) {
+          console.warn('⚠ SKU코드 컬럼 못찾음, 기본값 17 사용');
+          skuCodeIdx = 17;
+        }
+        if (skuNameIdx < 0) {
+          console.warn('⚠ SKU명 컬럼 못찾음, 기본값 18 사용');
+          skuNameIdx = 18;
+        }
+        if (qtyIdx < 0) {
+          console.warn('⚠ 입고진행수량 컬럼 못찾음, 기본값 23 사용');
+          qtyIdx = 23;
+        }
+        
+        console.log('배민 컬럼 확정 - SKU코드:', skuCodeIdx, 'SKU명:', skuNameIdx, '입고진행수량:', qtyIdx);
+        
+        // 첫 번째 데이터 행 디버깅
+        if (rows.length > 1) {
+          const firstDataRow = rows[1];
+          console.log('첫 데이터 행 전체:', JSON.stringify(firstDataRow));
+          console.log('  SKU코드[' + skuCodeIdx + ']:', firstDataRow[skuCodeIdx]);
+          console.log('  SKU명[' + skuNameIdx + ']:', firstDataRow[skuNameIdx]);
+          console.log('  입고진행수량[' + qtyIdx + ']:', firstDataRow[qtyIdx]);
+        }
+        
+        // 데이터 추출 (2행부터)
+        const baeminItems = new Map();  // SKU코드별 수량 합산용
+        
+        for (let i = 1; i < rows.length; i++) {
+          const row = rows[i];
+          if (!row || !Array.isArray(row)) continue;
+          
+          const skuCode = String(row[skuCodeIdx] || '').trim();
+          const skuName = String(row[skuNameIdx] || '').trim();
+          const qtyRaw = String(row[qtyIdx] || '').replace(/,/g, '').trim();
+          const quantity = parseInt(qtyRaw) || 0;
+          
+          // 유효성 검사 (SKU코드는 S 또는 A로 시작하는 패턴)
+          if (skuCode && /^[SA]\d+/.test(skuCode) && quantity > 0) {
+            console.log('행', i, ': SKU=' + skuCode, 'SKU명=' + skuName.substring(0, 25) + '...', '수량=' + quantity);
+            
+            // 동일 SKU 수량 합산
+            if (baeminItems.has(skuCode)) {
+              const existing = baeminItems.get(skuCode);
+              existing.quantity += quantity;
+            } else {
+              baeminItems.set(skuCode, {
+                product_name: skuName,
+                quantity: quantity,
+                sku_code: skuCode  // ★ SKU코드 추가
+              });
+            }
+          } else if (i <= 3) {
+            // 처음 몇 행 디버깅
+            console.log('행', i, '스킵 - SKU:', skuCode, '수량:', quantity, 'SKU패턴:', /^[SA]\d+/.test(skuCode));
+          }
+        }
+        
+        // Map을 배열로 변환하여 allItems에 추가
+        for (const item of baeminItems.values()) {
+          allItems.push(item);
+          console.log('  → 추가됨:', item.sku_code, item.product_name, '수량:', item.quantity);
+        }
+        
+        console.log('배민 발주서 파싱 완료:', allItems.length, '건 (SKU 코드 기반)');
+        continue;  // 다음 파일로
+      }
+      
+      // ============================================================
+      // 일반 엑셀 형식 처리 (쿠팡/배민 아닌 경우)
       // ============================================================
       console.log('일반 엑셀 형식으로 처리');
       console.log('처음 10행 미리보기:');
@@ -48617,7 +48788,8 @@ async function handleOrderFileUpload() {
       items: allItems.map(i => ({ 
         product_name: i.product_name, 
         quantity: i.quantity,
-        barcode: i.barcode || undefined  // 바코드 포함
+        barcode: i.barcode || undefined,
+        sku_code: i.sku_code || undefined  // ★ SKU코드 추가 (배민용)
       })),
       channel: channelSelect.value,
       order_date: dateInput.value
@@ -49134,7 +49306,7 @@ async function renderSheetsConfig() {
             <button onclick="initSheets()" class="w-full px-4 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600">
               <i class="fas fa-plus-circle mr-2"></i>시트 초기화 (6개 시트 생성)
             </button>
-            <a href="https://docs.google.com/spreadsheets/d/1z8nkSEaP8PuKWKjVHozSO3_ghb2KY47QiQ-vDfB9Vfg" target="_blank" 
+            <a href="https://docs.google.com/spreadsheets/d/1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU" target="_blank" 
                class="block w-full px-4 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-center">
               <i class="fas fa-external-link-alt mr-2"></i>구글시트 열기
             </a>
@@ -49164,7 +49336,7 @@ async function checkSheetsStatus() {
         <i class="fas fa-check-circle"></i>
         <span>구글시트 연동 준비됨</span>
       </div>
-      <p class="text-sm text-gray-500 mt-2">시트 ID: 1z8nkSEaP8PuKWKjVHozSO3_ghb2KY47QiQ-vDfB9Vfg</p>
+      <p class="text-sm text-gray-500 mt-2">시트 ID: 1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU</p>
     `;
   } catch (error) {
     statusDiv.innerHTML = `
@@ -49270,7 +49442,15 @@ async function generateDailyReportPdf() {
   
   try {
     // 올바른 생산일보 API 호출 (Google Sheets 기반)
-    const res = await axios.get(`/api/sheets/v2/output/production-report?date=${date}`);
+    const [prodRes, invRes] = await Promise.all([
+      axios.get(`/api/sheets/v2/output/production-report?date=${date}`),
+      axios.get(`/api/sheets/v2/inventory?date=${date}`)  // ★ 일별수불부 데이터 추가
+    ]);
+    
+    const res = prodRes;
+    // ★ 일별수불부 원료 사용량 데이터 (usage_qty 기준)
+    const inventoryData = invRes.data.success ? (invRes.data.data || []) : [];
+    
     if (res.data.success && res.data.report) {
       const report = res.data.report;
       const items = report.items || [];
@@ -49294,7 +49474,7 @@ async function generateDailyReportPdf() {
           </div>
           
           <div class="bg-blue-50 rounded-lg p-4">
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+            <div class="grid grid-cols-3 gap-4 text-center">
               <div>
                 <p class="text-xs text-gray-500">조회일자</p>
                 <p class="text-lg font-bold text-blue-600">${date}</p>
@@ -49306,10 +49486,6 @@ async function generateDailyReportPdf() {
               <div>
                 <p class="text-xs text-gray-500">총 생산량</p>
                 <p class="text-lg font-bold text-purple-600">${(summary.total_production || items.reduce((s,i) => s + (i.quantity || i.production_qty || 0), 0)).toLocaleString()}</p>
-              </div>
-              <div>
-                <p class="text-xs text-gray-500">총 출고량</p>
-                <p class="text-lg font-bold text-orange-600">${(summary.total_outbound || 0).toLocaleString()}</p>
               </div>
             </div>
           </div>
@@ -49328,28 +49504,41 @@ async function generateDailyReportPdf() {
                 </tr>
               </thead>
               <tbody class="divide-y">
-                ${items.slice(0, 50).map(item => {
-                  // 소비기한 계산 (생산일 + expiry_days)
-                  const expiryDays = item.expiry_days || 24;
-                  const prodDate = new Date(date);
-                  prodDate.setDate(prodDate.getDate() + expiryDays);
-                  const expiryDate = prodDate.toISOString().split('T')[0];
-                  
-                  return '<tr class="hover:bg-gray-50">' +
-                    '<td class="px-3 py-2 font-mono text-xs">' + (item.product_code || item.item_code || '-') + '</td>' +
-                    '<td class="px-3 py-2">' + (item.product_name || item.item_name || '-') + '</td>' +
-                    '<td class="px-3 py-2 text-right text-green-600 font-bold">' + (item.quantity || item.production_qty || 0).toLocaleString() + '</td>' +
-                    '<td class="px-3 py-2 font-mono text-xs text-blue-600">' + (item.lot_number || '-') + '</td>' +
-                    '<td class="px-3 py-2">' + (item.channel || '-') + '</td>' +
-                    '<td class="px-3 py-2 text-center text-orange-600 font-medium">' + expiryDate + '</td>' +
-                  '</tr>';
-                }).join('')}
+                ${(() => {
+                  // ★ 제품코드별 순번 카운터
+                  const lotCounters = {};
+                  return items.slice(0, 50).map(item => {
+                    // 소비기한 계산 (생산일 + expiry_days)
+                    const expiryDays = item.expiry_days || 24;
+                    const prodDate = new Date(date);
+                    prodDate.setDate(prodDate.getDate() + expiryDays);
+                    const expiryDate = prodDate.toISOString().split('T')[0];
+                    
+                    // ★★★ 제품 LOT 형식: 20260601-PR253-001 (날짜-제품코드-순번) ★★★
+                    let lotNo = item.lot_number;
+                    const pcode = item.product_code || item.item_code || 'PRD';
+                    if (!lotNo || lotNo === '260601' || lotNo.length < 10) {
+                      if (!lotCounters[pcode]) lotCounters[pcode] = 0;
+                      lotCounters[pcode]++;
+                      lotNo = date.replace(/-/g, '') + '-' + pcode + '-' + String(lotCounters[pcode]).padStart(3, '0');
+                    }
+                    
+                    return '<tr class="hover:bg-gray-50">' +
+                      '<td class="px-3 py-2 font-mono text-xs">' + pcode + '</td>' +
+                      '<td class="px-3 py-2">' + (item.product_name || item.item_name || '-') + '</td>' +
+                      '<td class="px-3 py-2 text-right text-green-600 font-bold">' + (item.quantity || item.production_qty || 0).toLocaleString() + '</td>' +
+                      '<td class="px-3 py-2 font-mono text-xs text-blue-600">' + lotNo + '</td>' +
+                      '<td class="px-3 py-2">' + (item.channel || '-') + '</td>' +
+                      '<td class="px-3 py-2 text-center text-orange-600 font-medium">' + expiryDate + '</td>' +
+                    '</tr>';
+                  }).join('');
+                })()}
                 ${items.length > 50 ? '<tr><td colspan="6" class="px-3 py-2 text-center text-gray-500">... 외 ' + (items.length - 50) + '건</td></tr>' : ''}
               </tbody>
             </table>
           </div>
           
-          <!-- 원료 사용 현황 (LOT 정보 포함) -->
+          <!-- 원료 사용 현황 (구글시트 일별수불부 기반) -->
           <div class="mt-6">
             <h4 class="font-bold text-gray-700 mb-2">
               <i class="fas fa-flask text-purple-500 mr-2"></i>원료 사용 현황 (LOT별)
@@ -49367,44 +49556,27 @@ async function generateDailyReportPdf() {
                 </thead>
                 <tbody class="divide-y">
                   ${(() => {
-                    // 모든 원료 사용 데이터를 집계 (LOT별)
-                    const materialMap = new Map();
-                    items.forEach(item => {
-                      (item.materials || []).forEach(mat => {
-                        const key = mat.item_code + '|' + (mat.material_lot || '-');
-                        if (materialMap.has(key)) {
-                          materialMap.get(key).usage_qty += mat.usage_qty || 0;
-                        } else {
-                          materialMap.set(key, {
-                            item_code: mat.item_code,
-                            item_name: mat.item_name,
-                            usage_qty: mat.usage_qty || 0,
-                            material_lot: mat.material_lot || '-',
-                            expiry_date: mat.expiry_date || '-'
-                          });
-                        }
-                      });
-                    });
-                    const materialList = Array.from(materialMap.values())
-                      .filter(m => m.usage_qty > 0)
-                      .sort((a, b) => a.item_code.localeCompare(b.item_code));
+                    // ★★★ 구글시트 일별수불부에서 usage_qty 사용 ★★★
+                    const materialList = inventoryData
+                      .filter(inv => (inv.usage_qty || 0) > 0)
+                      .sort((a, b) => (a.item_code || '').localeCompare(b.item_code || ''));
                     
                     if (materialList.length === 0) {
                       return '<tr><td colspan="5" class="px-3 py-4 text-center text-gray-500">원료 사용 데이터가 없습니다.</td></tr>';
                     }
                     
-                    return materialList.slice(0, 100).map(mat => {
+                    return materialList.slice(0, 100).map(inv => {
                       // 유통기한 형식 변환 (엑셀 시리얼 날짜 → YYYY-MM-DD)
-                      let expDate = mat.expiry_date;
+                      let expDate = inv.expiry_date || '-';
                       if (expDate && !isNaN(expDate) && parseInt(expDate) > 40000) {
                         const d = new Date((parseInt(expDate) - 25569) * 86400000);
                         expDate = d.toISOString().split('T')[0];
                       }
                       return '<tr class="hover:bg-gray-50">' +
-                        '<td class="px-3 py-2 font-mono text-xs">' + mat.item_code + '</td>' +
-                        '<td class="px-3 py-2">' + (mat.item_name || '-') + '</td>' +
-                        '<td class="px-3 py-2 text-right text-purple-600">' + mat.usage_qty.toFixed(3) + '</td>' +
-                        '<td class="px-3 py-2 font-mono text-xs">' + mat.material_lot + '</td>' +
+                        '<td class="px-3 py-2 font-mono text-xs">' + (inv.item_code || '-') + '</td>' +
+                        '<td class="px-3 py-2">' + (inv.item_name || '-') + '</td>' +
+                        '<td class="px-3 py-2 text-right text-purple-600">' + Math.abs(inv.usage_qty || 0).toFixed(3) + '</td>' +
+                        '<td class="px-3 py-2 font-mono text-xs">' + (inv.lot_number || '-') + '</td>' +
                         '<td class="px-3 py-2 text-xs">' + expDate + '</td>' +
                         '</tr>';
                     }).join('') + (materialList.length > 100 ? '<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ' + (materialList.length - 100) + '건</td></tr>' : '');
@@ -49425,10 +49597,208 @@ async function generateDailyReportPdf() {
   }
 }
 
-// 생산일보 인쇄 기능
-function printDailyReportPdf(date) {
-  // 일별수불부 페이지로 이동 후 인쇄 트리거
-  window.location.hash = `daily-report?date=${date}&print=true`;
+// 생산일보 인쇄 기능 (v3.5.56 - 원료사용현황 + 이상여부/조치사항 테이블 추가)
+async function printDailyReportPdf(date) {
+  try {
+    showToast('인쇄 데이터 로딩 중...', 'info');
+    
+    // ★★★ 생산일보 + 일별수불부 API 동시 호출 ★★★
+    const [prodRes, invRes] = await Promise.all([
+      axios.get(`/api/sheets/v2/output/production-report?date=${date}`),
+      axios.get(`/api/sheets/v2/inventory?date=${date}`)  // 구글시트 일별수불부
+    ]);
+    
+    const res = prodRes;
+    // ★ 구글시트 일별수불부 원료 사용량 데이터 (usage_qty 기준)
+    const inventoryData = invRes.data.success ? (invRes.data.data || []) : [];
+    
+    if (!res.data.success || !res.data.report) {
+      showToast('인쇄할 데이터가 없습니다', 'warning');
+      return;
+    }
+    
+    const report = res.data.report;
+    const items = report.items || [];
+    const summary = report.summary || {};
+    
+    if (items.length === 0) {
+      showToast('해당 일자 생산 데이터가 없습니다', 'warning');
+      return;
+    }
+    
+    // ========== 1. 생산실적 테이블 (출고/재고 컬럼 삭제) ==========
+    // ★ 제품코드별 순번 카운터 (LOT 형식: 20260601-PR253-001)
+    const lotCounters = {};
+    
+    let productionTableHtml = `
+      <table>
+        <thead>
+          <tr style="background:#e0e0e0;">
+            <th>제품코드</th>
+            <th>제품명</th>
+            <th style="text-align:right;">생산</th>
+            <th style="text-align:center;">소비기한</th>
+            <th style="text-align:center;">제품LOT</th>
+            <th style="text-align:center;">판매처</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+    
+    items.forEach(item => {
+      // ★★★ 제품 LOT 형식: 20260601-PR253-001 (날짜-제품코드-순번) ★★★
+      const pcode = item.product_code || 'PRD';
+      let lotNo = item.lot_number;
+      if (!lotNo || lotNo === '260601' || lotNo.length < 10) {
+        if (!lotCounters[pcode]) lotCounters[pcode] = 0;
+        lotCounters[pcode]++;
+        lotNo = date.replace(/-/g, '') + '-' + pcode + '-' + String(lotCounters[pcode]).padStart(3, '0');
+      }
+      
+      // 소비기한 계산 (생산일 + expiry_days)
+      const expiryDays = item.expiry_days || 24;
+      const prodDate = new Date(date);
+      prodDate.setDate(prodDate.getDate() + expiryDays);
+      const expiryDate = prodDate.toISOString().split('T')[0];
+      
+      productionTableHtml += `
+        <tr>
+          <td>${pcode}</td>
+          <td>${item.product_name || '-'}</td>
+          <td style="text-align:right;">${formatNumber(item.quantity || item.production_qty || 0)}</td>
+          <td style="text-align:center;">${expiryDate}</td>
+          <td style="text-align:center;">${lotNo}</td>
+          <td style="text-align:center;">${item.channel || item.remark || '-'}</td>
+        </tr>
+      `;
+    });
+    
+    productionTableHtml += '</tbody></table>';
+    
+    // ========== 2. 원료사용 현황 테이블 (구글시트 일별수불부 기반) ==========
+    // ★★★ 구글시트 일별수불부에서 usage_qty 사용 ★★★
+    const materialList = inventoryData
+      .filter(inv => (inv.usage_qty || 0) > 0)
+      .sort((a, b) => (a.item_code || '').localeCompare(b.item_code || ''));
+    
+    let materialsTableHtml = '';
+    if (materialList.length > 0) {
+      materialsTableHtml = `
+        <h3 style="margin-top:20px; margin-bottom:10px; font-size:14px; font-weight:bold; border-bottom:1px solid #333; padding-bottom:5px;">
+          ◆ 원료 사용 현황 (총 ${materialList.length}종)
+        </h3>
+        <table>
+          <thead>
+            <tr style="background:#f0e6ff;">
+              <th>원료코드</th>
+              <th>원료명</th>
+              <th style="text-align:right;">사용량</th>
+              <th>원료 LOT</th>
+              <th>유통기한</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      materialList.forEach(inv => {
+        // 유통기한 형식 변환 (엑셀 시리얼 날짜 → YYYY-MM-DD)
+        let expDate = inv.expiry_date || '-';
+        if (expDate && !isNaN(expDate) && parseInt(expDate) > 40000) {
+          const d = new Date((parseInt(expDate) - 25569) * 86400000);
+          expDate = d.toISOString().split('T')[0];
+        }
+        materialsTableHtml += `
+          <tr>
+            <td>${inv.item_code || '-'}</td>
+            <td>${inv.item_name || '-'}</td>
+            <td style="text-align:right;">${Math.abs(inv.usage_qty || 0).toFixed(3)}</td>
+            <td>${inv.lot_number || '-'}</td>
+            <td>${expDate}</td>
+          </tr>
+        `;
+      });
+      materialsTableHtml += '</tbody></table>';
+    } else {
+      materialsTableHtml = `
+        <h3 style="margin-top:20px; margin-bottom:10px; font-size:14px; font-weight:bold; border-bottom:1px solid #333; padding-bottom:5px;">
+          ◆ 원료 사용 현황
+        </h3>
+        <p style="color:#666; font-size:12px; text-align:center; padding:10px;">원료 사용 데이터가 없습니다. (일별수불부 미등록)</p>
+      `;
+    }
+    
+    // ========== 3. 이상여부/조치사항 테이블 ==========
+    const remarksTableHtml = `
+      <h3 style="margin-top:20px; margin-bottom:10px; font-size:14px; font-weight:bold; border-bottom:1px solid #333; padding-bottom:5px;">
+        ◆ 이상여부 및 조치사항
+      </h3>
+      <table>
+        <thead>
+          <tr style="background:#fff3e0;">
+            <th style="width:80px;">이상여부</th>
+            <th style="width:120px;">제품/원료</th>
+            <th style="width:100px;">LOT</th>
+            <th>내용</th>
+            <th>조치사항</th>
+            <th style="width:100px;">비고</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td style="text-align:center;">□ 유 / ☑ 무</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td style="text-align:center;">□ 유 / □ 무</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+          <tr>
+            <td style="text-align:center;">□ 유 / □ 무</td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top:20px; display:flex; justify-content:space-between;">
+        <div style="border:1px solid #333; padding:10px 30px; text-align:center;">
+          <div style="font-size:11px; color:#666;">작성자</div>
+          <div style="height:30px;"></div>
+        </div>
+        <div style="border:1px solid #333; padding:10px 30px; text-align:center;">
+          <div style="font-size:11px; color:#666;">검토자</div>
+          <div style="height:30px;"></div>
+        </div>
+        <div style="border:1px solid #333; padding:10px 30px; text-align:center;">
+          <div style="font-size:11px; color:#666;">승인자</div>
+          <div style="height:30px;"></div>
+        </div>
+      </div>
+    `;
+    
+    // ========== 전체 HTML 조합 ==========
+    const totalProduction = items.reduce((s, i) => s + (i.quantity || i.production_qty || 0), 0);
+    const totalOutbound = summary.total_outbound || items.reduce((s, i) => s + (i.outbound_qty || 0), 0);
+    
+    const fullHtml = productionTableHtml + materialsTableHtml + remarksTableHtml;
+    
+    const info = `<strong>조회일:</strong> ${date} | <strong>품목:</strong> ${items.length}건 | <strong>총생산:</strong> ${formatNumber(totalProduction)} | <strong>총출고:</strong> ${formatNumber(totalOutbound)} | <strong>원료:</strong> ${materialList.length}종`;
+    
+    printData(`생산일보 (${date})`, fullHtml, info);
+    
+  } catch (error) {
+    console.error('생산일보 인쇄 오류:', error);
+    showToast('인쇄 중 오류가 발생했습니다', 'error');
+  }
 }
 
 window.renderDailyReportPdf = renderDailyReportPdf;
@@ -49579,7 +49949,7 @@ async function completeOrderProduction() {
       // 구글시트 바로가기 안내
       setTimeout(() => {
         if (confirm('구글시트에서 원료 사용량을 확인하시겠습니까?')) {
-          window.open('https://docs.google.com/spreadsheets/d/1z8nkSEaP8PuKWKjVHozSO3_ghb2KY47QiQ-vDfB9Vfg', '_blank');
+          window.open('https://docs.google.com/spreadsheets/d/1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU', '_blank');
         }
         window.location.hash = 'order-list';
       }, 1000);
@@ -49877,7 +50247,7 @@ function printShipmentLog() {
         <tr class="header-row">
           <td rowspan="2" class="title-cell" style="width:50%;">출 고 일 지</td>
           <td class="info-label">문서번호</td>
-          <td class="info-value" style="width:120px;">BV-HACCP-SH-001</td>
+          <td class="info-value" style="width:120px;">BV-201-22</td>
           <td class="approval-label">담당</td>
           <td class="approval-label">검토</td>
           <td class="approval-label">승인</td>

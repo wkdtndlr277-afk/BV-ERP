@@ -1075,7 +1075,7 @@ function printData(title, tableHtml, additionalInfo = '', options = {}) {
       `}
       ${tableHtml}
       <div class="footer" style="${isCompactHeader ? 'margin-top:5px; font-size:6px; padding-top:3px;' : ''}">
-        HACCP 통합관리시스템 | DOC-${formatDate(new Date()).replace(/-/g, '')}-${Math.random().toString(36).substr(2,4).toUpperCase()}
+        HACCP 통합관리시스템
       </div>
     </body>
     </html>

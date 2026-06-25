@@ -49442,14 +49442,14 @@ async function generateDailyReportPdf() {
   
   try {
     // 올바른 생산일보 API 호출 (Google Sheets 기반)
-    const [prodRes, invRes] = await Promise.all([
+    const [prodRes, matRes] = await Promise.all([
       axios.get(`/api/sheets/v2/output/production-report?date=${date}`),
-      axios.get(`/api/sheets/v2/output/daily-stock?date=${date}`)  // ★ 구글시트 일별수불부 데이터
+      axios.get(`/api/sheets/v2/output/material-usage?date=${date}`)  // ★ 로트매칭 기반 원료사용현황 (LOT+소비기한 포함)
     ]);
     
     const res = prodRes;
-    // ★ 구글시트 일별수불부 원료 사용량 데이터 (usage_qty 기준)
-    const inventoryData = invRes.data.success ? (invRes.data.data || []) : [];
+    // ★ 로트매칭 시트 기반 원료 사용량 데이터 (LOT + 소비기한 포함)
+    const materialUsageData = matRes.data.success ? (matRes.data.data || []) : [];
     
     if (res.data.success && res.data.report) {
       const report = res.data.report;
@@ -49556,30 +49556,20 @@ async function generateDailyReportPdf() {
                 </thead>
                 <tbody class="divide-y">
                   ${(() => {
-                    // ★★★ 구글시트 일별수불부에서 usage_qty 사용 ★★★
-                    const materialList = inventoryData
-                      .filter(inv => (inv.usage_qty || 0) > 0)
-                      .sort((a, b) => (a.item_code || '').localeCompare(b.item_code || ''));
-                    
-                    if (materialList.length === 0) {
+                    // ★★★ 로트매칭 시트에서 원료사용현황 (LOT + 소비기한 포함) ★★★
+                    if (materialUsageData.length === 0) {
                       return '<tr><td colspan="5" class="px-3 py-4 text-center text-gray-500">원료 사용 데이터가 없습니다.</td></tr>';
                     }
                     
-                    return materialList.slice(0, 100).map(inv => {
-                      // 유통기한 형식 변환 (엑셀 시리얼 날짜 → YYYY-MM-DD)
-                      let expDate = inv.expiry_date || '-';
-                      if (expDate && !isNaN(expDate) && parseInt(expDate) > 40000) {
-                        const d = new Date((parseInt(expDate) - 25569) * 86400000);
-                        expDate = d.toISOString().split('T')[0];
-                      }
+                    return materialUsageData.slice(0, 100).map(mat => {
                       return '<tr class="hover:bg-gray-50">' +
-                        '<td class="px-3 py-2 font-mono text-xs">' + (inv.item_code || '-') + '</td>' +
-                        '<td class="px-3 py-2">' + (inv.item_name || '-') + '</td>' +
-                        '<td class="px-3 py-2 text-right text-purple-600">' + Math.abs(inv.usage_qty || 0).toFixed(3) + '</td>' +
-                        '<td class="px-3 py-2 font-mono text-xs">' + (inv.lot_number || '-') + '</td>' +
-                        '<td class="px-3 py-2 text-xs">' + expDate + '</td>' +
+                        '<td class="px-3 py-2 font-mono text-xs">' + (mat.item_code || '-') + '</td>' +
+                        '<td class="px-3 py-2">' + (mat.item_name || '-') + '</td>' +
+                        '<td class="px-3 py-2 text-right text-purple-600">' + Math.abs(mat.usage_qty || 0).toFixed(3) + '</td>' +
+                        '<td class="px-3 py-2 font-mono text-xs">' + (mat.lot_number || '-') + '</td>' +
+                        '<td class="px-3 py-2 text-xs">' + (mat.expiry_date || '-') + '</td>' +
                         '</tr>';
-                    }).join('') + (materialList.length > 100 ? '<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ' + (materialList.length - 100) + '건</td></tr>' : '');
+                    }).join('') + (materialUsageData.length > 100 ? '<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ' + (materialUsageData.length - 100) + '건</td></tr>' : '');
                   })()}
                 </tbody>
               </table>
@@ -49602,15 +49592,15 @@ async function printDailyReportPdf(date) {
   try {
     showToast('인쇄 데이터 로딩 중...', 'info');
     
-    // ★★★ 생산일보 + 일별수불부 API 동시 호출 ★★★
-    const [prodRes, invRes] = await Promise.all([
+    // ★★★ 생산일보 + 로트매칭 기반 원료사용현황 API 동시 호출 ★★★
+    const [prodRes, matRes] = await Promise.all([
       axios.get(`/api/sheets/v2/output/production-report?date=${date}`),
-      axios.get(`/api/sheets/v2/output/daily-stock?date=${date}`)  // ★ 구글시트 일별수불부
+      axios.get(`/api/sheets/v2/output/material-usage?date=${date}`)  // ★ 로트매칭 기반 (LOT+소비기한 포함)
     ]);
     
     const res = prodRes;
-    // ★ 구글시트 일별수불부 원료 사용량 데이터 (usage_qty 기준)
-    const inventoryData = invRes.data.success ? (invRes.data.data || []) : [];
+    // ★ 로트매칭 시트 기반 원료 사용량 데이터 (LOT + 소비기한 포함)
+    const materialUsageData = matRes.data.success ? (matRes.data.data || []) : [];
     
     if (!res.data.success || !res.data.report) {
       showToast('인쇄할 데이터가 없습니다', 'warning');
@@ -49675,17 +49665,13 @@ async function printDailyReportPdf(date) {
     
     productionTableHtml += '</tbody></table>';
     
-    // ========== 2. 원료사용 현황 테이블 (구글시트 일별수불부 기반) ==========
-    // ★★★ 구글시트 일별수불부에서 usage_qty 사용 ★★★
-    const materialList = inventoryData
-      .filter(inv => (inv.usage_qty || 0) > 0)
-      .sort((a, b) => (a.item_code || '').localeCompare(b.item_code || ''));
-    
+    // ========== 2. 원료사용 현황 테이블 (로트매칭 시트 기반) ==========
+    // ★★★ 로트매칭 시트에서 원료사용현황 (LOT + 소비기한 포함) ★★★
     let materialsTableHtml = '';
-    if (materialList.length > 0) {
+    if (materialUsageData.length > 0) {
       materialsTableHtml = `
         <h3 style="margin-top:20px; margin-bottom:10px; font-size:14px; font-weight:bold; border-bottom:1px solid #333; padding-bottom:5px;">
-          ◆ 원료 사용 현황 (총 ${materialList.length}종)
+          ◆ 원료 사용 현황 (총 ${materialUsageData.length}종)
         </h3>
         <table>
           <thead>
@@ -49694,25 +49680,19 @@ async function printDailyReportPdf(date) {
               <th>원료명</th>
               <th style="text-align:right;">사용량</th>
               <th>원료 LOT</th>
-              <th>유통기한</th>
+              <th>소비기한</th>
             </tr>
           </thead>
           <tbody>
       `;
-      materialList.forEach(inv => {
-        // 유통기한 형식 변환 (엑셀 시리얼 날짜 → YYYY-MM-DD)
-        let expDate = inv.expiry_date || '-';
-        if (expDate && !isNaN(expDate) && parseInt(expDate) > 40000) {
-          const d = new Date((parseInt(expDate) - 25569) * 86400000);
-          expDate = d.toISOString().split('T')[0];
-        }
+      materialUsageData.forEach(mat => {
         materialsTableHtml += `
           <tr>
-            <td>${inv.item_code || '-'}</td>
-            <td>${inv.item_name || '-'}</td>
-            <td style="text-align:right;">${Math.abs(inv.usage_qty || 0).toFixed(3)}</td>
-            <td>${inv.lot_number || '-'}</td>
-            <td>${expDate}</td>
+            <td>${mat.item_code || '-'}</td>
+            <td>${mat.item_name || '-'}</td>
+            <td style="text-align:right;">${Math.abs(mat.usage_qty || 0).toFixed(3)}</td>
+            <td>${mat.lot_number || '-'}</td>
+            <td>${mat.expiry_date || '-'}</td>
           </tr>
         `;
       });
@@ -49722,7 +49702,7 @@ async function printDailyReportPdf(date) {
         <h3 style="margin-top:20px; margin-bottom:10px; font-size:14px; font-weight:bold; border-bottom:1px solid #333; padding-bottom:5px;">
           ◆ 원료 사용 현황
         </h3>
-        <p style="color:#666; font-size:12px; text-align:center; padding:10px;">원료 사용 데이터가 없습니다. (일별수불부 미등록)</p>
+        <p style="color:#666; font-size:12px; text-align:center; padding:10px;">원료 사용 데이터가 없습니다. (로트매칭 미등록)</p>
       `;
     }
     

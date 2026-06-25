@@ -1370,6 +1370,90 @@ sheets.get('/v2/output/daily-stock', async (c) => {
 });
 
 // =====================================================
+// 원료 사용 현황 (LOT + 소비기한 포함) - 생산일보 PDF용
+// =====================================================
+sheets.get('/v2/output/material-usage', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+    
+    // 로트매칭 시트에서 해당 날짜 데이터 조회
+    // 구조: A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
+    
+    // 날짜 필터링 및 원료별 집계
+    const materialMap = new Map<string, {
+      item_code: string;
+      item_name: string;
+      usage_qty: number;
+      lot_number: string;
+      expiry_date: string;
+    }>();
+    
+    lotMatchingData.forEach(row => {
+      // 날짜 비교
+      let rowDate = row[0];
+      if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      } else if (typeof rowDate === 'string') {
+        rowDate = rowDate.replace(/^'/, '');
+      }
+      
+      if (rowDate !== date) return;
+      
+      const itemCode = row[2] || '';
+      const itemName = row[3] || '';
+      const usageQty = parseFloat(row[4]) || 0;
+      const lotNumber = row[5] || '-';
+      let expiryDate = row[6] || '-';
+      
+      // 유통기한 형식 변환 (엑셀 숫자 → YYYY-MM-DD)
+      if (expiryDate && !isNaN(expiryDate as any) && parseInt(expiryDate) > 40000) {
+        const d = new Date((parseInt(expiryDate) - 25569) * 86400 * 1000);
+        expiryDate = d.toISOString().split('T')[0];
+      }
+      
+      // 원료코드 + LOT 조합으로 키 생성
+      const key = `${itemCode}|${lotNumber}`;
+      
+      if (materialMap.has(key)) {
+        const existing = materialMap.get(key)!;
+        existing.usage_qty += usageQty;
+      } else {
+        materialMap.set(key, {
+          item_code: itemCode,
+          item_name: itemName,
+          usage_qty: usageQty,
+          lot_number: lotNumber,
+          expiry_date: expiryDate
+        });
+      }
+    });
+    
+    const records = Array.from(materialMap.values())
+      .filter(m => m.usage_qty > 0)
+      .sort((a, b) => a.item_code.localeCompare(b.item_code));
+    
+    return c.json({
+      success: true,
+      date,
+      total_items: records.length,
+      total_usage: records.reduce((sum, r) => sum + r.usage_qty, 0),
+      data: records,
+      note: '★ 로트매칭 시트 기반 원료 사용 현황 (LOT + 소비기한 포함)'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// =====================================================
 // 🚚 출고 자동화 API (v2/shipment/)
 // 생산일보 기반 익일 출고 자동 생성
 // =====================================================

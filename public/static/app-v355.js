@@ -49444,11 +49444,11 @@ async function generateDailyReportPdf() {
     // 올바른 생산일보 API 호출 (Google Sheets 기반)
     const [prodRes, invRes] = await Promise.all([
       axios.get(`/api/sheets/v2/output/production-report?date=${date}`),
-      axios.get(`/api/sheets/v2/inventory?date=${date}`)  // ★ 일별수불부 데이터 추가
+      axios.get(`/api/sheets/v2/output/daily-stock?date=${date}`)  // ★ 구글시트 일별수불부 데이터
     ]);
     
     const res = prodRes;
-    // ★ 일별수불부 원료 사용량 데이터 (usage_qty 기준)
+    // ★ 구글시트 일별수불부 원료 사용량 데이터 (usage_qty 기준)
     const inventoryData = invRes.data.success ? (invRes.data.data || []) : [];
     
     if (res.data.success && res.data.report) {
@@ -49605,7 +49605,7 @@ async function printDailyReportPdf(date) {
     // ★★★ 생산일보 + 일별수불부 API 동시 호출 ★★★
     const [prodRes, invRes] = await Promise.all([
       axios.get(`/api/sheets/v2/output/production-report?date=${date}`),
-      axios.get(`/api/sheets/v2/inventory?date=${date}`)  // 구글시트 일별수불부
+      axios.get(`/api/sheets/v2/output/daily-stock?date=${date}`)  // ★ 구글시트 일별수불부
     ]);
     
     const res = prodRes;

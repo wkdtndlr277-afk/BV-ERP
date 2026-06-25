@@ -49842,7 +49842,7 @@ async function printDailyReportPdf(date) {
     
     const fullHtml = productionTableHtml + materialsTableHtml + remarksTableHtml;
     
-    const info = `<strong>조회일:</strong> ${date} | <strong>품목:</strong> ${items.length}건 | <strong>총생산:</strong> ${formatNumber(totalProduction)} | <strong>총출고:</strong> ${formatNumber(totalOutbound)} | <strong>원료:</strong> ${materialList.length}종`;
+    const info = `<strong>조회일:</strong> ${date} | <strong>품목:</strong> ${items.length}건 | <strong>총생산:</strong> ${formatNumber(totalProduction)} | <strong>원료:</strong> ${materialUsageData.length}종`;
     
     printData(`생산일보 (${date})`, fullHtml, info);
     

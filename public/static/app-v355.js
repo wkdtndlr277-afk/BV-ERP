@@ -49802,7 +49802,7 @@ async function printDailyReportPdf(date) {
       `;
     }
     
-    // ========== 3. 이상여부/조치사항 테이블 ==========
+    // ========== 3. 이상여부/조치사항 테이블 (결재란 삭제) ==========
     const remarksTableHtml = `
       <h3 style="margin-top:20px; margin-bottom:10px; font-size:14px; font-weight:bold; border-bottom:1px solid #333; padding-bottom:5px;">
         ◆ 이상여부 및 조치사항
@@ -49845,31 +49845,72 @@ async function printDailyReportPdf(date) {
           </tr>
         </tbody>
       </table>
-      <div style="margin-top:20px; display:flex; justify-content:space-between;">
-        <div style="border:1px solid #333; padding:10px 30px; text-align:center;">
-          <div style="font-size:11px; color:#666;">작성자</div>
-          <div style="height:30px;"></div>
-        </div>
-        <div style="border:1px solid #333; padding:10px 30px; text-align:center;">
-          <div style="font-size:11px; color:#666;">검토자</div>
-          <div style="height:30px;"></div>
-        </div>
-        <div style="border:1px solid #333; padding:10px 30px; text-align:center;">
-          <div style="font-size:11px; color:#666;">승인자</div>
-          <div style="height:30px;"></div>
-        </div>
-      </div>
     `;
     
     // ========== 전체 HTML 조합 ==========
     const totalProduction = items.reduce((s, i) => s + (i.quantity || i.production_qty || 0), 0);
-    const totalOutbound = summary.total_outbound || items.reduce((s, i) => s + (i.outbound_qty || 0), 0);
     
     const fullHtml = productionTableHtml + materialsTableHtml + remarksTableHtml;
     
-    const info = `<strong>조회일:</strong> ${date} | <strong>품목:</strong> ${items.length}건 | <strong>총생산:</strong> ${formatNumber(totalProduction)} | <strong>원료:</strong> ${materialUsageData.length}종`;
+    // ★★★ 생산일보 전용 인쇄 (상단 제목/출력일/결재란 없음, 하단 HACCP 통합관리시스템만) ★★★
+    const printHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>생산일보 (${date})</title>
+        <style>
+          @page { margin: 12mm; size: A4; }
+          * { box-sizing: border-box; }
+          body {
+            font-family: 'Malgun Gothic', '맑은 고딕', -apple-system, sans-serif;
+            font-size: 10px;
+            line-height: 1.4;
+            color: #333;
+            margin: 0;
+            padding: 15px;
+          }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+          th, td { border: 1px solid #333; padding: 5px 6px; text-align: left; font-size: 9px; }
+          th { background: #e8e8e8; font-weight: bold; text-align: center; }
+          h3 { font-size: 14px; margin-top: 20px; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
+          .footer {
+            margin-top: 20px;
+            text-align: center;
+            font-size: 9px;
+            color: #666;
+            border-top: 1px solid #333;
+            padding-top: 8px;
+          }
+          @media print {
+            body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        ${fullHtml}
+        <div class="footer">HACCP 통합관리시스템</div>
+      </body>
+      </html>
+    `;
     
-    printData(`생산일보 (${date})`, fullHtml, info);
+    const blob = new Blob([printHtml], { type: 'text/html; charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const printWindow = window.open(url, '_blank', 'width=900,height=700,scrollbars=yes');
+    
+    if (!printWindow) {
+      showToast('팝업이 차단되었습니다. 팝업 차단을 해제해주세요.', 'error');
+      URL.revokeObjectURL(url);
+      return;
+    }
+    
+    printWindow.onload = function() {
+      setTimeout(() => {
+        printWindow.focus();
+        printWindow.print();
+        URL.revokeObjectURL(url);
+      }, 300);
+    };
     
   } catch (error) {
     console.error('생산일보 인쇄 오류:', error);

@@ -1373,7 +1373,23 @@ sheets.get('/v2/output/daily-stock', async (c) => {
 // 원료 사용 현황 - 생산일보 PDF용
 // 사용량: 일별수불부 시트 (SSOT)
 // LOT/소비기한: 로트매칭 시트에서 추출
+// ★ 이원료(SF001~SF010): 사용량만 표기, LOT/소비기한 없음
 // =====================================================
+
+// ★★★ 이원료 마스터 (고정) - 입고 개념 없음, 사용량만 표기 ★★★
+const IWON_MATERIALS: Record<string, string> = {
+  'SF001': '발효종르방',
+  'SF002': '통밀르방',
+  'SF003': '폴리쉬',
+  'SF004': '쌀르방',
+  'SF005': '쌀탕종',
+  'SF006': '탕종',
+  'SF007': '통밀탕종',
+  'SF008': '통밀폴리쉬',
+  'SF009': '호밀르방',
+  'SF010': '솔트라이발효종르방'
+};
+
 sheets.get('/v2/output/material-usage', async (c) => {
   const service = getSheetService(c);
   if (!service) {
@@ -1404,15 +1420,22 @@ sheets.get('/v2/output/material-usage', async (c) => {
       if (usageQty <= 0) return;
       
       const itemCode = row[1] || '';
+      let itemName = row[2] || '';
+      
+      // ★★★ 이원료(SF001~SF010): 고정된 원료명 사용 ★★★
+      if (IWON_MATERIALS[itemCode]) {
+        itemName = IWON_MATERIALS[itemCode];
+      }
+      
       usageMap.set(itemCode, {
         item_code: itemCode,
-        item_name: row[2] || '',
+        item_name: itemName,
         usage_qty: usageQty,
         unit: row[7] || 'kg'
       });
     });
     
-    // ★★★ 2. 로트매칭 시트에서 LOT/소비기한 조회 ★★★
+    // ★★★ 2. 로트매칭 시트에서 LOT/소비기한 조회 (이원료 제외) ★★★
     // 구조: A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한
     const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
     
@@ -1431,6 +1454,10 @@ sheets.get('/v2/output/material-usage', async (c) => {
       if (rowDate !== date) return;
       
       const itemCode = row[2] || '';
+      
+      // ★★★ 이원료는 LOT 정보 저장 안함 ★★★
+      if (IWON_MATERIALS[itemCode]) return;
+      
       const lotNumber = row[5] || '-';
       let expiryDate = row[6] || '-';
       
@@ -1448,14 +1475,18 @@ sheets.get('/v2/output/material-usage', async (c) => {
     
     // ★★★ 3. 두 데이터 조합 ★★★
     const records = Array.from(usageMap.values()).map(item => {
-      const lotInfo = lotMap.get(item.item_code);
+      // ★★★ 이원료(SF001~SF010): LOT/소비기한 표시 안함 ★★★
+      const isIwon = !!IWON_MATERIALS[item.item_code];
+      const lotInfo = isIwon ? null : lotMap.get(item.item_code);
+      
       return {
         item_code: item.item_code,
         item_name: item.item_name,
         usage_qty: item.usage_qty,
         unit: item.unit,
-        lot_number: lotInfo?.lot_number || '-',
-        expiry_date: lotInfo?.expiry_date || '-'
+        lot_number: isIwon ? '-' : (lotInfo?.lot_number || '-'),
+        expiry_date: isIwon ? '-' : (lotInfo?.expiry_date || '-'),
+        is_iwon: isIwon  // 이원료 여부 플래그
       };
     });
     
@@ -1468,7 +1499,7 @@ sheets.get('/v2/output/material-usage', async (c) => {
       total_items: records.length,
       total_usage: records.reduce((sum, r) => sum + r.usage_qty, 0),
       data: records,
-      note: '★ 사용량: 일별수불부(SSOT), LOT/소비기한: 로트매칭'
+      note: '★ 사용량: 일별수불부(SSOT), LOT/소비기한: 로트매칭, 이원료(SF001~SF010): 사용량만'
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

@@ -137,6 +137,38 @@ export class GoogleSheetsService {
     return response.ok;
   }
 
+  // ★ 여러 범위 한 번에 쓰기 (batchUpdate) - 성능 최적화
+  async batchWriteSheet(updates: Array<{ sheetName: string; range: string; values: any[][] }>): Promise<boolean> {
+    const token = await this.getToken();
+    
+    const data = updates.map(u => ({
+      range: `${u.sheetName}!${u.range}`,
+      values: u.values
+    }));
+
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values:batchUpdate`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          valueInputOption: 'USER_ENTERED',
+          data
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const error = await response.json();
+      console.error('[batchWriteSheet] API 오류:', error);
+    }
+
+    return response.ok;
+  }
+
   // 시트에 데이터 추가 (Append)
   async appendSheet(sheetName: string, values: any[][]): Promise<{ success: boolean; updates?: any; error?: string }> {
     const token = await this.getToken();

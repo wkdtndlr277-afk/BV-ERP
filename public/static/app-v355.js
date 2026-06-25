@@ -47830,15 +47830,15 @@ function renderOrderUpload() {
             </div>
             
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">엑셀 파일 (CSV/TSV)</label>
-              <input type="file" id="order-upload-file" accept=".csv,.tsv,.txt,.xlsx,.xls" multiple
+              <label class="block text-sm font-medium text-gray-700 mb-1">발주서 파일 (엑셀/PDF)</label>
+              <input type="file" id="order-upload-file" accept=".csv,.tsv,.txt,.xlsx,.xls,.pdf" multiple
                 class="w-full px-3 py-2 border rounded-lg">
-              <p class="text-xs text-gray-500 mt-1">※ 여러 파일 선택 가능 (Ctrl+클릭)</p>
+              <p class="text-xs text-gray-500 mt-1">※ 여러 파일 선택 가능 (Ctrl+클릭) | PDF, 엑셀 모두 지원</p>
             </div>
             
             <button onclick="handleOrderFileUpload()" 
               class="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 font-medium">
-              <i class="fas fa-upload mr-2"></i>엑셀 업로드
+              <i class="fas fa-upload mr-2"></i>파일 업로드
             </button>
           </div>
         </div>
@@ -47903,7 +47903,265 @@ function renderOrderUpload() {
   `;
 }
 
-// 엑셀 파일 업로드 처리
+// ============================================================
+// PDF 텍스트 파싱 함수 - 발주서에서 제품명과 수량 추출
+// ============================================================
+
+// ★ 배민(배달의민족) 입고확인서 전용 파서
+// 구조: 순서 | 바코드 | SKU코드 | 상품명 | 보관온도 | 박스입수량 | 낱개 | 입고수량 | 소비기한 | ...
+function parseBaeminPdf(text) {
+  console.log('★ 배민 입고확인서 전용 파싱 시작');
+  const items = [];
+  
+  // 배민 감지: "입고확인서" + "우아한형제들" 또는 "본비반트"
+  const isBaemin = text.includes('입고확인서') && (text.includes('우아한형제들') || text.includes('본비반트'));
+  if (!isBaemin) {
+    console.log('배민 형식 아님, 일반 파싱으로 전환');
+    return null;  // 배민이 아니면 null 반환하여 일반 파싱으로 전환
+  }
+  
+  console.log('✓ 배민 입고확인서 감지됨');
+  
+  // PDF.js 텍스트는 공백으로 연결되어 있음
+  // 토큰 단위로 분리
+  const tokens = text.split(/\s+/).filter(t => t.trim());
+  console.log('토큰 수:', tokens.length);
+  console.log('토큰 샘플:', tokens.slice(0, 50).join(' | '));
+  
+  // 바코드 패턴 (880으로 시작하는 13자리)
+  const barcodePattern = /^880\d{10}$/;
+  // SKU 코드 패턴 (S로 시작하거나 A로 시작하는 코드)
+  const skuPattern = /^[SA]\d{5,10}$/;
+  // 순서 번호 (1~999)
+  const seqPattern = /^[1-9]\d{0,2}$/;
+  
+  // 바코드 위치 찾기 - 각 제품 데이터의 시작점
+  const productData = [];
+  
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    
+    // 바코드 발견
+    if (barcodePattern.test(token)) {
+      const barcode = token;
+      
+      // 바코드 이전에 순서 번호가 있는지 확인
+      let seq = '';
+      if (i > 0 && seqPattern.test(tokens[i-1])) {
+        seq = tokens[i-1];
+      }
+      
+      // 바코드 다음에 SKU 코드가 있는지 확인
+      let skuCode = '';
+      let productNameStart = i + 1;
+      
+      if (i + 1 < tokens.length && skuPattern.test(tokens[i + 1])) {
+        skuCode = tokens[i + 1];
+        productNameStart = i + 2;
+      }
+      
+      // 제품명 수집 - 다음 바코드 또는 특정 키워드까지
+      let productName = '';
+      let j = productNameStart;
+      const stopKeywords = ['냉동', '냉장', '상온', '박스', '낱개'];
+      
+      while (j < tokens.length) {
+        const t = tokens[j];
+        // 다음 바코드면 중단
+        if (barcodePattern.test(t)) break;
+        // 다음 순서번호 + 바코드 패턴이면 중단
+        if (seqPattern.test(t) && j + 1 < tokens.length && barcodePattern.test(tokens[j + 1])) break;
+        // 보관온도 키워드면 중단
+        if (stopKeywords.includes(t)) {
+          // 보관온도 이후에 수량 정보 추출
+          // 형식: 냉동 20 1 20 (박스입수량, 낱개, 입고수량)
+          const tempType = t;  // 냉동/냉장/상온
+          
+          // 다음 숫자들에서 수량 추출
+          let nums = [];
+          for (let k = j + 1; k < Math.min(j + 10, tokens.length); k++) {
+            const numToken = tokens[k].replace(/,/g, '');
+            if (/^\d+$/.test(numToken)) {
+              nums.push(parseInt(numToken));
+            } else if (barcodePattern.test(tokens[k]) || stopKeywords.includes(tokens[k])) {
+              break;
+            }
+          }
+          
+          // 수량 결정: 배민 형식은 [박스입수량, 낱개, 입고수량(박스), 입고수량(낱개)]
+          // 총 입고수량 = 입고수량(박스) * 박스입수량 + 입고수량(낱개)
+          let quantity = 0;
+          if (nums.length >= 4) {
+            // 박스입수량, 낱개표시, 입고박스수, 입고낱개수
+            const boxQty = nums[0];      // 박스입수량 (예: 20)
+            const boxCount = nums[2];    // 입고 박스 수 (예: 1)
+            const looseCount = nums[3];  // 입고 낱개 수 (예: 20)
+            quantity = boxCount * boxQty + looseCount;
+            console.log(`  수량계산: ${boxCount}박스 x ${boxQty}개 + ${looseCount}낱개 = ${quantity}`);
+          } else if (nums.length >= 2) {
+            // 간단 형식: 박스입수량, 입고수량
+            quantity = nums[nums.length - 1];  // 마지막 숫자를 입고수량으로
+          } else if (nums.length === 1) {
+            quantity = nums[0];
+          }
+          
+          if (productName && quantity > 0) {
+            productData.push({
+              seq,
+              barcode,
+              skuCode,
+              product_name: productName.trim(),
+              quantity,
+              tempType
+            });
+            console.log(`  → 추출: [${seq}] ${barcode} ${skuCode} "${productName.trim()}" ${quantity}개 (${tempType})`);
+          }
+          break;
+        }
+        
+        // 제품명에 추가
+        productName += (productName ? ' ' : '') + t;
+        j++;
+      }
+    }
+  }
+  
+  // 중복 제거 (바코드 기준)
+  const seen = new Set();
+  for (const item of productData) {
+    const key = item.barcode + '_' + item.product_name;
+    if (!seen.has(key)) {
+      seen.add(key);
+      items.push({
+        product_name: item.product_name,
+        quantity: item.quantity,
+        barcode: item.barcode
+      });
+    }
+  }
+  
+  console.log('배민 파싱 완료:', items.length, '건');
+  return items;
+}
+
+// 일반 PDF 텍스트 파싱
+function parsePdfText(text) {
+  console.log('★ PDF 텍스트 파싱 시작');
+  
+  // ★ 배민 형식 먼저 시도
+  const baeminItems = parseBaeminPdf(text);
+  if (baeminItems && baeminItems.length > 0) {
+    return baeminItems;
+  }
+  
+  const items = [];
+  
+  // 줄 단위로 분리
+  const lines = text.split(/\n/).map(l => l.trim()).filter(l => l);
+  console.log('PDF 줄 수:', lines.length);
+  
+  // ★ 필터링할 패턴들 (페이지 번호, 헤더 등)
+  const skipPatterns = [
+    /^\d+\s*\/\s*\d+$/,          // "1 / 2", "2/2" 등 페이지 번호
+    /^page\s*\d+/i,              // "page 1" 등
+    /^\d+\s*페이지$/,            // "1페이지" 등
+    /^입고확인서/,               // 헤더
+    /^발주번호/,
+    /^PO\d+/,
+    /^순서\s*바코드/,            // 테이블 헤더
+    /^No\.\s*상품/i,
+  ];
+  
+  // 다양한 패턴으로 제품명+수량 추출
+  for (const line of lines) {
+    // 스킵할 패턴 확인
+    if (skipPatterns.some(p => p.test(line))) {
+      console.log('  스킵 (필터링):', line);
+      continue;
+    }
+    
+    // 너무 짧은 라인 스킵
+    if (line.length < 3) continue;
+    
+    // 패턴 1: "제품명 수량개" 또는 "제품명 수량 개"
+    // 예: "플틴플러스 300g 50개", "잡곡빵 밋슈디 100개"
+    let match = line.match(/^(.+?)\s+(\d+)\s*개\s*$/);
+    if (match) {
+      const name = match[1].trim();
+      const qty = parseInt(match[2]);
+      if (name.length >= 2 && qty > 0 && qty < 100000) {
+        items.push({ product_name: name, quantity: qty });
+        console.log('  패턴1 매칭:', name, qty);
+        continue;
+      }
+    }
+    
+    // 패턴 2: "수량 제품명" (숫자가 앞에 오는 경우)
+    // 예: "50 플틴플러스 300g"
+    match = line.match(/^(\d+)\s+(.+?)$/);
+    if (match) {
+      const qty = parseInt(match[1]);
+      const name = match[2].trim();
+      // ★ 추가 필터: 페이지 번호 패턴 ("/ 2" 같은 것) 제외
+      if (qty > 0 && qty < 100000 && name.length >= 2 && !/^\d+$/.test(name) && !/^\/\s*\d+$/.test(name)) {
+        items.push({ product_name: name, quantity: qty });
+        console.log('  패턴2 매칭:', name, qty);
+        continue;
+      }
+    }
+    
+    // 패턴 3: 테이블 형식 "순번 제품코드 제품명 ... 수량"
+    // 공백/탭으로 구분된 경우, 마지막 숫자를 수량으로 인식
+    const parts = line.split(/\s{2,}|\t/).map(p => p.trim()).filter(p => p);
+    if (parts.length >= 2) {
+      // 마지막 요소가 숫자인지 확인
+      const lastPart = parts[parts.length - 1].replace(/,/g, '');
+      if (/^\d+$/.test(lastPart)) {
+        const qty = parseInt(lastPart);
+        // 숫자가 아닌 부분 중 가장 긴 것을 제품명으로
+        const nameParts = parts.slice(0, -1).filter(p => !/^\d+$/.test(p.replace(/,/g, '')) && !/^\/\s*\d+$/.test(p));
+        const name = nameParts.join(' ').trim();
+        
+        if (qty > 0 && qty < 100000 && name.length >= 2) {
+          items.push({ product_name: name, quantity: qty });
+          console.log('  패턴3 매칭:', name, qty);
+          continue;
+        }
+      }
+    }
+    
+    // 패턴 4: "제품명,수량" 또는 "제품명\t수량" (CSV/TSV 스타일)
+    match = line.match(/^(.+?)[,\t](\d+)$/);
+    if (match) {
+      const name = match[1].trim();
+      const qty = parseInt(match[2]);
+      if (name.length >= 2 && qty > 0 && qty < 100000) {
+        items.push({ product_name: name, quantity: qty });
+        console.log('  패턴4 매칭:', name, qty);
+        continue;
+      }
+    }
+    
+    // 패턴 5: 바코드 포함 "순번 바코드 제품명 수량"
+    // 예: "1 8809424531266 아몬드크랜베리깜바뉴 50"
+    match = line.match(/^\d+\s+(\d{8,14})\s+(.+?)\s+(\d+)$/);
+    if (match) {
+      const barcode = match[1];
+      const name = match[2].trim();
+      const qty = parseInt(match[3]);
+      if (name.length >= 2 && qty > 0 && qty < 100000) {
+        items.push({ product_name: name, quantity: qty, barcode: barcode });
+        console.log('  패턴5 매칭 (바코드):', name, qty, barcode);
+        continue;
+      }
+    }
+  }
+  
+  console.log('PDF 파싱 완료:', items.length, '건');
+  return items;
+}
+
+// 파일 업로드 처리 (엑셀/PDF)
 async function handleOrderFileUpload() {
   const fileInput = document.getElementById('order-upload-file');
   const dateInput = document.getElementById('order-upload-date');
@@ -47924,8 +48182,112 @@ async function handleOrderFileUpload() {
     for (const file of files) {
       const fileName = file.name.toLowerCase();
       let rows = [];
+      let pdfText = '';  // PDF 텍스트 저장용
       
+      // ============================================================
+      // PDF 파일 처리 - pdf.js 사용
+      // ============================================================
+      if (fileName.endsWith('.pdf')) {
+        console.log('★ PDF 파일 감지:', file.name);
+        
+        if (typeof pdfjsLib === 'undefined') {
+          console.error('PDF.js 라이브러리가 로드되지 않았습니다');
+          showToast('PDF 처리 라이브러리 로드 실패. 페이지를 새로고침 해주세요.', 'error');
+          continue;
+        }
+        
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          console.log('PDF 페이지 수:', pdf.numPages);
+          
+          // 모든 페이지에서 텍스트 추출 (Y좌표 기반 행 정렬)
+          let fullText = '';
+          let allTextItems = [];  // 모든 페이지의 텍스트 아이템
+          
+          for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            const page = await pdf.getPage(pageNum);
+            const textContent = await page.getTextContent();
+            const viewport = page.getViewport({ scale: 1 });
+            
+            // 페이지별 오프셋 (이전 페이지 높이 누적)
+            const pageOffset = (pageNum - 1) * viewport.height;
+            
+            // 텍스트 아이템에 Y좌표 추가
+            for (const item of textContent.items) {
+              if (item.str && item.str.trim()) {
+                allTextItems.push({
+                  text: item.str,
+                  x: item.transform[4],
+                  y: pageOffset + (viewport.height - item.transform[5]),  // Y 좌표 반전 + 페이지 오프셋
+                  page: pageNum
+                });
+              }
+            }
+          }
+          
+          // Y좌표로 정렬 (같은 행은 X좌표로)
+          allTextItems.sort((a, b) => {
+            const yDiff = a.y - b.y;
+            if (Math.abs(yDiff) < 5) {  // 같은 행 (Y 차이 5 이하)
+              return a.x - b.x;
+            }
+            return yDiff;
+          });
+          
+          // 행 단위로 그룹핑
+          let currentY = -999;
+          let currentLine = [];
+          const lines = [];
+          
+          for (const item of allTextItems) {
+            if (Math.abs(item.y - currentY) > 8) {  // 새로운 행
+              if (currentLine.length > 0) {
+                lines.push(currentLine.join(' '));
+              }
+              currentLine = [item.text];
+              currentY = item.y;
+            } else {
+              currentLine.push(item.text);
+            }
+          }
+          if (currentLine.length > 0) {
+            lines.push(currentLine.join(' '));
+          }
+          
+          // 행 단위 텍스트로 변환
+          fullText = lines.join('\n');
+          
+          pdfText = fullText;
+          console.log('PDF 텍스트 추출 완료, 길이:', pdfText.length);
+          console.log('PDF 행 수:', lines.length);
+          console.log('PDF 텍스트 미리보기 (처음 10행):');
+          lines.slice(0, 10).forEach((line, i) => console.log(`  [${i}] ${line}`));
+          
+          // PDF 텍스트를 파싱하여 제품/수량 추출
+          const pdfItems = parsePdfText(pdfText);
+          console.log('PDF 파싱 결과:', pdfItems.length, '건');
+          
+          // allItems에 추가
+          for (const item of pdfItems) {
+            if (item.product_name && item.quantity > 0) {
+              allItems.push(item);
+            }
+          }
+          
+          console.log('PDF 파일 처리 완료:', file.name);
+          continue;  // 다음 파일로
+          
+        } catch (pdfError) {
+          console.error('PDF 파싱 오류:', pdfError);
+          showToast('PDF 파싱 실패: ' + pdfError.message, 'error');
+          continue;
+        }
+      }
+      
+      // ============================================================
       // 엑셀 파일 (.xlsx, .xls) - XLSX 라이브러리 사용
+      // ============================================================
       if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
         const arrayBuffer = await file.arrayBuffer();
         const data = new Uint8Array(arrayBuffer);
@@ -47933,8 +48295,10 @@ async function handleOrderFileUpload() {
         const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
         rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
       } 
+      // ============================================================
       // CSV/TSV/TXT 파일 - 텍스트로 파싱
-      else {
+      // ============================================================
+      else if (fileName.endsWith('.csv') || fileName.endsWith('.tsv') || fileName.endsWith('.txt')) {
         const arrayBuffer = await file.arrayBuffer();
         const data = new Uint8Array(arrayBuffer);
         // UTF-8 먼저 시도, 실패하면 EUC-KR

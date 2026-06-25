@@ -1493,9 +1493,9 @@ sheets.post('/v2/shipment/confirm', async (c) => {
       });
     });
 
-    // 재고 차감 처리
+    // 재고 차감 처리 (배치용 데이터 준비)
     const deductionResults: any[] = [];
-    const newInventoryItems: any[][] = [];
+    const batchUpdates: Array<{ sheetName: string; range: string; values: any[][] }> = [];
 
     for (const shipment of pendingShipments) {
       const inv = inventoryMap.get(shipment.product_code);
@@ -1503,9 +1503,11 @@ sheets.post('/v2/shipment/confirm', async (c) => {
       if (inv) {
         // 기존 재고 차감
         const newQty = Math.max(0, inv.qty - shipment.quantity);
-        await service.writeSheet('제품재고', `C${inv.row_index}:E${inv.row_index}`, [
-          [newQty, 'EA', `'${shipment_date}`]
-        ]);
+        batchUpdates.push({
+          sheetName: '제품재고',
+          range: `C${inv.row_index}:E${inv.row_index}`,
+          values: [[newQty, 'EA', `'${shipment_date}`]]
+        });
         deductionResults.push({
           product_code: shipment.product_code,
           prev_qty: inv.qty,
@@ -1525,9 +1527,21 @@ sheets.post('/v2/shipment/confirm', async (c) => {
       }
     }
 
-    // 3. 출고일지 상태 업데이트 (출고예정 → 출고완료)
+    // 3. 출고일지 상태 업데이트 (출고예정 → 출고완료) - 배치에 추가
     for (const rowIdx of pendingRowIndices) {
-      await service.writeSheet('출고일지', `I${rowIdx}`, [['출고완료']]);
+      batchUpdates.push({
+        sheetName: '출고일지',
+        range: `I${rowIdx}`,
+        values: [['출고완료']]
+      });
+    }
+
+    // 4. 모든 업데이트를 한 번에 실행 (성능 최적화)
+    if (batchUpdates.length > 0) {
+      const batchSuccess = await service.batchWriteSheet(batchUpdates);
+      if (!batchSuccess) {
+        return c.json({ success: false, error: '배치 업데이트 실패' }, 500);
+      }
     }
 
     return c.json({

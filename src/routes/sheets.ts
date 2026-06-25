@@ -1370,7 +1370,9 @@ sheets.get('/v2/output/daily-stock', async (c) => {
 });
 
 // =====================================================
-// 원료 사용 현황 - 생산일보 PDF용 (일별수불부 시트 기준 SSOT)
+// 원료 사용 현황 - 생산일보 PDF용
+// 사용량: 일별수불부 시트 (SSOT)
+// LOT/소비기한: 로트매칭 시트에서 추출
 // =====================================================
 sheets.get('/v2/output/material-usage', async (c) => {
   const service = getSheetService(c);
@@ -1381,34 +1383,81 @@ sheets.get('/v2/output/material-usage', async (c) => {
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
     
-    // ★★★ 일별수불부 시트에서 조회 (SSOT) ★★★
-    // 구조: A:일자, B:품목코드, C:품목명, D:전일재고, E:입고, F:사용, G:현재고, H:단위
-    const data = await service.readSheet('일별수불부', 'A2:H');
+    // ★★★ 1. 일별수불부 시트에서 사용량 조회 (SSOT) ★★★
+    const dailyStockData = await service.readSheet('일별수불부', 'A2:H');
     
-    const records = data
-      .filter(row => {
-        // 날짜 필터링
-        let rowDate = row[0];
-        if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
-          const excelDate = parseInt(rowDate);
-          const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
-          rowDate = jsDate.toISOString().split('T')[0];
-        } else if (typeof rowDate === 'string') {
-          rowDate = rowDate.replace(/^'/, '');
-        }
-        return rowDate === date;
-      })
-      .filter(row => {
-        // 사용량이 있는 것만
-        const usageQty = parseFloat(row[5]) || 0;
-        return usageQty > 0;
-      })
-      .map(row => ({
-        item_code: row[1] || '',
+    const usageMap = new Map<string, { item_code: string; item_name: string; usage_qty: number; unit: string }>();
+    
+    dailyStockData.forEach(row => {
+      // 날짜 필터링
+      let rowDate = row[0];
+      if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      } else if (typeof rowDate === 'string') {
+        rowDate = rowDate.replace(/^'/, '');
+      }
+      if (rowDate !== date) return;
+      
+      const usageQty = parseFloat(row[5]) || 0;
+      if (usageQty <= 0) return;
+      
+      const itemCode = row[1] || '';
+      usageMap.set(itemCode, {
+        item_code: itemCode,
         item_name: row[2] || '',
-        usage_qty: parseFloat(row[5]) || 0,
+        usage_qty: usageQty,
         unit: row[7] || 'kg'
-      }));
+      });
+    });
+    
+    // ★★★ 2. 로트매칭 시트에서 LOT/소비기한 조회 ★★★
+    // 구조: A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
+    
+    const lotMap = new Map<string, { lot_number: string; expiry_date: string }>();
+    
+    lotMatchingData.forEach(row => {
+      // 날짜 필터링
+      let rowDate = row[0];
+      if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      } else if (typeof rowDate === 'string') {
+        rowDate = rowDate.replace(/^'/, '');
+      }
+      if (rowDate !== date) return;
+      
+      const itemCode = row[2] || '';
+      const lotNumber = row[5] || '-';
+      let expiryDate = row[6] || '-';
+      
+      // 유통기한 형식 변환 (엑셀 숫자 → YYYY-MM-DD)
+      if (expiryDate && !isNaN(expiryDate as any) && parseInt(expiryDate) > 40000) {
+        const d = new Date((parseInt(expiryDate) - 25569) * 86400 * 1000);
+        expiryDate = d.toISOString().split('T')[0];
+      }
+      
+      // 원료코드별 첫 번째 LOT 정보만 저장 (또는 덮어쓰기)
+      if (!lotMap.has(itemCode)) {
+        lotMap.set(itemCode, { lot_number: lotNumber, expiry_date: expiryDate });
+      }
+    });
+    
+    // ★★★ 3. 두 데이터 조합 ★★★
+    const records = Array.from(usageMap.values()).map(item => {
+      const lotInfo = lotMap.get(item.item_code);
+      return {
+        item_code: item.item_code,
+        item_name: item.item_name,
+        usage_qty: item.usage_qty,
+        unit: item.unit,
+        lot_number: lotInfo?.lot_number || '-',
+        expiry_date: lotInfo?.expiry_date || '-'
+      };
+    });
     
     // 품목코드 기준 정렬
     records.sort((a, b) => a.item_code.localeCompare(b.item_code));
@@ -1419,7 +1468,7 @@ sheets.get('/v2/output/material-usage', async (c) => {
       total_items: records.length,
       total_usage: records.reduce((sum, r) => sum + r.usage_qty, 0),
       data: records,
-      note: '★ 일별수불부 시트 기준 (SSOT)'
+      note: '★ 사용량: 일별수불부(SSOT), LOT/소비기한: 로트매칭'
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

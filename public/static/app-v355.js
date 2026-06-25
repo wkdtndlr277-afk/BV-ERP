@@ -49690,7 +49690,7 @@ async function generateDailyReportPdf() {
             </table>
           </div>
           
-          <!-- 원료 사용 현황 (구글시트 일별수불부 기반 SSOT) -->
+          <!-- 원료 사용 현황 (사용량: 일별수불부 SSOT, LOT/소비기한: 로트매칭) -->
           <div class="mt-6">
             <h4 class="font-bold text-gray-700 mb-2">
               <i class="fas fa-flask text-purple-500 mr-2"></i>원료 사용 현황
@@ -49702,14 +49702,14 @@ async function generateDailyReportPdf() {
                     <th class="px-3 py-2 text-left">원료코드</th>
                     <th class="px-3 py-2 text-left">원료명</th>
                     <th class="px-3 py-2 text-right">사용량</th>
-                    <th class="px-3 py-2 text-center">단위</th>
+                    <th class="px-3 py-2 text-left">원료 LOT</th>
+                    <th class="px-3 py-2 text-left">소비기한</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y">
                   ${(() => {
-                    // ★★★ 일별수불부 시트 기반 원료사용현황 (SSOT) ★★★
                     if (materialUsageData.length === 0) {
-                      return '<tr><td colspan="4" class="px-3 py-4 text-center text-gray-500">원료 사용 데이터가 없습니다.</td></tr>';
+                      return '<tr><td colspan="5" class="px-3 py-4 text-center text-gray-500">원료 사용 데이터가 없습니다.</td></tr>';
                     }
                     
                     return materialUsageData.slice(0, 100).map(mat => {
@@ -49717,9 +49717,10 @@ async function generateDailyReportPdf() {
                         '<td class="px-3 py-2 font-mono text-xs">' + (mat.item_code || '-') + '</td>' +
                         '<td class="px-3 py-2">' + (mat.item_name || '-') + '</td>' +
                         '<td class="px-3 py-2 text-right text-purple-600">' + Math.abs(mat.usage_qty || 0).toFixed(3) + '</td>' +
-                        '<td class="px-3 py-2 text-center">' + (mat.unit || 'kg') + '</td>' +
+                        '<td class="px-3 py-2 font-mono text-xs">' + (mat.lot_number || '-') + '</td>' +
+                        '<td class="px-3 py-2 text-xs">' + (mat.expiry_date || '-') + '</td>' +
                         '</tr>';
-                    }).join('') + (materialUsageData.length > 100 ? '<tr><td colspan="4" class="px-3 py-2 text-center text-gray-500">... 외 ' + (materialUsageData.length - 100) + '건</td></tr>' : '');
+                    }).join('') + (materialUsageData.length > 100 ? '<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ' + (materialUsageData.length - 100) + '건</td></tr>' : '');
                   })()}
                 </tbody>
               </table>
@@ -49817,7 +49818,7 @@ async function printDailyReportPdf(date) {
     
     // ========== 2. 원료사용 현황 테이블 (로트매칭 시트 기반) ==========
     // ★★★ 로트매칭 시트에서 원료사용현황 (LOT + 소비기한 포함) ★★★
-    // ========== 2. 원료사용 현황 테이블 (일별수불부 시트 기준 SSOT) ==========
+    // ========== 2. 원료사용 현황 테이블 (사용량: 일별수불부 SSOT, LOT/소비기한: 로트매칭) ==========
     let materialsTableHtml = '';
     if (materialUsageData.length > 0) {
       materialsTableHtml = `
@@ -49830,7 +49831,8 @@ async function printDailyReportPdf(date) {
               <th>원료코드</th>
               <th>원료명</th>
               <th style="text-align:right;">사용량</th>
-              <th style="text-align:center;">단위</th>
+              <th>원료 LOT</th>
+              <th>소비기한</th>
             </tr>
           </thead>
           <tbody>
@@ -49841,7 +49843,8 @@ async function printDailyReportPdf(date) {
             <td>${mat.item_code || '-'}</td>
             <td>${mat.item_name || '-'}</td>
             <td style="text-align:right;">${Math.abs(mat.usage_qty || 0).toFixed(3)}</td>
-            <td style="text-align:center;">${mat.unit || 'kg'}</td>
+            <td>${mat.lot_number || '-'}</td>
+            <td>${mat.expiry_date || '-'}</td>
           </tr>
         `;
       });

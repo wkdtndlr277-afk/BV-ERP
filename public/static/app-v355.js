@@ -7238,8 +7238,33 @@ function printDailyLedger() {
 function printSheetsBasedDailyLedger(data, period, summary) {
   const date = period.start_date || formatDate(new Date());
   
-  // 제외 항목: 정제수(RM184)
-  const filteredData = data.filter(d => d.item_code !== 'RM184');
+  // ★★★ 화면 렌더링(renderSheetsDailyStock)과 동일한 집계 로직 적용 ★★★
+  // 1. 중복 item_code 집계 (같은 품목은 합산)
+  const aggregatedMap = new Map();
+  data.forEach(d => {
+    const key = d.item_code;
+    if (!key) return;
+    
+    if (aggregatedMap.has(key)) {
+      const existing = aggregatedMap.get(key);
+      existing.usage_qty = (existing.usage_qty || 0) + (d.usage_qty || 0);
+      existing.inbound_qty = (existing.inbound_qty || 0) + (d.inbound_qty || 0);
+    } else {
+      aggregatedMap.set(key, { ...d });
+    }
+  });
+  
+  // 2. 집계된 데이터로 현재고 재계산
+  let aggregatedData = Array.from(aggregatedMap.values()).map(d => ({
+    ...d,
+    current_stock: (d.prev_stock || 0) + (d.inbound_qty || 0) - (d.usage_qty || 0)
+  }));
+  
+  // 3. 제외 항목: 정제수(RM184)
+  const filteredData = aggregatedData.filter(d => d.item_code !== 'RM184');
+  
+  // 4. item_code 기준 정렬 (화면과 동일)
+  filteredData.sort((a, b) => (a.item_code || '').localeCompare(b.item_code || ''));
   
   // 합계 재계산
   const totals = {

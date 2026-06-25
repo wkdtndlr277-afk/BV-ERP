@@ -1765,6 +1765,9 @@ sheets.get('/v2/shipment/list', async (c) => {
     // 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
     const productionData = await service.readSheet('생산실적', 'A2:H');
     
+    // ★ 제품코드별 순번 카운터 (LOT 형식: 20260601-PR253-001)
+    const lotCounters: Record<string, number> = {};
+    
     let records = productionData
       .map(row => {
         // 날짜 처리
@@ -1777,17 +1780,28 @@ sheets.get('/v2/shipment/list', async (c) => {
           prodDate = prodDate.replace(/^'/, '');
         }
         
+        const productCode = row[1]?.toString() || '';
+        let lotNumber = row[4]?.toString() || '';
+        
+        // ★★★ 생산일보와 동일한 LOT 형식: 20260601-PR253-001 (날짜-제품코드-순번) ★★★
+        if (!lotNumber || lotNumber.length < 10) {
+          if (!lotCounters[productCode]) lotCounters[productCode] = 0;
+          lotCounters[productCode]++;
+          const dateStr = prodDate.replace(/-/g, '');
+          lotNumber = `${dateStr}-${productCode}-${String(lotCounters[productCode]).padStart(3, '0')}`;
+        }
+        
         // ★ 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
         return {
           shipment_date: shipmentDate,  // 출고일 (조회 기준일)
           production_date: prodDate,     // 생산일
-          product_code: row[1]?.toString() || '',
+          product_code: productCode,
           product_name: row[2]?.toString() || '',
           quantity: parseFloat(row[3]) || 0,
           unit: 'EA',
-          lot_number: row[4]?.toString() || '',
+          lot_number: lotNumber,
           channel: row[5]?.toString() || '',
-          status: '출고예정',
+          status: '출고완료',  // ★★★ 출고완료로 표기 ★★★
           remark: row[6]?.toString() || `${prodDate} 생산분`
         };
       })

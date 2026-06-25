@@ -7136,9 +7136,16 @@ function printDailyLedger() {
   const data = window.dailyLedgerData || [];
   const period = window.dailyLedgerPeriod || {};
   const summary = window.dailyLedgerSummary || {};
+  const dataSource = document.getElementById('daily-source')?.value || 'sheets';
   
   if (data.length === 0) {
     showToast('출력할 데이터가 없습니다. 먼저 조회해주세요.', 'warning');
+    return;
+  }
+  
+  // ★★★ 구글시트 기반 데이터인 경우 간단한 형식으로 출력 ★★★
+  if (dataSource === 'sheets') {
+    printSheetsBasedDailyLedger(data, period, summary);
     return;
   }
   
@@ -7223,6 +7230,70 @@ function printDailyLedger() {
   const title = `일별 수불부 (${period.start_date || formatDate(new Date())})`;
   // v2.4.1: formatWeight로 소수점 4자리까지 표시
   const info = `<strong>전일:</strong> ${formatWeight(summary.carry_over || 0)} | <strong>입고:</strong> +${formatWeight(summary.period_inbound || 0)} | <strong>사용:</strong> -${formatWeight(summary.period_usage || 0)} | <strong>현재고:</strong> ${formatWeight(summary.closing_qty || 0)} | <strong>품목:</strong> ${filteredData.length}건`;
+  
+  printData(title, tableHtml, info);
+}
+
+// ★★★ 구글시트 기반 일별수불부 출력 ★★★
+function printSheetsBasedDailyLedger(data, period, summary) {
+  const date = period.start_date || formatDate(new Date());
+  
+  // 제외 항목: 정제수(RM184)
+  const filteredData = data.filter(d => d.item_code !== 'RM184');
+  
+  // 합계 재계산
+  const totals = {
+    prev_stock: filteredData.reduce((sum, d) => sum + (d.prev_stock || 0), 0),
+    inbound_qty: filteredData.reduce((sum, d) => sum + (d.inbound_qty || 0), 0),
+    usage_qty: filteredData.reduce((sum, d) => sum + (d.usage_qty || 0), 0),
+    current_stock: filteredData.reduce((sum, d) => sum + (d.current_stock || 0), 0)
+  };
+  
+  // 테이블 HTML 생성
+  let tableHtml = `
+    <table>
+      <thead>
+        <tr style="background:#e0e0e0;">
+          <th>품목코드</th>
+          <th>품목명</th>
+          <th style="text-align:right;">전일재고</th>
+          <th style="text-align:right;">입고</th>
+          <th style="text-align:right;">사용</th>
+          <th style="text-align:right;">현재고</th>
+          <th style="text-align:center;">단위</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+  
+  filteredData.forEach(item => {
+    tableHtml += `
+      <tr>
+        <td>${item.item_code || '-'}</td>
+        <td>${item.item_name || '-'}</td>
+        <td style="text-align:right;">${formatNumber(item.prev_stock || 0, 2)}</td>
+        <td style="text-align:right; color:blue;">${(item.inbound_qty || 0) > 0 ? '+' + formatNumber(item.inbound_qty, 2) : '-'}</td>
+        <td style="text-align:right; color:red;">${(item.usage_qty || 0) > 0 ? '-' + formatNumber(item.usage_qty, 2) : '-'}</td>
+        <td style="text-align:right; font-weight:bold;">${formatNumber(item.current_stock || 0, 2)}</td>
+        <td style="text-align:center;">${item.unit || 'kg'}</td>
+      </tr>
+    `;
+  });
+  
+  tableHtml += `
+      <tr style="background:#f0f0f0; font-weight:bold;">
+        <td colspan="2" style="text-align:right;">합계</td>
+        <td style="text-align:right;">${formatNumber(totals.prev_stock, 2)}</td>
+        <td style="text-align:right; color:blue;">+${formatNumber(totals.inbound_qty, 2)}</td>
+        <td style="text-align:right; color:red;">-${formatNumber(totals.usage_qty, 2)}</td>
+        <td style="text-align:right;">${formatNumber(totals.current_stock, 2)}</td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table>`;
+  
+  const title = `일별 수불부 (${date}) - 구글시트 SSOT`;
+  const info = `<strong>전일:</strong> ${formatNumber(totals.prev_stock)} | <strong>입고:</strong> +${formatNumber(totals.inbound_qty)} | <strong>사용:</strong> -${formatNumber(totals.usage_qty)} | <strong>현재고:</strong> ${formatNumber(totals.current_stock)} | <strong>품목:</strong> ${filteredData.length}건`;
   
   printData(title, tableHtml, info);
 }

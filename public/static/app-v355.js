@@ -7317,10 +7317,66 @@ function printSheetsBasedDailyLedger(data, period, summary) {
     </tbody>
   </table>`;
   
-  const title = `일별 수불부 (${date}) - 구글시트 SSOT`;
-  const info = `<strong>전일:</strong> ${formatNumber(totals.prev_stock)} | <strong>입고:</strong> +${formatNumber(totals.inbound_qty)} | <strong>사용:</strong> -${formatNumber(totals.usage_qty)} | <strong>현재고:</strong> ${formatNumber(totals.current_stock)} | <strong>품목:</strong> ${filteredData.length}건`;
+  const title = `일별 수불부 (${date})`;
   
-  printData(title, tableHtml, info);
+  // ★★★ 일별수불부 전용 인쇄 (상단 헤더/결재란 없음, 하단 HACCP 통합관리시스템만) ★★★
+  const printHtml = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <title>${title}</title>
+      <style>
+        @page { margin: 12mm; size: A4; }
+        * { box-sizing: border-box; }
+        body {
+          font-family: 'Malgun Gothic', '맑은 고딕', -apple-system, sans-serif;
+          font-size: 10px;
+          line-height: 1.4;
+          color: #333;
+          margin: 0;
+          padding: 15px;
+        }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
+        th, td { border: 1px solid #333; padding: 5px 6px; text-align: left; font-size: 9px; }
+        th { background: #e8e8e8; font-weight: bold; text-align: center; }
+        .footer {
+          margin-top: 20px;
+          text-align: center;
+          font-size: 9px;
+          color: #666;
+          border-top: 1px solid #333;
+          padding-top: 8px;
+        }
+        @media print {
+          body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; padding: 0; }
+        }
+      </style>
+    </head>
+    <body>
+      ${tableHtml}
+      <div class="footer">HACCP 통합관리시스템</div>
+    </body>
+    </html>
+  `;
+  
+  const blob = new Blob([printHtml], { type: 'text/html; charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const printWindow = window.open(url, '_blank', 'width=900,height=700,scrollbars=yes');
+  
+  if (!printWindow) {
+    showToast('팝업이 차단되었습니다. 팝업 차단을 해제해주세요.', 'error');
+    URL.revokeObjectURL(url);
+    return;
+  }
+  
+  printWindow.onload = function() {
+    setTimeout(() => {
+      printWindow.focus();
+      printWindow.print();
+      URL.revokeObjectURL(url);
+    }, 300);
+  };
 }
 
 // 월별 수불부 다운로드 (엑셀)

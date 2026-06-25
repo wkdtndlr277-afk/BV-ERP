@@ -47908,140 +47908,162 @@ function renderOrderUpload() {
 // ============================================================
 
 // ★ 배민(배달의민족) 입고확인서 전용 파서
-// 구조: 순서 | 바코드 | SKU코드 | 상품명 | 보관온도 | 박스입수량 | 낱개 | 입고수량 | 소비기한 | ...
+// PDF에서 바코드가 두 줄로 나뉘어 추출됨:
+//   - 첫째 줄: 8809424530 (10자리)
+//   - 둘째 줄: 535 (3자리)
+//   - 합쳐야 함: 8809424530535 (13자리)
+// 콘솔 로그 패턴 분석:
+//   - "패턴2 매칭: S0015621 상온 40 1 40 1" → SKU + 보관온도 + 수량들
+//   - "패턴2 매칭: 티 100g 01 535" → 제품명 일부 + 바코드 뒷자리(535)
+// 전략: 바코드 앞부분(10자리) + 뒷부분(3자리) 결합, SKU 코드 기반 매칭
 function parseBaeminPdf(text) {
   console.log('★ 배민 입고확인서 전용 파싱 시작');
   const items = [];
   
-  // 배민 감지: "입고확인서" + "우아한형제들" 또는 "본비반트"
+  // 배민 감지
   const isBaemin = text.includes('입고확인서') && (text.includes('우아한형제들') || text.includes('본비반트'));
   if (!isBaemin) {
     console.log('배민 형식 아님, 일반 파싱으로 전환');
-    return null;  // 배민이 아니면 null 반환하여 일반 파싱으로 전환
+    return null;
   }
   
   console.log('✓ 배민 입고확인서 감지됨');
   
-  // PDF.js 텍스트는 공백으로 연결되어 있음
   // 토큰 단위로 분리
   const tokens = text.split(/\s+/).filter(t => t.trim());
   console.log('토큰 수:', tokens.length);
-  console.log('토큰 샘플:', tokens.slice(0, 50).join(' | '));
   
-  // 바코드 패턴 (880으로 시작하는 13자리)
-  const barcodePattern = /^880\d{10}$/;
-  // SKU 코드 패턴 (S로 시작하거나 A로 시작하는 코드)
-  const skuPattern = /^[SA]\d{5,10}$/;
-  // 순서 번호 (1~999)
-  const seqPattern = /^[1-9]\d{0,2}$/;
+  // 바코드 앞부분 패턴 (880으로 시작하는 10자리)
+  const barcodeFrontPattern = /^880\d{7}$/;
+  // 바코드 뒷부분 패턴 (3자리 숫자)
+  const barcodeBackPattern = /^\d{3}$/;
+  // SKU 코드 패턴
+  const skuPattern = /^[SA]\d{7,8}$/;
   
-  // 바코드 위치 찾기 - 각 제품 데이터의 시작점
-  const productData = [];
-  
+  // 1단계: 바코드 앞부분(10자리) 찾기 및 뒷부분(3자리) 결합
+  const barcodeMap = new Map();  // 위치 → 전체 바코드
   for (let i = 0; i < tokens.length; i++) {
-    const token = tokens[i];
-    
-    // 바코드 발견
-    if (barcodePattern.test(token)) {
-      const barcode = token;
-      
-      // 바코드 이전에 순서 번호가 있는지 확인
-      let seq = '';
-      if (i > 0 && seqPattern.test(tokens[i-1])) {
-        seq = tokens[i-1];
-      }
-      
-      // 바코드 다음에 SKU 코드가 있는지 확인
-      let skuCode = '';
-      let productNameStart = i + 1;
-      
-      if (i + 1 < tokens.length && skuPattern.test(tokens[i + 1])) {
-        skuCode = tokens[i + 1];
-        productNameStart = i + 2;
-      }
-      
-      // 제품명 수집 - 다음 바코드 또는 특정 키워드까지
-      let productName = '';
-      let j = productNameStart;
-      const stopKeywords = ['냉동', '냉장', '상온', '박스', '낱개'];
-      
-      while (j < tokens.length) {
-        const t = tokens[j];
-        // 다음 바코드면 중단
-        if (barcodePattern.test(t)) break;
-        // 다음 순서번호 + 바코드 패턴이면 중단
-        if (seqPattern.test(t) && j + 1 < tokens.length && barcodePattern.test(tokens[j + 1])) break;
-        // 보관온도 키워드면 중단
-        if (stopKeywords.includes(t)) {
-          // 보관온도 이후에 수량 정보 추출
-          // 형식: 냉동 20 1 20 (박스입수량, 낱개, 입고수량)
-          const tempType = t;  // 냉동/냉장/상온
-          
-          // 다음 숫자들에서 수량 추출
-          let nums = [];
-          for (let k = j + 1; k < Math.min(j + 10, tokens.length); k++) {
-            const numToken = tokens[k].replace(/,/g, '');
-            if (/^\d+$/.test(numToken)) {
-              nums.push(parseInt(numToken));
-            } else if (barcodePattern.test(tokens[k]) || stopKeywords.includes(tokens[k])) {
-              break;
-            }
-          }
-          
-          // 수량 결정: 배민 형식은 [박스입수량, 낱개, 입고수량(박스), 입고수량(낱개)]
-          // 총 입고수량 = 입고수량(박스) * 박스입수량 + 입고수량(낱개)
-          let quantity = 0;
-          if (nums.length >= 4) {
-            // 박스입수량, 낱개표시, 입고박스수, 입고낱개수
-            const boxQty = nums[0];      // 박스입수량 (예: 20)
-            const boxCount = nums[2];    // 입고 박스 수 (예: 1)
-            const looseCount = nums[3];  // 입고 낱개 수 (예: 20)
-            quantity = boxCount * boxQty + looseCount;
-            console.log(`  수량계산: ${boxCount}박스 x ${boxQty}개 + ${looseCount}낱개 = ${quantity}`);
-          } else if (nums.length >= 2) {
-            // 간단 형식: 박스입수량, 입고수량
-            quantity = nums[nums.length - 1];  // 마지막 숫자를 입고수량으로
-          } else if (nums.length === 1) {
-            quantity = nums[0];
-          }
-          
-          if (productName && quantity > 0) {
-            productData.push({
-              seq,
-              barcode,
-              skuCode,
-              product_name: productName.trim(),
-              quantity,
-              tempType
-            });
-            console.log(`  → 추출: [${seq}] ${barcode} ${skuCode} "${productName.trim()}" ${quantity}개 (${tempType})`);
-          }
+    if (barcodeFrontPattern.test(tokens[i])) {
+      const front = tokens[i];  // 8809424530
+      // 뒷부분 찾기 (근처 토큰에서 3자리 숫자)
+      for (let j = i + 1; j < Math.min(i + 15, tokens.length); j++) {
+        if (barcodeBackPattern.test(tokens[j])) {
+          const back = tokens[j];  // 535
+          const fullBarcode = front + back;  // 8809424530535
+          barcodeMap.set(i, { barcode: fullBarcode, backPos: j });
+          console.log(`  바코드 결합: ${front} + ${back} = ${fullBarcode}`);
           break;
         }
-        
-        // 제품명에 추가
-        productName += (productName ? ' ' : '') + t;
-        j++;
       }
     }
   }
   
-  // 중복 제거 (바코드 기준)
-  const seen = new Set();
-  for (const item of productData) {
-    const key = item.barcode + '_' + item.product_name;
-    if (!seen.has(key)) {
-      seen.add(key);
+  // 2단계: SKU 코드 위치 찾기
+  const skuPositions = [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (skuPattern.test(tokens[i])) {
+      skuPositions.push(i);
+    }
+  }
+  console.log('SKU 코드 발견:', skuPositions.length, '개');
+  console.log('바코드 결합:', barcodeMap.size, '개');
+  
+  // 3단계: 각 SKU에 대해 제품 정보 추출
+  for (let idx = 0; idx < skuPositions.length; idx++) {
+    const skuPos = skuPositions[idx];
+    const skuCode = tokens[skuPos];
+    const nextSkuPos = idx + 1 < skuPositions.length ? skuPositions[idx + 1] : tokens.length;
+    
+    // 이 SKU와 연결된 바코드 찾기 (SKU 앞쪽에 있는 바코드)
+    let barcode = '';
+    for (const [barcodePos, barcodeInfo] of barcodeMap) {
+      if (barcodePos < skuPos && barcodePos > skuPos - 5) {
+        barcode = barcodeInfo.barcode;
+        break;
+      }
+    }
+    
+    // 보관온도 찾기
+    let tempPos = -1;
+    let tempType = '';
+    for (let j = skuPos + 1; j < Math.min(skuPos + 20, nextSkuPos); j++) {
+      if (['냉동', '냉장', '상온'].includes(tokens[j])) {
+        tempPos = j;
+        tempType = tokens[j];
+        break;
+      }
+    }
+    
+    if (tempPos < 0) {
+      console.log(`  SKU ${skuCode}: 보관온도 미발견, 스킵`);
+      continue;
+    }
+    
+    // 제품명 추출: SKU 다음 ~ 보관온도 이전
+    const nameParts = [];
+    for (let j = skuPos + 1; j < tempPos; j++) {
+      const t = tokens[j];
+      // 숫자만 있는 토큰, 바코드 조각 제외
+      if (!/^\d+$/.test(t) && !barcodeFrontPattern.test(t)) {
+        nameParts.push(t);
+      }
+    }
+    let productName = nameParts.join(' ').trim();
+    
+    // 보관온도 이후 숫자들에서 수량 추출
+    // 패턴: 보관온도 박스입수량 낱개단위 입고박스수 [입고낱개수] 순서번호
+    const nums = [];
+    for (let j = tempPos + 1; j < Math.min(tempPos + 8, nextSkuPos); j++) {
+      const numStr = tokens[j].replace(/,/g, '');
+      if (/^\d+$/.test(numStr)) {
+        nums.push(parseInt(numStr));
+      } else if (skuPattern.test(tokens[j]) || ['냉동', '냉장', '상온', '/', '페이지'].includes(tokens[j])) {
+        break;
+      }
+    }
+    
+    // 수량 계산: 박스입수량 * 입고박스수
+    // nums = [박스입수량, 낱개단위, 입고박스수, 순서번호] 또는 더 많을 수 있음
+    let quantity = 0;
+    if (nums.length >= 3) {
+      const boxQty = nums[0];      // 박스입수량 (예: 40)
+      const looseUnit = nums[1];   // 낱개 단위 (보통 1)
+      const inQty = nums[2];       // 입고 수량 또는 박스 수
+      
+      // inQty가 boxQty의 배수면 총 수량, 아니면 박스 수
+      if (inQty >= boxQty && inQty % boxQty === 0) {
+        quantity = inQty;
+      } else {
+        quantity = inQty * boxQty;
+      }
+    }
+    
+    console.log(`  → SKU=${skuCode} 바코드=${barcode} 제품명="${productName}" ${tempType} 수량=${quantity}`);
+    
+    if (quantity > 0) {
       items.push({
-        product_name: item.product_name,
-        quantity: item.quantity,
-        barcode: item.barcode
+        product_name: productName || skuCode,
+        quantity: quantity,
+        barcode: barcode,
+        sku_code: skuCode
       });
     }
   }
   
-  console.log('배민 파싱 완료:', items.length, '건');
-  return items;
+  // 중복 제거 (바코드 또는 SKU 기준)
+  const seen = new Map();
+  for (const item of items) {
+    const key = item.barcode || item.sku_code;
+    if (seen.has(key)) {
+      seen.get(key).quantity += item.quantity;
+    } else {
+      seen.set(key, { ...item });
+    }
+  }
+  
+  const result = Array.from(seen.values());
+  console.log('배민 파싱 완료:', result.length, '건 (중복 합산 후)');
+  return result.length > 0 ? result : null;  // 결과 없으면 일반 파서로
 }
 
 // 일반 PDF 텍스트 파싱
@@ -48098,12 +48120,21 @@ function parsePdfText(text) {
     
     // 패턴 2: "수량 제품명" (숫자가 앞에 오는 경우)
     // 예: "50 플틴플러스 300g"
+    // ★ 배민 데이터 필터: SKU코드(S/A로 시작), 보관온도 키워드 포함 시 제외
     match = line.match(/^(\d+)\s+(.+?)$/);
     if (match) {
       const qty = parseInt(match[1]);
       const name = match[2].trim();
-      // ★ 추가 필터: 페이지 번호 패턴 ("/ 2" 같은 것) 제외
-      if (qty > 0 && qty < 100000 && name.length >= 2 && !/^\d+$/.test(name) && !/^\/\s*\d+$/.test(name)) {
+      // 필터 조건들
+      const isPageNum = /^\/\s*\d+$/.test(name);
+      const isOnlyDigits = /^\d+$/.test(name);
+      const hasSkuCode = /^[SA]\d{7,8}/.test(name);  // SKU 코드로 시작
+      const hasTempKeyword = /냉동|냉장|상온/.test(name);  // 보관온도 포함
+      const hasBarcodeFragment = /\s\d{3}$/.test(name);  // 바코드 뒷자리(3자리)로 끝남
+      const tooManyNumbers = (name.match(/\d+/g) || []).length >= 4;  // 숫자가 4개 이상
+      
+      if (qty > 0 && qty < 100000 && name.length >= 2 && 
+          !isPageNum && !isOnlyDigits && !hasSkuCode && !hasTempKeyword && !hasBarcodeFragment && !tooManyNumbers) {
         items.push({ product_name: name, quantity: qty });
         console.log('  패턴2 매칭:', name, qty);
         continue;

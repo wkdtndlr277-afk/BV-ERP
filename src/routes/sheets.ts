@@ -2824,9 +2824,13 @@ sheets.post('/rebuild-daily-stock', async (c) => {
     const EXCLUDE_ITEMS = ['RM184', 'SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
     
     // 6월 1일 데이터에서 모든 품목코드 추출 (전일 재고가 있는 모든 원료)
-    const allItemCodes = june1Data
-      .map(row => row[1]?.toString())
-      .filter(code => code && !EXCLUDE_ITEMS.includes(code));
+    // ★ v3.5.72: Set으로 중복 제거 필수!
+    const allItemCodesSet = new Set(
+      june1Data
+        .map(row => row[1]?.toString())
+        .filter(code => code && !EXCLUDE_ITEMS.includes(code))
+    );
+    const allItemCodes = Array.from(allItemCodesSet);
     
     // ★ v3.5.68: 품목코드순 정렬 (관리자 재고 검토 편의를 위해 고정 순서)
     const itemCodes = allItemCodes.sort((a, b) => {

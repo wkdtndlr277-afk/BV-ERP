@@ -2101,7 +2101,7 @@ sheets.post('/v2/shipment/auto-process', async (c) => {
 // =====================================================
 
 // [3단계] 출력 레이어: 생산일보 데이터 (PDF용)
-// ★★★ v3.5.62: 성능 최적화 - Map 인덱싱으로 O(n) 조회 ★★★
+// ★★★ v3.5.63: PDF용 경량화 - materials 제외 (별도 API로 조회) ★★★
 sheets.get('/v2/output/production-report', async (c) => {
   const service = getSheetService(c);
   if (!service) {
@@ -2110,6 +2110,8 @@ sheets.get('/v2/output/production-report', async (c) => {
 
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+    // ★ include_materials=true 일 때만 원료 매칭 데이터 포함 (기본값: false)
+    const includeMaterials = c.req.query('include_materials') === 'true';
     
     // 1. 생산실적 조회
     const productions = await service.getProductionRecords(date);
@@ -2128,33 +2130,33 @@ sheets.get('/v2/output/production-report', async (c) => {
       });
     }
     
-    // 2. 로트매칭 정보 조회 - ★ Map으로 인덱싱하여 성능 최적화 ★
-    const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
-    
-    // 날짜+로트번호 기준 Map 생성 (O(n) → O(1) 조회)
-    const lotMatchingMap = new Map<string, any[]>();
-    for (const row of lotMatchingData) {
-      let rowDate = row[0]?.toString().replace(/^'/, '');
-      // 엑셀 시리얼 번호 처리
-      if (/^\d{5}$/.test(rowDate)) {
-        const excelDate = parseInt(rowDate);
-        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
-        rowDate = jsDate.toISOString().split('T')[0];
-      }
+    // 2. 로트매칭 정보 조회 - ★ include_materials=true 일 때만 ★
+    let lotMatchingMap = new Map<string, any[]>();
+    if (includeMaterials) {
+      const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
       
-      if (rowDate === date) {
-        const lotNumber = row[1]?.toString();
-        const key = `${date}|${lotNumber}`;
-        if (!lotMatchingMap.has(key)) {
-          lotMatchingMap.set(key, []);
+      for (const row of lotMatchingData) {
+        let rowDate = row[0]?.toString().replace(/^'/, '');
+        if (/^\d{5}$/.test(rowDate)) {
+          const excelDate = parseInt(rowDate);
+          const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+          rowDate = jsDate.toISOString().split('T')[0];
         }
-        lotMatchingMap.get(key)!.push({
-          item_code: row[2],
-          item_name: row[3],
-          usage_qty: parseFloat(row[4]) || 0,
-          material_lot: row[5] || '',
-          expiry_date: row[6] || ''
-        });
+        
+        if (rowDate === date) {
+          const lotNumber = row[1]?.toString();
+          const key = `${date}|${lotNumber}`;
+          if (!lotMatchingMap.has(key)) {
+            lotMatchingMap.set(key, []);
+          }
+          lotMatchingMap.get(key)!.push({
+            item_code: row[2],
+            item_name: row[3],
+            usage_qty: parseFloat(row[4]) || 0,
+            material_lot: row[5] || '',
+            expiry_date: row[6] || ''
+          });
+        }
       }
     }
     
@@ -2162,38 +2164,39 @@ sheets.get('/v2/output/production-report', async (c) => {
     const productMaster = await service.getProductMaster();
     const expiryMap = new Map<string, number>();
     
-    // 제품코드+채널별 소비기한 매핑
     for (const pm of productMaster) {
       const key = `${pm.product_code}|${pm.channel || ''}`;
       expiryMap.set(key, pm.expiry_days || 24);
-      // 채널 없는 기본값도 설정
       if (!expiryMap.has(pm.product_code)) {
         expiryMap.set(pm.product_code, pm.expiry_days || 24);
       }
     }
     
-    // 4. 생산일보 데이터 구성 - Map에서 O(1) 조회
+    // 4. 생산일보 데이터 구성 - ★ materials 선택적 포함 ★
     const reportItems = [];
     
     for (const prod of productions) {
-      const key = `${date}|${prod.lot_number}`;
-      const materials = lotMatchingMap.get(key) || [];
-
-      // 제품별 소비기한 조회 (채널 우선, 없으면 기본값)
       const expiryDays = expiryMap.get(`${prod.product_code}|${prod.channel || ''}`) 
                       || expiryMap.get(prod.product_code) 
                       || 24;
 
-      reportItems.push({
+      const item: any = {
         prod_date: prod.prod_date,
         product_code: prod.product_code,
         product_name: prod.product_name,
         quantity: prod.quantity,
         lot_number: prod.lot_number,
         channel: prod.channel,
-        expiry_days: expiryDays,
-        materials
-      });
+        expiry_days: expiryDays
+      };
+      
+      // ★ include_materials=true 일 때만 materials 추가
+      if (includeMaterials) {
+        const key = `${date}|${prod.lot_number}`;
+        item.materials = lotMatchingMap.get(key) || [];
+      }
+
+      reportItems.push(item);
     }
 
     return c.json({
@@ -2206,7 +2209,9 @@ sheets.get('/v2/output/production-report', async (c) => {
         total_quantity: productions.reduce((sum, p) => sum + p.quantity, 0),
         items: reportItems
       },
-      note: '★ PDF 생성용 정리된 데이터입니다. 소비기한은 제품마스터(구글시트) 참조.'
+      note: includeMaterials 
+        ? '★ 원료 매칭 데이터 포함'
+        : '★ PDF용 경량 데이터. 원료는 /api/sheets/v2/output/material-usage 참조'
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

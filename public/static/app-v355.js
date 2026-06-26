@@ -49992,7 +49992,7 @@ async function printDailyReportPdf(date) {
         </thead>
         <tbody>
           <tr>
-            <td style="text-align:center;">□ 유 / ☑ 무</td>
+            <td style="text-align:center;">□ 유 / □ 무</td>
             <td></td>
             <td></td>
             <td></td>

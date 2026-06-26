@@ -620,17 +620,23 @@ sheets.post('/test/calculate-usage', async (c) => {
       return c.json({ success: false, error: '해당 날짜 생산 실적 없음' }, 400);
     }
 
-    // 2. BOM 마스터 조회
+    // 2. BOM 마스터 조회 - ★ v3.5.70: 단위 통일 (g → kg 변환)
     const bomData = await service.readSheet('BOM마스터', 'A2:F');
     const bomMap = new Map<string, any[]>();
     for (const row of bomData) {
       const productCode = row[0];
       if (!bomMap.has(productCode)) bomMap.set(productCode, []);
+      
+      const rawQty = parseFloat(row[4]) || 0;
+      const unit = (row[5] || 'kg').toString().toLowerCase().trim();
+      // g 단위면 /1000으로 kg 변환
+      const quantity_kg = unit === 'g' ? rawQty / 1000 : rawQty;
+      
       bomMap.get(productCode)!.push({
         item_code: row[2],
         item_name: row[3],
-        quantity: parseFloat(row[4]) || 0,
-        unit: row[5] || 'g'
+        quantity: quantity_kg,  // 항상 kg 단위
+        unit: 'kg'  // 통일
       });
     }
 
@@ -662,10 +668,8 @@ sheets.post('/test/calculate-usage', async (c) => {
       for (const material of bom) {
         const isExcluded = EXCLUDE_STOCK.includes(material.item_code);
         
-        // BOM 단위가 g면 kg로 변환
-        let usageKg = material.unit === 'g' 
-          ? (material.quantity * prod.quantity) / 1000 
-          : material.quantity * prod.quantity;
+        // ★ v3.5.70: BOM 읽을 때 이미 kg로 변환됨
+        let usageKg = material.quantity * prod.quantity;
 
         // 원료별 사용량 집계
         if (!usageByItem.has(material.item_code)) {
@@ -3727,6 +3731,216 @@ sheets.post('/cleanup/all', async (c) => {
         production_rows: newProdData.length,
         lot_matching_rows: newLotData.length,
         daily_stock_rows: newDailyData.length
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.70: 로트매칭 재계산 API - 기존 데이터 삭제 후 BOM 기반 재계산 ★★★
+sheets.post('/recalculate-lot-matching', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const date = body.date;
+    const dryRun = body.dry_run !== false;
+
+    if (!date) {
+      return c.json({ success: false, error: 'date 필수' }, 400);
+    }
+
+    const parseDate = (val: any): string => {
+      if (!val) return '';
+      let dateStr = val.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(dateStr)) {
+        const excelDate = parseInt(dateStr);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        dateStr = jsDate.toISOString().split('T')[0];
+      }
+      return dateStr;
+    };
+
+    // 1. 기존 로트매칭에서 해당 날짜 데이터 분리
+    const lotData = await service.readSheet('로트매칭', 'A2:G');
+    const otherDateRows: any[][] = [];
+    let deletedCount = 0;
+    
+    for (const row of lotData) {
+      const rowDate = parseDate(row[0]);
+      if (rowDate === date) {
+        deletedCount++;
+      } else if (row[0]) {
+        otherDateRows.push(row);
+      }
+    }
+
+    // 2. 생산실적 조회
+    const productions = await service.getProductionRecords(date);
+    if (productions.length === 0) {
+      return c.json({ 
+        success: false, 
+        error: `${date} 생산실적 없음. 먼저 생산실적을 등록해주세요.` 
+      }, 400);
+    }
+
+    // 3. BOM 마스터 조회 (단위 변환 포함)
+    const bomData = await service.readSheet('BOM마스터', 'A2:F');
+    const bomMap = new Map<string, any[]>();
+    for (const row of bomData) {
+      const productCode = row[0]?.toString() || '';
+      if (!productCode) continue;
+      
+      if (!bomMap.has(productCode)) bomMap.set(productCode, []);
+      
+      // ★ 단위 변환: g → kg
+      const rawQty = parseFloat(row[4]) || 0;
+      const unit = (row[5] || 'kg').toString().toLowerCase().trim();
+      const quantity_kg = unit === 'g' ? rawQty / 1000 : rawQty;
+      
+      bomMap.get(productCode)!.push({
+        item_code: row[2]?.toString() || '',
+        item_name: row[3]?.toString() || '',
+        quantity: quantity_kg,
+        unit: 'kg'
+      });
+    }
+
+    // 4. 원료입고 조회 (FEFO용)
+    const inboundData = await service.readSheet('원료입고', 'A2:I');
+    const inboundMap = new Map<string, any[]>();
+    for (const row of inboundData) {
+      const itemCode = row[1]?.toString() || '';
+      const remainQty = parseFloat(row[8]) || 0;
+      if (!itemCode || remainQty <= 0) continue;
+      
+      if (!inboundMap.has(itemCode)) inboundMap.set(itemCode, []);
+      inboundMap.get(itemCode)!.push({
+        lot_number: row[3]?.toString() || '',
+        remain_qty: remainQty,
+        expiry_date: row[7]?.toString() || ''
+      });
+    }
+    // FEFO 정렬
+    for (const [, lots] of inboundMap) {
+      lots.sort((a, b) => (a.expiry_date || '9999').localeCompare(b.expiry_date || '9999'));
+    }
+
+    // 5. 새 로트매칭 데이터 계산
+    const EXCLUDE_STOCK = ['RM184'];
+    const SF_ITEMS = ['SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
+    const newLotMatchingRows: any[][] = [];
+    const usageSummary = new Map<string, number>();
+
+    for (const prod of productions) {
+      const bom = bomMap.get(prod.product_code) || [];
+      
+      for (const material of bom) {
+        const usageKg = material.quantity * prod.quantity;
+        if (usageKg <= 0) continue;
+        
+        // 사용량 합계
+        usageSummary.set(material.item_code, 
+          (usageSummary.get(material.item_code) || 0) + usageKg);
+
+        // 제외 원료 (정제수)
+        if (EXCLUDE_STOCK.includes(material.item_code)) {
+          newLotMatchingRows.push([
+            `'${date}`, prod.lot_number, material.item_code, material.item_name,
+            usageKg.toFixed(5), '-', '-'
+          ]);
+          continue;
+        }
+        
+        // SF 원료 (자체 생산)
+        if (SF_ITEMS.includes(material.item_code)) {
+          newLotMatchingRows.push([
+            `'${date}`, prod.lot_number, material.item_code, material.item_name,
+            usageKg.toFixed(5), '', ''
+          ]);
+          continue;
+        }
+
+        // FEFO 로트 매칭
+        const lots = inboundMap.get(material.item_code) || [];
+        let remaining = usageKg;
+        
+        for (const lot of lots) {
+          if (remaining <= 0) break;
+          if (lot.remain_qty <= 0) continue;
+          
+          const useFromLot = Math.min(remaining, lot.remain_qty);
+          remaining -= useFromLot;
+          lot.remain_qty -= useFromLot;  // 메모리상 차감
+          
+          newLotMatchingRows.push([
+            `'${date}`, prod.lot_number, material.item_code, material.item_name,
+            useFromLot.toFixed(5), lot.lot_number, lot.expiry_date
+          ]);
+        }
+        
+        // 재고 부족 시
+        if (remaining > 0) {
+          newLotMatchingRows.push([
+            `'${date}`, prod.lot_number, material.item_code, material.item_name,
+            remaining.toFixed(5), '재고부족', ''
+          ]);
+        }
+      }
+    }
+
+    // 6. dry_run이면 시뮬레이션만
+    if (dryRun) {
+      // 주요 원료 사용량 비교
+      const majorItems = ['R102', 'R101', 'R60', 'R070', 'R114', 'RM211'];
+      const comparison: any[] = [];
+      
+      for (const item of majorItems) {
+        const newUsage = usageSummary.get(item) || 0;
+        comparison.push({
+          item_code: item,
+          new_usage_kg: newUsage.toFixed(3)
+        });
+      }
+
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        message: '시뮬레이션 결과 (실제 변경 없음)',
+        data: {
+          date,
+          deleted_rows: deletedCount,
+          new_rows: newLotMatchingRows.length,
+          production_count: productions.length,
+          major_items_usage: comparison
+        },
+        note: 'dry_run: false로 설정하면 실제 재계산 실행'
+      });
+    }
+
+    // 7. 실제 실행
+    // 기존 데이터 전체 클리어 후 다시 작성
+    await service.clearRange('로트매칭', `A2:G${lotData.length + 100}`);
+    
+    const allNewData = [...otherDateRows, ...newLotMatchingRows];
+    if (allNewData.length > 0) {
+      await service.writeSheet('로트매칭', `A2:G${allNewData.length + 1}`, allNewData);
+    }
+
+    return c.json({
+      success: true,
+      mode: 'executed',
+      message: `${date} 로트매칭 재계산 완료`,
+      data: {
+        date,
+        deleted_rows: deletedCount,
+        new_rows: newLotMatchingRows.length,
+        production_count: productions.length,
+        total_rows: allNewData.length
       }
     });
   } catch (error: any) {

@@ -929,13 +929,19 @@ export class GoogleSheetsService {
         bomMap.set(productCode, []);
       }
       
+      // ★ v3.5.70: BOM 단위 통일 - g → kg 변환
+      const rawQty = parseFloat(row[4]) || 0;
+      const unit = (row[5] || 'kg').toString().toLowerCase().trim();
+      // g 단위면 /1000으로 kg 변환
+      const ratio_kg = unit === 'g' ? rawQty / 1000 : rawQty;
+      
       bomMap.get(productCode)!.push({
         product_code: row[0],
         product_name: row[1],
         material_code: row[2]?.toString() || '',
         material_name: row[3]?.toString() || '',
-        ratio_kg: parseFloat(row[4]) || 0,
-        unit: row[5] || 'kg'
+        ratio_kg: ratio_kg,  // 항상 kg 단위
+        unit: 'kg'  // 통일
       });
     }
     

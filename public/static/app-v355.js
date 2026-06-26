@@ -6623,29 +6623,11 @@ function renderSheetsDailyStock(result, date, search, category) {
   
   if (!contentEl) return;
   
-  // ★ 중복 데이터 집계 (같은 item_code는 합산)
-  const aggregatedMap = new Map();
-  data.forEach(d => {
-    const key = d.item_code;
-    if (!key) return;
-    
-    if (aggregatedMap.has(key)) {
-      const existing = aggregatedMap.get(key);
-      existing.usage_qty = (existing.usage_qty || 0) + (d.usage_qty || 0);
-      existing.inbound_qty = (existing.inbound_qty || 0) + (d.inbound_qty || 0);
-      // prev_stock, current_stock은 첫 번째 값 유지 (또는 마지막 값으로 덮어쓰기)
-      // 재고 계산: prev_stock + inbound - usage = current_stock
-    } else {
-      aggregatedMap.set(key, { ...d });
-    }
-  });
+  // ★★★ v3.5.64: 구글시트 데이터 그대로 사용 (SSOT) - 재계산 금지 ★★★
+  // 구글시트의 current_stock은 수식으로 이미 계산됨
   
-  // 집계된 데이터로 재계산
-  data = Array.from(aggregatedMap.values()).map(d => ({
-    ...d,
-    // 현재고 재계산: 전일재고 + 입고 - 사용
-    current_stock: (d.prev_stock || 0) + (d.inbound_qty || 0) - (d.usage_qty || 0)
-  }));
+  // ★ 제외 항목: 정제수(RM184), 마스크(RT1021)
+  data = data.filter(d => d.item_code !== 'RM184' && d.item_code !== 'RT1021');
   
   // 카테고리 필터링 (원료: R/RM, 부자재: SM, 제품: PR/PD)
   if (category === '원료') {
@@ -7238,30 +7220,11 @@ function printDailyLedger() {
 function printSheetsBasedDailyLedger(data, period, summary) {
   const date = period.start_date || formatDate(new Date());
   
-  // ★★★ 화면 렌더링(renderSheetsDailyStock)과 동일한 집계 로직 적용 ★★★
-  // 1. 중복 item_code 집계 (같은 품목은 합산)
-  const aggregatedMap = new Map();
-  data.forEach(d => {
-    const key = d.item_code;
-    if (!key) return;
-    
-    if (aggregatedMap.has(key)) {
-      const existing = aggregatedMap.get(key);
-      existing.usage_qty = (existing.usage_qty || 0) + (d.usage_qty || 0);
-      existing.inbound_qty = (existing.inbound_qty || 0) + (d.inbound_qty || 0);
-    } else {
-      aggregatedMap.set(key, { ...d });
-    }
-  });
+  // ★★★ v3.5.64: 구글시트 데이터 그대로 사용 (SSOT) - 재계산 금지 ★★★
+  // 구글시트에서 이미 계산된 값을 그대로 사용
   
-  // 2. 집계된 데이터로 현재고 재계산
-  let aggregatedData = Array.from(aggregatedMap.values()).map(d => ({
-    ...d,
-    current_stock: (d.prev_stock || 0) + (d.inbound_qty || 0) - (d.usage_qty || 0)
-  }));
-  
-  // 3. 제외 항목: 정제수(RM184)
-  const filteredData = aggregatedData.filter(d => d.item_code !== 'RM184');
+  // 제외 항목: 정제수(RM184), 마스크(RT1021)
+  const filteredData = data.filter(d => d.item_code !== 'RM184' && d.item_code !== 'RT1021');
   
   // 4. item_code 기준 정렬 (화면과 동일)
   filteredData.sort((a, b) => (a.item_code || '').localeCompare(b.item_code || ''));

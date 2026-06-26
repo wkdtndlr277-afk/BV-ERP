@@ -1,8 +1,22 @@
 // 입고 관리 API (FEFO 기반 LOT 관리)
 import { Hono } from 'hono';
 import type { Bindings, Inbound, InboundRequest } from '../types';
+import { GoogleSheetsService } from '../services/GoogleSheetsService';
 
 const inboundRoutes = new Hono<{ Bindings: Bindings }>();
+
+// 구글시트 서비스 인스턴스 생성 헬퍼
+function getSheetService(c: any): GoogleSheetsService | null {
+  const clientEmail = c.env.GOOGLE_CLIENT_EMAIL;
+  const privateKey = c.env.GOOGLE_PRIVATE_KEY;
+  
+  if (!clientEmail || !privateKey) {
+    return null;
+  }
+  
+  const formattedKey = privateKey.replace(/\\n/g, '\n');
+  return new GoogleSheetsService(clientEmail, formattedKey);
+}
 
 // LOT 번호 생성 함수 (YYYYMMDD-품목코드-순번)
 function generateLotNumber(itemCode: string, date: string, sequence: number): string {
@@ -506,10 +520,45 @@ inboundRoutes.post('/', async (c) => {
     }
   }
   
+  // ★★★ 구글시트 원료입고 시트에 자동 동기화 ★★★
+  let sheetSyncResult = { success: false, message: '구글시트 동기화 스킵' };
+  try {
+    const sheetService = getSheetService(c);
+    if (sheetService) {
+      // 원료입고 시트 구조: A:입고일, B:품목코드, C:품목명, D:LOT, E:입고량, F:거래처, G:소비기한, H:품질상태, I:잔량
+      const itemName = (master as any).item_name || item_code;
+      const row = [
+        `'${inbound_date}`,  // A: 입고일 (문자열로 강제)
+        item_code,            // B: 품목코드
+        itemName,             // C: 품목명
+        lot_number,           // D: LOT
+        quantity,             // E: 입고량
+        supplier || '',       // F: 거래처
+        expiryDateValue ? `'${expiryDateValue}` : '',  // G: 소비기한
+        quality_status || '합격',  // H: 품질상태
+        quantity              // I: 잔량 (초기값 = 입고량)
+      ];
+      
+      await sheetService.appendSheet('원료입고', [row]);
+      sheetSyncResult = { success: true, message: '구글시트 동기화 완료' };
+      console.log('구글시트 원료입고 동기화 성공:', { item_code, lot_number, quantity });
+    }
+  } catch (sheetError: any) {
+    console.error('구글시트 동기화 오류:', sheetError);
+    sheetSyncResult = { success: false, message: `구글시트 동기화 실패: ${sheetError.message}` };
+    // 구글시트 동기화 실패해도 입고 등록은 성공으로 처리
+  }
+  
   return c.json({ 
     success: true, 
     message: (hasSampleColumn && is_sample) ? '샘플 입고가 등록되었습니다.' : '입고가 등록되었습니다.',
-    data: { lot_number, quality_status, is_sample: hasSampleColumn ? is_sample : undefined, storage_location: hasSampleColumn ? storage_location : undefined }
+    data: { 
+      lot_number, 
+      quality_status, 
+      is_sample: hasSampleColumn ? is_sample : undefined, 
+      storage_location: hasSampleColumn ? storage_location : undefined,
+      sheet_sync: sheetSyncResult
+    }
   });
   } catch (error: any) {
     console.error('Inbound registration error:', error);

@@ -1325,7 +1325,7 @@ sheets.get('/v2/output/daily-stock', async (c) => {
       })
       .map(row => ({
         date: row[0]?.toString().replace(/^'/, ''),
-        item_code: code,
+        item_code: row[1],  // ★ v3.5.63 fix: code → row[1]
         item_name: row[2],
         prev_stock: parseFloat(row[3]) || 0,
         inbound_qty: parseFloat(row[4]) || 0,

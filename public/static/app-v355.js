@@ -49728,7 +49728,7 @@ async function generateDailyReportPdf() {
                 <tr>
                   <th class="px-3 py-2 text-left">제품코드</th>
                   <th class="px-3 py-2 text-left">제품명</th>
-                  <th class="px-3 py-2 text-right">생산</th>
+                  <th class="px-3 py-2 text-right">생산(EA)</th>
                   <th class="px-3 py-2 text-left">제품LOT</th>
                   <th class="px-3 py-2 text-left">판매처</th>
                   <th class="px-3 py-2 text-center">소비기한</th>
@@ -49780,7 +49780,7 @@ async function generateDailyReportPdf() {
                   <tr>
                     <th class="px-3 py-2 text-left">원료코드</th>
                     <th class="px-3 py-2 text-left">원료명</th>
-                    <th class="px-3 py-2 text-right">사용량</th>
+                    <th class="px-3 py-2 text-right">사용량(kg)</th>
                     <th class="px-3 py-2 text-left">원료 LOT</th>
                     <th class="px-3 py-2 text-left">소비기한</th>
                   </tr>
@@ -49856,7 +49856,7 @@ async function printDailyReportPdf(date) {
           <tr style="background:#e0e0e0;">
             <th>제품코드</th>
             <th>제품명</th>
-            <th style="text-align:right;">생산</th>
+            <th style="text-align:right;">생산(EA)</th>
             <th style="text-align:center;">소비기한</th>
             <th style="text-align:center;">제품LOT</th>
             <th style="text-align:center;">판매처</th>
@@ -49909,7 +49909,7 @@ async function printDailyReportPdf(date) {
             <tr style="background:#f0e6ff;">
               <th>원료코드</th>
               <th>원료명</th>
-              <th style="text-align:right;">사용량</th>
+              <th style="text-align:right;">사용량(kg)</th>
               <th>원료 LOT</th>
               <th>소비기한</th>
             </tr>

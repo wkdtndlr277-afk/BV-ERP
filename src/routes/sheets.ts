@@ -2807,30 +2807,19 @@ sheets.post('/rebuild-daily-stock', async (c) => {
       }
     }
 
-    // 3. 로트매칭에서 해당 날짜 원료 조회
-    const lotMatchingData = await service.readSheet('로트매칭', 'A2:E');
-    const usedItems = new Set<string>();
+    // 3. ★★★ v3.5.69: 전일(6월1일)의 모든 원료를 기준으로 생성 ★★★
+    // (사용량 0인 원료도 포함하여 완전한 일별수불부 유지)
     
-    for (const row of lotMatchingData) {
-      let rowDate = row[0]?.toString().replace(/^'/, '');
-      if (/^\d{5}$/.test(rowDate)) {
-        const excelDate = parseInt(rowDate);
-        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
-        rowDate = jsDate.toISOString().split('T')[0];
-      }
-      
-      if (rowDate === date) {
-        const itemCode = row[2]?.toString();
-        if (itemCode) usedItems.add(itemCode);
-      }
-    }
-
-    // 4. SF원료, 정제수 제외
+    // SF원료, 정제수 제외
     const EXCLUDE_ITEMS = ['RM184', 'SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
-    const itemCodesUnsorted = Array.from(usedItems).filter(code => !EXCLUDE_ITEMS.includes(code));
+    
+    // 6월 1일 데이터에서 모든 품목코드 추출 (전일 재고가 있는 모든 원료)
+    const allItemCodes = june1Data
+      .map(row => row[1]?.toString())
+      .filter(code => code && !EXCLUDE_ITEMS.includes(code));
     
     // ★ v3.5.68: 품목코드순 정렬 (관리자 재고 검토 편의를 위해 고정 순서)
-    const itemCodes = itemCodesUnsorted.sort((a, b) => {
+    const itemCodes = allItemCodes.sort((a, b) => {
       // 숫자 부분 추출하여 자연스러운 정렬 (R002 < R012 < R102)
       const aMatch = a.match(/^([A-Z]+)(\d+)$/);
       const bMatch = b.match(/^([A-Z]+)(\d+)$/);
@@ -2848,7 +2837,7 @@ sheets.post('/rebuild-daily-stock', async (c) => {
     if (itemCodes.length === 0) {
       return c.json({
         success: false,
-        error: `${date} 로트매칭에 해당 날짜 원료 사용 기록 없음`
+        error: `전일(6월1일) 데이터에 원료 정보가 없습니다`
       }, 400);
     }
 

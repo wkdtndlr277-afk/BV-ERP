@@ -1231,17 +1231,23 @@ sheets.post('/v2/calculate/daily-stock', async (c) => {
     // 1. 해당 날짜의 생산실적 조회
     const productions = await service.getProductionRecords(date);
     
-    // 2. BOM 데이터 조회
+    // 2. BOM 데이터 조회 - ★ v3.5.71: 단위 통일 (g → kg 변환)
     const bomData = await service.readSheet('BOM마스터', 'A2:F');
     const bomMap = new Map<string, any[]>();
     for (const row of bomData) {
       const productCode = row[0];
       if (!bomMap.has(productCode)) bomMap.set(productCode, []);
+      
+      const rawQty = parseFloat(row[4]) || 0;
+      const unit = (row[5] || 'kg').toString().toLowerCase().trim();
+      // g 단위면 /1000으로 kg 변환
+      const quantity_kg = unit === 'g' ? rawQty / 1000 : rawQty;
+      
       bomMap.get(productCode)!.push({
         item_code: row[2],
         item_name: row[3],
-        quantity: parseFloat(row[4]) || 0,  // g 단위
-        unit: row[5] || 'g'
+        quantity: quantity_kg,  // 항상 kg 단위
+        unit: 'kg'  // 통일
       });
     }
 
@@ -1276,7 +1282,7 @@ sheets.post('/v2/calculate/daily-stock', async (c) => {
       for (const material of bom) {
         if (EXCLUDE_STOCK.includes(material.item_code)) continue;
         
-        // ★★★ BOM 단위가 이미 kg이므로 변환 없이 그대로 사용 ★★★
+        // ★ v3.5.71: BOM 읽을 때 이미 kg로 변환됨
         const usageKg = material.quantity * prod.quantity;
         
         if (!usageMap.has(material.item_code)) {
@@ -3208,15 +3214,21 @@ sheets.get('/debug/verify-usage', async (c) => {
     const date = c.req.query('date') || '2026-06-02';
     const itemCode = c.req.query('item_code') || 'R002';
 
-    // 1. BOM 마스터에서 해당 원료 배합비 조회
+    // 1. BOM 마스터에서 해당 원료 배합비 조회 - ★ v3.5.71: 단위 통일 (g → kg 변환)
     const bomData = await service.readSheet('BOM마스터', 'A2:F');
-    const bomMap = new Map<string, { quantity: number; unit: string }>();
+    const bomMap = new Map<string, { quantity_kg: number; original_qty: number; original_unit: string }>();
     for (const row of bomData) {
       if (row[2]?.toString() === itemCode) {
         const productCode = row[0]?.toString();
+        const rawQty = parseFloat(row[4]) || 0;
+        const unit = (row[5] || 'kg').toString().toLowerCase().trim();
+        // g 단위면 /1000으로 kg 변환
+        const quantity_kg = unit === 'g' ? rawQty / 1000 : rawQty;
+        
         bomMap.set(productCode, {
-          quantity: parseFloat(row[4]) || 0,
-          unit: row[5]?.toString() || 'g'
+          quantity_kg: quantity_kg,
+          original_qty: rawQty,
+          original_unit: unit
         });
       }
     }
@@ -3252,29 +3264,24 @@ sheets.get('/debug/verify-usage', async (c) => {
       }
     }
 
-    // 3. BOM 기반 예상 사용량 계산
+    // 3. BOM 기반 예상 사용량 계산 - ★ v3.5.71: 단위 변환 이미 적용됨
     const expectedUsage: any[] = [];
     let totalExpectedKg = 0;
     
     for (const [productCode, productions] of productionMap) {
       const bom = bomMap.get(productCode)!;
       for (const prod of productions) {
-        // BOM 배합비 단위 변환
-        let usageKg: number;
-        if (bom.unit === 'kg') {
-          usageKg = bom.quantity * prod.quantity;
-        } else {
-          // g 단위면 kg로 변환
-          usageKg = (bom.quantity * prod.quantity) / 1000;
-        }
+        // ★ v3.5.71: BOM 읽을 때 이미 kg로 변환됨
+        const usageKg = bom.quantity_kg * prod.quantity;
         
         totalExpectedKg += usageKg;
         expectedUsage.push({
           product_code: productCode,
           lot_number: prod.lot_number,
           production_qty: prod.quantity,
-          bom_qty: bom.quantity,
-          bom_unit: bom.unit,
+          bom_qty_original: bom.original_qty,
+          bom_unit_original: bom.original_unit,
+          bom_qty_kg: bom.quantity_kg,
           expected_usage_kg: usageKg.toFixed(5)
         });
       }

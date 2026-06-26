@@ -1341,7 +1341,19 @@ sheets.get('/v2/output/daily-stock', async (c) => {
         usage_qty: parseFloat(row[5]) || 0,
         current_stock: parseFloat(row[6]) || 0,
         unit: row[7] || 'kg'
-      }));
+      }))
+      // ★ v3.5.68: 품목코드순 정렬 (관리자 재고 검토 편의)
+      .sort((a, b) => {
+        const aMatch = a.item_code?.match(/^([A-Z]+)(\d+)$/);
+        const bMatch = b.item_code?.match(/^([A-Z]+)(\d+)$/);
+        if (aMatch && bMatch) {
+          if (aMatch[1] === bMatch[1]) {
+            return parseInt(aMatch[2]) - parseInt(bMatch[2]);
+          }
+          return aMatch[1].localeCompare(bMatch[1]);
+        }
+        return (a.item_code || '').localeCompare(b.item_code || '');
+      });
 
     // 요약 통계
     const summary = {
@@ -2815,7 +2827,23 @@ sheets.post('/rebuild-daily-stock', async (c) => {
 
     // 4. SF원료, 정제수 제외
     const EXCLUDE_ITEMS = ['RM184', 'SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
-    const itemCodes = Array.from(usedItems).filter(code => !EXCLUDE_ITEMS.includes(code));
+    const itemCodesUnsorted = Array.from(usedItems).filter(code => !EXCLUDE_ITEMS.includes(code));
+    
+    // ★ v3.5.68: 품목코드순 정렬 (관리자 재고 검토 편의를 위해 고정 순서)
+    const itemCodes = itemCodesUnsorted.sort((a, b) => {
+      // 숫자 부분 추출하여 자연스러운 정렬 (R002 < R012 < R102)
+      const aMatch = a.match(/^([A-Z]+)(\d+)$/);
+      const bMatch = b.match(/^([A-Z]+)(\d+)$/);
+      if (aMatch && bMatch) {
+        // 같은 접두사면 숫자로 비교
+        if (aMatch[1] === bMatch[1]) {
+          return parseInt(aMatch[2]) - parseInt(bMatch[2]);
+        }
+        // 다른 접두사면 알파벳 순서
+        return aMatch[1].localeCompare(bMatch[1]);
+      }
+      return a.localeCompare(b);
+    });
 
     if (itemCodes.length === 0) {
       return c.json({

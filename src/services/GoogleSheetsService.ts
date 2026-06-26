@@ -438,6 +438,19 @@ export class GoogleSheetsService {
   async getDailyStockReport(date: string): Promise<any[]> {
     const data = await this.readSheet('일별수불부', 'A2:H');
     
+    // ★ v3.5.68: 품목코드순 정렬 헬퍼 (R002 < R012 < R102 자연스러운 정렬)
+    const sortByItemCode = (a: any, b: any) => {
+      const aMatch = a.item_code?.match(/^([A-Z]+)(\d+)$/);
+      const bMatch = b.item_code?.match(/^([A-Z]+)(\d+)$/);
+      if (aMatch && bMatch) {
+        if (aMatch[1] === bMatch[1]) {
+          return parseInt(aMatch[2]) - parseInt(bMatch[2]);
+        }
+        return aMatch[1].localeCompare(bMatch[1]);
+      }
+      return (a.item_code || '').localeCompare(b.item_code || '');
+    };
+    
     return data
       .filter(row => row[0] === date)
       .map(row => ({
@@ -449,7 +462,8 @@ export class GoogleSheetsService {
         used_qty: parseFloat(row[5]) || 0,
         current_stock: parseFloat(row[6]) || 0,
         unit: row[7]
-      }));
+      }))
+      .sort(sortByItemCode);  // 품목코드순 정렬
   }
 
   // 로트 매칭 결과 조회 (시트에서 FEFO 계산된 결과)

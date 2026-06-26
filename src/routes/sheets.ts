@@ -2445,4 +2445,89 @@ sheets.post('/delete-by-date', async (c) => {
   }
 });
 
+// ★★★ v3.5.58: 기존 일별수불부 데이터를 수식 기반으로 변환 ★★★
+// 전일재고 이월 구조: 전일 같은 원료코드의 현재고(G열)를 참조
+sheets.post('/convert-daily-stock-to-formulas', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const confirm = body.confirm === true;
+    
+    if (!confirm) {
+      return c.json({
+        success: false,
+        error: 'confirm: true를 전송해야 합니다',
+        warning: '이 작업은 기존 일별수불부 데이터를 수식 기반으로 변환합니다. 기존 값은 수식으로 대체됩니다.'
+      }, 400);
+    }
+
+    // 1. 기존 일별수불부 데이터 읽기
+    const existingData = await service.readSheet('일별수불부', 'A2:H');
+    
+    if (existingData.length === 0) {
+      return c.json({ success: true, message: '변환할 데이터가 없습니다', converted: 0 });
+    }
+
+    // 2. 기존 데이터 삭제 (헤더 제외)
+    await service.clearSheetData('일별수불부', 2);
+
+    // 3. 수식 기반 행 생성
+    // ★ 전일재고 이월 구조:
+    //   - 같은 원료코드의 전일(A열 날짜가 1일 전) 현재고(G열)를 참조
+    //   - SUMPRODUCT + INDEX/MATCH 사용
+    const formulaRows: any[][] = [];
+    
+    for (let i = 0; i < existingData.length; i++) {
+      const row = existingData[i];
+      const rowNum = i + 2; // 실제 시트 행 번호
+      
+      const date = row[0]?.toString().replace(/^'/, '') || '';
+      const itemCode = row[1]?.toString() || '';
+      
+      if (!date || !itemCode) continue;
+      
+      formulaRows.push([
+        `'${date}`,  // A: 일자 (문자열 강제)
+        itemCode,    // B: 원료코드
+        // C: 원료명 - 원료입고에서 VLOOKUP
+        `=IFERROR(VLOOKUP(B${rowNum},원료입고!B:C,2,FALSE),"")`,
+        // D: 전일재고 - 전일 같은 원료코드의 현재고(G열) 참조
+        // SUMPRODUCT로 일자가 (당일-1)이고 원료코드가 같은 행의 G열 값 합산
+        `=IFERROR(SUMPRODUCT((A$2:A$9999=A${rowNum}-1)*(B$2:B$9999=B${rowNum})*(G$2:G$9999)),0)`,
+        // E: 입고량 - 당일 원료입고 합계
+        `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
+        // F: 사용량 - 로트매칭 시트에서 해당 일자+원료코드 합계
+        `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,
+        // G: 현재고 = 전일재고 + 입고 - 사용
+        `=D${rowNum}+E${rowNum}-F${rowNum}`,
+        'kg'  // H: 단위
+      ]);
+    }
+
+    // 4. 수식 행 일괄 저장
+    if (formulaRows.length > 0) {
+      await service.appendSheetWithFormulas('일별수불부', formulaRows);
+    }
+
+    return c.json({
+      success: true,
+      message: `일별수불부 ${formulaRows.length}건을 수식 기반으로 변환 완료`,
+      converted: formulaRows.length,
+      formula_structure: {
+        'D열(전일재고)': '전일 같은 원료코드의 현재고(G열) 참조',
+        'E열(입고량)': '원료입고 시트에서 당일+원료코드 합계',
+        'F열(사용량)': '로트매칭 시트에서 당일+원료코드 합계',
+        'G열(현재고)': '전일재고 + 입고 - 사용'
+      },
+      note: '이제 구글시트에서 셀 클릭 시 수식이 보입니다'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;

@@ -3959,6 +3959,225 @@ sheets.post('/recalculate-lot-matching', async (c) => {
   }
 });
 
+// ★★★ v3.5.74: 시트 범위 클리어 API ★★★
+sheets.post('/clear-range', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const sheet = body.sheet;
+    const range = body.range;
+    
+    if (!sheet || !range) {
+      return c.json({ success: false, error: 'sheet와 range 필수' }, 400);
+    }
+
+    await service.clearRange(sheet, range);
+    
+    return c.json({
+      success: true,
+      message: `${sheet} 시트 ${range} 범위 클리어 완료`
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.74: 로트매칭 완전 재생성 API ★★★
+// 특정 날짜들의 로트매칭을 완전히 삭제하고 새로 계산
+sheets.post('/rebuild-lot-matching-dates', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const dates: string[] = body.dates || ['2026-06-01', '2026-06-02'];
+    const dryRun = body.dry_run !== false;
+
+    const parseDate = (val: any): string => {
+      if (!val) return '';
+      let dateStr = val.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(dateStr)) {
+        const excelDate = parseInt(dateStr);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        dateStr = jsDate.toISOString().split('T')[0];
+      }
+      return dateStr;
+    };
+
+    // 1. 기존 로트매칭에서 해당 날짜들 제외한 데이터만 분리
+    const lotData = await service.readSheet('로트매칭', 'A2:G');
+    const preservedRows: any[][] = [];
+    let deletedCount = 0;
+    
+    for (const row of lotData) {
+      const rowDate = parseDate(row[0]);
+      if (dates.includes(rowDate)) {
+        deletedCount++;
+      } else if (row[0]) {
+        preservedRows.push(row);
+      }
+    }
+
+    // 2. BOM 마스터 조회
+    const bomData = await service.readSheet('BOM마스터', 'A2:F');
+    const bomMap = new Map<string, any[]>();
+    for (const row of bomData) {
+      const productCode = row[0]?.toString() || '';
+      if (!productCode) continue;
+      if (!bomMap.has(productCode)) bomMap.set(productCode, []);
+      
+      const rawQty = parseFloat(row[4]) || 0;
+      const unit = (row[5] || 'kg').toString().toLowerCase().trim();
+      const quantity_kg = unit === 'g' ? rawQty / 1000 : rawQty;
+      
+      bomMap.get(productCode)!.push({
+        item_code: row[2]?.toString() || '',
+        item_name: row[3]?.toString() || '',
+        quantity: quantity_kg,
+        unit: 'kg'
+      });
+    }
+
+    // 3. 원료입고 조회 (최신 상태)
+    const inboundData = await service.readSheet('원료입고', 'A2:I');
+    
+    // 4. 각 날짜별로 로트매칭 새로 계산
+    const EXCLUDE_STOCK = ['RM184'];
+    const SF_ITEMS = ['SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
+    const allNewRows: any[][] = [];
+    const dateResults: any[] = [];
+
+    for (const date of dates) {
+      // 원료입고 맵 초기화 (날짜별로 새로 시작)
+      const inboundMap = new Map<string, any[]>();
+      for (const row of inboundData) {
+        const itemCode = row[1]?.toString() || '';
+        const remainQty = parseFloat(row[8]) || 0;
+        if (!itemCode || remainQty <= 0) continue;
+        
+        if (!inboundMap.has(itemCode)) inboundMap.set(itemCode, []);
+        inboundMap.get(itemCode)!.push({
+          lot_number: row[3]?.toString() || '',
+          remain_qty: remainQty,
+          expiry_date: row[7]?.toString() || ''
+        });
+      }
+      // FEFO 정렬
+      for (const [, lots] of inboundMap) {
+        lots.sort((a, b) => (a.expiry_date || '9999').localeCompare(b.expiry_date || '9999'));
+      }
+
+      // 생산실적 조회
+      const productions = await service.getProductionRecords(date);
+      if (productions.length === 0) {
+        dateResults.push({ date, status: 'skipped', reason: '생산실적 없음' });
+        continue;
+      }
+
+      // 로트매칭 계산
+      const newRows: any[][] = [];
+      
+      for (const prod of productions) {
+        const bom = bomMap.get(prod.product_code) || [];
+        
+        for (const material of bom) {
+          if (EXCLUDE_STOCK.includes(material.item_code)) continue;
+          
+          const usageKg = material.quantity * prod.quantity;
+          
+          // SF 원료
+          if (SF_ITEMS.includes(material.item_code)) {
+            newRows.push([
+              `'${date}`, prod.lot_number, material.item_code, material.item_name,
+              usageKg.toFixed(5), '', ''
+            ]);
+            continue;
+          }
+
+          // FEFO 로트 매칭
+          const lots = inboundMap.get(material.item_code) || [];
+          let remaining = usageKg;
+          
+          for (const lot of lots) {
+            if (remaining <= 0) break;
+            if (lot.remain_qty <= 0) continue;
+            
+            const useFromLot = Math.min(remaining, lot.remain_qty);
+            remaining -= useFromLot;
+            lot.remain_qty -= useFromLot;
+            
+            newRows.push([
+              `'${date}`, prod.lot_number, material.item_code, material.item_name,
+              useFromLot.toFixed(5), lot.lot_number, lot.expiry_date
+            ]);
+          }
+          
+          if (remaining > 0) {
+            newRows.push([
+              `'${date}`, prod.lot_number, material.item_code, material.item_name,
+              remaining.toFixed(5), '재고부족', ''
+            ]);
+          }
+        }
+      }
+      
+      allNewRows.push(...newRows);
+      dateResults.push({ 
+        date, 
+        status: 'calculated', 
+        production_count: productions.length,
+        new_rows: newRows.length 
+      });
+    }
+
+    if (dryRun) {
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        message: '시뮬레이션 결과 (실제 변경 없음)',
+        data: {
+          dates,
+          deleted_rows: deletedCount,
+          preserved_rows: preservedRows.length,
+          new_rows: allNewRows.length,
+          date_results: dateResults
+        },
+        note: 'dry_run: false로 설정하면 실제 재생성 실행'
+      });
+    }
+
+    // 5. 실제 실행: 전체 클리어 후 다시 쓰기
+    await service.clearRange('로트매칭', `A2:G${lotData.length + 500}`);
+    
+    const finalData = [...preservedRows, ...allNewRows];
+    if (finalData.length > 0) {
+      await service.writeSheet('로트매칭', `A2:G${finalData.length + 1}`, finalData);
+    }
+
+    return c.json({
+      success: true,
+      mode: 'executed',
+      message: `로트매칭 ${dates.join(', ')} 완전 재생성 완료`,
+      data: {
+        dates,
+        deleted_rows: deletedCount,
+        preserved_rows: preservedRows.length,
+        new_rows: allNewRows.length,
+        total_rows: finalData.length,
+        date_results: dateResults
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.5.73: 일별수불부 완전 초기화 및 재구성 API ★★★
 // 구글시트 일별수불부 전체를 클리어하고 6월 1일부터 다시 생성
 sheets.post('/reset-daily-stock-complete', async (c) => {

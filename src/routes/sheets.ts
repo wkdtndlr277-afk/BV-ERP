@@ -3959,4 +3959,312 @@ sheets.post('/recalculate-lot-matching', async (c) => {
   }
 });
 
+// ★★★ v3.5.73: 일별수불부 완전 초기화 및 재구성 API ★★★
+// 구글시트 일별수불부 전체를 클리어하고 6월 1일부터 다시 생성
+sheets.post('/reset-daily-stock-complete', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const dryRun = body.dry_run !== false;  // 기본 true: 시뮬레이션 모드
+    
+    // ★ R102 유기농 T55 초기재고 사용자 지정값 (기본 10000kg)
+    const t55InitialStock = parseFloat(body.t55_initial_stock) || 10000;
+    
+    // 1. 원료입고 시트에서 6월 1일 이전 기준 초기재고 계산
+    // (6월 1일 입고분은 포함하지 않음 - 전일재고 개념)
+    const inboundData = await service.readSheet('원료입고', 'A2:I');
+    
+    // 6월 1일 이전(5월 31일까지)의 잔량 합계로 초기재고 계산
+    const initialStockMap = new Map<string, { stock: number; name: string }>();
+    
+    for (const row of inboundData) {
+      let inboundDate = row[0]?.toString().replace(/^'/, '');
+      
+      // 엑셀 시리얼 번호 변환
+      if (/^\d{5}$/.test(inboundDate)) {
+        const excelDate = parseInt(inboundDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        inboundDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      const itemCode = row[1]?.toString();
+      const itemName = row[2]?.toString() || '';
+      const remainQty = parseFloat(row[8]) || 0;  // I열: 잔량
+      
+      if (!itemCode) continue;
+      
+      // SF원료, 정제수 제외
+      if (itemCode.startsWith('SF') || itemCode === 'RM184') continue;
+      
+      // 기존 값에 누적
+      const existing = initialStockMap.get(itemCode) || { stock: 0, name: itemName };
+      existing.stock += remainQty;
+      if (!existing.name && itemName) existing.name = itemName;
+      initialStockMap.set(itemCode, existing);
+    }
+    
+    // ★★★ R102 유기농 T55 사용자 지정 초기재고로 강제 설정 ★★★
+    if (initialStockMap.has('R102')) {
+      const existing = initialStockMap.get('R102')!;
+      existing.stock = t55InitialStock;
+      initialStockMap.set('R102', existing);
+    } else {
+      initialStockMap.set('R102', { stock: t55InitialStock, name: '유기농 T55' });
+    }
+    
+    // 2. 품목코드 정렬 (자연스러운 숫자 정렬)
+    const itemCodes = Array.from(initialStockMap.keys()).sort((a, b) => {
+      const aMatch = a.match(/^([A-Z]+)(\d+)$/);
+      const bMatch = b.match(/^([A-Z]+)(\d+)$/);
+      if (aMatch && bMatch) {
+        if (aMatch[1] === bMatch[1]) {
+          return parseInt(aMatch[2]) - parseInt(bMatch[2]);
+        }
+        return aMatch[1].localeCompare(bMatch[1]);
+      }
+      return a.localeCompare(b);
+    });
+    
+    // 3. 6월 1일 입고량 계산 (원료입고 시트에서)
+    const june1InboundMap = new Map<string, number>();
+    for (const row of inboundData) {
+      let inboundDate = row[0]?.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(inboundDate)) {
+        const excelDate = parseInt(inboundDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        inboundDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (inboundDate === '2026-06-01') {
+        const itemCode = row[1]?.toString();
+        const originQty = parseFloat(row[4]) || 0;  // E열: 입고량
+        if (itemCode) {
+          june1InboundMap.set(itemCode, (june1InboundMap.get(itemCode) || 0) + originQty);
+        }
+      }
+    }
+    
+    // 4. 6월 1일 사용량 계산 (로트매칭 시트에서, BOM 단위 변환 적용)
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:E');
+    const june1UsageMap = new Map<string, number>();
+    
+    for (const row of lotMatchingData) {
+      let matchDate = row[0]?.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(matchDate)) {
+        const excelDate = parseInt(matchDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        matchDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (matchDate === '2026-06-01') {
+        const itemCode = row[2]?.toString();
+        const usageQty = parseFloat(row[4]) || 0;  // E열: 사용량 (이미 kg 단위로 저장됨)
+        if (itemCode) {
+          june1UsageMap.set(itemCode, (june1UsageMap.get(itemCode) || 0) + usageQty);
+        }
+      }
+    }
+    
+    // 5. 6월 1일 일별수불부 행 생성 (값으로 직접 저장 - 수식 없음)
+    const june1Rows: any[][] = [];
+    
+    for (const itemCode of itemCodes) {
+      const itemInfo = initialStockMap.get(itemCode)!;
+      const prevStock = itemInfo.stock;  // 전일재고 (5월 31일까지의 잔량 합계)
+      const inboundQty = june1InboundMap.get(itemCode) || 0;  // 당일 입고량
+      const usageQty = june1UsageMap.get(itemCode) || 0;  // 당일 사용량
+      const currentStock = prevStock + inboundQty - usageQty;  // 현재고 계산
+      
+      june1Rows.push([
+        "'2026-06-01",  // A: 일자
+        itemCode,       // B: 원료코드
+        itemInfo.name,  // C: 원료명
+        Math.round(prevStock * 10000) / 10000,     // D: 전일재고
+        Math.round(inboundQty * 10000) / 10000,    // E: 입고량
+        Math.round(usageQty * 10000) / 10000,      // F: 사용량
+        Math.round(currentStock * 10000) / 10000,  // G: 현재고
+        'kg'            // H: 단위
+      ]);
+    }
+    
+    // 6. 6월 2일 입고량 계산
+    const june2InboundMap = new Map<string, number>();
+    for (const row of inboundData) {
+      let inboundDate = row[0]?.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(inboundDate)) {
+        const excelDate = parseInt(inboundDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        inboundDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (inboundDate === '2026-06-02') {
+        const itemCode = row[1]?.toString();
+        const originQty = parseFloat(row[4]) || 0;
+        if (itemCode) {
+          june2InboundMap.set(itemCode, (june2InboundMap.get(itemCode) || 0) + originQty);
+        }
+      }
+    }
+    
+    // 7. 6월 2일 사용량 계산
+    const june2UsageMap = new Map<string, number>();
+    for (const row of lotMatchingData) {
+      let matchDate = row[0]?.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(matchDate)) {
+        const excelDate = parseInt(matchDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        matchDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (matchDate === '2026-06-02') {
+        const itemCode = row[2]?.toString();
+        const usageQty = parseFloat(row[4]) || 0;
+        if (itemCode) {
+          june2UsageMap.set(itemCode, (june2UsageMap.get(itemCode) || 0) + usageQty);
+        }
+      }
+    }
+    
+    // 8. 6월 1일 마감재고 맵 생성
+    const june1EndStockMap = new Map<string, number>();
+    for (const row of june1Rows) {
+      june1EndStockMap.set(row[1], row[6]);  // itemCode -> currentStock
+    }
+    
+    // 9. 6월 2일 일별수불부 행 생성
+    const june2Rows: any[][] = [];
+    
+    for (const itemCode of itemCodes) {
+      const itemInfo = initialStockMap.get(itemCode)!;
+      const prevStock = june1EndStockMap.get(itemCode) || 0;  // 6월 1일 마감재고
+      const inboundQty = june2InboundMap.get(itemCode) || 0;  // 당일 입고량
+      const usageQty = june2UsageMap.get(itemCode) || 0;  // 당일 사용량
+      const currentStock = prevStock + inboundQty - usageQty;  // 현재고 계산
+      
+      june2Rows.push([
+        "'2026-06-02",  // A: 일자
+        itemCode,       // B: 원료코드
+        itemInfo.name,  // C: 원료명
+        Math.round(prevStock * 10000) / 10000,     // D: 전일재고
+        Math.round(inboundQty * 10000) / 10000,    // E: 입고량
+        Math.round(usageQty * 10000) / 10000,      // F: 사용량
+        Math.round(currentStock * 10000) / 10000,  // G: 현재고
+        'kg'            // H: 단위
+      ]);
+    }
+    
+    // dry_run 모드: 결과만 보여줌
+    if (dryRun) {
+      // R102 유기농 T55 확인
+      const t55June1 = june1Rows.find(r => r[1] === 'R102');
+      const t55June2 = june2Rows.find(r => r[1] === 'R102');
+      
+      // 난백/난황 확인
+      const nanbaekJune1 = june1Rows.find(r => r[1] === 'R016');
+      const nanhwangJune1 = june1Rows.find(r => r[1] === 'R017');
+      
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        message: '시뮬레이션 결과 (실제 변경 없음)',
+        data: {
+          total_items: itemCodes.length,
+          june1_rows: june1Rows.length,
+          june2_rows: june2Rows.length,
+          t55_initial_stock_setting: t55InitialStock,
+          t55_june1: t55June1 ? {
+            prev_stock: t55June1[3],
+            inbound: t55June1[4],
+            usage: t55June1[5],
+            current_stock: t55June1[6]
+          } : null,
+          t55_june2: t55June2 ? {
+            prev_stock: t55June2[3],
+            inbound: t55June2[4],
+            usage: t55June2[5],
+            current_stock: t55June2[6]
+          } : null,
+          nanbaek_june1: nanbaekJune1 ? {
+            item_name: nanbaekJune1[2],
+            prev_stock: nanbaekJune1[3],
+            usage: nanbaekJune1[5],
+            current_stock: nanbaekJune1[6]
+          } : null,
+          nanhwang_june1: nanhwangJune1 ? {
+            item_name: nanhwangJune1[2],
+            prev_stock: nanhwangJune1[3],
+            usage: nanhwangJune1[5],
+            current_stock: nanhwangJune1[6]
+          } : null,
+          sample_june1: june1Rows.slice(0, 5).map(r => ({
+            item_code: r[1],
+            item_name: r[2],
+            prev_stock: r[3],
+            inbound: r[4],
+            usage: r[5],
+            current_stock: r[6]
+          })),
+          sample_june2: june2Rows.slice(0, 5).map(r => ({
+            item_code: r[1],
+            item_name: r[2],
+            prev_stock: r[3],
+            inbound: r[4],
+            usage: r[5],
+            current_stock: r[6]
+          }))
+        },
+        note: 'dry_run: false로 설정하면 실제 시트 초기화 실행'
+      });
+    }
+    
+    // 10. 실제 실행: 일별수불부 시트 완전 클리어
+    // A2부터 2000행까지 클리어 (헤더 제외)
+    await service.clearRange('일별수불부', 'A2:H2000');
+    
+    // 11. 6월 1일 데이터 쓰기 (A2부터)
+    const june1Range = `A2:H${1 + june1Rows.length}`;
+    await service.writeSheet('일별수불부', june1Range, june1Rows);
+    
+    // 12. 6월 2일 데이터 쓰기 (6월 1일 다음부터)
+    const june2StartRow = 2 + june1Rows.length;
+    const june2Range = `A${june2StartRow}:H${june2StartRow + june2Rows.length - 1}`;
+    await service.writeSheet('일별수불부', june2Range, june2Rows);
+    
+    // R102 유기농 T55 최종 확인
+    const t55June1Final = june1Rows.find(r => r[1] === 'R102');
+    const t55June2Final = june2Rows.find(r => r[1] === 'R102');
+    
+    return c.json({
+      success: true,
+      mode: 'executed',
+      message: '일별수불부 완전 초기화 및 재구성 완료',
+      data: {
+        cleared_range: 'A2:H2000',
+        june1_rows_written: june1Rows.length,
+        june2_rows_written: june2Rows.length,
+        total_rows: june1Rows.length + june2Rows.length,
+        t55_initial_stock: t55InitialStock,
+        t55_june1_result: t55June1Final ? {
+          prev_stock: t55June1Final[3],
+          inbound: t55June1Final[4],
+          usage: t55June1Final[5],
+          current_stock: t55June1Final[6]
+        } : null,
+        t55_june2_result: t55June2Final ? {
+          prev_stock: t55June2Final[3],
+          inbound: t55June2Final[4],
+          usage: t55June2Final[5],
+          current_stock: t55June2Final[6]
+        } : null
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;

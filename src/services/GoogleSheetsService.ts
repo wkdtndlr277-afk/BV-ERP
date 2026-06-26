@@ -1063,7 +1063,13 @@ export class GoogleSheetsService {
   async appendLotMatchingWithDedup(rows: any[][]): Promise<{ added: number; skipped: number }> {
     const existing = await this.readSheet('로트매칭', 'A2:E');
     
-    // 기존 키 세트 생성 (날짜_제품LOT_원료코드_사용량)
+    // ★ v3.5.67: 소수점 2자리 반올림 헬퍼
+    const roundUsage = (val: any): string => {
+      const num = parseFloat(val?.toString() || '0');
+      return (Math.round(num * 100) / 100).toString();
+    };
+    
+    // 기존 키 세트 생성 (날짜_제품LOT_원료코드_사용량(반올림))
     const existingKeys = new Set<string>();
     for (const row of existing) {
       let rowDate = row[0]?.toString().replace(/^'/, '') || '';
@@ -1074,7 +1080,7 @@ export class GoogleSheetsService {
       }
       const productLot = row[1]?.toString() || '';
       const materialCode = row[2]?.toString() || '';
-      const usage = row[4]?.toString() || '';
+      const usage = roundUsage(row[4]);  // 소수점 2자리 반올림
       existingKeys.add(`${rowDate}_${productLot}_${materialCode}_${usage}`);
     }
     
@@ -1086,7 +1092,7 @@ export class GoogleSheetsService {
       const date = row[0]?.toString().replace(/^'/, '') || '';
       const productLot = row[1]?.toString() || '';
       const materialCode = row[2]?.toString() || '';
-      const usage = row[4]?.toString() || '';
+      const usage = roundUsage(row[4]);  // 소수점 2자리 반올림
       const key = `${date}_${productLot}_${materialCode}_${usage}`;
       
       if (existingKeys.has(key)) {

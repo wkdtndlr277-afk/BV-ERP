@@ -3458,10 +3458,13 @@ sheets.post('/cleanup/lot-matching', async (c) => {
       }
     }
 
-    // 3. 해당 날짜 중복 제거 (제품LOT + 원료코드 + 사용량 기준)
+    // 3. 해당 날짜 중복 제거 (제품LOT + 원료코드 + 사용량(반올림) 기준)
+    // ★ v3.5.67: 소수점 2자리 반올림하여 비교 (1.23048 vs 1.23 같은 중복 처리)
     const uniqueMap = new Map<string, any[]>();
     for (const row of targetDateRows) {
-      const key = `${row[1]}_${row[2]}_${row[4]}`;  // 제품LOT_원료코드_사용량
+      const usageQty = parseFloat(row[4]) || 0;
+      const roundedUsage = Math.round(usageQty * 100) / 100;  // 소수점 2자리 반올림
+      const key = `${row[1]}_${row[2]}_${roundedUsage}`;  // 제품LOT_원료코드_사용량(반올림)
       if (!uniqueMap.has(key)) {
         uniqueMap.set(key, row);
       }

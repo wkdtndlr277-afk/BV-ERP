@@ -16682,6 +16682,8 @@ async function loadProductCatalog(search = '') {
                 ${p.process_number ? `<div><i class="fas fa-cogs w-5 text-gray-400"></i> ${p.process_number}</div>` : ''}
                 ${p.expiry_info ? `<div><i class="fas fa-clock w-5 text-gray-400"></i> ${p.expiry_info}</div>` : ''}
                 ${p.storage_method ? `<div><i class="fas fa-thermometer-half w-5 text-gray-400"></i> ${p.storage_method}</div>` : ''}
+                ${p.oven_temperature ? `<div><i class="fas fa-temperature-high w-5 text-orange-400"></i> ${p.oven_temperature}</div>` : ''}
+                ${p.process_type ? `<div><i class="fas fa-industry w-5 text-purple-400"></i> ${p.process_type}</div>` : ''}
                 ${p.sales_channel ? `<div><i class="fas fa-store w-5 text-gray-400"></i> ${p.sales_channel}</div>` : ''}
               </div>
               
@@ -16732,7 +16734,7 @@ async function searchProductionItems(searchTerm) {
   }
 }
 
-// 제품 등록/수정 모달
+// ★★★ v3.5.60: 제품 등록/수정 모달 (ERP 제품코드 필수, 오븐온도/공정유형 추가) ★★★
 function showProductModal(product = null) {
   const isEdit = !!product;
   
@@ -16740,10 +16742,10 @@ function showProductModal(product = null) {
     <form id="product-form" class="space-y-4">
       <input type="hidden" id="product-id" value="${product?.id || ''}">
       
-      <!-- ★★★ v3.5.59: 제품마스터 코드 선택 (BOM 연동) ★★★ -->
+      <!-- ★★★ v3.5.60: ERP 제품마스터 코드 선택 (필수) ★★★ -->
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
         <label class="block text-sm font-medium text-blue-700 mb-2">
-          <i class="fas fa-link mr-1"></i> 제품마스터 코드 (BOM 연동)
+          <i class="fas fa-link mr-1"></i> ERP 제품마스터 코드 <span class="text-red-500">*</span>
         </label>
         <div class="flex gap-2">
           <div class="flex-1 relative">
@@ -16762,17 +16764,19 @@ function showProductModal(product = null) {
         <input type="hidden" id="product-production-code" value="${product?.production_code || ''}">
         <input type="hidden" id="product-production-name" value="${product?.production_name || ''}">
         <div id="selected-production-info" class="mt-2 text-sm ${product?.production_code ? '' : 'hidden'}">
-          <span class="text-blue-600 font-medium">
+          <span class="text-green-600 font-medium">
             <i class="fas fa-check-circle mr-1"></i>
             선택됨: <span id="selected-production-display">${product?.production_code ? `${product.production_code} - ${product.production_name || ''}` : ''}</span>
           </span>
+          ${!isEdit ? `
           <button type="button" onclick="clearProductionCode()" class="ml-2 text-red-500 hover:text-red-700 text-xs">
             <i class="fas fa-times"></i> 해제
           </button>
+          ` : ''}
         </div>
         <p class="text-xs text-blue-600 mt-1">
-          <i class="fas fa-info-circle mr-1"></i>
-          BOM(배합표)에 등록된 제품마스터 코드를 선택하면 생산시 원료 자동 계산됩니다.
+          <i class="fas fa-exclamation-circle mr-1"></i>
+          ERP에 등록된 제품마스터 코드를 선택하면 해당 코드가 제품코드로 사용됩니다.
         </p>
       </div>
       
@@ -16841,6 +16845,27 @@ function showProductModal(product = null) {
           <label class="block text-sm font-medium text-gray-700 mb-1">보관방법</label>
           <input type="text" id="product-storage-method" value="${product?.storage_method || ''}"
                  class="w-full border rounded-lg px-4 py-2" placeholder="예: 냉장 0~10℃">
+        </div>
+      </div>
+      
+      <!-- ★★★ v3.5.60: 오븐온도, 공정유형 추가 ★★★ -->
+      <div class="grid grid-cols-2 gap-4">
+        <!-- 오븐온도 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            <i class="fas fa-temperature-high text-orange-500 mr-1"></i>오븐온도
+          </label>
+          <input type="text" id="product-oven-temperature" value="${product?.oven_temperature || ''}"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="예: 상화 180℃ / 하화 160℃">
+        </div>
+        
+        <!-- 공정유형 -->
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            <i class="fas fa-cogs text-purple-500 mr-1"></i>공정유형
+          </label>
+          <input type="text" id="product-process-type" value="${product?.process_type || ''}"
+                 class="w-full border rounded-lg px-4 py-2" placeholder="예: 구움, 튤김, 냉동">
         </div>
       </div>
       
@@ -16969,7 +16994,7 @@ function handleProductImageUpload(event) {
   reader.readAsDataURL(file);
 }
 
-// 제품 저장
+// ★★★ v3.5.60: 제품 저장 (ERP 코드 필수, 오븐온도/공정유형 추가) ★★★
 async function saveProduct(isEdit) {
   const data = {
     product_name: document.getElementById('product-name').value.trim(),
@@ -16981,13 +17006,22 @@ async function saveProduct(isEdit) {
     storage_method: document.getElementById('product-storage-method').value.trim(),
     sales_channel: document.getElementById('product-sales-channel').value.trim(),
     memo: document.getElementById('product-memo').value.trim(),
-    // ★★★ v3.5.59: 제품마스터 코드 및 생산명 추가 ★★★
+    // ★★★ v3.5.60: ERP 코드 + 오븐온도 + 공정유형 ★★★
     production_code: document.getElementById('product-production-code')?.value.trim() || '',
-    production_name: document.getElementById('product-production-name')?.value.trim() || ''
+    production_name: document.getElementById('product-production-name')?.value.trim() || '',
+    oven_temperature: document.getElementById('product-oven-temperature')?.value.trim() || '',
+    process_type: document.getElementById('product-process-type')?.value.trim() || ''
   };
   
   if (!data.product_name) {
     showToast('제품명을 입력해주세요.', 'warning');
+    return;
+  }
+  
+  // ★★★ v3.5.60: 신규 등록 시 ERP 제품코드 필수 ★★★
+  if (!isEdit && !data.production_code) {
+    showToast('ERP 제품마스터 코드를 선택해주세요.', 'warning');
+    document.getElementById('production-code-search')?.focus();
     return;
   }
   
@@ -17068,6 +17102,15 @@ async function viewProduct(id) {
             <p class="text-gray-500 text-xs mb-1">판매처</p>
             <p class="font-medium">${p.sales_channel || '-'}</p>
           </div>
+          <!-- ★★★ v3.5.60: 오븐온도, 공정유형 추가 ★★★ -->
+          <div class="bg-orange-50 border border-orange-200 rounded-lg p-3">
+            <p class="text-orange-600 text-xs mb-1"><i class="fas fa-temperature-high mr-1"></i>오븐온도</p>
+            <p class="font-medium">${p.oven_temperature || '-'}</p>
+          </div>
+          <div class="bg-purple-50 border border-purple-200 rounded-lg p-3">
+            <p class="text-purple-600 text-xs mb-1"><i class="fas fa-cogs mr-1"></i>공정유형</p>
+            <p class="font-medium">${p.process_type || '-'}</p>
+          </div>
         </div>
         
         ${p.memo ? `
@@ -17117,7 +17160,7 @@ async function deleteProduct(id, productName) {
   }
 }
 
-// 제품 현황 엑셀 다운로드
+// ★★★ v3.5.60: 제품 현황 엑셀 다운로드 (오븐온도, 공정유형 추가) ★★★
 function downloadProductCatalog() {
   const data = window.productCatalogData || [];
   
@@ -17129,6 +17172,8 @@ function downloadProductCatalog() {
     { key: 'barcode', label: '상품바코드' },
     { key: 'expiry_info', label: '소비기한' },
     { key: 'storage_method', label: '보관방법' },
+    { key: 'oven_temperature', label: '오븐온도' },      // ★ v3.5.60
+    { key: 'process_type', label: '공정유형' },          // ★ v3.5.60
     { key: 'sales_channel', label: '판매처' },
     { key: 'is_active', label: '상태' }
   ];
@@ -17141,7 +17186,7 @@ function downloadProductCatalog() {
   downloadExcel(exportData, columns, '제품현황관리');
 }
 
-// 제품 현황 출력
+// ★★★ v3.5.60: 제품 현황 출력 (오븐온도, 공정유형 추가) ★★★
 function printProductCatalog() {
   const data = window.productCatalogData || [];
   
@@ -17149,10 +17194,12 @@ function printProductCatalog() {
     { key: 'product_code', label: '제품코드' },
     { key: 'product_name', label: '제품명' },
     { key: 'manufacture_report', label: '품목제조보고서' },
-    { key: 'process_number', label: '제조공정번호' },
+    { key: 'process_number', label: '공정번호' },
     { key: 'barcode', label: '바코드' },
     { key: 'expiry_info', label: '소비기한' },
     { key: 'storage_method', label: '보관방법' },
+    { key: 'oven_temperature', label: '오븐온도' },      // ★ v3.5.60
+    { key: 'process_type', label: '공정유형' },          // ★ v3.5.60
     { key: 'sales_channel', label: '판매처' },
     { key: 'is_active', label: '상태', type: 'center', format: (v) => `<span class="badge ${v ? 'badge-pass' : 'badge-fail'}">${v ? '활성' : '비활성'}</span>` }
   ];

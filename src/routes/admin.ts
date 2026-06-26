@@ -8492,7 +8492,7 @@ admin.get('/debug/transactions-stock', async (c) => {
   }
 })
 
-// ★★★ v3.5.59: Product_Catalog에 production_code, production_name 컬럼 추가 마이그레이션 ★★★
+// ★★★ v3.5.60: Product_Catalog 마이그레이션 (오븐온도, 공정유형 추가) ★★★
 admin.get('/migrate-product-catalog', async (c) => {
   const { env } = c
   const results: string[] = []
@@ -8526,7 +8526,35 @@ admin.get('/migrate-product-catalog', async (c) => {
       }
     }
     
-    // 3. 인덱스 생성
+    // 3. ★★★ v3.5.60: oven_temperature 컬럼 추가 (오븐온도) ★★★
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE Product_Catalog ADD COLUMN oven_temperature TEXT
+      `).run()
+      results.push('oven_temperature 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message.includes('duplicate column')) {
+        results.push('oven_temperature 컬럼 이미 존재')
+      } else {
+        throw e
+      }
+    }
+    
+    // 4. ★★★ v3.5.60: process_type 컬럼 추가 (공정유형) ★★★
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE Product_Catalog ADD COLUMN process_type TEXT
+      `).run()
+      results.push('process_type 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message.includes('duplicate column')) {
+        results.push('process_type 컬럼 이미 존재')
+      } else {
+        throw e
+      }
+    }
+    
+    // 5. 인덱스 생성
     try {
       await env.DB.prepare(`
         CREATE INDEX IF NOT EXISTS idx_product_catalog_production_code ON Product_Catalog(production_code)
@@ -8538,7 +8566,7 @@ admin.get('/migrate-product-catalog', async (c) => {
     
     return c.json({ 
       success: true, 
-      message: 'Product_Catalog 마이그레이션 완료',
+      message: 'Product_Catalog 마이그레이션 완료 (v3.5.60: 오븐온도, 공정유형 추가)',
       results 
     })
   } catch (error: any) {

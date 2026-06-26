@@ -65,8 +65,10 @@ app.get('/:id', async (c) => {
   })
 })
 
-// 제품 코드 자동 생성
+// ★★★ v3.5.60: 제품 코드 자동 생성 (기존 PRD 코드는 더이상 사용 안함, ERP 코드 사용) ★★★
+// 이제 ERP 제품코드(production_code)를 product_code로 직접 사용
 async function generateProductCode(db: D1Database): Promise<string> {
+  // 레거시: 만약 production_code가 없는 경우를 위한 백업 코드 생성
   const result = await db.prepare(`
     SELECT product_code FROM Product_Catalog 
     WHERE product_code LIKE 'PRD%' 
@@ -84,7 +86,7 @@ async function generateProductCode(db: D1Database): Promise<string> {
   return `PRD${String(nextNum).padStart(4, '0')}`
 }
 
-// 제품 등록
+// ★★★ v3.5.60: 제품 등록 (ERP 제품코드를 product_code로 사용, 오븐온도/공정유형 추가) ★★★
 app.post('/', async (c) => {
   const body = await c.req.json()
   const {
@@ -97,16 +99,32 @@ app.post('/', async (c) => {
     storage_method,
     sales_channel,
     memo,
-    production_code,    // ★ v3.5.59: 제품마스터 코드 추가
-    production_name     // ★ v3.5.59: 생산명 추가
+    production_code,    // ★ v3.5.59: ERP 제품마스터 코드
+    production_name,    // ★ v3.5.59: 생산명
+    oven_temperature,   // ★ v3.5.60: 오븐온도 (자유입력)
+    process_type        // ★ v3.5.60: 공정유형 (자유입력)
   } = body
   
   if (!product_name) {
     return c.json({ success: false, error: '제품명은 필수입니다.' }, 400)
   }
   
-  // 제품 코드 자동 생성
-  const product_code = await generateProductCode(c.env.DB)
+  // ★★★ v3.5.60: ERP 제품코드 필수 ★★★
+  if (!production_code) {
+    return c.json({ success: false, error: 'ERP 제품마스터 코드를 선택해주세요.' }, 400)
+  }
+  
+  // ★★★ v3.5.60: production_code를 product_code로 사용 (코드 일치) ★★★
+  const product_code = production_code
+  
+  // 제품코드 중복 체크
+  const existingCode = await c.env.DB.prepare(`
+    SELECT id FROM Product_Catalog WHERE product_code = ?
+  `).bind(product_code).first()
+  
+  if (existingCode) {
+    return c.json({ success: false, error: `제품코드 '${product_code}'는 이미 등록되어 있습니다.` }, 400)
+  }
   
   // 바코드 중복 체크
   if (barcode) {
@@ -123,8 +141,8 @@ app.post('/', async (c) => {
     INSERT INTO Product_Catalog (
       product_code, product_name, manufacture_report, product_image,
       process_number, barcode, expiry_info, storage_method, sales_channel, memo,
-      production_code, production_name
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      production_code, production_name, oven_temperature, process_type
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     product_code,
     product_name,
@@ -136,13 +154,15 @@ app.post('/', async (c) => {
     storage_method || null,
     sales_channel || null,
     memo || null,
-    production_code || null,   // ★ v3.5.59
-    production_name || null    // ★ v3.5.59
+    production_code,         // ★ v3.5.60: 같은 값
+    production_name || null,
+    oven_temperature || null,  // ★ v3.5.60
+    process_type || null       // ★ v3.5.60
   ).run()
   
   return c.json({
     success: true,
-    message: '제품이 등록되었습니다.',
+    message: `제품이 등록되었습니다. (코드: ${product_code})`,
     data: {
       id: result.meta.last_row_id,
       product_code
@@ -150,7 +170,7 @@ app.post('/', async (c) => {
   })
 })
 
-// 제품 수정
+// ★★★ v3.5.60: 제품 수정 (오븐온도, 공정유형 추가) ★★★
 app.put('/:id', async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json()
@@ -166,13 +186,15 @@ app.put('/:id', async (c) => {
     memo,
     is_active,
     production_code,    // ★ v3.5.59
-    production_name     // ★ v3.5.59
+    production_name,    // ★ v3.5.59
+    oven_temperature,   // ★ v3.5.60
+    process_type        // ★ v3.5.60
   } = body
   
   // 기존 제품 확인
   const existing = await c.env.DB.prepare(`
     SELECT * FROM Product_Catalog WHERE id = ?
-  `).bind(id).first()
+  `).bind(id).first() as any
   
   if (!existing) {
     return c.json({ success: false, error: '제품을 찾을 수 없습니다.' }, 404)
@@ -189,8 +211,13 @@ app.put('/:id', async (c) => {
     }
   }
   
+  // ★★★ v3.5.60: production_code 변경 시 product_code도 함께 변경 ★★★
+  const newProductionCode = production_code !== undefined ? production_code : existing.production_code
+  const newProductCode = newProductionCode || existing.product_code  // production_code가 있으면 동기화
+  
   await c.env.DB.prepare(`
     UPDATE Product_Catalog SET
+      product_code = ?,
       product_name = ?,
       manufacture_report = ?,
       product_image = ?,
@@ -203,9 +230,12 @@ app.put('/:id', async (c) => {
       is_active = ?,
       production_code = ?,
       production_name = ?,
+      oven_temperature = ?,
+      process_type = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).bind(
+    newProductCode,
     product_name || existing.product_name,
     manufacture_report !== undefined ? manufacture_report : existing.manufacture_report,
     product_image !== undefined ? product_image : existing.product_image,
@@ -216,8 +246,10 @@ app.put('/:id', async (c) => {
     sales_channel !== undefined ? sales_channel : existing.sales_channel,
     memo !== undefined ? memo : existing.memo,
     is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
-    production_code !== undefined ? production_code : existing.production_code,
+    newProductionCode,
     production_name !== undefined ? production_name : existing.production_name,
+    oven_temperature !== undefined ? oven_temperature : existing.oven_temperature,
+    process_type !== undefined ? process_type : existing.process_type,
     id
   ).run()
   

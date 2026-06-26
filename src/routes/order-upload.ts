@@ -968,7 +968,7 @@ orderUpload.post('/to-production', async (c) => {
 });
 
 
-// ★ 생산 완료 등록 API (v3.5.56 - BOM 기반 원료사용량 자동 계산 + 로트매칭)
+// ★ 생산 완료 등록 API (v3.5.57 - subrequest 최적화: 원료입고 1회 읽기 + 메모리 FEFO)
 orderUpload.post('/complete-production', async (c) => {
   try {
     const body = await c.req.json();
@@ -1004,10 +1004,65 @@ orderUpload.post('/complete-production', async (c) => {
     const materialUsageSummary: { code: string; name: string; total: number }[] = [];
     
     try {
-      // 1. 전체 BOM 조회 (한 번만)
+      // ★★★ v3.5.57 최적화: 데이터를 한 번만 읽고 메모리에서 처리 ★★★
+      // 기존: 원료마다 readSheet 호출 (770회) → 개선: 1회만 읽기
+      
+      // 1. 전체 BOM 조회 (1회)
       const bomMap = await service.getAllBOM();
       
-      // 2. 제품별 원료 사용량 계산
+      // 2. 원료입고 데이터 전체 조회 (1회) - ★ 핵심 최적화
+      const inboundData = await service.readSheet('원료입고', 'A2:I');
+      
+      // 3. 원료입고 데이터를 원료코드별로 그룹화 (메모리에서 처리)
+      const inboundByMaterial = new Map<string, { lot_number: string; remain_qty: number; expiry_date: string }[]>();
+      for (const row of inboundData) {
+        const materialCode = row[1]?.toString() || '';
+        const remainQty = parseFloat(row[8]) || 0;
+        if (!materialCode || remainQty <= 0) continue;
+        
+        if (!inboundByMaterial.has(materialCode)) {
+          inboundByMaterial.set(materialCode, []);
+        }
+        inboundByMaterial.get(materialCode)!.push({
+          lot_number: row[3]?.toString() || '',
+          remain_qty: remainQty,
+          expiry_date: row[7]?.toString() || ''
+        });
+      }
+      
+      // 4. 각 원료별로 유통기한순 정렬 (FEFO)
+      for (const [code, lots] of inboundByMaterial) {
+        lots.sort((a, b) => (a.expiry_date || '9999').localeCompare(b.expiry_date || '9999'));
+      }
+      
+      // 5. 메모리 기반 FEFO 할당 함수
+      const allocateFEFOFromCache = (
+        materialCode: string, 
+        requiredQty: number
+      ): { lot_number: string; used_qty: number; expiry_date: string }[] => {
+        const availableLots = inboundByMaterial.get(materialCode) || [];
+        const allocations: { lot_number: string; used_qty: number; expiry_date: string }[] = [];
+        let remaining = requiredQty;
+        
+        for (const lot of availableLots) {
+          if (remaining <= 0) break;
+          if (lot.remain_qty <= 0) continue;
+          
+          const useQty = Math.min(lot.remain_qty, remaining);
+          allocations.push({
+            lot_number: lot.lot_number,
+            used_qty: useQty,
+            expiry_date: lot.expiry_date
+          });
+          remaining -= useQty;
+          // 메모리상 잔량 차감 (다음 제품에서 중복 할당 방지)
+          lot.remain_qty -= useQty;
+        }
+        
+        return allocations;
+      };
+      
+      // 6. 제품별 원료 사용량 계산 (API 호출 없이 메모리에서 처리)
       for (const item of items) {
         const productCode = item.product_code;
         const productionQty = item.production_qty || 0;
@@ -1020,11 +1075,8 @@ orderUpload.post('/complete-production', async (c) => {
           const usageQty = (bomItem.ratio_kg || 0) * productionQty;
           if (usageQty <= 0) continue;
           
-          // FEFO 기반 원료 LOT 자동 할당
-          const allocations = await service.allocateMaterialLotsFEFO(
-            bomItem.material_code, 
-            usageQty
-          );
+          // ★ 메모리 기반 FEFO 할당 (API 호출 없음)
+          const allocations = allocateFEFOFromCache(bomItem.material_code, usageQty);
           
           if (allocations.length > 0) {
             // LOT별로 로트매칭 행 추가
@@ -1066,7 +1118,7 @@ orderUpload.post('/complete-production', async (c) => {
         }
       }
       
-      // 3. 로트매칭 시트에 일괄 저장
+      // 7. 로트매칭 시트에 일괄 저장 (1회)
       if (lotMatchingRows.length > 0) {
         await service.appendSheet('로트매칭', lotMatchingRows);
       }
@@ -1099,7 +1151,7 @@ orderUpload.post('/complete-production', async (c) => {
         }
       }
       
-      // ★ batchWriteSheet로 일괄 업데이트 (subrequest 제한 해결)
+      // ★ batchWriteSheet로 일괄 업데이트
       if (updates.length > 0) {
         await service.batchWriteSheet(updates);
       }

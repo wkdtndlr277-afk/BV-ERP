@@ -728,30 +728,20 @@ sheets.post('/test/calculate-usage', async (c) => {
       await service.appendSheet('로트매칭', lotMatchingRows);
     }
 
-    // 6. 일별수불부 데이터 생성 (★ 정제수 등 제외 원료는 수불부에서 제외)
-    const dailyStockRows: any[][] = [];
+    // 6. ★★★ v3.5.57: 일별수불부는 수식 기반으로 변경 ★★★
+    // 값을 직접 저장하지 않고, 수식이 적용된 행만 생성
+    // 실제 계산은 구글시트 수식이 원료입고/로트매칭 시트를 참조해서 수행
+    const itemCodesToAdd: string[] = [];
     for (const [itemCode, usage] of usageByItem) {
-      // ★ 정제수 등 제외 원료는 수불부에서 제외
+      // 정제수 등 제외 원료는 수불부에서 제외
       if (usage.isExcluded) continue;
-      
-      // 전일재고 = 원료입고 시트의 잔량 합계 (단순화)
-      const lots = inboundMap.get(itemCode) || [];
-      const totalRemain = lots.reduce((sum, lot) => sum + lot.remain_qty, 0);
-      
-      dailyStockRows.push([
-        prod_date,
-        itemCode,
-        usage.item_name,
-        totalRemain.toFixed(3),  // 전일재고 (실제로는 전일 기준 계산 필요)
-        0,  // 당일 입고 (별도 계산 필요)
-        usage.total.toFixed(3),  // 사용량
-        (totalRemain - usage.total).toFixed(3),  // 현재고
-        'kg'
-      ]);
+      itemCodesToAdd.push(itemCode);
     }
 
-    if (dailyStockRows.length > 0) {
-      await service.appendSheet('일별수불부', dailyStockRows);
+    let dailyStockResult = { rows_created: 0 };
+    if (itemCodesToAdd.length > 0) {
+      // 수식 기반 행 생성 (중복 체크 포함)
+      dailyStockResult = await service.setupDailyStockWithFormulas(prod_date, itemCodesToAdd);
     }
 
     return c.json({
@@ -760,7 +750,7 @@ sheets.post('/test/calculate-usage', async (c) => {
       summary: {
         production_count: productions.length,
         lot_matching_count: lotMatchingRows.length,
-        daily_stock_count: dailyStockRows.length,
+        daily_stock_count: dailyStockResult.rows_created,
         excluded_items: EXCLUDE_STOCK,
         usage_items: Array.from(usageByItem.entries()).map(([code, data]) => ({
           item_code: code,
@@ -768,7 +758,8 @@ sheets.post('/test/calculate-usage', async (c) => {
           total_usage_kg: data.total.toFixed(3),
           excluded: data.isExcluded
         }))
-      }
+      },
+      note: '★ 일별수불부는 수식 기반으로 자동 계산됩니다 (원료입고/로트매칭 시트 참조)'
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
@@ -1263,30 +1254,13 @@ sheets.post('/v2/calculate/daily-stock', async (c) => {
       }
     }
 
-    // 5. 일별수불부 데이터 생성
-    const dailyStockRows: any[][] = [];
+    // 5. ★★★ v3.5.57: 일별수불부는 수식 기반으로 변경 ★★★
+    // 값을 직접 저장하지 않고, 수식이 적용된 행만 생성
+    const itemCodes = Array.from(usageMap.keys());
     
-    for (const [itemCode, usageData] of usageMap) {
-      const stock = stockMap.get(itemCode);
-      const prevStock = stock?.qty || 0;
-      const inboundQty = 0;  // TODO: 당일 입고량 조회
-      const currentStock = prevStock - usageData.usage;
-      
-      dailyStockRows.push([
-        `'${date}`,           // A: 일자
-        itemCode,             // B: 품목코드
-        usageData.name,       // C: 품목명
-        prevStock.toFixed(3), // D: 전일재고
-        inboundQty.toFixed(3),// E: 입고(+)
-        usageData.usage.toFixed(3), // F: 출고/사용(-)  ★ 핵심!
-        currentStock.toFixed(3),    // G: 현재고
-        'kg'                  // H: 단위
-      ]);
-    }
-
-    // 6. 일별수불부 시트에 저장
-    if (dailyStockRows.length > 0) {
-      await service.appendSheet('일별수불부', dailyStockRows);
+    let dailyStockResult = { rows_created: 0 };
+    if (itemCodes.length > 0) {
+      dailyStockResult = await service.setupDailyStockWithFormulas(date, itemCodes);
     }
 
     return c.json({
@@ -1294,17 +1268,10 @@ sheets.post('/v2/calculate/daily-stock', async (c) => {
       layer: 'PROCESSING',
       date,
       production_count: productions.length,
-      items_calculated: dailyStockRows.length,
-      message: `${date} 일별수불부 ${dailyStockRows.length}건 계산 완료`,
-      sample: dailyStockRows.slice(0, 3).map(row => ({
-        item_code: row[1],
-        item_name: row[2],
-        prev_stock: row[3],
-        inbound: row[4],
-        usage: row[5],
-        current: row[6]
-      })),
-      note: '★ 출고/사용(-) 컬럼에 BOM 기반 원료 사용량이 계산되었습니다.'
+      items_calculated: dailyStockResult.rows_created,
+      message: `${date} 일별수불부 ${dailyStockResult.rows_created}건 수식 행 생성 완료`,
+      sample: Array.from(usageMap.entries()).slice(0, 3).map(([code, usageData]) => ({ item_code: code, item_name: usageData.name, usage: usageData.usage.toFixed(3) })),
+      note: '★ 일별수불부는 수식 기반으로 자동 계산됩니다'
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
@@ -1339,7 +1306,7 @@ sheets.get('/v2/output/daily-stock', async (c) => {
       })
       .map(row => ({
         date: row[0]?.toString().replace(/^'/, ''),
-        item_code: row[1],
+        item_code: code,
         item_name: row[2],
         prev_stock: parseFloat(row[3]) || 0,
         inbound_qty: parseFloat(row[4]) || 0,

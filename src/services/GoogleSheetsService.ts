@@ -542,53 +542,129 @@ export class GoogleSheetsService {
     return response.ok;
   }
 
-  // 일별수불부 수식 설정
+  // 일별수불부 수식 설정 (v3.5.57 - 로트매칭 시트 기반으로 단순화)
   async setupDailyStockFormulas(): Promise<{ success: boolean; message: string }> {
     try {
       // 일별수불부 시트 구조:
       // A: 일자, B: 원료코드, C: 원료명, D: 전일재고, E: 입고량, F: 사용량, G: 현재고, H: 단위
       // 
-      // ★ 핵심 원칙: ERP는 생산실적만 시트에 기록
-      // 수식이 BOM+생산실적+원료입고를 참조해서 자동 계산
+      // ★ 핵심 원칙: 
+      // - 입고량: 원료입고 시트에서 SUMIFS
+      // - 사용량: 로트매칭 시트에서 SUMIFS (ERP가 생산등록 시 기록)
+      // - 전일재고/현재고: 수식으로 자동 계산
       
       const sheetId = await this.getSheetId('일별수불부');
       if (sheetId === null) {
         return { success: false, message: '일별수불부 시트를 찾을 수 없습니다' };
       }
 
-      // 헤더 행 설정 (수식 설명 포함)
+      // 헤더 행 설정
       const headerRow = [
         '일자', '원료코드', '원료명', 
-        '전일재고', '입고량', '사용량(자동)', '현재고(자동)', '단위'
+        '전일재고', '입고량', '사용량', '현재고', '단위'
       ];
       await this.writeSheet('일별수불부', 'A1:H1', [headerRow]);
 
-      // 수식 템플릿 행 (행 2)에 수식 설정
-      // 실제 데이터는 행 3부터 시작
-      const formulaRow = [
-        '=TEXT(TODAY(),"YYYY-MM-DD")',  // A2: 오늘 날짜
-        '',  // B2: 원료코드 (수동 입력 또는 참조)
-        '=IFERROR(VLOOKUP(B2,원료입고!B:C,2,FALSE),"")',  // C2: 원료명 자동 조회
-        // D2: 전일재고 = 전일 현재고 (첫 행은 원료입고 합계)
-        '=IFERROR(SUMIFS(원료입고!I:I,원료입고!B:B,B2,원료입고!A:A,"<"&A2),0)',
-        // E2: 당일 입고량
-        '=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B2,원료입고!A:A,A2),0)',
-        // F2: 사용량 (BOM × 생산수량 자동 계산)
-        '=IFERROR(SUMPRODUCT((생산실적!A:A=A2)*(생산실적!B:B<>"")*SUMIFS(BOM마스터!E:E,BOM마스터!C:C,B2,BOM마스터!A:A,생산실적!B:B)*생산실적!D:D/1000),0)',
-        // G2: 현재고 = 전일재고 + 입고 - 사용
-        '=D2+E2-F2',
-        'kg'  // H2: 단위
-      ];
-      
-      await this.writeWithFormulas('일별수불부', 'A2:H2', [formulaRow]);
+      // ★ 수식 행을 설정하지 않음 - 각 행에 개별 수식 적용 방식으로 변경
+      // setupDailyStockWithFormulas() 함수에서 실제 데이터 행에 수식 적용
 
       return { 
         success: true, 
-        message: '일별수불부 수식 설정 완료. 원료코드(B열)만 입력하면 나머지 자동 계산됩니다.' 
+        message: '일별수불부 헤더 설정 완료. setupDailyStockWithFormulas()로 수식을 적용하세요.' 
       };
     } catch (error: any) {
       return { success: false, message: error.message };
     }
+  }
+
+  // ★★★ v3.5.57: 일별수불부 수식 기반 데이터 생성 ★★★
+  // 일자+원료코드 조합을 받아서 수식이 적용된 행 생성
+  async setupDailyStockWithFormulas(
+    date: string, 
+    itemCodes: string[]
+  ): Promise<{ success: boolean; message: string; rows_created: number }> {
+    try {
+      // 기존 해당 일자 데이터 확인 (중복 방지)
+      const existingData = await this.readSheet('일별수불부', 'A2:B');
+      const existingKeys = new Set(
+        existingData
+          .filter(row => row[0]?.toString().replace(/^'/, '') === date)
+          .map(row => `${row[0]?.toString().replace(/^'/, '')}_${row[1]}`)
+      );
+
+      // 새로 추가할 원료코드만 필터링
+      const newItemCodes = itemCodes.filter(code => !existingKeys.has(`${date}_${code}`));
+      
+      if (newItemCodes.length === 0) {
+        return { 
+          success: true, 
+          message: `${date} 일자에 이미 모든 원료가 등록되어 있습니다.`,
+          rows_created: 0
+        };
+      }
+
+      // 수식이 적용된 행 생성
+      const rows: any[][] = [];
+      for (const itemCode of newItemCodes) {
+        const rowNum = existingData.length + rows.length + 2; // 다음 행 번호
+        
+        rows.push([
+          `'${date}`,  // A: 일자 (문자열 강제)
+          itemCode,    // B: 원료코드
+          // C: 원료명 - 원료입고에서 VLOOKUP
+          `=IFERROR(VLOOKUP(B${rowNum},원료입고!B:C,2,FALSE),"")`,
+          // D: 전일재고 - 전일 기준 원료입고 잔량 합계
+          `=IFERROR(SUMIFS(원료입고!I:I,원료입고!B:B,B${rowNum},원료입고!A:A,"<"&A${rowNum}),0)`,
+          // E: 입고량 - 당일 원료입고 합계
+          `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
+          // F: 사용량 - 로트매칭 시트에서 해당 일자+원료코드 합계 ★핵심★
+          `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,
+          // G: 현재고 = 전일재고 + 입고 - 사용
+          `=D${rowNum}+E${rowNum}-F${rowNum}`,
+          'kg'  // H: 단위
+        ]);
+      }
+
+      // 일별수불부 시트에 수식 행 추가
+      if (rows.length > 0) {
+        await this.appendSheetWithFormulas('일별수불부', rows);
+      }
+
+      return { 
+        success: true, 
+        message: `${date} 일별수불부 ${rows.length}건 수식 행 생성 완료`,
+        rows_created: rows.length
+      };
+    } catch (error: any) {
+      return { success: false, message: error.message, rows_created: 0 };
+    }
+  }
+
+  // 수식 포함 데이터 append (USER_ENTERED 모드)
+  async appendSheetWithFormulas(sheetName: string, values: any[][]): Promise<{ success: boolean; updates?: any; error?: string }> {
+    const token = await this.getToken();
+    const range = `${sheetName}!A:Z`;
+    
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values })
+      }
+    );
+
+    const result = await response.json() as any;
+    
+    if (!response.ok) {
+      console.error('[appendSheetWithFormulas] API 오류:', result);
+      return { success: false, error: result.error?.message || 'Unknown error' };
+    }
+    
+    return { success: true, updates: result.updates };
   }
 
   // 로트매칭 자동화 시트 설정 (FEFO 기반)

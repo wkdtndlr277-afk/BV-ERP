@@ -4024,8 +4024,10 @@ productionRoutes.post('/simple', async (c) => {
           '',                           // G: 비고
           new Date().toISOString()      // H: 등록시간
         ]);
-        await service.appendSheet('생산실적', rows);
+        // ★ v3.5.67: 중복 방지 함수 사용
+        const prodResult = await service.appendProductionWithDedup(rows);
         sheetSent = true;
+        console.log(`[production/simple] 생산실적 추가: ${prodResult.added}건 추가, ${prodResult.skipped}건 중복 스킵`);
       } catch (sheetError: any) {
         console.error('[production/simple] 시트 전송 실패:', sheetError.message);
       }
@@ -4059,7 +4061,7 @@ productionRoutes.post('/simple', async (c) => {
       db_saved: dbSaved,
       sheet_sent: sheetSent,
       message: `${items.length}건 생산 등록 완료 (시트: ${sheetSent ? 'O' : 'X'})`,
-      note: '원료 사용량은 구글시트에서 자동 계산됩니다.'
+      note: '원료 사용량은 구글시트에서 자동 계산됩니다. 중복 데이터는 자동 스킵됩니다.'
     });
     
   } catch (error: any) {
@@ -4098,8 +4100,10 @@ productionRoutes.post('/simple-batch', async (c) => {
           '',                           // G: 비고
           new Date().toISOString()      // H: 등록시간
         ]);
-        await service.appendSheet('생산실적', rows);
+        // ★ v3.5.67: 중복 방지 함수 사용
+        const prodResult = await service.appendProductionWithDedup(rows);
         sheetSent = true;
+        console.log(`[production/simple-batch] 생산실적 추가: ${prodResult.added}건 추가, ${prodResult.skipped}건 중복 스킵`);
       } catch (sheetError: any) {
         console.error('[production/simple-batch] 시트 전송 실패:', sheetError.message);
       }

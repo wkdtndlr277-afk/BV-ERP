@@ -986,6 +986,123 @@ export class GoogleSheetsService {
     }
     return false;
   }
+
+  // ★★★ v3.5.66: 중복 방지 - 생산실적 중복 체크 ★★★
+  // 동일 날짜 + 제품코드 + LOT번호 조합이 이미 있으면 true
+  async isProductionDuplicate(
+    prodDate: string,
+    productCode: string,
+    lotNumber: string
+  ): Promise<boolean> {
+    const data = await this.readSheet('생산실적', 'A2:E');
+    
+    for (const row of data) {
+      let rowDate = row[0]?.toString().replace(/^'/, '') || '';
+      // 엑셀 시리얼 번호 변환
+      if (/^\d{5}$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      const rowProductCode = row[1]?.toString() || '';
+      const rowLotNumber = row[4]?.toString() || '';
+      
+      if (rowDate === prodDate && rowProductCode === productCode && rowLotNumber === lotNumber) {
+        return true;  // 중복 있음
+      }
+    }
+    return false;  // 중복 없음
+  }
+
+  // ★★★ v3.5.66: 중복 방지 - 생산실적 필터링 후 추가 ★★★
+  // 중복 제거 후 새로운 행만 추가
+  async appendProductionWithDedup(rows: any[][]): Promise<{ added: number; skipped: number }> {
+    const existing = await this.readSheet('생산실적', 'A2:E');
+    
+    // 기존 키 세트 생성
+    const existingKeys = new Set<string>();
+    for (const row of existing) {
+      let rowDate = row[0]?.toString().replace(/^'/, '') || '';
+      if (/^\d{5}$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      }
+      const productCode = row[1]?.toString() || '';
+      const lotNumber = row[4]?.toString() || '';
+      existingKeys.add(`${rowDate}_${productCode}_${lotNumber}`);
+    }
+    
+    // 새 행에서 중복 필터링
+    const newRows: any[][] = [];
+    let skipped = 0;
+    
+    for (const row of rows) {
+      const date = row[0]?.toString().replace(/^'/, '') || '';
+      const productCode = row[1]?.toString() || '';
+      const lotNumber = row[4]?.toString() || '';
+      const key = `${date}_${productCode}_${lotNumber}`;
+      
+      if (existingKeys.has(key)) {
+        skipped++;
+      } else {
+        newRows.push(row);
+        existingKeys.add(key);  // 새로 추가된 것도 중복 방지
+      }
+    }
+    
+    if (newRows.length > 0) {
+      await this.appendSheet('생산실적', newRows);
+    }
+    
+    return { added: newRows.length, skipped };
+  }
+
+  // ★★★ v3.5.66: 중복 방지 - 로트매칭 필터링 후 추가 ★★★
+  async appendLotMatchingWithDedup(rows: any[][]): Promise<{ added: number; skipped: number }> {
+    const existing = await this.readSheet('로트매칭', 'A2:E');
+    
+    // 기존 키 세트 생성 (날짜_제품LOT_원료코드_사용량)
+    const existingKeys = new Set<string>();
+    for (const row of existing) {
+      let rowDate = row[0]?.toString().replace(/^'/, '') || '';
+      if (/^\d{5}$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      }
+      const productLot = row[1]?.toString() || '';
+      const materialCode = row[2]?.toString() || '';
+      const usage = row[4]?.toString() || '';
+      existingKeys.add(`${rowDate}_${productLot}_${materialCode}_${usage}`);
+    }
+    
+    // 새 행에서 중복 필터링
+    const newRows: any[][] = [];
+    let skipped = 0;
+    
+    for (const row of rows) {
+      const date = row[0]?.toString().replace(/^'/, '') || '';
+      const productLot = row[1]?.toString() || '';
+      const materialCode = row[2]?.toString() || '';
+      const usage = row[4]?.toString() || '';
+      const key = `${date}_${productLot}_${materialCode}_${usage}`;
+      
+      if (existingKeys.has(key)) {
+        skipped++;
+      } else {
+        newRows.push(row);
+        existingKeys.add(key);
+      }
+    }
+    
+    if (newRows.length > 0) {
+      await this.appendSheet('로트매칭', newRows);
+    }
+    
+    return { added: newRows.length, skipped };
+  }
 }
 
 export const GOOGLE_SHEET_ID = SHEET_ID;

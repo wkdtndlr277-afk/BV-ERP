@@ -996,7 +996,9 @@ orderUpload.post('/complete-production', async (c) => {
       new Date().toISOString()         // H: 생성일
     ]);
     
-    await service.appendSheet('생산실적', productionRows);
+    // ★★★ v3.5.66: 중복 방지 - 생산실적 추가 ★★★
+    const prodResult = await service.appendProductionWithDedup(productionRows);
+    console.log(`생산실적 추가: ${prodResult.added}건 추가, ${prodResult.skipped}건 중복 스킵`);
     
     // ★★★ BOM 기반 원료사용량 자동 계산 + 로트매칭 시트 저장 ★★★
     // 로트매칭 시트 구조: A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한
@@ -1118,9 +1120,10 @@ orderUpload.post('/complete-production', async (c) => {
         }
       }
       
-      // 7. 로트매칭 시트에 일괄 저장 (1회)
+      // 7. 로트매칭 시트에 일괄 저장 (1회) - ★★★ v3.5.66: 중복 방지 ★★★
       if (lotMatchingRows.length > 0) {
-        await service.appendSheet('로트매칭', lotMatchingRows);
+        const lotResult = await service.appendLotMatchingWithDedup(lotMatchingRows);
+        console.log(`로트매칭 추가: ${lotResult.added}건 추가, ${lotResult.skipped}건 중복 스킵`);
       }
       
     } catch (bomError: any) {
@@ -1223,15 +1226,18 @@ orderUpload.post('/convert-to-production', async (c) => {
       '계획'  // status
     ]);
     
-    await service.appendSheet('생산실적', productionRows);
+    // ★ v3.5.67: 중복 방지 함수 사용
+    const prodResult = await service.appendProductionWithDedup(productionRows);
     
     return c.json({
       success: true,
       order_date: orderDate,
       production_date: prodDate,
       converted: productionRows.length,
+      added: prodResult.added,
+      skipped: prodResult.skipped,
       items: Object.values(productTotals),
-      message: productionRows.length + '건 생산실적 등록 완료'
+      message: `${prodResult.added}건 생산실적 등록 완료 (${prodResult.skipped}건 중복 스킵)`
     });
     
   } catch (error: any) {

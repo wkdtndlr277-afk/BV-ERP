@@ -575,11 +575,14 @@ sheets.post('/test/add-production', async (c) => {
       new Date().toISOString()
     ];
 
-    await service.appendSheet('생산실적', [row]);
+    // ★ v3.5.67: 중복 방지 함수 사용
+    const prodResult = await service.appendProductionWithDedup([row]);
 
     return c.json({
       success: true,
-      message: '생산 실적 추가 완료',
+      message: prodResult.added > 0 ? '생산 실적 추가 완료' : '중복 데이터로 스킵됨',
+      added: prodResult.added,
+      skipped: prodResult.skipped,
       data: {
         prod_date,
         product_code,
@@ -1123,18 +1126,24 @@ sheets.post('/v2/input/production', async (c) => {
       results.success++;
     }
 
-    // RAW 시트에 저장
+    // RAW 시트에 저장 - ★ v3.5.67: 중복 방지 함수 사용
+    let addedCount = 0;
+    let skippedCount = 0;
     if (validRows.length > 0) {
-      await service.appendSheet('생산실적', validRows);
+      const prodResult = await service.appendProductionWithDedup(validRows);
+      addedCount = prodResult.added;
+      skippedCount = prodResult.skipped;
     }
 
     return c.json({
       success: true,
       layer: 'INPUT',
       lot_number: lotNum,
-      message: `생산 ${results.success}건 저장, ${results.failed}건 실패`,
+      message: `생산 ${addedCount}건 저장, ${skippedCount}건 중복 스킵, ${results.failed}건 실패`,
+      added: addedCount,
+      skipped: skippedCount,
       validation_errors: results.errors.length > 0 ? results.errors : undefined,
-      note: '★ 무결성 검증 통과 데이터만 저장됨. 원료사용량은 자동 계산됩니다.'
+      note: '★ 무결성 검증 통과 데이터만 저장됨. 원료사용량은 자동 계산됩니다. 중복 데이터는 자동 스킵됩니다.'
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
@@ -2975,6 +2984,729 @@ sheets.post('/create-daily-stock', async (c) => {
         existing_items: existingKeys.size,
         new_items: rows.length,
         sample_items: newItemCodes.slice(0, 10)
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.65: 로트매칭 디버그 API - 특정 원료의 사용량 원본 데이터 조회 ★★★
+sheets.get('/debug/lot-matching', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const date = c.req.query('date');  // 조회 날짜
+    const itemCode = c.req.query('item_code');  // 원료코드
+
+    // 1. 로트매칭 전체 데이터 읽기 (A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한)
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
+    
+    // 2. 날짜 변환 함수
+    const parseDate = (val: any): string => {
+      if (!val) return '';
+      let dateStr = val.toString().replace(/^'/, '');
+      
+      // 엑셀 시리얼 번호 변환 (예: 46174 = 2026-06-01)
+      if (/^\d{5}$/.test(dateStr)) {
+        const excelDate = parseInt(dateStr);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        dateStr = jsDate.toISOString().split('T')[0];
+      }
+      return dateStr;
+    };
+
+    // 3. 필터링
+    let filteredData = lotMatchingData.map(row => ({
+      date: parseDate(row[0]),
+      date_raw: row[0]?.toString() || '',
+      product_lot: row[1]?.toString() || '',
+      item_code: row[2]?.toString() || '',
+      item_name: row[3]?.toString() || '',
+      usage_qty: parseFloat(row[4]) || 0,
+      material_lot: row[5]?.toString() || '',
+      expiry_date: row[6]?.toString() || ''
+    }));
+
+    if (date) {
+      filteredData = filteredData.filter(row => row.date === date);
+    }
+    if (itemCode) {
+      filteredData = filteredData.filter(row => row.item_code === itemCode);
+    }
+
+    // 4. 통계 집계
+    const totalUsage = filteredData.reduce((sum, row) => sum + row.usage_qty, 0);
+    
+    // 5. 제품별 집계
+    const byProduct = new Map<string, { product_lot: string; qty: number; count: number }>();
+    for (const row of filteredData) {
+      const key = row.product_lot;
+      if (!byProduct.has(key)) {
+        byProduct.set(key, { product_lot: key, qty: 0, count: 0 });
+      }
+      const item = byProduct.get(key)!;
+      item.qty += row.usage_qty;
+      item.count++;
+    }
+
+    return c.json({
+      success: true,
+      filters: { date, item_code: itemCode },
+      total_records: filteredData.length,
+      total_usage_kg: totalUsage.toFixed(5),
+      by_product: Array.from(byProduct.values()).sort((a, b) => b.qty - a.qty),
+      data: filteredData,
+      note: 'BOM 배합비 검증 - 각 행의 usage_qty가 제품당 배합비 * 생산수량과 일치해야 함'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.65: BOM 마스터 조회 API - 특정 원료의 배합비 확인 ★★★
+sheets.get('/debug/bom', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const itemCode = c.req.query('item_code');  // 원료코드
+
+    // BOM 마스터 조회 (A:제품코드, B:제품명, C:원료코드, D:원료명, E:배합비, F:단위)
+    const bomData = await service.readSheet('BOM마스터', 'A2:F');
+    
+    let filteredData = bomData.map(row => ({
+      product_code: row[0]?.toString() || '',
+      product_name: row[1]?.toString() || '',
+      item_code: row[2]?.toString() || '',
+      item_name: row[3]?.toString() || '',
+      quantity: parseFloat(row[4]) || 0,
+      unit: row[5]?.toString() || 'g'
+    }));
+
+    if (itemCode) {
+      filteredData = filteredData.filter(row => row.item_code === itemCode);
+    }
+
+    return c.json({
+      success: true,
+      filter: { item_code: itemCode },
+      count: filteredData.length,
+      data: filteredData,
+      note: '배합비 단위 확인 - g/kg 단위에 따라 사용량 계산 달라짐'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.65: 생산실적 조회 API - 특정 날짜의 생산 수량 확인 ★★★
+sheets.get('/debug/production', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const date = c.req.query('date');
+    const productCode = c.req.query('product_code');
+
+    // 생산실적 조회 (A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:상태, H:소비기한)
+    const productionData = await service.readSheet('생산실적', 'A2:H');
+    
+    // 날짜 변환
+    const parseDate = (val: any): string => {
+      if (!val) return '';
+      let dateStr = val.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(dateStr)) {
+        const excelDate = parseInt(dateStr);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        dateStr = jsDate.toISOString().split('T')[0];
+      }
+      return dateStr;
+    };
+
+    let filteredData = productionData.map(row => ({
+      date: parseDate(row[0]),
+      date_raw: row[0]?.toString() || '',
+      product_code: row[1]?.toString() || '',
+      product_name: row[2]?.toString() || '',
+      quantity: parseFloat(row[3]) || 0,
+      lot_number: row[4]?.toString() || '',
+      channel: row[5]?.toString() || '',
+      status: row[6]?.toString() || '',
+      expiry_date: row[7]?.toString() || ''
+    }));
+
+    if (date) {
+      filteredData = filteredData.filter(row => row.date === date);
+    }
+    if (productCode) {
+      filteredData = filteredData.filter(row => row.product_code === productCode);
+    }
+
+    // 제품별 집계
+    const byProduct = new Map<string, { product_code: string; product_name: string; total_qty: number; count: number }>();
+    for (const row of filteredData) {
+      const key = row.product_code;
+      if (!byProduct.has(key)) {
+        byProduct.set(key, { product_code: key, product_name: row.product_name, total_qty: 0, count: 0 });
+      }
+      const item = byProduct.get(key)!;
+      item.total_qty += row.quantity;
+      item.count++;
+    }
+
+    return c.json({
+      success: true,
+      filters: { date, product_code: productCode },
+      total_records: filteredData.length,
+      total_quantity: filteredData.reduce((sum, row) => sum + row.quantity, 0),
+      by_product: Array.from(byProduct.values()).sort((a, b) => b.total_qty - a.total_qty),
+      data: filteredData,
+      note: '생산 수량과 BOM 배합비를 곱하면 원료 사용량이 됨'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.65: WPC(R002) 사용량 검증 API - BOM 배합비 * 생산수량 vs 로트매칭 사용량 비교 ★★★
+sheets.get('/debug/verify-usage', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const date = c.req.query('date') || '2026-06-02';
+    const itemCode = c.req.query('item_code') || 'R002';
+
+    // 1. BOM 마스터에서 해당 원료 배합비 조회
+    const bomData = await service.readSheet('BOM마스터', 'A2:F');
+    const bomMap = new Map<string, { quantity: number; unit: string }>();
+    for (const row of bomData) {
+      if (row[2]?.toString() === itemCode) {
+        const productCode = row[0]?.toString();
+        bomMap.set(productCode, {
+          quantity: parseFloat(row[4]) || 0,
+          unit: row[5]?.toString() || 'g'
+        });
+      }
+    }
+
+    // 2. 생산실적 조회
+    const parseDate = (val: any): string => {
+      if (!val) return '';
+      let dateStr = val.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(dateStr)) {
+        const excelDate = parseInt(dateStr);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        dateStr = jsDate.toISOString().split('T')[0];
+      }
+      return dateStr;
+    };
+
+    const productionData = await service.readSheet('생산실적', 'A2:E');
+    const productionMap = new Map<string, { product_code: string; lot_number: string; quantity: number }[]>();
+    
+    for (const row of productionData) {
+      if (parseDate(row[0]) === date) {
+        const productCode = row[1]?.toString();
+        if (bomMap.has(productCode)) {
+          if (!productionMap.has(productCode)) {
+            productionMap.set(productCode, []);
+          }
+          productionMap.get(productCode)!.push({
+            product_code: productCode,
+            lot_number: row[4]?.toString() || '',
+            quantity: parseFloat(row[3]) || 0
+          });
+        }
+      }
+    }
+
+    // 3. BOM 기반 예상 사용량 계산
+    const expectedUsage: any[] = [];
+    let totalExpectedKg = 0;
+    
+    for (const [productCode, productions] of productionMap) {
+      const bom = bomMap.get(productCode)!;
+      for (const prod of productions) {
+        // BOM 배합비 단위 변환
+        let usageKg: number;
+        if (bom.unit === 'kg') {
+          usageKg = bom.quantity * prod.quantity;
+        } else {
+          // g 단위면 kg로 변환
+          usageKg = (bom.quantity * prod.quantity) / 1000;
+        }
+        
+        totalExpectedKg += usageKg;
+        expectedUsage.push({
+          product_code: productCode,
+          lot_number: prod.lot_number,
+          production_qty: prod.quantity,
+          bom_qty: bom.quantity,
+          bom_unit: bom.unit,
+          expected_usage_kg: usageKg.toFixed(5)
+        });
+      }
+    }
+
+    // 4. 로트매칭 실제 사용량 조회
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:E');
+    const actualUsage: any[] = [];
+    let totalActualKg = 0;
+    
+    for (const row of lotMatchingData) {
+      if (parseDate(row[0]) === date && row[2]?.toString() === itemCode) {
+        const qty = parseFloat(row[4]) || 0;
+        totalActualKg += qty;
+        actualUsage.push({
+          product_lot: row[1]?.toString(),
+          usage_qty: qty
+        });
+      }
+    }
+
+    // 5. 비교 결과
+    const difference = totalActualKg - totalExpectedKg;
+    const isMatch = Math.abs(difference) < 0.001;
+
+    return c.json({
+      success: true,
+      item_code: itemCode,
+      date: date,
+      expected_usage: {
+        total_kg: totalExpectedKg.toFixed(5),
+        details: expectedUsage
+      },
+      actual_usage: {
+        total_kg: totalActualKg.toFixed(5),
+        details: actualUsage
+      },
+      comparison: {
+        expected_kg: totalExpectedKg.toFixed(5),
+        actual_kg: totalActualKg.toFixed(5),
+        difference_kg: difference.toFixed(5),
+        is_match: isMatch,
+        status: isMatch ? '✅ 일치' : '❌ 불일치'
+      },
+      bom_products_using_this_item: Array.from(bomMap.entries()).map(([code, bom]) => ({
+        product_code: code,
+        bom_qty: bom.quantity,
+        bom_unit: bom.unit
+      })),
+      note: 'expected = BOM배합비 * 생산수량, actual = 로트매칭 E열 합계'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.66: 중복 데이터 정리 API ★★★
+// 생산실적, 로트매칭 시트의 중복 데이터를 정리하고 일별수불부 재생성
+
+// 1. 생산실적 중복 정리 API
+sheets.post('/cleanup/production', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const date = body.date;  // 정리할 날짜
+    const dryRun = body.dry_run !== false;  // 기본 true: 시뮬레이션만
+
+    if (!date) {
+      return c.json({ success: false, error: 'date 필수' }, 400);
+    }
+
+    // 날짜 변환 함수
+    const parseDate = (val: any): string => {
+      if (!val) return '';
+      let dateStr = val.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(dateStr)) {
+        const excelDate = parseInt(dateStr);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        dateStr = jsDate.toISOString().split('T')[0];
+      }
+      return dateStr;
+    };
+
+    // 1. 생산실적 전체 읽기
+    const allData = await service.readSheet('생산실적', 'A2:H');
+    
+    // 2. 해당 날짜 데이터와 다른 날짜 데이터 분리
+    const targetDateRows: any[][] = [];
+    const otherDateRows: any[][] = [];
+    
+    for (const row of allData) {
+      const rowDate = parseDate(row[0]);
+      if (rowDate === date) {
+        targetDateRows.push(row);
+      } else if (row[0]) {  // 빈 행 제외
+        otherDateRows.push(row);
+      }
+    }
+
+    // 3. 해당 날짜 중복 제거 (제품코드+LOT번호 기준)
+    const uniqueMap = new Map<string, any[]>();
+    for (const row of targetDateRows) {
+      const key = `${row[1]}_${row[4]}`;  // 제품코드_LOT번호
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, row);
+      }
+    }
+    const uniqueRows = Array.from(uniqueMap.values());
+
+    const duplicatesRemoved = targetDateRows.length - uniqueRows.length;
+
+    if (dryRun) {
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        message: '시뮬레이션 결과 (실제 변경 없음)',
+        data: {
+          date,
+          before: targetDateRows.length,
+          after: uniqueRows.length,
+          duplicates_to_remove: duplicatesRemoved,
+          other_dates_preserved: otherDateRows.length
+        },
+        note: 'dry_run: false로 설정하면 실제 정리 실행'
+      });
+    }
+
+    // 4. 실제 정리 - 시트 전체 다시 쓰기
+    // 4-1. 데이터 영역 클리어 (헤더 제외)
+    const clearRange = `A2:H${allData.length + 10}`;
+    await service.clearRange('생산실적', clearRange);
+
+    // 4-2. 다른 날짜 데이터 + 정리된 해당 날짜 데이터 합치기
+    const newData = [...otherDateRows, ...uniqueRows];
+    
+    if (newData.length > 0) {
+      const writeRange = `A2:H${newData.length + 1}`;
+      await service.writeSheet('생산실적', writeRange, newData);
+    }
+
+    return c.json({
+      success: true,
+      mode: 'executed',
+      message: `생산실적 ${date} 중복 정리 완료`,
+      data: {
+        date,
+        before: targetDateRows.length,
+        after: uniqueRows.length,
+        duplicates_removed: duplicatesRemoved,
+        total_rows_now: newData.length
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 2. 로트매칭 중복 정리 API
+sheets.post('/cleanup/lot-matching', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const date = body.date;
+    const dryRun = body.dry_run !== false;
+
+    if (!date) {
+      return c.json({ success: false, error: 'date 필수' }, 400);
+    }
+
+    const parseDate = (val: any): string => {
+      if (!val) return '';
+      let dateStr = val.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(dateStr)) {
+        const excelDate = parseInt(dateStr);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        dateStr = jsDate.toISOString().split('T')[0];
+      }
+      return dateStr;
+    };
+
+    // 1. 로트매칭 전체 읽기 (A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한)
+    const allData = await service.readSheet('로트매칭', 'A2:G');
+    
+    // 2. 해당 날짜와 다른 날짜 분리
+    const targetDateRows: any[][] = [];
+    const otherDateRows: any[][] = [];
+    
+    for (const row of allData) {
+      const rowDate = parseDate(row[0]);
+      if (rowDate === date) {
+        targetDateRows.push(row);
+      } else if (row[0]) {
+        otherDateRows.push(row);
+      }
+    }
+
+    // 3. 해당 날짜 중복 제거 (제품LOT + 원료코드 + 사용량 기준)
+    const uniqueMap = new Map<string, any[]>();
+    for (const row of targetDateRows) {
+      const key = `${row[1]}_${row[2]}_${row[4]}`;  // 제품LOT_원료코드_사용량
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, row);
+      }
+    }
+    const uniqueRows = Array.from(uniqueMap.values());
+
+    const duplicatesRemoved = targetDateRows.length - uniqueRows.length;
+
+    // 4. 원료별 사용량 비교 (정리 전/후)
+    const beforeUsage = new Map<string, number>();
+    const afterUsage = new Map<string, number>();
+    
+    for (const row of targetDateRows) {
+      const code = row[2]?.toString() || '';
+      const qty = parseFloat(row[4]) || 0;
+      beforeUsage.set(code, (beforeUsage.get(code) || 0) + qty);
+    }
+    for (const row of uniqueRows) {
+      const code = row[2]?.toString() || '';
+      const qty = parseFloat(row[4]) || 0;
+      afterUsage.set(code, (afterUsage.get(code) || 0) + qty);
+    }
+
+    // 주요 원료 비교
+    const usageComparison: any[] = [];
+    for (const [code, before] of beforeUsage) {
+      const after = afterUsage.get(code) || 0;
+      if (before !== after) {
+        usageComparison.push({
+          item_code: code,
+          before_kg: before.toFixed(3),
+          after_kg: after.toFixed(3),
+          reduction: (before - after).toFixed(3)
+        });
+      }
+    }
+
+    if (dryRun) {
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        message: '시뮬레이션 결과 (실제 변경 없음)',
+        data: {
+          date,
+          before: targetDateRows.length,
+          after: uniqueRows.length,
+          duplicates_to_remove: duplicatesRemoved,
+          other_dates_preserved: otherDateRows.length,
+          usage_changes: usageComparison.slice(0, 20)  // 상위 20개만
+        },
+        note: 'dry_run: false로 설정하면 실제 정리 실행'
+      });
+    }
+
+    // 5. 실제 정리
+    const clearRange = `A2:G${allData.length + 10}`;
+    await service.clearRange('로트매칭', clearRange);
+
+    const newData = [...otherDateRows, ...uniqueRows];
+    if (newData.length > 0) {
+      const writeRange = `A2:G${newData.length + 1}`;
+      await service.writeSheet('로트매칭', writeRange, newData);
+    }
+
+    return c.json({
+      success: true,
+      mode: 'executed',
+      message: `로트매칭 ${date} 중복 정리 완료`,
+      data: {
+        date,
+        before: targetDateRows.length,
+        after: uniqueRows.length,
+        duplicates_removed: duplicatesRemoved,
+        total_rows_now: newData.length,
+        usage_changes: usageComparison.slice(0, 20)
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 3. 전체 정리 API (생산실적 → 로트매칭 → 일별수불부 순서)
+sheets.post('/cleanup/all', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const date = body.date;
+    const dryRun = body.dry_run !== false;
+
+    if (!date) {
+      return c.json({ success: false, error: 'date 필수' }, 400);
+    }
+
+    const parseDate = (val: any): string => {
+      if (!val) return '';
+      let dateStr = val.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(dateStr)) {
+        const excelDate = parseInt(dateStr);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        dateStr = jsDate.toISOString().split('T')[0];
+      }
+      return dateStr;
+    };
+
+    const results: any = {
+      date,
+      mode: dryRun ? 'dry_run' : 'executed',
+      production: {},
+      lot_matching: {},
+      daily_stock: {}
+    };
+
+    // ===== 1. 생산실적 정리 =====
+    const prodData = await service.readSheet('생산실적', 'A2:H');
+    const prodTargetRows: any[][] = [];
+    const prodOtherRows: any[][] = [];
+    
+    for (const row of prodData) {
+      const rowDate = parseDate(row[0]);
+      if (rowDate === date) {
+        prodTargetRows.push(row);
+      } else if (row[0]) {
+        prodOtherRows.push(row);
+      }
+    }
+
+    const prodUniqueMap = new Map<string, any[]>();
+    for (const row of prodTargetRows) {
+      const key = `${row[1]}_${row[4]}`;
+      if (!prodUniqueMap.has(key)) {
+        prodUniqueMap.set(key, row);
+      }
+    }
+    const prodUniqueRows = Array.from(prodUniqueMap.values());
+
+    results.production = {
+      before: prodTargetRows.length,
+      after: prodUniqueRows.length,
+      duplicates_removed: prodTargetRows.length - prodUniqueRows.length
+    };
+
+    // ===== 2. 로트매칭 정리 =====
+    const lotData = await service.readSheet('로트매칭', 'A2:G');
+    const lotTargetRows: any[][] = [];
+    const lotOtherRows: any[][] = [];
+    
+    for (const row of lotData) {
+      const rowDate = parseDate(row[0]);
+      if (rowDate === date) {
+        lotTargetRows.push(row);
+      } else if (row[0]) {
+        lotOtherRows.push(row);
+      }
+    }
+
+    const lotUniqueMap = new Map<string, any[]>();
+    for (const row of lotTargetRows) {
+      const key = `${row[1]}_${row[2]}_${row[4]}`;
+      if (!lotUniqueMap.has(key)) {
+        lotUniqueMap.set(key, row);
+      }
+    }
+    const lotUniqueRows = Array.from(lotUniqueMap.values());
+
+    results.lot_matching = {
+      before: lotTargetRows.length,
+      after: lotUniqueRows.length,
+      duplicates_removed: lotTargetRows.length - lotUniqueRows.length
+    };
+
+    // ===== 3. 일별수불부 정리 =====
+    const dailyData = await service.readSheet('일별수불부', 'A2:H');
+    const dailyTargetRows: any[][] = [];
+    const dailyOtherRows: any[][] = [];
+    
+    for (const row of dailyData) {
+      const rowDate = parseDate(row[0]);
+      if (rowDate === date) {
+        dailyTargetRows.push(row);
+      } else if (row[0]) {
+        dailyOtherRows.push(row);
+      }
+    }
+
+    // 일별수불부 중복 제거 (날짜 + 원료코드 기준)
+    const dailyUniqueMap = new Map<string, any[]>();
+    for (const row of dailyTargetRows) {
+      const key = `${row[0]}_${row[1]}`;  // 날짜_원료코드
+      if (!dailyUniqueMap.has(key)) {
+        dailyUniqueMap.set(key, row);
+      }
+    }
+    const dailyUniqueRows = Array.from(dailyUniqueMap.values());
+
+    results.daily_stock = {
+      before: dailyTargetRows.length,
+      after: dailyUniqueRows.length,
+      duplicates_removed: dailyTargetRows.length - dailyUniqueRows.length
+    };
+
+    if (dryRun) {
+      return c.json({
+        success: true,
+        message: '시뮬레이션 결과 (실제 변경 없음)',
+        results,
+        note: 'dry_run: false로 설정하면 실제 정리 실행'
+      });
+    }
+
+    // ===== 실제 정리 실행 =====
+    
+    // 1. 생산실적 정리
+    await service.clearRange('생산실적', `A2:H${prodData.length + 10}`);
+    const newProdData = [...prodOtherRows, ...prodUniqueRows];
+    if (newProdData.length > 0) {
+      await service.writeSheet('생산실적', `A2:H${newProdData.length + 1}`, newProdData);
+    }
+
+    // 2. 로트매칭 정리
+    await service.clearRange('로트매칭', `A2:G${lotData.length + 10}`);
+    const newLotData = [...lotOtherRows, ...lotUniqueRows];
+    if (newLotData.length > 0) {
+      await service.writeSheet('로트매칭', `A2:G${newLotData.length + 1}`, newLotData);
+    }
+
+    // 3. 일별수불부 정리
+    await service.clearRange('일별수불부', `A2:H${dailyData.length + 10}`);
+    const newDailyData = [...dailyOtherRows, ...dailyUniqueRows];
+    if (newDailyData.length > 0) {
+      await service.writeSheet('일별수불부', `A2:H${newDailyData.length + 1}`, newDailyData);
+    }
+
+    return c.json({
+      success: true,
+      message: `${date} 전체 중복 정리 완료`,
+      results,
+      totals: {
+        production_rows: newProdData.length,
+        lot_matching_rows: newLotData.length,
+        daily_stock_rows: newDailyData.length
       }
     });
   } catch (error: any) {

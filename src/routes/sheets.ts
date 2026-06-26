@@ -607,6 +607,9 @@ sheets.post('/test/calculate-usage', async (c) => {
 
     // ★ 재고 관리 제외 원료 (물 등 무한 공급)
     const EXCLUDE_STOCK = ['RM184'];  // 정제수
+    
+    // ★★★ v3.5.61: SF원료 (자체 생산 원료) - 입고 개념 없음, 로트 공란 처리 ★★★
+    const SF_ITEMS = ['SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
 
     // 1. 생산실적 조회
     const productions = await service.getProductionRecords(prod_date);
@@ -675,7 +678,7 @@ sheets.post('/test/calculate-usage', async (c) => {
         // ★ 정제수 등 제외 원료는 사용량만 기록 (로트매칭 없음)
         if (isExcluded) {
           lotMatchingRows.push([
-            prod_date,
+            `'${prod_date}`,  // ★ v3.5.61: 날짜를 문자열로 강제
             prod.lot_number,
             material.item_code,
             material.item_name,
@@ -683,6 +686,22 @@ sheets.post('/test/calculate-usage', async (c) => {
             '-',  // 로트 없음
             '-'   // 유통기한 없음
           ]);
+          continue;
+        }
+        
+        // ★★★ v3.5.61: SF원료는 자체 생산원료로 입고 개념 없음 - 로트 공란 처리 ★★★
+        if (SF_ITEMS.includes(material.item_code)) {
+          lotMatchingRows.push([
+            `'${prod_date}`,  // 날짜 문자열 강제
+            prod.lot_number,
+            material.item_code,
+            material.item_name,
+            usageKg.toFixed(3),
+            '',  // ★ 로트 공란 (SF원료는 입고 개념 없음)
+            ''   // ★ 소비기한 공란
+          ]);
+          // SF원료는 수불부에서도 제외
+          usageByItem.get(material.item_code)!.isExcluded = true;
           continue;
         }
 
@@ -698,7 +717,7 @@ sheets.post('/test/calculate-usage', async (c) => {
 
           // 로트매칭 시트에 기록
           lotMatchingRows.push([
-            prod_date,
+            `'${prod_date}`,  // ★ v3.5.61: 날짜를 문자열로 강제
             prod.lot_number,
             material.item_code,
             material.item_name,
@@ -711,7 +730,7 @@ sheets.post('/test/calculate-usage', async (c) => {
         // 로트가 부족한 경우
         if (remaining > 0) {
           lotMatchingRows.push([
-            prod_date,
+            `'${prod_date}`,  // ★ v3.5.61: 날짜를 문자열로 강제
             prod.lot_number,
             material.item_code,
             material.item_name,
@@ -2524,6 +2543,170 @@ sheets.post('/convert-daily-stock-to-formulas', async (c) => {
         'G열(현재고)': '전일재고 + 입고 - 사용'
       },
       note: '이제 구글시트에서 셀 클릭 시 수식이 보입니다'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.61: 일별수불부 6월 1일 데이터 초기화 (ERP 마감재고 기준) ★★★
+sheets.post('/init-daily-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const { date = '2026-06-01' } = body;
+
+    // 1. ERP inbound 테이블에서 해당 날짜까지의 원료별 재고 계산
+    // (잔여수량 기준 - remain_qty)
+    const stockData = await c.env.DB.prepare(`
+      SELECT 
+        i.item_code,
+        m.item_name,
+        SUM(i.remain_qty) as stock,
+        COALESCE(m.unit, 'kg') as unit
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.inbound_date <= ? 
+        AND i.item_code LIKE 'R%'
+        AND i.remain_qty > 0
+      GROUP BY i.item_code
+      ORDER BY i.item_code
+    `).bind(date).all();
+
+    if (!stockData.results || stockData.results.length === 0) {
+      return c.json({ success: false, error: '해당 날짜의 재고 데이터가 없습니다' }, 400);
+    }
+
+    // 2. 일별수불부 기존 데이터 지우기 (헤더 제외)
+    // 먼저 기존 데이터 범위 확인
+    const existingData = await service.readSheet('일별수불부', 'A2:H');
+    if (existingData.length > 0) {
+      // 기존 데이터가 있으면 지우기 (빈 배열로 덮어쓰기)
+      const clearRows = existingData.map(() => ['', '', '', '', '', '', '', '']);
+      await service.writeSheet('일별수불부', `A2:H${existingData.length + 1}`, clearRows);
+    }
+
+    // 3. 수식 기반 행 생성
+    // ★★★ v3.5.61 수정: 6월 1일 전일재고에 ERP 잔여재고(시작재고) 직접 입력 ★★★
+    const formulaRows: any[][] = [];
+    let rowNum = 2;
+
+    for (const item of stockData.results as any[]) {
+      // 6월 1일은 전환 기준일이므로:
+      // - 전일재고(D열) = ERP 잔여재고 (시작재고 역할)
+      // - 입고량(E열) = 6월 1일 입고분만 합계
+      // - 사용량(F열) = 6월 1일 로트매칭 사용량
+      // - 현재고(G열) = 전일재고 + 입고 - 사용
+      const startingStock = parseFloat(item.stock) || 0;
+      
+      formulaRows.push([
+        `'${date}`,  // A: 일자 (문자열 강제)
+        item.item_code,  // B: 원료코드
+        `=IFERROR(VLOOKUP(B${rowNum},원료입고!B:C,2,FALSE),"")`,  // C: 원료명 (원료입고에서 참조)
+        startingStock,  // D: 전일재고 = ★ ERP 시작 잔여재고 ★
+        `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,  // E: 입고량
+        `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,  // F: 사용량
+        `=D${rowNum}+E${rowNum}-F${rowNum}`,  // G: 현재고
+        item.unit || 'kg'  // H: 단위
+      ]);
+      rowNum++;
+    }
+
+    // 4. 구글시트에 기록
+    if (formulaRows.length > 0) {
+      await service.writeSheet('일별수불부', `A2:H${formulaRows.length + 1}`, formulaRows);
+    }
+
+    return c.json({
+      success: true,
+      message: `일별수불부 ${date} 초기화 완료`,
+      data: {
+        date,
+        items_count: formulaRows.length,
+        items: (stockData.results as any[]).map(i => ({
+          item_code: i.item_code,
+          item_name: i.item_name,
+          stock: i.stock
+        }))
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.61: 로트매칭 기존 데이터 수정 (날짜 형식 + SF원료 공란 처리) ★★★
+sheets.post('/fix-lot-matching', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // 1. 기존 로트매칭 데이터 읽기
+    const data = await service.readSheet('로트매칭', 'A2:G');
+    if (data.length === 0) {
+      return c.json({ success: false, error: '로트매칭 데이터 없음' }, 400);
+    }
+
+    // SF원료 목록
+    const SF_ITEMS = ['SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
+
+    // 2. 데이터 수정
+    const fixedRows: any[][] = [];
+    let fixedCount = 0;
+
+    for (const row of data) {
+      let prodDate = row[0];
+      const productLot = row[1];
+      const itemCode = row[2];
+      const itemName = row[3];
+      const usage = row[4];
+      let lotNumber = row[5];
+      let expiryDate = row[6];
+
+      // 날짜가 숫자면 변환 (엑셀 시리얼 번호)
+      if (typeof prodDate === 'number' || /^\d{5}$/.test(prodDate?.toString())) {
+        const excelDate = parseInt(prodDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        prodDate = `'${jsDate.toISOString().split('T')[0]}`;
+        fixedCount++;
+      } else if (prodDate && !prodDate.toString().startsWith("'")) {
+        prodDate = `'${prodDate}`;
+      }
+
+      // 소비기한도 숫자면 변환
+      if (typeof expiryDate === 'number' || /^\d{5}$/.test(expiryDate?.toString())) {
+        const excelDate = parseInt(expiryDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        expiryDate = jsDate.toISOString().split('T')[0];
+        fixedCount++;
+      }
+
+      // SF원료: '재고부족' → 공란
+      if (SF_ITEMS.includes(itemCode) && lotNumber === '재고부족') {
+        lotNumber = '';
+        expiryDate = '';
+        fixedCount++;
+      }
+
+      fixedRows.push([prodDate, productLot, itemCode, itemName, usage, lotNumber, expiryDate]);
+    }
+
+    // 3. 수정된 데이터로 덮어쓰기
+    await service.writeSheet('로트매칭', `A2:G${fixedRows.length + 1}`, fixedRows);
+
+    return c.json({
+      success: true,
+      message: `로트매칭 데이터 수정 완료`,
+      data: {
+        total_rows: fixedRows.length,
+        fixed_count: fixedCount
+      }
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

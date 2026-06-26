@@ -2101,6 +2101,7 @@ sheets.post('/v2/shipment/auto-process', async (c) => {
 // =====================================================
 
 // [3단계] 출력 레이어: 생산일보 데이터 (PDF용)
+// ★★★ v3.5.62: 성능 최적화 - Map 인덱싱으로 O(n) 조회 ★★★
 sheets.get('/v2/output/production-report', async (c) => {
   const service = getSheetService(c);
   if (!service) {
@@ -2113,8 +2114,49 @@ sheets.get('/v2/output/production-report', async (c) => {
     // 1. 생산실적 조회
     const productions = await service.getProductionRecords(date);
     
-    // 2. 로트매칭 정보 조회
+    if (productions.length === 0) {
+      return c.json({
+        success: true,
+        layer: 'OUTPUT',
+        date,
+        report: {
+          title: `생산일보 - ${date}`,
+          total_items: 0,
+          total_quantity: 0,
+          items: []
+        }
+      });
+    }
+    
+    // 2. 로트매칭 정보 조회 - ★ Map으로 인덱싱하여 성능 최적화 ★
     const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
+    
+    // 날짜+로트번호 기준 Map 생성 (O(n) → O(1) 조회)
+    const lotMatchingMap = new Map<string, any[]>();
+    for (const row of lotMatchingData) {
+      let rowDate = row[0]?.toString().replace(/^'/, '');
+      // 엑셀 시리얼 번호 처리
+      if (/^\d{5}$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (rowDate === date) {
+        const lotNumber = row[1]?.toString();
+        const key = `${date}|${lotNumber}`;
+        if (!lotMatchingMap.has(key)) {
+          lotMatchingMap.set(key, []);
+        }
+        lotMatchingMap.get(key)!.push({
+          item_code: row[2],
+          item_name: row[3],
+          usage_qty: parseFloat(row[4]) || 0,
+          material_lot: row[5] || '',
+          expiry_date: row[6] || ''
+        });
+      }
+    }
     
     // 3. 제품마스터에서 소비기한 정보 조회 (SSOT)
     const productMaster = await service.getProductMaster();
@@ -2130,19 +2172,12 @@ sheets.get('/v2/output/production-report', async (c) => {
       }
     }
     
-    // 4. 생산일보 데이터 구성
+    // 4. 생산일보 데이터 구성 - Map에서 O(1) 조회
     const reportItems = [];
     
     for (const prod of productions) {
-      const materials = lotMatchingData
-        .filter(row => row[0]?.toString().replace(/^'/, '') === date && row[1] === prod.lot_number)
-        .map(row => ({
-          item_code: row[2],
-          item_name: row[3],
-          usage_qty: parseFloat(row[4]) || 0,
-          material_lot: row[5],
-          expiry_date: row[6]
-        }));
+      const key = `${date}|${prod.lot_number}`;
+      const materials = lotMatchingMap.get(key) || [];
 
       // 제품별 소비기한 조회 (채널 우선, 없으면 기본값)
       const expiryDays = expiryMap.get(`${prod.product_code}|${prod.channel || ''}`) 
@@ -2156,7 +2191,7 @@ sheets.get('/v2/output/production-report', async (c) => {
         quantity: prod.quantity,
         lot_number: prod.lot_number,
         channel: prod.channel,
-        expiry_days: expiryDays,  // ★ 소비기한(일) 추가
+        expiry_days: expiryDays,
         materials
       });
     }

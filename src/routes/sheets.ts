@@ -2713,4 +2713,233 @@ sheets.post('/fix-lot-matching', async (c) => {
   }
 });
 
+// ★★★ v3.5.62: 일별수불부 재구성 (잘못된 데이터 수정) ★★★
+sheets.post('/rebuild-daily-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const date = body.date;  // 필수: 추가할 날짜 (예: 2026-06-02)
+    const clearInvalid = body.clear_invalid !== false;  // 기본 true: 잘못된 데이터 정리
+    
+    if (!date) {
+      return c.json({ success: false, error: 'date 필수' }, 400);
+    }
+
+    // 1. 현재 일별수불부 전체 데이터 읽기
+    const allData = await service.readSheet('일별수불부', 'A2:H');
+    
+    // 2. 6월 1일 데이터와 잘못된 6월 2일+ 데이터 분리
+    const june1Data: any[][] = [];
+    const invalidData: any[][] = [];
+    
+    for (const row of allData) {
+      const rowDate = row[0]?.toString().replace(/^'/, '');
+      if (rowDate === '2026-06-01') {
+        june1Data.push(row);
+      } else if (rowDate) {
+        // 6월 1일 이후 데이터는 잘못된 것으로 간주 (수식이 값으로 저장됨)
+        invalidData.push(row);
+      }
+    }
+
+    // 3. 로트매칭에서 해당 날짜 원료 조회
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:E');
+    const usedItems = new Set<string>();
+    
+    for (const row of lotMatchingData) {
+      let rowDate = row[0]?.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (rowDate === date) {
+        const itemCode = row[2]?.toString();
+        if (itemCode) usedItems.add(itemCode);
+      }
+    }
+
+    // 4. SF원료, 정제수 제외
+    const EXCLUDE_ITEMS = ['RM184', 'SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
+    const itemCodes = Array.from(usedItems).filter(code => !EXCLUDE_ITEMS.includes(code));
+
+    if (itemCodes.length === 0) {
+      return c.json({
+        success: false,
+        error: `${date} 로트매칭에 해당 날짜 원료 사용 기록 없음`
+      }, 400);
+    }
+
+    // 5. 6월 1일 데이터의 현재고를 맵으로 만들기 (전일재고 참조용)
+    const june1StockMap = new Map<string, number>();
+    for (const row of june1Data) {
+      const itemCode = row[1]?.toString();
+      const currentStock = parseFloat(row[6]) || 0;  // G열: 현재고
+      if (itemCode) june1StockMap.set(itemCode, currentStock);
+    }
+
+    // 6. 새 날짜의 수식 행 생성
+    const startRow = june1Data.length + 2;  // 6월 1일 데이터 다음 행
+    const newRows: any[][] = [];
+    
+    for (let i = 0; i < itemCodes.length; i++) {
+      const itemCode = itemCodes[i];
+      const rowNum = startRow + i;
+      const prevStock = june1StockMap.get(itemCode) || 0;
+      
+      newRows.push([
+        `'${date}`,  // A: 일자
+        itemCode,    // B: 원료코드
+        `=IFERROR(VLOOKUP(B${rowNum},원료입고!B:C,2,FALSE),"")`,  // C: 원료명
+        prevStock,   // D: 전일재고 = 6월 1일 현재고
+        `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,  // E: 입고량
+        `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,  // F: 사용량
+        `=D${rowNum}+E${rowNum}-F${rowNum}`,  // G: 현재고
+        'kg'  // H: 단위
+      ]);
+    }
+
+    // 7. 잘못된 데이터 영역 클리어 후 새 데이터 쓰기
+    if (clearInvalid && invalidData.length > 0) {
+      // 6월 1일 데이터 이후 모든 행 클리어
+      const clearRange = `A${startRow}:H${startRow + invalidData.length + 200}`;
+      await service.clearRange('일별수불부', clearRange);
+    }
+
+    // 8. 새 데이터 쓰기 (특정 위치에 직접 쓰기)
+    const writeRange = `A${startRow}:H${startRow + newRows.length - 1}`;
+    await service.writeSheetWithFormulas('일별수불부', writeRange, newRows);
+
+    return c.json({
+      success: true,
+      message: `${date} 일별수불부 재구성 완료`,
+      data: {
+        date,
+        june1_rows: june1Data.length,
+        invalid_rows_cleared: clearInvalid ? invalidData.length : 0,
+        new_rows_created: newRows.length,
+        start_row: startRow,
+        sample_items: itemCodes.slice(0, 5)
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.5.62: 일별수불부 특정 일자 생성 API (디버그/수동 생성용) ★★★
+sheets.post('/create-daily-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const date = body.date;  // 필수: 생성할 날짜 (예: 2026-06-02)
+    
+    if (!date) {
+      return c.json({ success: false, error: 'date 필수' }, 400);
+    }
+
+    // 1. 로트매칭에서 해당 날짜에 사용된 원료 조회
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:E');
+    const usedItems = new Set<string>();
+    
+    for (const row of lotMatchingData) {
+      let rowDate = row[0]?.toString().replace(/^'/, '');
+      // 엑셀 시리얼 번호 변환
+      if (/^\d{5}$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (rowDate === date) {
+        const itemCode = row[2]?.toString();
+        if (itemCode) usedItems.add(itemCode);
+      }
+    }
+
+    // 2. SF원료, 정제수 제외
+    const EXCLUDE_ITEMS = ['RM184', 'SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
+    const itemCodes = Array.from(usedItems).filter(code => !EXCLUDE_ITEMS.includes(code));
+
+    if (itemCodes.length === 0) {
+      return c.json({
+        success: false,
+        error: `${date} 로트매칭에 해당 날짜 원료 사용 기록 없음`,
+        debug: {
+          total_lot_matching_rows: lotMatchingData.length,
+          sample_dates: lotMatchingData.slice(0, 5).map(r => r[0])
+        }
+      }, 400);
+    }
+
+    // 3. 기존 일별수불부 데이터 확인
+    const existingData = await service.readSheet('일별수불부', 'A2:B');
+    const existingKeys = new Set(
+      existingData
+        .filter(row => row[0]?.toString().replace(/^'/, '') === date)
+        .map(row => `${row[0]?.toString().replace(/^'/, '')}_${row[1]}`)
+    );
+
+    // 4. 새로 추가할 원료코드만 필터링
+    const newItemCodes = itemCodes.filter(code => !existingKeys.has(`${date}_${code}`));
+
+    if (newItemCodes.length === 0) {
+      return c.json({
+        success: true,
+        message: `${date} 일자에 이미 모든 원료가 등록되어 있습니다.`,
+        data: {
+          requested_items: itemCodes.length,
+          existing_items: existingKeys.size,
+          new_items: 0
+        }
+      });
+    }
+
+    // 5. 수식이 적용된 행 생성
+    const rows: any[][] = [];
+    for (const itemCode of newItemCodes) {
+      const rowNum = existingData.length + rows.length + 2;
+      
+      rows.push([
+        `'${date}`,  // A: 일자 (문자열 강제)
+        itemCode,    // B: 원료코드
+        `=IFERROR(VLOOKUP(B${rowNum},원료입고!B:C,2,FALSE),"")`,  // C: 원료명
+        `=IFERROR(SUMIFS(원료입고!I:I,원료입고!B:B,B${rowNum},원료입고!A:A,"<"&A${rowNum}),0)`,  // D: 전일재고
+        `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,  // E: 입고량
+        `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,  // F: 사용량
+        `=D${rowNum}+E${rowNum}-F${rowNum}`,  // G: 현재고
+        'kg'  // H: 단위
+      ]);
+    }
+
+    // 6. 시트에 추가
+    if (rows.length > 0) {
+      await service.appendSheetWithFormulas('일별수불부', rows);
+    }
+
+    return c.json({
+      success: true,
+      message: `${date} 일별수불부 ${rows.length}건 수식 행 생성 완료`,
+      data: {
+        date,
+        requested_items: itemCodes.length,
+        existing_items: existingKeys.size,
+        new_items: rows.length,
+        sample_items: newItemCodes.slice(0, 10)
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;

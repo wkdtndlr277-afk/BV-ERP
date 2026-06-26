@@ -667,6 +667,59 @@ export class GoogleSheetsService {
     return { success: true, updates: result.updates };
   }
 
+  // ★★★ v3.5.62: 특정 범위에 수식 포함 데이터 쓰기 ★★★
+  async writeSheetWithFormulas(sheetName: string, range: string, values: any[][]): Promise<{ success: boolean; updates?: any; error?: string }> {
+    const token = await this.getToken();
+    const fullRange = `${sheetName}!${range}`;
+    
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}?valueInputOption=USER_ENTERED`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ values })
+      }
+    );
+
+    const result = await response.json() as any;
+    
+    if (!response.ok) {
+      console.error('[writeSheetWithFormulas] API 오류:', result);
+      return { success: false, error: result.error?.message || 'Unknown error' };
+    }
+    
+    return { success: true, updates: result };
+  }
+
+  // ★★★ v3.5.62: 특정 범위 클리어 ★★★
+  async clearRange(sheetName: string, range: string): Promise<{ success: boolean; error?: string }> {
+    const token = await this.getToken();
+    const fullRange = `${sheetName}!${range}`;
+    
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}:clear`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const result = await response.json() as any;
+    
+    if (!response.ok) {
+      console.error('[clearRange] API 오류:', result);
+      return { success: false, error: result.error?.message || 'Unknown error' };
+    }
+    
+    return { success: true };
+  }
+
   // 로트매칭 자동화 시트 설정 (FEFO 기반)
   async setupLotMatchingFormulas(): Promise<{ success: boolean; message: string }> {
     try {

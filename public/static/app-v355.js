@@ -16665,6 +16665,14 @@ async function loadProductCatalog(search = '') {
                 <div>
                   <span class="text-xs text-gray-400 font-mono">${p.product_code}</span>
                   <h3 class="font-bold text-gray-800">${p.product_name}</h3>
+                  ${p.production_code ? `
+                    <div class="flex items-center gap-1 mt-1">
+                      <span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-mono">
+                        <i class="fas fa-link text-xs mr-1"></i>${p.production_code}
+                      </span>
+                      ${p.production_name ? `<span class="text-xs text-gray-500">${p.production_name}</span>` : ''}
+                    </div>
+                  ` : ''}
                 </div>
                 ${!p.is_active ? '<span class="px-2 py-1 bg-red-100 text-red-600 text-xs rounded">비활성</span>' : ''}
               </div>
@@ -16713,6 +16721,17 @@ function showImagePreview(imageUrl, productName) {
   `, '<button onclick="closeModal()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">닫기</button>');
 }
 
+// ★★★ v3.5.59: 제품마스터 코드 검색 ★★★
+async function searchProductionItems(searchTerm) {
+  try {
+    const result = await api(`/admin/production-items/search?q=${encodeURIComponent(searchTerm)}`);
+    return result.data || [];
+  } catch (e) {
+    console.error('제품마스터 검색 실패:', e);
+    return [];
+  }
+}
+
 // 제품 등록/수정 모달
 function showProductModal(product = null) {
   const isEdit = !!product;
@@ -16720,6 +16739,42 @@ function showProductModal(product = null) {
   showModal(isEdit ? '제품 수정' : '제품 등록', `
     <form id="product-form" class="space-y-4">
       <input type="hidden" id="product-id" value="${product?.id || ''}">
+      
+      <!-- ★★★ v3.5.59: 제품마스터 코드 선택 (BOM 연동) ★★★ -->
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <label class="block text-sm font-medium text-blue-700 mb-2">
+          <i class="fas fa-link mr-1"></i> 제품마스터 코드 (BOM 연동)
+        </label>
+        <div class="flex gap-2">
+          <div class="flex-1 relative">
+            <input type="text" id="production-code-search" 
+                   value="${product?.production_code || ''}"
+                   class="w-full border rounded-lg px-4 py-2 pr-10" 
+                   placeholder="코드 또는 생산명으로 검색..."
+                   oninput="handleProductionCodeSearch(this.value)"
+                   autocomplete="off">
+            <i class="fas fa-search absolute right-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+            <!-- 검색 결과 드롭다운 -->
+            <div id="production-code-dropdown" class="absolute z-50 w-full bg-white border rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto hidden">
+            </div>
+          </div>
+        </div>
+        <input type="hidden" id="product-production-code" value="${product?.production_code || ''}">
+        <input type="hidden" id="product-production-name" value="${product?.production_name || ''}">
+        <div id="selected-production-info" class="mt-2 text-sm ${product?.production_code ? '' : 'hidden'}">
+          <span class="text-blue-600 font-medium">
+            <i class="fas fa-check-circle mr-1"></i>
+            선택됨: <span id="selected-production-display">${product?.production_code ? `${product.production_code} - ${product.production_name || ''}` : ''}</span>
+          </span>
+          <button type="button" onclick="clearProductionCode()" class="ml-2 text-red-500 hover:text-red-700 text-xs">
+            <i class="fas fa-times"></i> 해제
+          </button>
+        </div>
+        <p class="text-xs text-blue-600 mt-1">
+          <i class="fas fa-info-circle mr-1"></i>
+          BOM(배합표)에 등록된 제품마스터 코드를 선택하면 생산시 원료 자동 계산됩니다.
+        </p>
+      </div>
       
       <!-- 이미지 업로드 -->
       <div>
@@ -16819,6 +16874,72 @@ function showProductModal(product = null) {
   `);
 }
 
+// ★★★ v3.5.59: 제품마스터 코드 검색 핸들러 ★★★
+let productionSearchTimeout = null;
+async function handleProductionCodeSearch(value) {
+  const dropdown = document.getElementById('production-code-dropdown');
+  
+  // 디바운싱
+  if (productionSearchTimeout) clearTimeout(productionSearchTimeout);
+  
+  if (!value || value.length < 1) {
+    dropdown.classList.add('hidden');
+    return;
+  }
+  
+  productionSearchTimeout = setTimeout(async () => {
+    const items = await searchProductionItems(value);
+    
+    if (items.length === 0) {
+      dropdown.innerHTML = '<div class="p-3 text-gray-500 text-sm">검색 결과가 없습니다</div>';
+    } else {
+      dropdown.innerHTML = items.map(item => `
+        <div class="p-3 hover:bg-blue-50 cursor-pointer border-b last:border-0"
+             onclick="selectProductionCode('${item.production_code}', '${(item.production_name || '').replace(/'/g, "\\'")}')">
+          <div class="flex justify-between items-center">
+            <span class="font-medium text-blue-600">${item.production_code}</span>
+            <span class="text-xs text-gray-500">${item.category || ''}</span>
+          </div>
+          <div class="text-sm text-gray-700">${item.production_name || '-'}</div>
+          ${item.alias1 ? `<div class="text-xs text-gray-400">별칭: ${item.alias1}</div>` : ''}
+        </div>
+      `).join('');
+    }
+    
+    dropdown.classList.remove('hidden');
+  }, 300);
+}
+
+// 제품마스터 코드 선택
+function selectProductionCode(code, name) {
+  document.getElementById('product-production-code').value = code;
+  document.getElementById('product-production-name').value = name;
+  document.getElementById('production-code-search').value = code;
+  document.getElementById('selected-production-display').textContent = `${code} - ${name}`;
+  document.getElementById('selected-production-info').classList.remove('hidden');
+  document.getElementById('production-code-dropdown').classList.add('hidden');
+  
+  showToast(`제품마스터 선택: ${code} - ${name}`, 'success');
+}
+
+// 제품마스터 코드 선택 해제
+function clearProductionCode() {
+  document.getElementById('product-production-code').value = '';
+  document.getElementById('product-production-name').value = '';
+  document.getElementById('production-code-search').value = '';
+  document.getElementById('selected-production-info').classList.add('hidden');
+  showToast('제품마스터 연결이 해제되었습니다.', 'info');
+}
+
+// 드롭다운 외부 클릭 시 닫기
+document.addEventListener('click', (e) => {
+  const dropdown = document.getElementById('production-code-dropdown');
+  const searchInput = document.getElementById('production-code-search');
+  if (dropdown && !dropdown.contains(e.target) && e.target !== searchInput) {
+    dropdown.classList.add('hidden');
+  }
+});
+
 // 이미지 업로드 처리
 function handleProductImageUpload(event) {
   const file = event.target.files[0];
@@ -16859,7 +16980,10 @@ async function saveProduct(isEdit) {
     expiry_info: document.getElementById('product-expiry-info').value.trim(),
     storage_method: document.getElementById('product-storage-method').value.trim(),
     sales_channel: document.getElementById('product-sales-channel').value.trim(),
-    memo: document.getElementById('product-memo').value.trim()
+    memo: document.getElementById('product-memo').value.trim(),
+    // ★★★ v3.5.59: 제품마스터 코드 및 생산명 추가 ★★★
+    production_code: document.getElementById('product-production-code')?.value.trim() || '',
+    production_name: document.getElementById('product-production-name')?.value.trim() || ''
   };
   
   if (!data.product_name) {

@@ -2814,6 +2814,51 @@ admin.post('/production-items', async (c) => {
   }
 })
 
+// ★★★ v3.5.59: production_items 검색 API (제품코드/생산명 검색) ★★★
+// 주의: 이 라우트는 /production-items/:code 보다 앞에 있어야 함!
+admin.get('/production-items/search', async (c) => {
+  const { env } = c
+  const search = c.req.query('q') || ''
+  
+  try {
+    let query = `
+      SELECT 
+        production_code,
+        production_name,
+        alias1,
+        alias2,
+        category,
+        is_active
+      FROM production_items
+      WHERE is_active = 1
+    `
+    const params: any[] = []
+    
+    if (search) {
+      query += ` AND (
+        production_code LIKE ? OR
+        production_name LIKE ? OR
+        alias1 LIKE ? OR
+        alias2 LIKE ?
+      )`
+      const searchTerm = `%${search}%`
+      params.push(searchTerm, searchTerm, searchTerm, searchTerm)
+    }
+    
+    query += ` ORDER BY production_code ASC LIMIT 50`
+    
+    const result = await env.DB.prepare(query).bind(...params).all()
+    
+    return c.json({
+      success: true,
+      data: result.results || [],
+      count: result.results?.length || 0
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
 // 생산명 단일 조회
 admin.get('/production-items/:code', async (c) => {
   const { env } = c
@@ -8444,6 +8489,60 @@ admin.get('/debug/transactions-stock', async (c) => {
     })
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ★★★ v3.5.59: Product_Catalog에 production_code, production_name 컬럼 추가 마이그레이션 ★★★
+admin.get('/migrate-product-catalog', async (c) => {
+  const { env } = c
+  const results: string[] = []
+  
+  try {
+    // 1. production_code 컬럼 추가
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE Product_Catalog ADD COLUMN production_code TEXT
+      `).run()
+      results.push('production_code 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message.includes('duplicate column')) {
+        results.push('production_code 컬럼 이미 존재')
+      } else {
+        throw e
+      }
+    }
+    
+    // 2. production_name 컬럼 추가 (생산명)
+    try {
+      await env.DB.prepare(`
+        ALTER TABLE Product_Catalog ADD COLUMN production_name TEXT
+      `).run()
+      results.push('production_name 컬럼 추가 완료')
+    } catch (e: any) {
+      if (e.message.includes('duplicate column')) {
+        results.push('production_name 컬럼 이미 존재')
+      } else {
+        throw e
+      }
+    }
+    
+    // 3. 인덱스 생성
+    try {
+      await env.DB.prepare(`
+        CREATE INDEX IF NOT EXISTS idx_product_catalog_production_code ON Product_Catalog(production_code)
+      `).run()
+      results.push('production_code 인덱스 생성 완료')
+    } catch (e: any) {
+      results.push('production_code 인덱스: ' + e.message)
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: 'Product_Catalog 마이그레이션 완료',
+      results 
+    })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message, results }, 500)
   }
 })
 

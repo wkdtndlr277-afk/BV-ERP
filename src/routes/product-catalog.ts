@@ -22,17 +22,19 @@ app.get('/', async (c) => {
     params.push(active === 'true' ? 1 : 0)
   }
   
-  // 검색어 필터 (제품명, 바코드, 제조공정번호, 판매처)
+  // 검색어 필터 (제품명, 바코드, 제조공정번호, 판매처, 생산코드, 생산명)
   if (search) {
     query += ` AND (
       product_name LIKE ? OR 
       barcode LIKE ? OR 
       process_number LIKE ? OR 
       sales_channel LIKE ? OR
-      product_code LIKE ?
+      product_code LIKE ? OR
+      production_code LIKE ? OR
+      production_name LIKE ?
     )`
     const searchTerm = `%${search}%`
-    params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm)
   }
   
   query += ` ORDER BY created_at DESC`
@@ -94,7 +96,9 @@ app.post('/', async (c) => {
     expiry_info,
     storage_method,
     sales_channel,
-    memo
+    memo,
+    production_code,    // ★ v3.5.59: 제품마스터 코드 추가
+    production_name     // ★ v3.5.59: 생산명 추가
   } = body
   
   if (!product_name) {
@@ -118,8 +122,9 @@ app.post('/', async (c) => {
   const result = await c.env.DB.prepare(`
     INSERT INTO Product_Catalog (
       product_code, product_name, manufacture_report, product_image,
-      process_number, barcode, expiry_info, storage_method, sales_channel, memo
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      process_number, barcode, expiry_info, storage_method, sales_channel, memo,
+      production_code, production_name
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     product_code,
     product_name,
@@ -130,7 +135,9 @@ app.post('/', async (c) => {
     expiry_info || null,
     storage_method || null,
     sales_channel || null,
-    memo || null
+    memo || null,
+    production_code || null,   // ★ v3.5.59
+    production_name || null    // ★ v3.5.59
   ).run()
   
   return c.json({
@@ -157,7 +164,9 @@ app.put('/:id', async (c) => {
     storage_method,
     sales_channel,
     memo,
-    is_active
+    is_active,
+    production_code,    // ★ v3.5.59
+    production_name     // ★ v3.5.59
   } = body
   
   // 기존 제품 확인
@@ -192,6 +201,8 @@ app.put('/:id', async (c) => {
       sales_channel = ?,
       memo = ?,
       is_active = ?,
+      production_code = ?,
+      production_name = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).bind(
@@ -205,6 +216,8 @@ app.put('/:id', async (c) => {
     sales_channel !== undefined ? sales_channel : existing.sales_channel,
     memo !== undefined ? memo : existing.memo,
     is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
+    production_code !== undefined ? production_code : existing.production_code,
+    production_name !== undefined ? production_name : existing.production_name,
     id
   ).run()
   

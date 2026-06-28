@@ -2820,15 +2820,16 @@ sheets.post('/rebuild-daily-stock', async (c) => {
     // 3. ★★★ v3.5.69: 전일(6월1일)의 모든 원료를 기준으로 생성 ★★★
     // (사용량 0인 원료도 포함하여 완전한 일별수불부 유지)
     
-    // SF원료, 정제수 제외
+    // SF원료, SM부자재, 정제수 제외 (원료만 일별수불부 대상)
     const EXCLUDE_ITEMS = ['RM184', 'SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
     
     // 6월 1일 데이터에서 모든 품목코드 추출 (전일 재고가 있는 모든 원료)
     // ★ v3.5.72: Set으로 중복 제거 필수!
+    // ★ v3.5.75: SM부자재 제외
     const allItemCodesSet = new Set(
       june1Data
         .map(row => row[1]?.toString())
-        .filter(code => code && !EXCLUDE_ITEMS.includes(code))
+        .filter(code => code && !EXCLUDE_ITEMS.includes(code) && !code.startsWith('SM'))
     );
     const allItemCodes = Array.from(allItemCodesSet);
     
@@ -2946,9 +2947,9 @@ sheets.post('/create-daily-stock', async (c) => {
       }
     }
 
-    // 2. SF원료, 정제수 제외
+    // 2. SF원료, SM부자재, 정제수 제외 (원료만 일별수불부 대상)
     const EXCLUDE_ITEMS = ['RM184', 'SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
-    const itemCodes = Array.from(usedItems).filter(code => !EXCLUDE_ITEMS.includes(code));
+    const itemCodes = Array.from(usedItems).filter(code => !EXCLUDE_ITEMS.includes(code) && !code.startsWith('SM'));
 
     if (itemCodes.length === 0) {
       return c.json({
@@ -4216,8 +4217,8 @@ sheets.post('/reset-daily-stock-complete', async (c) => {
       
       if (!itemCode) continue;
       
-      // SF원료, 정제수 제외
-      if (itemCode.startsWith('SF') || itemCode === 'RM184') continue;
+      // SF원료, SM부자재, 정제수 제외 (원료만 일별수불부 대상)
+      if (itemCode.startsWith('SF') || itemCode.startsWith('SM') || itemCode === 'RM184') continue;
       
       // 기존 값에 누적
       const existing = initialStockMap.get(itemCode) || { stock: 0, name: itemName };

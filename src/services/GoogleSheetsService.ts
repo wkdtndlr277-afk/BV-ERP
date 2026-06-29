@@ -1342,6 +1342,9 @@ export class GoogleSheetsService {
       return rowDate === prevDate;
     });
     
+    // ★★★ v3.6.07: 전날 현재고 맵 - 선언을 먼저! ★★★
+    const prevStockMap: Record<string, { name: string; current: number; unit: string }> = {};
+    
     // ★★★ v3.5.90: 전일 데이터 없으면 자동 생성 (재귀) ★★★
     if (prevDayData.length === 0) {
       console.log(`[addDailyStockDate] 전일(${prevDate}) 데이터 없음 → 자동 생성 시도`);
@@ -1376,16 +1379,15 @@ export class GoogleSheetsService {
       }
       
       console.log(`[addDailyStockDate] 전일(${prevDate}) 자동 생성 완료, ${refreshedPrevData.length}건`);
-    }
-    
-    // 전날 현재고 맵
-    const prevStockMap: Record<string, { name: string; current: number; unit: string }> = {};
-    for (const row of prevDayData) {
-      const code = row[1]?.toString() || '';
-      const name = row[2]?.toString() || '';
-      const current = parseFloat(row[6]?.toString() || '0') || 0;
-      const unit = row[7]?.toString() || 'kg';
-      prevStockMap[code] = { name, current, unit };
+    } else {
+      // 전일 데이터가 있는 경우 - prevStockMap 채우기
+      for (const row of prevDayData) {
+        const code = row[1]?.toString() || '';
+        const name = row[2]?.toString() || '';
+        const current = parseFloat(row[6]?.toString() || '0') || 0;
+        const unit = row[7]?.toString() || 'kg';
+        prevStockMap[code] = { name, current, unit };
+      }
     }
     
     // 5. 당일 입고량 가져오기

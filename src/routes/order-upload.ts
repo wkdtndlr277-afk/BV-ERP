@@ -578,7 +578,7 @@ orderUpload.post('/upload', async (c) => {
   try {
     const formData = await c.req.formData();
     const file = formData.get('file') as File;
-    const channel = (formData.get('channel') as string) || '기타';
+    let channel = (formData.get('channel') as string) || '기타';
     const orderDate = (formData.get('order_date') as string) || new Date().toISOString().split('T')[0];
     
     if (!file) {
@@ -602,8 +602,78 @@ orderUpload.post('/upload', async (c) => {
       }, 400);
     }
     
-    // 엑셀/CSV 파일 처리
-    const text = await file.text();
+    // ★ v3.5.79: 오아시스 HTML 형식 xls 파일 자동 감지
+    const arrayBuffer = await file.arrayBuffer();
+    const rawContent = new TextDecoder('utf-8').decode(arrayBuffer);
+    
+    // 오아시스 HTML 형식 감지 (HTML 태그 + 특정 키워드)
+    const isOasisHtml = rawContent.includes('<meta ht') || 
+                        rawContent.includes('<table') ||
+                        (rawContent.includes('바코드') && rawContent.includes('출고수량') && rawContent.includes('<td'));
+    
+    if (isOasisHtml && (fileName.endsWith('.xls') || fileName.endsWith('.xlsx'))) {
+      console.log('[upload] 오아시스 HTML 형식 xls 감지됨');
+      
+      // EUC-KR 또는 CP949로 다시 디코딩 시도
+      let content = rawContent;
+      if (content.includes('ÁÖ¹®') || content.includes('\ufffd')) {
+        // 인코딩 깨짐 → EUC-KR로 재디코딩
+        content = new TextDecoder('euc-kr').decode(arrayBuffer);
+      }
+      
+      // 오아시스 HTML 테이블 파싱
+      const oasisItems = parseOasisHtmlTableInternal(content);
+      
+      if (oasisItems.length > 0) {
+        channel = '오아시스';  // 채널 자동 설정
+        
+        // 바코드별 합계
+        const barcodeMap = new Map<string, { barcode: string; product_name: string; quantity: number }>();
+        for (const item of oasisItems) {
+          const existing = barcodeMap.get(item.barcode);
+          if (existing) {
+            existing.quantity += item.quantity;
+          } else {
+            barcodeMap.set(item.barcode, { ...item });
+          }
+        }
+        const aggregatedItems = Array.from(barcodeMap.values());
+        
+        // 바코드 기반 매칭
+        const service = getSheetService(c);
+        if (service) {
+          const { matched, unmatched } = await matchOasisBarcodesFromSheetsInternal(service, aggregatedItems);
+          
+          // 매칭된 항목 발주서 시트에 저장
+          let sheetsSaved = 0;
+          if (matched.length > 0) {
+            const saveResult = await saveOrdersToSheets(service, orderDate, channel, matched);
+            sheetsSaved = saveResult.count;
+          }
+          
+          return c.json({
+            success: true,
+            file_type: 'oasis_html',
+            channel,
+            order_date: orderDate,
+            delivery_date: oasisItems[0]?.delivery_date || '',
+            summary: {
+              total_parsed: oasisItems.length,
+              unique_products: aggregatedItems.length,
+              matched: matched.length,
+              unmatched: unmatched.length,
+              sheets_saved: sheetsSaved
+            },
+            matched_items: matched,
+            unmatched_items: unmatched,
+            message: `오아시스 발주서 ${matched.length}건 등록 완료, ${unmatched.length}건 미매칭`
+          });
+        }
+      }
+    }
+    
+    // 기존 CSV/TSV 파싱 로직
+    const text = new TextDecoder('utf-8').decode(arrayBuffer);
     const parsedItems = parseExcelData(text, channel);
     
     if (parsedItems.length === 0) {
@@ -642,6 +712,139 @@ orderUpload.post('/upload', async (c) => {
     return c.json({ success: false, error: error.message }, 500);
   }
 });
+
+// ★ v3.5.79: 오아시스 HTML 파싱 내부 함수 (upload API용)
+function parseOasisHtmlTableInternal(html: string): { barcode: string; product_name: string; quantity: number; delivery_date: string }[] {
+  const results: { barcode: string; product_name: string; quantity: number; delivery_date: string }[] = [];
+  
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  let isHeader = true;
+  let headerMap: Record<string, number> = {};
+  
+  while ((rowMatch = rowRegex.exec(html)) !== null) {
+    const rowContent = rowMatch[1];
+    const cells: string[] = [];
+    
+    const cellRegexLocal = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    let cellMatch;
+    while ((cellMatch = cellRegexLocal.exec(rowContent)) !== null) {
+      const cellText = cellMatch[1]
+        .replace(/<[^>]*>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .trim();
+      cells.push(cellText);
+    }
+    
+    if (cells.length === 0) continue;
+    
+    // 헤더 감지
+    if (isHeader && cells.some(c => c.includes('바코드') || c.includes('상품코드') || c.includes('No'))) {
+      cells.forEach((cell, idx) => {
+        if (cell.includes('바코드')) headerMap['barcode'] = idx;
+        if (cell.includes('상 품 명') || cell.includes('상품명')) headerMap['product_name'] = idx;
+        if (cell.includes('출고수량') || cell.includes('수량')) headerMap['quantity'] = idx;
+        if (cell.includes('입고예정') || cell.includes('납품일')) headerMap['delivery_date'] = idx;
+      });
+      isHeader = false;
+      continue;
+    }
+    
+    // 소계 행 건너뛰기
+    if (cells[0]?.includes('소 계') || cells[0]?.includes('분 류')) continue;
+    
+    // 숫자로 시작하는 행만 (실제 데이터)
+    if (!/^\d+$/.test(cells[0] || '')) continue;
+    
+    // 오아시스 표준: 0:No, 5:상품명, 8:입고예정, 9:출고수량, 12:바코드
+    const barcodeIdx = headerMap['barcode'] ?? 12;
+    const productNameIdx = headerMap['product_name'] ?? 5;
+    const quantityIdx = headerMap['quantity'] ?? 9;
+    const deliveryDateIdx = headerMap['delivery_date'] ?? 8;
+    
+    const barcode = cells[barcodeIdx]?.trim() || '';
+    let productName = cells[productNameIdx]?.trim() || '';
+    const quantity = parseInt((cells[quantityIdx] || '0').replace(/,/g, '')) || 0;
+    const deliveryDate = cells[deliveryDateIdx]?.trim() || '';
+    
+    productName = productName.replace(/^\+/, '').trim();
+    
+    if (barcode && productName && quantity > 0) {
+      results.push({ barcode, product_name: productName, quantity, delivery_date: deliveryDate });
+    }
+  }
+  
+  return results;
+}
+
+// ★ v3.5.79: 오아시스 바코드 매칭 내부 함수 (upload API용)
+async function matchOasisBarcodesFromSheetsInternal(
+  service: GoogleSheetsService,
+  items: { barcode: string; product_name: string; quantity: number }[]
+): Promise<{
+  matched: { product_code: string; product_name: string; barcode: string; quantity: number; matched_name: string }[];
+  unmatched: { barcode: string; product_name: string; quantity: number; fail_reason: string }[];
+}> {
+  const matched: any[] = [];
+  const unmatched: any[] = [];
+  
+  let productMaster: any[][] = [];
+  try {
+    productMaster = await service.readSheet('제품마스터', 'A2:H');
+  } catch (e) {
+    console.error('[오아시스 매칭] 제품마스터 읽기 실패:', e);
+    return {
+      matched: [],
+      unmatched: items.map(item => ({
+        barcode: item.barcode,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        fail_reason: '제품마스터 시트 읽기 실패'
+      }))
+    };
+  }
+  
+  // 바코드 → 제품 매핑
+  const barcodeToProduct = new Map<string, { code: string; name: string }>();
+  for (const row of productMaster) {
+    const productCode = row[0]?.toString().trim() || '';
+    const productName = row[1]?.toString().trim() || '';
+    const barcode = row[2]?.toString().trim() || '';
+    
+    if (barcode && productCode) {
+      barcodeToProduct.set(barcode, { code: productCode, name: productName });
+    }
+  }
+  
+  console.log('[오아시스 매칭] 바코드 등록 수:', barcodeToProduct.size);
+  
+  for (const item of items) {
+    const product = barcodeToProduct.get(item.barcode);
+    
+    if (product) {
+      matched.push({
+        product_code: product.code,
+        product_name: product.name,
+        barcode: item.barcode,
+        quantity: item.quantity,
+        matched_name: item.product_name,
+        channel: '오아시스'
+      });
+    } else {
+      unmatched.push({
+        barcode: item.barcode,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        fail_reason: '바코드 미등록'
+      });
+    }
+  }
+  
+  return { matched, unmatched };
+}
 
 // ===== 텍스트 직접 입력 (PDF 복사 붙여넣기용) =====
 orderUpload.post('/upload-text', async (c) => {

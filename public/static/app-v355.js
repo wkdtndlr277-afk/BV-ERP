@@ -48602,10 +48602,23 @@ async function handleOrderFileUpload() {
           continue;  // 다음 파일로 (return 대신 continue!)
         }
         
-        // 일반 엑셀 파일 처리 (XLSX 라이브러리)
+        // ★ v3.5.87: 일반 엑셀 파일 처리 - 컬리 발주서 시트 우선 선택
         const workbook = XLSX.read(data, { type: 'array', codepage: 949 }); // EUC-KR 지원
-        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-        rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
+        
+        // 시트 선택 우선순위: 발주서내역 > 상품별 수량 합산 > 첫 번째 시트
+        let selectedSheetName = workbook.SheetNames[0];
+        const prioritySheets = ['발주서내역', '상품별 수량 합산', '상품별수량합산'];
+        for (const sheetName of prioritySheets) {
+          if (workbook.SheetNames.includes(sheetName)) {
+            selectedSheetName = sheetName;
+            console.log('★ 컬리 발주서 시트 감지:', sheetName);
+            break;
+          }
+        }
+        console.log('선택된 시트:', selectedSheetName, '(전체:', workbook.SheetNames.join(', '), ')');
+        
+        const selectedSheet = workbook.Sheets[selectedSheetName];
+        rows = XLSX.utils.sheet_to_json(selectedSheet, { header: 1, defval: '' });
       } 
       // ============================================================
       // CSV/TSV/TXT 파일 - 텍스트로 파싱
@@ -49104,6 +49117,12 @@ async function handleOrderFileUpload() {
       showToast('파싱된 데이터가 없습니다. 파일 형식을 확인하세요.', 'error');
       return;
     }
+    
+    // ★ v3.5.86: 서버 전송 전 allItems 상세 로그
+    console.log('★★★ 서버 전송 전 allItems 확인 ★★★');
+    allItems.forEach((item, idx) => {
+      console.log(`  [${idx}] ${item.product_name} x${item.quantity} | barcode: ${item.barcode || '없음'} | sku: ${item.sku_code || '없음'}`);
+    });
     
     // JSON API로 업로드 (바코드 포함, 제품명 매칭)
     const result = await api('/order/upload-json', 'POST', {

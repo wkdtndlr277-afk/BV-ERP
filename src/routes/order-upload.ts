@@ -2471,3 +2471,64 @@ orderUpload.post('/register-oasis', async (c) => {
 });
 
 export default orderUpload;
+
+// ★★★ v3.5.86: 바코드 매칭 디버그 API ★★★
+orderUpload.post('/debug-barcode', async (c) => {
+  try {
+    const { barcode, product_name } = await c.req.json();
+    const service = getSheetService(c);
+    
+    if (!service) {
+      return c.json({ success: false, error: 'Google Sheets 서비스 없음' });
+    }
+    
+    // 제품마스터 시트 읽기
+    const productMaster = await service.readSheet('제품마스터', 'A2:H');
+    
+    // 바코드로 검색
+    const barcodeMatches: any[] = [];
+    const nameMatches: any[] = [];
+    
+    for (const row of productMaster) {
+      const code = row[0]?.toString().trim() || '';
+      const name = row[1]?.toString().trim() || '';
+      const barcodeCol = row[2]?.toString().trim() || '';
+      const orderName = row[3]?.toString().trim() || '';
+      
+      // 바코드 매칭
+      if (barcode && barcodeCol === barcode) {
+        barcodeMatches.push({ code, name, barcode: barcodeCol, orderName });
+      }
+      
+      // 제품명 부분 매칭
+      if (product_name) {
+        const searchLower = product_name.toLowerCase();
+        if (name.toLowerCase().includes(searchLower) || 
+            searchLower.includes(name.toLowerCase()) ||
+            orderName.toLowerCase().includes(searchLower) ||
+            searchLower.includes(orderName.toLowerCase())) {
+          nameMatches.push({ code, name, barcode: barcodeCol, orderName });
+        }
+      }
+    }
+    
+    // 바코드 컬럼에서 880으로 시작하는 값 샘플
+    const barcodeSamples = productMaster
+      .filter(row => row[2]?.toString().startsWith('880'))
+      .slice(0, 10)
+      .map(row => ({ code: row[0], name: row[1], barcode: row[2] }));
+    
+    return c.json({
+      success: true,
+      search: { barcode, product_name },
+      barcode_matches: barcodeMatches,
+      name_matches: nameMatches,
+      total_products: productMaster.length,
+      barcode_samples: barcodeSamples,
+      message: barcodeMatches.length > 0 ? '바코드 매칭 성공' : '바코드 매칭 실패 - 제품마스터에 해당 바코드 없음'
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message });
+  }
+});

@@ -48719,7 +48719,7 @@ async function handleOrderFileUpload() {
           
           if (isBaeminFile) {
             console.log('★★★ 배민 PDF 감지 → PDF.js 파싱 사용 ★★★');
-            showLoading('배민 입고확인서 분석 중...');
+            // ★ v3.6.04: 로딩은 전체 파일 처리 시작시만 표시 (continue 후 자동 hideLoading)
           }
           
           // ★★★ PDF.js 기본 파싱 (배민 아니거나 AI 파싱 실패 시) ★★★
@@ -48807,6 +48807,10 @@ async function handleOrderFileUpload() {
           }
           
           console.log('PDF 파일 처리 완료:', file.name);
+          // ★ v3.6.04: 배민 PDF 파싱 완료 로그
+          if (isBaeminFile) {
+            console.log('★ 배민 PDF 파싱 결과:', allItems.length, '건');
+          }
           continue;  // 다음 파일로
           
         } catch (pdfError) {
@@ -49367,6 +49371,25 @@ async function handleOrderFileUpload() {
       console.log(`  [${idx}] ${item.product_name} x${item.quantity} | barcode: ${item.barcode || '없음'} | sku: ${item.sku_code || '없음'}`);
     });
     
+    // ★ v3.6.04: 채널 자동 감지 (파일명 기반)
+    let autoChannel = channelSelect.value || '';
+    if (!autoChannel) {
+      const allFileNames = Array.from(files).map(f => f.name.toLowerCase()).join(' ');
+      if (allFileNames.includes('배민') || allFileNames.includes('baemin') || allFileNames.includes('입고확인서') || allFileNames.includes('우아한')) {
+        autoChannel = '배민';
+        console.log('★ 채널 자동 감지: 배민');
+      } else if (allFileNames.includes('쿠팡') || allFileNames.includes('coupang')) {
+        autoChannel = '쿠팡';
+        console.log('★ 채널 자동 감지: 쿠팡');
+      } else if (allFileNames.includes('컬리') || allFileNames.includes('kurly')) {
+        autoChannel = '컬리';
+        console.log('★ 채널 자동 감지: 컬리');
+      } else if (allFileNames.includes('오아시스') || allFileNames.includes('oasis')) {
+        autoChannel = '오아시스';
+        console.log('★ 채널 자동 감지: 오아시스');
+      }
+    }
+    
     // ★ v3.5.89: JSON API로 업로드 (바코드 포함, 판매처 추가)
     const result = await api('/order/upload-json', 'POST', {
       items: allItems.map(i => ({ 
@@ -49375,7 +49398,7 @@ async function handleOrderFileUpload() {
         barcode: i.barcode || undefined,
         sku_code: i.sku_code || undefined  // ★ SKU코드 추가 (배민용)
       })),
-      channel: channelSelect.value || '',
+      channel: autoChannel,
       seller: sellerInput?.value || '',  // ★ 판매처 추가
       order_date: dateInput.value
     });

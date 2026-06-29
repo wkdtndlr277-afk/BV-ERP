@@ -49469,10 +49469,15 @@ async function handleOrderFileUpload() {
       console.log(`  [${idx}] ${item.product_name} x${item.quantity} | barcode: ${item.barcode || '없음'} | sku: ${item.sku_code || '없음'}`);
     });
     
-    // ★ v3.6.04: 채널 자동 감지 (파일명 기반)
+    // ★★★ v3.6.06: 채널 자동 감지 강화 (파일명 + PDF 내용 기반) ★★★
     let autoChannel = channelSelect.value || '';
-    if (!autoChannel) {
+    
+    // ★ 자동 감지 옵션 선택 시 (빈 문자열) 또는 "기타" 선택 시 자동 감지 시도
+    if (!autoChannel || autoChannel === '기타') {
       const allFileNames = Array.from(files).map(f => f.name.toLowerCase()).join(' ');
+      
+      // ★ PDF 내용에서도 채널 감지 (parsedText가 있으면)
+      const allParsedContent = allItems.map(i => (i.product_name || '').toLowerCase()).join(' ');
       if (allFileNames.includes('배민') || allFileNames.includes('baemin') || allFileNames.includes('입고확인서') || allFileNames.includes('우아한')) {
         autoChannel = '배민';
         console.log('★ 채널 자동 감지: 배민');

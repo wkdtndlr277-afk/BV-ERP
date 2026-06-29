@@ -4073,13 +4073,15 @@ productionRoutes.post('/simple', async (c) => {
 productionRoutes.post('/simple-batch', async (c) => {
   try {
     const body = await c.req.json();
-    const { prod_date, lot_number, items, order_date } = body;
+    // ★★★ v3.6.06: production_date도 지원 (프론트엔드 호환성) ★★★
+    const { prod_date, production_date, lot_number, items, order_date } = body;
+    const actualProdDate = prod_date || production_date;  // 둘 다 지원
     
-    if (!prod_date || !items || !Array.isArray(items) || items.length === 0) {
-      return c.json({ success: false, error: 'prod_date, items 필수' }, 400);
+    if (!actualProdDate || !items || !Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: 'prod_date 또는 production_date, items 필수' }, 400);
     }
     
-    const lotNum = lot_number || prod_date.replace(/-/g, '').slice(2);
+    const lotNum = lot_number || actualProdDate.replace(/-/g, '').slice(2);
     
     // 1. 구글 시트에 생산실적 전송
     const service = getSheetServiceForProduction(c);
@@ -4091,7 +4093,7 @@ productionRoutes.post('/simple-batch', async (c) => {
         // 헤더: 생산일자, 제품코드, 제품명, 생산수량, 제품로트, 채널, 비고, 등록시간
         // ★ 날짜는 문자열로 명시 (시트가 숫자로 변환하지 않도록)
         const rows = items.map((item: any) => [
-          `'${prod_date}`,              // A: 생산일자 (앞에 '로 문자열 강제)
+          `'${actualProdDate}`,              // A: 생산일자 (앞에 '로 문자열 강제)
           item.product_code,            // B: 제품코드
           item.product_name || '',      // C: 제품명
           item.quantity || 0,           // D: 생산수량
@@ -4119,7 +4121,7 @@ productionRoutes.post('/simple-batch', async (c) => {
         `).bind(
           item.product_code,
           item.quantity || 0,
-          prod_date,
+          actualProdDate,
           lotNum,
           item.channel || item.channels || ''
         ).run();
@@ -4153,8 +4155,8 @@ productionRoutes.post('/simple-batch', async (c) => {
     if (service && sheetSent) {
       try {
         // 4-1. LOT 매칭 자동 생성 (해당 날짜만)
-        console.log(`[production/simple-batch] LOT 매칭 생성 시작: ${prod_date}`);
-        lotMatchingResult = await service.rebuildLotMatchingForDates([prod_date]);
+        console.log(`[production/simple-batch] LOT 매칭 생성 시작: ${actualProdDate}`);
+        lotMatchingResult = await service.rebuildLotMatchingForDates([actualProdDate]);
         console.log(`[production/simple-batch] LOT 매칭 완료: ${lotMatchingResult?.totalRows || 0}행`);
       } catch (lotError: any) {
         console.error('[production/simple-batch] LOT 매칭 실패:', lotError.message, lotError.stack);
@@ -4163,8 +4165,8 @@ productionRoutes.post('/simple-batch', async (c) => {
       
       try {
         // 4-2. 일별수불부 자동 추가 (전일 현재고 → 당일 전일재고 연속성 유지)
-        console.log(`[production/simple-batch] 일별수불부 추가 시작: ${prod_date}`);
-        dailyStockResult = await service.addDailyStockDate(prod_date);
+        console.log(`[production/simple-batch] 일별수불부 추가 시작: ${actualProdDate}`);
+        dailyStockResult = await service.addDailyStockDate(actualProdDate);
         console.log(`[production/simple-batch] 일별수불부 완료: ${dailyStockResult?.new_rows || 0}행`);
       } catch (stockError: any) {
         console.error('[production/simple-batch] 일별수불부 실패:', stockError.message, stockError.stack);
@@ -4178,7 +4180,7 @@ productionRoutes.post('/simple-batch', async (c) => {
     
     return c.json({
       success: true,
-      prod_date,
+      prod_date: actualProdDate,
       lot_number: lotNum,
       items_count: items.length,
       db_saved: dbSaved,

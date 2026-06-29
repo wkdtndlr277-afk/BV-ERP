@@ -48921,6 +48921,17 @@ async function handleOrderFileUpload() {
       const header = rows[headerRowIdx].map(h => String(h || '').toLowerCase().trim());
       console.log('헤더 컬럼들:', header);
       
+      // ★ v3.5.84: 바코드 컬럼 찾기
+      let barcodeColIdx = -1;
+      const barcodePatterns = ['바코드', 'barcode', 'sku', '상품코드', '품목코드'];
+      for (let i = 0; i < header.length; i++) {
+        if (barcodePatterns.some(p => header[i].includes(p))) {
+          barcodeColIdx = i;
+          console.log('✓ 바코드 컬럼:', i, '=', header[i]);
+          break;
+        }
+      }
+      
       // 제품명 컬럼 찾기
       let nameColIdx = -1;
       const namePatterns = ['상품명', '제품명', '품명', '옵션명', '품목명', '상품', '제품', '옵션'];
@@ -48993,7 +49004,7 @@ async function handleOrderFileUpload() {
       
       console.log('★ 최종 컬럼 - 제품명:', nameColIdx, '수량:', qtyColIdx, '데이터시작:', dataStartIdx);
       
-      // 데이터 추출 (일반 형식)
+      // ★ v3.5.84: 데이터 추출 (일반 형식) - 바코드 포함
       for (let i = dataStartIdx; i < rows.length; i++) {
         const row = rows[i];
         if (!row || !Array.isArray(row)) continue;
@@ -49003,17 +49014,31 @@ async function handleOrderFileUpload() {
         const qtyRaw = String(row[qtyColIdx] || '').replace(/,/g, '').trim();
         const quantity = parseInt(qtyRaw) || 0;
         
+        // ★ v3.5.84: 바코드 추출 (컬럼 있으면 해당 컬럼, 없으면 제품명에서 추출)
+        let barcode = '';
+        if (barcodeColIdx >= 0 && row[barcodeColIdx]) {
+          barcode = String(row[barcodeColIdx]).trim();
+        }
+        // 제품명에서 바코드 패턴 추출 (880으로 시작하는 13자리)
+        if (!barcode) {
+          const barcodeMatch = productName.match(/\b(880\d{10})\b/);
+          if (barcodeMatch) barcode = barcodeMatch[1];
+        }
+        
         // 유효성 검사: 이름 있고, 수량이 1-9999 사이 (합리적 범위)
         if (!productName || productName.length < 2) continue;
         if (quantity <= 0 || quantity > 9999) continue;  // 수량 범위 제한!
         
-        // 헤더/합계 행 제외
+        // ★ v3.5.84: 헤더/합계 행 제외 - 총합계, 종합계 추가
         const lowerName = productName.toLowerCase();
         const skipPatterns = ['제품', '상품', '품명', '제품명', '상품명', '옵션명', '품목명', 
                              'product', 'name', 'item', '품목', '합계', '총계', 'total', 'sum', 
-                             '소계', 'subtotal', '번호', 'no', 'no.'];
+                             '소계', 'subtotal', '번호', 'no', 'no.', '총합계', '종합계', '합계:'];
         
         if (skipPatterns.includes(lowerName)) continue;
+        
+        // ★ v3.5.84: 합계 관련 키워드 포함된 행 제외
+        if (lowerName.includes('합계') || lowerName.includes('총계') || lowerName.includes('종합')) continue;
         
         // 숫자로 시작하는 메타 정보 제외 (예: "1. xxx", "2. 발주정보")  
         if (/^\d+\.\s/.test(productName)) continue;
@@ -49021,9 +49046,9 @@ async function handleOrderFileUpload() {
         // 순수 숫자인 경우 제외 (행 번호일 가능성)
         if (/^\d+$/.test(productName)) continue;
         
-        // 유효한 데이터 추가
-        allItems.push({ product_name: productName, quantity });
-        console.log('  추출:', productName.substring(0, 30), '→', quantity);
+        // ★ v3.5.84: 유효한 데이터 추가 (바코드 포함)
+        allItems.push({ product_name: productName, quantity, barcode: barcode || undefined });
+        console.log('  추출:', productName.substring(0, 30), '→', quantity, barcode ? `(바코드: ${barcode})` : '');
       }
       
       console.log('파일 "' + file.name + '" 일반 파싱 완료');

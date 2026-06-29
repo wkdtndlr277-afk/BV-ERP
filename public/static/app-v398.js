@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
-// Version: 3.5.97 Build: 20260629
-const APP_VERSION = '3.5.97';
-const APP_BUILD = '20260629-1';
+// Version: 3.5.98 Build: 20260629
+const APP_VERSION = '3.5.98';
+const APP_BUILD = '20260629-2';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -19167,31 +19167,31 @@ function generateClosingPrintHtml(cache, date) {
       
       <div class="section-header">2. 원재료 사용 현황 <span>(총 ${filteredUsage.length}종)</span></div>
       
-      <!-- ★★★ v3.5.96: 원료LOT/소비기한 컬럼 추가 (FEFO 선입선출 증빙) ★★★ -->
+      <!-- ★★★ v3.5.97: 원료LOT/소비기한 컬럼 - LOT별 수량+소비기한 함께 표시 ★★★ -->
       <table class="sub-table">
         <thead>
           <tr>
             <th style="width:4%">No</th>
             <th style="width:10%">품목코드</th>
-            <th style="width:30%" class="text-left">원재료명</th>
-            <th style="width:12%">사용량</th>
-            <th style="width:24%">원료LOT(사용량)</th>
-            <th style="width:14%">소비기한</th>
+            <th style="width:26%" class="text-left">원재료명</th>
+            <th style="width:10%">사용량</th>
+            <th style="width:38%">원료LOT (수량/소비기한)</th>
+            <th style="width:6%">LOT수</th>
             <th style="width:6%">단위</th>
           </tr>
         </thead>
         <tbody>
           ${filteredUsage.map((item, idx) => {
-            // ★★★ v3.5.96: 원료LOT + 소비기한 표시 (여러 LOT 지원) ★★★
+            // ★★★ v3.5.97: 원료LOT + 수량 + 소비기한 통합 표시 ★★★
             const lotDisplay = item.lot_number || '-';
-            const expiryDisplay = item.expiry_date || '-';
+            const lotCount = item.lots?.length || (lotDisplay === '-' ? 0 : 1);
             return '<tr>' +
               '<td>' + (idx + 1) + '</td>' +
               '<td>' + (item.item_code || '-') + '</td>' +
               '<td class="text-left">' + (item.item_name || item.item_code || '-') + '</td>' +
               '<td class="text-right">' + formatNumber(Math.abs(item.usage_qty || 0), 3) + '</td>' +
-              '<td class="font-small">' + lotDisplay + '</td>' +
-              '<td>' + expiryDisplay + '</td>' +
+              '<td class="font-small text-left" style="font-size:8px;">' + lotDisplay + '</td>' +
+              '<td>' + (lotCount || '-') + '</td>' +
               '<td>' + (item.unit || 'kg') + '</td>' +
             '</tr>';
           }).join('')}

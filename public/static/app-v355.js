@@ -24689,6 +24689,20 @@ async function executeOrderProduction() {
       if (reportNo) message += ` (일보: ${reportNo})`;
       
       showToast(message, 'success');
+      
+      // ★ v3.5.91: 자동 갱신 결과 확인 및 에러 표시
+      if (result.auto_update_error) {
+        console.error('[v3.5.91] 자동 갱신 에러:', result.auto_update_error);
+        showToast(`⚠️ 자동 갱신 실패: ${result.auto_update_error}`, 'warning');
+      } else {
+        // LOT 매칭 + 일별수불부 성공 표시
+        const lotRows = result.lot_matching?.rows || 0;
+        const stockRows = result.daily_stock?.rows || 0;
+        if (lotRows > 0 || stockRows > 0) {
+          console.log(`[v3.5.91] 자동 갱신 성공: LOT매칭 ${lotRows}건, 일별수불부 ${stockRows}건`);
+        }
+      }
+      
       cancelOrderUpload();
       
       // 백엔드 검증 결과 초기화

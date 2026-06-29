@@ -48581,7 +48581,7 @@ async function handleOrderFileUpload() {
         const arrayBuffer = await file.arrayBuffer();
         const data = new Uint8Array(arrayBuffer);
         
-        // ★★★ v3.5.80: 오아시스 HTML 형식 xls 감지 (더 정확한 조건) ★★★
+        // ★★★ v3.5.82: 오아시스 HTML 형식 xls 감지 - 다중 파일 지원 ★★★
         // 오아시스 발주서는 .xls 확장자지만 실제로는 HTML 파일임
         // 파일 시작 부분에서 HTML 시그니처 확인
         const textPreview = new TextDecoder('utf-8', { fatal: false }).decode(data.slice(0, 1000));
@@ -48595,30 +48595,11 @@ async function handleOrderFileUpload() {
           console.log('★★★ HTML 형식 xls 감지! (오아시스 발주서) ★★★');
           console.log('파일명:', file.name, '크기:', file.size);
           
-          // FormData로 서버에 파일 직접 전송
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('order_date', dateInput.value);
-          formData.append('channel', '오아시스');
-          
-          const oasisResponse = await fetch('/api/order/upload', {
-            method: 'POST',
-            body: formData
-          });
-          
-          const oasisResult = await oasisResponse.json();
-          console.log('오아시스 서버 응답:', oasisResult);
-          
-          if (oasisResult.success) {
-            hideLoading();
-            showToast(`오아시스: ${oasisResult.summary?.matched || 0}건 매칭`, 'success');
-            displayOrderUploadResult(oasisResult, oasisResult.summary?.total_parsed || 0);
-            return;  // 전체 함수 종료
-          } else {
-            hideLoading();
-            showToast('오아시스 파싱 실패: ' + (oasisResult.error || '오류'), 'error');
-            return;
-          }
+          // ★ v3.5.82: 오아시스 파일 목록에 추가 (나중에 일괄 처리)
+          if (!window._oasisFiles) window._oasisFiles = [];
+          window._oasisFiles.push(file);
+          console.log('오아시스 파일 추가됨, 총:', window._oasisFiles.length);
+          continue;  // 다음 파일로 (return 대신 continue!)
         }
         
         // 일반 엑셀 파일 처리 (XLSX 라이브러리)
@@ -49049,6 +49030,49 @@ async function handleOrderFileUpload() {
     }
     
     console.log('총 파싱된 항목:', allItems.length);
+    
+    // ★★★ v3.5.82: 오아시스 파일 일괄 처리 ★★★
+    if (window._oasisFiles && window._oasisFiles.length > 0) {
+      console.log('★★★ 오아시스 파일 일괄 처리 시작:', window._oasisFiles.length, '개 ★★★');
+      
+      // 모든 오아시스 파일을 하나의 FormData로 전송
+      const formData = new FormData();
+      for (const oasisFile of window._oasisFiles) {
+        formData.append('files', oasisFile);  // 복수 파일
+      }
+      formData.append('order_date', dateInput.value);
+      formData.append('channel', '오아시스');
+      
+      try {
+        const oasisResponse = await fetch('/api/order/upload-multi', {
+          method: 'POST',
+          body: formData
+        });
+        
+        const oasisResult = await oasisResponse.json();
+        console.log('오아시스 일괄 처리 응답:', oasisResult);
+        
+        // 오아시스 파일 목록 초기화
+        window._oasisFiles = [];
+        
+        if (oasisResult.success) {
+          hideLoading();
+          showToast(`오아시스: ${oasisResult.summary?.matched || 0}건 매칭 (${oasisResult.summary?.file_count || 0}개 파일)`, 'success');
+          displayOrderUploadResult(oasisResult, oasisResult.summary?.total_parsed || 0);
+          return;
+        } else {
+          hideLoading();
+          showToast('오아시스 파싱 실패: ' + (oasisResult.error || '오류'), 'error');
+          return;
+        }
+      } catch (oasisError) {
+        console.error('오아시스 일괄 처리 오류:', oasisError);
+        window._oasisFiles = [];
+        hideLoading();
+        showToast('오아시스 처리 실패: ' + oasisError.message, 'error');
+        return;
+      }
+    }
     
     if (allItems.length === 0) {
       hideLoading();

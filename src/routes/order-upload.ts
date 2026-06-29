@@ -713,6 +713,117 @@ orderUpload.post('/upload', async (c) => {
   }
 });
 
+// ★★★ v3.5.82: 오아시스 다중 파일 업로드 API ★★★
+orderUpload.post('/upload-multi', async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const files = formData.getAll('files') as File[];
+    const orderDate = formData.get('order_date')?.toString() || new Date().toISOString().split('T')[0];
+    const channel = formData.get('channel')?.toString() || '오아시스';
+    
+    console.log(`[upload-multi] ${files.length}개 파일 수신, 날짜: ${orderDate}, 채널: ${channel}`);
+    
+    if (files.length === 0) {
+      return c.json({ success: false, error: '업로드된 파일이 없습니다' }, 400);
+    }
+    
+    // 모든 파일에서 오아시스 항목 추출
+    const allOasisItems: { barcode: string; product_name: string; quantity: number; delivery_date: string }[] = [];
+    const fileResults: { name: string; items: number }[] = [];
+    
+    for (const file of files) {
+      const fileName = file.name.toLowerCase();
+      console.log(`[upload-multi] 파일 처리 중: ${file.name} (${file.size} bytes)`);
+      
+      const arrayBuffer = await file.arrayBuffer();
+      let content = new TextDecoder('utf-8').decode(arrayBuffer);
+      
+      // EUC-KR 디코딩 필요 여부 확인
+      if (content.includes('ÁÖ¹®') || content.includes('\ufffd')) {
+        content = new TextDecoder('euc-kr').decode(arrayBuffer);
+      }
+      
+      // HTML 형식 확인
+      const isOasisHtml = content.includes('<meta ') || 
+                          content.includes('<table') ||
+                          (content.includes('<td') && content.includes('<tr'));
+      
+      if (!isOasisHtml) {
+        console.log(`[upload-multi] ${file.name} - HTML 형식이 아님, 건너뜀`);
+        continue;
+      }
+      
+      // 오아시스 HTML 파싱
+      const oasisItems = parseOasisHtmlTableInternal(content);
+      console.log(`[upload-multi] ${file.name} - ${oasisItems.length}개 항목 파싱됨`);
+      
+      allOasisItems.push(...oasisItems);
+      fileResults.push({ name: file.name, items: oasisItems.length });
+    }
+    
+    if (allOasisItems.length === 0) {
+      return c.json({ 
+        success: false, 
+        error: '파싱된 데이터가 없습니다. 오아시스 발주서 형식인지 확인하세요.',
+        files_processed: fileResults
+      }, 400);
+    }
+    
+    // 바코드별 합계 (중복 제거)
+    const barcodeMap = new Map<string, { barcode: string; product_name: string; quantity: number }>();
+    for (const item of allOasisItems) {
+      const existing = barcodeMap.get(item.barcode);
+      if (existing) {
+        existing.quantity += item.quantity;
+      } else {
+        barcodeMap.set(item.barcode, { barcode: item.barcode, product_name: item.product_name, quantity: item.quantity });
+      }
+    }
+    const aggregatedItems = Array.from(barcodeMap.values());
+    
+    console.log(`[upload-multi] 전체: ${allOasisItems.length}개 항목 → ${aggregatedItems.length}개 고유 제품`);
+    
+    // 바코드 기반 매칭
+    const service = getSheetService(c);
+    if (!service) {
+      return c.json({ success: false, error: 'Google Sheets 서비스 연결 실패' }, 500);
+    }
+    
+    const { matched, unmatched } = await matchOasisBarcodesFromSheetsInternal(service, aggregatedItems);
+    
+    // 매칭된 항목 발주서 시트에 저장
+    let sheetsSaved = 0;
+    if (matched.length > 0) {
+      const saveResult = await saveOrdersToSheets(service, orderDate, channel, matched);
+      sheetsSaved = saveResult.count;
+    }
+    
+    return c.json({
+      success: true,
+      file_type: 'oasis_html_multi',
+      channel,
+      order_date: orderDate,
+      delivery_date: allOasisItems[0]?.delivery_date || '',
+      summary: {
+        file_count: files.length,
+        total_parsed: allOasisItems.length,
+        unique_products: aggregatedItems.length,
+        matched: matched.length,
+        unmatched: unmatched.length,
+        sheets_saved: sheetsSaved
+      },
+      matched_items: matched,
+      unmatched_items: unmatched,
+      files_processed: fileResults,
+      message: `오아시스 발주서 ${files.length}개 파일에서 ${matched.length}건 등록 완료, ${unmatched.length}건 미매칭`
+    });
+    
+  } catch (error: any) {
+    console.error('[upload-multi] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★ v3.5.79: 오아시스 HTML 파싱 내부 함수 (upload API용)
 function parseOasisHtmlTableInternal(html: string): { barcode: string; product_name: string; quantity: number; delivery_date: string }[] {
   const results: { barcode: string; product_name: string; quantity: number; delivery_date: string }[] = [];

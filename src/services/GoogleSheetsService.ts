@@ -1146,11 +1146,13 @@ export class GoogleSheetsService {
     const inboundData = await this.readSheet('원료입고', 'A2:J5000');
     const inboundByMaterial: Record<string, Array<{ lot: string; expiry: string; qty: number; remaining: number }>> = {};
     
+    // ★★★ v3.5.88: 원료입고 시트 구조 매핑 수정 ★★★
+    // A:입고일자, B:원료코드, C:원료명, D:로트번호, E:입고량, F:단위, G:공급업체, H:소비기한, I:잔량
     for (const row of inboundData) {
-      const materialCode = row[1]?.toString() || '';
-      const lot = row[3]?.toString() || '';
-      const expiry = row[4]?.toString() || '';
-      const qty = parseFloat(row[5]?.toString() || '0') || 0;
+      const materialCode = row[1]?.toString() || '';  // B열: 원료코드
+      const lot = row[3]?.toString() || '';           // D열: 로트번호
+      const expiry = row[7]?.toString() || '';        // H열: 소비기한 (★수정: row[4]→row[7])
+      const qty = parseFloat(row[4]?.toString() || '0') || 0;  // E열: 입고량 (★수정: row[5]→row[4])
       
       if (!materialCode || qty <= 0) continue;
       
@@ -1169,16 +1171,19 @@ export class GoogleSheetsService {
     const productionData = await this.readSheet('생산실적', 'A2:H5000');
     
     // 5. BOM 데이터 읽기
-    const bomData = await this.readSheet('BOM', 'A2:E2000');
+    // ★★★ v3.5.88: 'BOM마스터' 시트명 수정 (이전 'BOM'은 잘못된 이름) ★★★
+    const bomData = await this.readSheet('BOM마스터', 'A2:F2000');
     const bomMap: Record<string, Array<{ materialCode: string; materialName: string; usage: number }>> = {};
     
+    // ★★★ v3.5.88: BOM마스터 시트 구조 매핑 ★★★
+    // A:제품코드, B:제품명, C:원료코드, D:원료명, E:배합비(kg), F:단위
     for (const row of bomData) {
       const productCode = row[0]?.toString() || '';
-      const materialCode = row[1]?.toString() || '';
-      const materialName = row[2]?.toString() || '';
-      const usageRaw = parseFloat(row[3]?.toString() || '0') || 0;
-      // g → kg 변환
-      const usage = usageRaw / 1000;
+      const materialCode = row[2]?.toString() || '';  // C열: 원료코드
+      const materialName = row[3]?.toString() || '';  // D열: 원료명
+      const usageRaw = parseFloat(row[4]?.toString() || '0') || 0;  // E열: 배합비(kg)
+      // 이미 kg 단위이므로 변환 불필요
+      const usage = usageRaw;
       
       if (!productCode || !materialCode) continue;
       

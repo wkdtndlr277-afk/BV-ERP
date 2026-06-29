@@ -3,13 +3,15 @@
  * 
  * v3.5.0: 근본적 시스템 개선
  * v3.5.3: 로트 검증 강화 - lot_number 필수화
+ * v3.6.04: ★ 소비기한 만료 원료 자동 제외 - FEFO 쿼리에 expiry_date >= 생산일 조건 추가 ★
  * 
  * 핵심 원칙:
  * 1. Single Source of Truth: transactions 테이블이 모든 재고 변동의 원천
  * 2. Atomic Transaction: 모든 재고 차감 + 트랜잭션 기록은 하나의 DB 트랜잭션으로 처리
- * 3. FEFO (First Expired First Out): 소비기한 빠른 LOT 우선 사용
+ * 3. FEFO (First Expired First Out): 소비기한 빠른 LOT 우선 사용 + 만료 LOT 자동 제외
  * 4. Validation First: 모든 작업 전 엄격한 유효성 검증
  * 5. ★ Lot Integrity: 모든 사용 트랜잭션은 반드시 lot_number 포함 ★
+ * 6. ★ Expiry Check: 소비기한이 생산일 이전인 원료는 FEFO 선택에서 자동 제외 ★
  */
 
 // ===== 타입 정의 =====
@@ -293,21 +295,24 @@ export async function planFEFODeduction(
   // FEFO 쿼리로 가용 LOT 조회
   let lots: Array<{ lot_number: string; remain_qty: number; expiry_date: string }> = [];
   
+  // ★★★ v3.6.04: 소비기한이 생산일(referenceDate) 이전인 LOT는 제외 ★★★
   if (isSemiFinished) {
     const result = await db.prepare(`
       SELECT lot_number, remain_qty, expiry_date 
       FROM semi_finished_lots 
       WHERE item_code = ? AND remain_qty > 0
+        AND (expiry_date IS NULL OR expiry_date >= ?)
       ORDER BY expiry_date ASC, prod_date ASC, id ASC
-    `).bind(itemCode).all<{ lot_number: string; remain_qty: number; expiry_date: string }>();
+    `).bind(itemCode, referenceDate).all<{ lot_number: string; remain_qty: number; expiry_date: string }>();
     lots = result.results || [];
   } else {
     const result = await db.prepare(`
       SELECT lot_number, remain_qty, expiry_date 
       FROM inbound 
       WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+        AND (expiry_date IS NULL OR expiry_date >= ?)
       ORDER BY expiry_date ASC, inbound_date ASC, id ASC
-    `).bind(itemCode).all<{ lot_number: string; remain_qty: number; expiry_date: string }>();
+    `).bind(itemCode, referenceDate).all<{ lot_number: string; remain_qty: number; expiry_date: string }>();
     lots = result.results || [];
   }
 
@@ -515,40 +520,43 @@ export async function getMaterialLotNumber(
 ): Promise<string | null> {
   const isSemiFinished = itemCode.startsWith('SF');
   
+  // ★★★ v3.6.04: 소비기한이 생산일(productionDate) 이전인 LOT는 제외 ★★★
   if (isSemiFinished) {
-    // 반제품: semi_finished_lots에서 FEFO 조회
+    // 반제품: semi_finished_lots에서 FEFO 조회 (만료 LOT 제외)
     const lot = await db.prepare(`
       SELECT lot_number FROM semi_finished_lots 
       WHERE item_code = ? AND remain_qty > 0
+        AND (expiry_date IS NULL OR expiry_date >= ?)
       ORDER BY expiry_date ASC, prod_date ASC, id ASC LIMIT 1
-    `).bind(itemCode).first<{ lot_number: string }>();
+    `).bind(itemCode, productionDate).first<{ lot_number: string }>();
     
     if (lot?.lot_number) return lot.lot_number;
     
-    // 폴백: remain_qty 조건 없이 최신
+    // 폴백: remain_qty 조건 없이 최신 (만료 체크는 유지)
     const fallback = await db.prepare(`
       SELECT lot_number FROM semi_finished_lots 
-      WHERE item_code = ?
+      WHERE item_code = ? AND (expiry_date IS NULL OR expiry_date >= ?)
       ORDER BY prod_date DESC, id DESC LIMIT 1
-    `).bind(itemCode).first<{ lot_number: string }>();
+    `).bind(itemCode, productionDate).first<{ lot_number: string }>();
     
     return fallback?.lot_number || null;
   } else {
-    // 일반 원료: inbound에서 FEFO 조회
+    // 일반 원료: inbound에서 FEFO 조회 (만료 LOT 제외)
     const lot = await db.prepare(`
       SELECT lot_number FROM inbound 
       WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+        AND (expiry_date IS NULL OR expiry_date >= ?)
       ORDER BY expiry_date ASC, inbound_date ASC, id ASC LIMIT 1
-    `).bind(itemCode).first<{ lot_number: string }>();
+    `).bind(itemCode, productionDate).first<{ lot_number: string }>();
     
     if (lot?.lot_number) return lot.lot_number;
     
-    // 폴백: 조건 없이 최신
+    // 폴백: 조건 없이 최신 (만료 체크는 유지)
     const fallback = await db.prepare(`
       SELECT lot_number FROM inbound 
-      WHERE item_code = ?
+      WHERE item_code = ? AND (expiry_date IS NULL OR expiry_date >= ?)
       ORDER BY inbound_date DESC, id DESC LIMIT 1
-    `).bind(itemCode).first<{ lot_number: string }>();
+    `).bind(itemCode, productionDate).first<{ lot_number: string }>();
     
     return fallback?.lot_number || null;
   }

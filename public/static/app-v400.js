@@ -50237,7 +50237,7 @@ async function generateDailyReportPdf() {
             </table>
           </div>
           
-          <!-- 원료 사용 현황 (사용량: 일별수불부 SSOT, LOT/소비기한: 로트매칭) -->
+          <!-- ★★★ v3.6.01: 원료 사용 현황 (LOT별 개별 행 표시) ★★★ -->
           <div class="mt-6">
             <h4 class="font-bold text-gray-700 mb-2">
               <i class="fas fa-flask text-purple-500 mr-2"></i>원료 사용 현황
@@ -50248,26 +50248,63 @@ async function generateDailyReportPdf() {
                   <tr>
                     <th class="px-3 py-2 text-left">원료코드</th>
                     <th class="px-3 py-2 text-left">원료명</th>
-                    <th class="px-3 py-2 text-right">사용량(kg)</th>
+                    <th class="px-3 py-2 text-right">총사용량</th>
                     <th class="px-3 py-2 text-left">원료 LOT</th>
+                    <th class="px-3 py-2 text-right">LOT수량</th>
                     <th class="px-3 py-2 text-left">소비기한</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y">
                   ${(() => {
                     if (materialUsageData.length === 0) {
-                      return '<tr><td colspan="5" class="px-3 py-4 text-center text-gray-500">원료 사용 데이터가 없습니다.</td></tr>';
+                      return '<tr><td colspan="6" class="px-3 py-4 text-center text-gray-500">원료 사용 데이터가 없습니다.</td></tr>';
                     }
                     
-                    return materialUsageData.slice(0, 100).map(mat => {
-                      return '<tr class="hover:bg-gray-50">' +
-                        '<td class="px-3 py-2 font-mono text-xs">' + (mat.item_code || '-') + '</td>' +
-                        '<td class="px-3 py-2">' + (mat.item_name || '-') + '</td>' +
-                        '<td class="px-3 py-2 text-right text-purple-600">' + Math.abs(mat.usage_qty || 0).toFixed(3) + '</td>' +
-                        '<td class="px-3 py-2 font-mono text-xs">' + (mat.lot_number || '-') + '</td>' +
-                        '<td class="px-3 py-2 text-xs">' + (mat.expiry_date || '-') + '</td>' +
-                        '</tr>';
-                    }).join('') + (materialUsageData.length > 100 ? '<tr><td colspan="5" class="px-3 py-2 text-center text-gray-500">... 외 ' + (materialUsageData.length - 100) + '건</td></tr>' : '');
+                    let rows = '';
+                    materialUsageData.slice(0, 100).forEach(mat => {
+                      const lots = mat.lots || [];
+                      const totalQty = Math.abs(mat.usage_qty || 0).toFixed(3);
+                      
+                      if (lots.length === 0) {
+                        rows += '<tr class="hover:bg-gray-50">' +
+                          '<td class="px-3 py-2 font-mono text-xs">' + (mat.item_code || '-') + '</td>' +
+                          '<td class="px-3 py-2">' + (mat.item_name || '-') + '</td>' +
+                          '<td class="px-3 py-2 text-right text-purple-600">' + totalQty + '</td>' +
+                          '<td class="px-3 py-2 font-mono text-xs">-</td>' +
+                          '<td class="px-3 py-2 text-right">-</td>' +
+                          '<td class="px-3 py-2 text-xs">-</td>' +
+                          '</tr>';
+                      } else if (lots.length === 1) {
+                        rows += '<tr class="hover:bg-gray-50">' +
+                          '<td class="px-3 py-2 font-mono text-xs">' + (mat.item_code || '-') + '</td>' +
+                          '<td class="px-3 py-2">' + (mat.item_name || '-') + '</td>' +
+                          '<td class="px-3 py-2 text-right text-purple-600">' + totalQty + '</td>' +
+                          '<td class="px-3 py-2 font-mono text-xs">' + (lots[0].lot_number || '-') + '</td>' +
+                          '<td class="px-3 py-2 text-right text-purple-600">' + (lots[0].usage_qty || 0).toFixed(3) + '</td>' +
+                          '<td class="px-3 py-2 text-xs">' + (lots[0].expiry_date || '-') + '</td>' +
+                          '</tr>';
+                      } else {
+                        lots.forEach((lot, lotIdx) => {
+                          if (lotIdx === 0) {
+                            rows += '<tr class="hover:bg-gray-50">' +
+                              '<td class="px-3 py-2 font-mono text-xs" rowspan="' + lots.length + '">' + (mat.item_code || '-') + '</td>' +
+                              '<td class="px-3 py-2" rowspan="' + lots.length + '">' + (mat.item_name || '-') + '</td>' +
+                              '<td class="px-3 py-2 text-right text-purple-600" rowspan="' + lots.length + '">' + totalQty + '</td>' +
+                              '<td class="px-3 py-2 font-mono text-xs">' + (lot.lot_number || '-') + '</td>' +
+                              '<td class="px-3 py-2 text-right text-purple-600">' + (lot.usage_qty || 0).toFixed(3) + '</td>' +
+                              '<td class="px-3 py-2 text-xs">' + (lot.expiry_date || '-') + '</td>' +
+                              '</tr>';
+                          } else {
+                            rows += '<tr class="hover:bg-gray-50">' +
+                              '<td class="px-3 py-2 font-mono text-xs">' + (lot.lot_number || '-') + '</td>' +
+                              '<td class="px-3 py-2 text-right text-purple-600">' + (lot.usage_qty || 0).toFixed(3) + '</td>' +
+                              '<td class="px-3 py-2 text-xs">' + (lot.expiry_date || '-') + '</td>' +
+                              '</tr>';
+                          }
+                        });
+                      }
+                    });
+                    return rows + (materialUsageData.length > 100 ? '<tr><td colspan="6" class="px-3 py-2 text-center text-gray-500">... 외 ' + (materialUsageData.length - 100) + '건</td></tr>' : '');
                   })()}
                 </tbody>
               </table>
@@ -50364,8 +50401,7 @@ async function printDailyReportPdf(date) {
     productionTableHtml += '</tbody></table>';
     
     // ========== 2. 원료사용 현황 테이블 (로트매칭 시트 기반) ==========
-    // ★★★ 로트매칭 시트에서 원료사용현황 (LOT + 소비기한 포함) ★★★
-    // ========== 2. 원료사용 현황 테이블 (사용량: 일별수불부 SSOT, LOT/소비기한: 로트매칭) ==========
+    // ★★★ v3.6.01: LOT별 개별 행 표시 + LOT수량/소비기한 컬럼 추가 ★★★
     let materialsTableHtml = '';
     if (materialUsageData.length > 0) {
       materialsTableHtml = `
@@ -50377,23 +50413,67 @@ async function printDailyReportPdf(date) {
             <tr style="background:#f0e6ff;">
               <th>원료코드</th>
               <th>원료명</th>
-              <th style="text-align:right;">사용량(kg)</th>
+              <th style="text-align:right;">총사용량</th>
               <th>원료 LOT</th>
+              <th style="text-align:right;">LOT수량</th>
               <th>소비기한</th>
             </tr>
           </thead>
           <tbody>
       `;
       materialUsageData.forEach(mat => {
-        materialsTableHtml += `
-          <tr>
-            <td>${mat.item_code || '-'}</td>
-            <td>${mat.item_name || '-'}</td>
-            <td style="text-align:right;">${Math.abs(mat.usage_qty || 0).toFixed(3)}</td>
-            <td>${mat.lot_number || '-'}</td>
-            <td>${mat.expiry_date || '-'}</td>
-          </tr>
-        `;
+        const lots = mat.lots || [];
+        const totalQty = Math.abs(mat.usage_qty || 0).toFixed(3);
+        
+        if (lots.length === 0) {
+          // LOT 정보 없음 (이원료 등)
+          materialsTableHtml += `
+            <tr>
+              <td>${mat.item_code || '-'}</td>
+              <td>${mat.item_name || '-'}</td>
+              <td style="text-align:right;">${totalQty}</td>
+              <td>-</td>
+              <td style="text-align:right;">-</td>
+              <td>-</td>
+            </tr>
+          `;
+        } else if (lots.length === 1) {
+          // LOT 1개
+          materialsTableHtml += `
+            <tr>
+              <td>${mat.item_code || '-'}</td>
+              <td>${mat.item_name || '-'}</td>
+              <td style="text-align:right;">${totalQty}</td>
+              <td>${lots[0].lot_number || '-'}</td>
+              <td style="text-align:right;">${(lots[0].usage_qty || 0).toFixed(3)}</td>
+              <td>${lots[0].expiry_date || '-'}</td>
+            </tr>
+          `;
+        } else {
+          // LOT 여러 개 - rowspan으로 개별 행 표시
+          lots.forEach((lot, lotIdx) => {
+            if (lotIdx === 0) {
+              materialsTableHtml += `
+                <tr>
+                  <td rowspan="${lots.length}">${mat.item_code || '-'}</td>
+                  <td rowspan="${lots.length}">${mat.item_name || '-'}</td>
+                  <td rowspan="${lots.length}" style="text-align:right;">${totalQty}</td>
+                  <td>${lot.lot_number || '-'}</td>
+                  <td style="text-align:right;">${(lot.usage_qty || 0).toFixed(3)}</td>
+                  <td>${lot.expiry_date || '-'}</td>
+                </tr>
+              `;
+            } else {
+              materialsTableHtml += `
+                <tr>
+                  <td>${lot.lot_number || '-'}</td>
+                  <td style="text-align:right;">${(lot.usage_qty || 0).toFixed(3)}</td>
+                  <td>${lot.expiry_date || '-'}</td>
+                </tr>
+              `;
+            }
+          });
+        }
       });
       materialsTableHtml += '</tbody></table>';
     } else {

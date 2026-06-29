@@ -19056,7 +19056,7 @@ function generateClosingPrintHtml(cache, date) {
             <th style="width:4%">No</th>
             <th style="width:10%">소비기한</th>
             <th style="width:9%">제품코드</th>
-            <th style="width:34%" class="text-left">생산명/제품명</th>
+            <th style="width:34%" class="text-left">생산명</th>
             <th style="width:7%">수량</th>
             <th style="width:22%">제품LOT</th>
             <th style="width:7%">판매처</th>
@@ -23383,7 +23383,7 @@ function showDailyReportModal(reportData) {
             <table class="w-full text-sm">
               <thead class="bg-gray-100">
                 <tr>
-                  <th class="px-3 py-2 text-left">생산명/제품명</th>
+                  <th class="px-3 py-2 text-left">생산명</th>
                   <th class="px-3 py-2 text-center">수량</th>
                   <th class="px-3 py-2 text-center">소비기한</th>
                   <th class="px-3 py-2 text-center">BOM</th>
@@ -24036,7 +24036,7 @@ async function printDailyReportById(reportId) {
       '<th style="width:4%">No</th>' +
       '<th style="width:9%">소비기한</th>' +
       '<th style="width:9%">제품코드</th>' +
-      '<th>생산명/제품명</th>' +
+      '<th>생산명</th>' +
       '<th style="width:8%">수량</th>' +
       '<th style="width:18%">제품LOT</th>' +
       '<th style="width:6%">판매처</th>' +
@@ -27982,14 +27982,14 @@ function exportProductionReportExcel() {
     [`기간: ${startDate} ~ ${endDate}`],
     [`출력일: ${formatDate(new Date())} ${new Date().toLocaleTimeString('ko-KR')}`],
     [],
-    ['소비기한', '제품코드', '생산명/제품명', '생산수량', '제품LOT', '판매처', '비고']
+    ['소비기한', '제품코드', '생산명', '생산수량', '제품LOT', '판매처', '비고']
   ];
   
   for (const prod of productions) {
     // 소비기한: calculated_expiry_date 사용
     const expiryDate = prod.calculated_expiry_date || prod.expiry_date || prod.prod_date;
     
-    // 생산명/제품명 (production_barcodes에서 가져옴) - 풀네임
+    // 생산명 (production_barcodes에서 가져옴) - 풀네임
     const productionName = prod.production_name || prod.product_code;
     const productName = prod.barcode_product_name || '';
     // 엑셀에서는 줄바꿈으로 구분
@@ -28018,7 +28018,7 @@ function exportProductionReportExcel() {
   wsSummary['!cols'] = [
     { wch: 12 }, // 소비기한
     { wch: 10 }, // 제품코드
-    { wch: 60 }, // 생산명/제품명 (풀네임)
+    { wch: 60 }, // 생산명 (풀네임)
     { wch: 10 }, // 생산수량
     { wch: 25 }, // 제품LOT
     { wch: 10 }, // 판매처
@@ -28248,7 +28248,7 @@ function printProductionReport() {
               <th style="width:4%">No</th>
               <th style="width:9%">소비기한</th>
               <th style="width:9%">제품코드</th>
-              <th>생산명/제품명</th>
+              <th>생산명</th>
               <th style="width:8%">수량</th>
               <th style="width:18%">제품LOT</th>
               <th style="width:6%">판매처</th>
@@ -49645,13 +49645,29 @@ async function loadOrderList() {
     
     // 목록 표시
     const tbody = document.getElementById('order-list-body');
+    // ★★★ v3.5.93: 채널 수정 기능 추가 ★★★
     if (orders.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">발주 데이터가 없습니다</td></tr>';
     } else {
       tbody.innerHTML = orders.map(order => `
-        <tr class="hover:bg-gray-50">
+        <tr class="hover:bg-gray-50" data-order-id="${order.id}">
           <td class="px-4 py-3"><input type="checkbox" class="order-checkbox" value="${order.id}"></td>
-          <td class="px-4 py-3"><span class="px-2 py-1 rounded text-xs ${getChannelColor(order.channel)}">${order.channel}</span></td>
+          <td class="px-4 py-3">
+            <select class="order-channel-select px-2 py-1 rounded text-xs border ${getChannelColor(order.channel)}" 
+                    data-order-id="${order.id}" data-original="${order.channel || ''}"
+                    onchange="updateOrderChannel(this, ${order.id})">
+              <option value="" ${!order.channel ? 'selected' : ''}>(미지정)</option>
+              <option value="쿠팡" ${order.channel === '쿠팡' ? 'selected' : ''}>쿠팡</option>
+              <option value="컬리" ${order.channel === '컬리' ? 'selected' : ''}>컬리</option>
+              <option value="배민" ${order.channel === '배민' ? 'selected' : ''}>배민</option>
+              <option value="오아시스" ${order.channel === '오아시스' ? 'selected' : ''}>오아시스</option>
+              <option value="GS" ${order.channel === 'GS' ? 'selected' : ''}>GS</option>
+              <option value="온도감" ${order.channel === '온도감' ? 'selected' : ''}>온도감</option>
+              <option value="CJ" ${order.channel === 'CJ' ? 'selected' : ''}>CJ</option>
+              <option value="비마트" ${order.channel === '비마트' ? 'selected' : ''}>비마트</option>
+              <option value="직영" ${order.channel === '직영' ? 'selected' : ''}>직영</option>
+            </select>
+          </td>
           <td class="px-4 py-3 font-mono">${order.product_code}</td>
           <td class="px-4 py-3">${order.product_name || ''}</td>
           <td class="px-4 py-3 text-right font-medium">${order.quantity?.toLocaleString()}</td>
@@ -49689,9 +49705,43 @@ function getChannelColor(channel) {
     '쿠팡': 'bg-orange-100 text-orange-800',
     '컬리': 'bg-purple-100 text-purple-800',
     '배민': 'bg-cyan-100 text-cyan-800',
-    '오아시스': 'bg-green-100 text-green-800'
+    '오아시스': 'bg-green-100 text-green-800',
+    'GS': 'bg-red-100 text-red-800',
+    '온도감': 'bg-blue-100 text-blue-800',
+    'CJ': 'bg-yellow-100 text-yellow-800',
+    '비마트': 'bg-pink-100 text-pink-800',
+    '직영': 'bg-indigo-100 text-indigo-800'
   };
   return colors[channel] || 'bg-gray-100 text-gray-800';
+}
+
+// ★★★ v3.5.93: 발주 채널 수정 함수 ★★★
+async function updateOrderChannel(selectEl, orderId) {
+  const newChannel = selectEl.value;
+  const originalChannel = selectEl.dataset.original || '';
+  const orderDate = document.getElementById('order-list-date')?.value;
+  
+  if (newChannel === originalChannel) return;  // 변경 없음
+  
+  try {
+    const res = await axios.post('/api/order/update-channel', {
+      order_id: orderId,
+      order_date: orderDate,
+      new_channel: newChannel
+    });
+    
+    if (res.data.success) {
+      selectEl.dataset.original = newChannel;
+      selectEl.className = `order-channel-select px-2 py-1 rounded text-xs border ${getChannelColor(newChannel)}`;
+      showToast(`채널 변경 완료: ${originalChannel || '(미지정)'} → ${newChannel || '(미지정)'}`, 'success');
+    } else {
+      selectEl.value = originalChannel;
+      showToast('채널 변경 실패: ' + (res.data.error || '알 수 없는 오류'), 'error');
+    }
+  } catch (error) {
+    selectEl.value = originalChannel;
+    showToast('채널 변경 실패: ' + (error.response?.data?.error || error.message), 'error');
+  }
 }
 
 function toggleAllOrders() {
@@ -50505,13 +50555,14 @@ async function loadShipmentLog() {
       return;
     }
     
+    // ★★★ v3.5.93: 제품명 → 생산명 수정 ★★★
     contentEl.innerHTML = `
       <table class="w-full text-sm">
         <thead class="bg-gray-100">
           <tr>
             <th class="p-2 text-left">출고일</th>
             <th class="p-2 text-left">제품코드</th>
-            <th class="p-2 text-left">제품명</th>
+            <th class="p-2 text-left">생산명</th>
             <th class="p-2 text-right">수량</th>
             <th class="p-2 text-left">채널</th>
             <th class="p-2 text-left">LOT</th>

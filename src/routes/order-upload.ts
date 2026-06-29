@@ -1652,6 +1652,69 @@ async function handleDeleteOrders(c: any) {
   }
 }
 
+// ===== ★★★ v3.5.93: 발주 채널 수정 API ★★★ =====
+orderUpload.post('/update-channel', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { order_id, order_date, new_channel } = body;
+    
+    if (!order_id) {
+      return c.json({ success: false, error: 'order_id 필수' }, 400);
+    }
+    
+    const service = getSheetService(c);
+    if (!service) {
+      return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+    }
+    
+    // 발주서 시트 읽기 (A:발주일, B:제품코드, C:제품명, D:수량, E:납품일, F:채널, G:비고, H:상태)
+    const data = await service.readSheet('발주서', 'A2:H10000');
+    
+    // order_id는 목록에서의 인덱스 (1-based)
+    // 실제 행 번호 계산: order_date로 필터링된 목록에서의 인덱스
+    let filteredIdx = 0;
+    let targetRowIdx = -1;
+    
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+      const status = row[7] || '대기';
+      
+      // 삭제된 행은 건너뛰기
+      if (status === '삭제') continue;
+      
+      // 날짜 필터
+      if (order_date && rowDate !== order_date) continue;
+      
+      filteredIdx++;
+      if (filteredIdx === order_id) {
+        targetRowIdx = i + 2;  // +2 because data starts from row 2 (0-indexed + header)
+        break;
+      }
+    }
+    
+    if (targetRowIdx === -1) {
+      return c.json({ success: false, error: '해당 발주 항목을 찾을 수 없습니다' }, 404);
+    }
+    
+    // F열(채널) 업데이트
+    await service.writeSheet('발주서', `F${targetRowIdx}`, [[new_channel]]);
+    
+    console.log(`[update-channel] 행 ${targetRowIdx} 채널 변경: → ${new_channel}`);
+    
+    return c.json({
+      success: true,
+      updated_row: targetRowIdx,
+      new_channel,
+      message: '채널 변경 완료'
+    });
+    
+  } catch (error: any) {
+    console.error('[update-channel] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ===== 발주 개별 삭제 (행 번호로) =====
 orderUpload.delete('/delete/:rowIndex', async (c) => {
   try {

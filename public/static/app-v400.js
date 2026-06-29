@@ -48436,13 +48436,13 @@ function updateFileLabel() {
 // PDF 텍스트 파싱 함수 - 발주서에서 제품명과 수량 추출
 // ============================================================
 
-// ★ 배민(배달의민족) 입고확인서 전용 파서 v4
-// PDF 테이블 구조:
-//   바코드(2줄): 8809424537 / 176 → 결합하면 8809424537176
-//   입고수량: 박스입수량(20) | 박스(1) | 낱개(20) → 낱개 컬럼이 실제 입고수량
-// ★ 바코드 기반 매칭만 사용
+// ★★★ v3.6.05: 배민(배달의민족) 입고확인서 전용 파서 - SKU코드 기반 매칭
+// PDF 테이블 구조 (2026년 기준):
+//   순서 | 바코드(2줄) | SKU코드 | 상품명 | 보관온도 | 박스입수량 | 박스 | 낱개(입고수량) | 소비기한 | 제조일 | 메모
+//   SKU코드 형식: S0015622, S0015619, A21017169 등 (S 또는 A로 시작 + 숫자)
+// ★★★ 바코드가 아닌 SKU코드로 매칭해야 함 (구글시트 제품마스터에 SKU코드 등록됨)
 function parseBaeminPdf(text) {
-  console.log('★ 배민 입고확인서 전용 파싱 시작 (v4)');
+  console.log('★★★ 배민 입고확인서 전용 파싱 시작 (v5 - SKU코드 기반) ★★★');
   const items = [];
   
   // 배민 감지
@@ -48457,36 +48457,46 @@ function parseBaeminPdf(text) {
   // 토큰 단위로 분리
   const tokens = text.split(/\s+/).filter(t => t.trim());
   console.log('토큰 수:', tokens.length);
+  console.log('처음 100개 토큰:', tokens.slice(0, 100).join(' | '));
   
-  // ★ 1단계: 바코드 앞부분(10자리)과 모든 숫자 수집
-  const barcodeFronts = [];  // 10자리 바코드 앞부분들 (위치 포함)
-  const allNumbers = [];     // 모든 1~3자리 숫자들 (위치 포함)
+  // ★★★ SKU코드 패턴: S 또는 A로 시작 + 숫자 (예: S0015622, A21017169)
+  const skuCodes = [];  // SKU코드들 (위치 포함)
+  const allNumbers = [];     // 모든 1~4자리 숫자들 (위치 포함)
   
   for (let i = 0; i < tokens.length; i++) {
     const token = tokens[i];
-    // 10자리 바코드 앞부분 (880942453X)
-    if (/^880942453\d$/.test(token)) {
-      barcodeFronts.push({ pos: i, front: token });
+    // ★★★ SKU코드 패턴: S0015622, A21017169 형식
+    // S로 시작 + 6~8자리 숫자 또는 A로 시작 + 7~9자리 숫자
+    if (/^S\d{6,8}$/i.test(token) || /^A\d{7,9}$/i.test(token)) {
+      skuCodes.push({ pos: i, sku: token });
+      console.log(`  SKU코드 발견: ${token} (pos=${i})`);
     }
-    // 1~3자리 숫자 (수량 후보)
-    if (/^\d{1,3}$/.test(token)) {
+    // 1~4자리 숫자 (수량 후보)
+    if (/^\d{1,4}$/.test(token)) {
       allNumbers.push({ pos: i, num: parseInt(token), raw: token });
     }
   }
   
-  console.log('바코드 앞부분(10자리):', barcodeFronts.length, '개');
+  console.log('★ SKU코드 발견:', skuCodes.length, '개');
   console.log('숫자 토큰:', allNumbers.length, '개');
   
-  // ★ 2단계: 각 바코드 앞부분에 대해 뒤따르는 숫자들 분석
-  // PDF 순서: [바코드앞10] ... [바코드뒤3] ... [박스입수량] [박스] [낱개]
-  for (let i = 0; i < barcodeFronts.length; i++) {
-    const { pos: frontPos, front } = barcodeFronts[i];
-    const nextFrontPos = i + 1 < barcodeFronts.length ? barcodeFronts[i + 1].pos : tokens.length;
+  if (skuCodes.length === 0) {
+    console.log('★ SKU코드 미발견, 바코드 기반 폴백 시도...');
+    // ★ 폴백: 바코드 기반 파싱 (880942453X 패턴)
+    return parseBaeminPdfByBarcode(text, tokens, allNumbers);
+  }
+  
+  // ★★★ 각 SKU코드에 대해 수량 추출
+  // PDF 순서: ... | SKU코드 | 상품명... | 박스입수량 | 박스 | 낱개(입고수량) | 소비기한 ...
+  // 낱개 컬럼이 실제 입고수량
+  for (let i = 0; i < skuCodes.length; i++) {
+    const { pos: skuPos, sku } = skuCodes[i];
+    const nextSkuPos = i + 1 < skuCodes.length ? skuCodes[i + 1].pos : tokens.length;
     
-    // 이 바코드 앞부분 뒤에 나오는 숫자들만 필터
-    const numsAfter = allNumbers.filter(n => n.pos > frontPos && n.pos < nextFrontPos);
+    // 이 SKU 뒤에 나오는 숫자들만 필터 (다음 SKU 전까지)
+    const numsAfter = allNumbers.filter(n => n.pos > skuPos && n.pos < nextSkuPos);
     
-    console.log(`\n  바코드앞 ${front} (pos=${frontPos}):`);
+    console.log(`\n  SKU ${sku} (pos=${skuPos}):`);
     console.log(`    뒤따르는 숫자들:`, numsAfter.map(n => n.raw).join(', '));
     
     if (numsAfter.length === 0) {
@@ -48494,30 +48504,125 @@ function parseBaeminPdf(text) {
       continue;
     }
     
-    // 첫 번째 3자리 숫자가 바코드 뒷부분
-    const backCandidate = numsAfter.find(n => n.raw.length === 3);
-    if (!backCandidate) {
-      console.log(`    → 3자리 숫자 없음, 스킵`);
-      continue;
+    // ★★★ 수량 추출 로직 개선
+    // PDF 패턴: [박스입수량(40)] [박스(2)] [낱개(80)] [소비기한연도(2026)] ...
+    // 낱개 = 박스입수량 × 박스수
+    let quantity = 1;
+    
+    // 패턴1: 40, 2, 80 형태 - 3번째 숫자가 낱개(입고수량)
+    // 패턴2: 일부 숫자가 빠진 경우 - 최대값 또는 마지막 합리적 숫자
+    
+    // 소비기한 연도(2026 등)를 제외한 숫자 필터링
+    const validNums = numsAfter.filter(n => {
+      // 연도 형태(2024~2030) 제외
+      if (n.num >= 2024 && n.num <= 2030) return false;
+      // 날짜 일부(08 등) 가능성 - 1~31 범위면서 앞에 연도가 있으면 제외
+      return true;
+    });
+    
+    console.log(`    유효 숫자들 (연도 제외):`, validNums.map(n => n.raw).join(', '));
+    
+    if (validNums.length >= 3) {
+      // 패턴: [박스입수량, 박스, 낱개] - 3번째가 낱개(입고수량)
+      // 보통 낱개 = 박스입수량 × 박스수 이므로 가장 큰 값이 낱개일 가능성 높음
+      const thirdNum = validNums[2].num;
+      const maxNum = Math.max(...validNums.slice(0, 4).map(n => n.num));
+      
+      // 3번째 숫자가 합리적인 수량인지 확인 (1~9999)
+      if (thirdNum >= 1 && thirdNum <= 9999) {
+        quantity = thirdNum;
+        console.log(`    → 수량(3번째): ${quantity}`);
+      } else {
+        quantity = maxNum;
+        console.log(`    → 수량(최대값): ${quantity}`);
+      }
+    } else if (validNums.length >= 1) {
+      // 숫자가 부족하면 최대값 사용
+      quantity = Math.max(...validNums.map(n => n.num));
+      console.log(`    → 수량(최대): ${quantity}`);
     }
     
+    // 수량 합리성 체크 (1~9999)
+    if (quantity < 1 || quantity > 9999) {
+      console.log(`    → 수량 ${quantity}이 비정상, 기본값 1 사용`);
+      quantity = 1;
+    }
+    
+    items.push({
+      product_name: sku,  // SKU코드를 product_name으로 (매칭에 사용)
+      quantity: quantity,
+      sku_code: sku  // ★★★ SKU코드 별도 필드 추가
+    });
+    console.log(`    → 추가: ${sku}, 수량: ${quantity}`);
+  }
+  
+  console.log('\n★ SKU코드 기반 파싱 결과:', items.length, '건');
+  
+  if (items.length === 0) {
+    console.log('SKU코드 파싱 실패, 바코드 기반 폴백...');
+    return parseBaeminPdfByBarcode(text, tokens, allNumbers);
+  }
+  
+  // 중복 제거 (SKU코드 기준, 수량 합산)
+  const seen = new Map();
+  for (const item of items) {
+    const key = item.sku_code;
+    if (seen.has(key)) {
+      seen.get(key).quantity += item.quantity;
+    } else {
+      seen.set(key, { ...item });
+    }
+  }
+  
+  const result = Array.from(seen.values());
+  console.log('★★★ 배민 SKU코드 파싱 완료:', result.length, '건');
+  result.forEach((r, i) => console.log(`  [${i+1}] ${r.sku_code}: ${r.quantity}개`));
+  return result.length > 0 ? result : null;
+}
+
+// ★ 바코드 기반 폴백 파싱 (SKU코드 미발견 시)
+function parseBaeminPdfByBarcode(text, tokens, allNumbers) {
+  console.log('★ 바코드 기반 폴백 파싱 시작');
+  const items = [];
+  
+  // 바코드 앞부분(10자리) 수집
+  const barcodeFronts = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    // 10자리 바코드 앞부분 (880942453X)
+    if (/^880942453\d$/.test(token)) {
+      barcodeFronts.push({ pos: i, front: token });
+    }
+  }
+  
+  console.log('바코드 앞부분(10자리):', barcodeFronts.length, '개');
+  
+  if (barcodeFronts.length === 0) {
+    console.log('바코드도 미발견, null 반환');
+    return null;
+  }
+  
+  for (let i = 0; i < barcodeFronts.length; i++) {
+    const { pos: frontPos, front } = barcodeFronts[i];
+    const nextFrontPos = i + 1 < barcodeFronts.length ? barcodeFronts[i + 1].pos : tokens.length;
+    
+    const numsAfter = allNumbers.filter(n => n.pos > frontPos && n.pos < nextFrontPos);
+    
+    if (numsAfter.length === 0) continue;
+    
+    // 3자리 숫자가 바코드 뒷부분
+    const backCandidate = numsAfter.find(n => n.raw.length === 3);
+    if (!backCandidate) continue;
+    
     const fullBarcode = front + backCandidate.raw;
-    console.log(`    → 바코드 결합: ${front} + ${backCandidate.raw} = ${fullBarcode}`);
     
-    // 바코드 뒷부분 이후의 숫자들에서 수량 추출
-    // 패턴: [박스입수량] [박스] [낱개] - 낱개가 실제 입고수량
+    // 수량 추출
     const numsAfterBack = numsAfter.filter(n => n.pos > backCandidate.pos);
-    console.log(`    바코드 뒤 숫자들:`, numsAfterBack.map(n => n.raw).join(', '));
-    
     let quantity = 1;
     if (numsAfterBack.length >= 3) {
-      // [박스입수량, 박스, 낱개] 패턴 - 마지막(낱개)이 수량
       quantity = numsAfterBack[2].num;
-      console.log(`    → 수량(낱개): ${quantity}`);
     } else if (numsAfterBack.length >= 1) {
-      // 숫자가 부족하면 마지막 숫자를 수량으로
       quantity = numsAfterBack[numsAfterBack.length - 1].num;
-      console.log(`    → 수량(마지막): ${quantity}`);
     }
     
     items.push({
@@ -48527,14 +48632,7 @@ function parseBaeminPdf(text) {
     });
   }
   
-  console.log('\n최종 파싱:', items.length, '건');
-  
-  if (items.length === 0) {
-    console.log('바코드 미발견, 일반 파싱으로 전환');
-    return null;
-  }
-  
-  // 중복 제거 (바코드 기준, 수량 합산)
+  // 중복 제거
   const seen = new Map();
   for (const item of items) {
     if (seen.has(item.barcode)) {
@@ -48545,7 +48643,7 @@ function parseBaeminPdf(text) {
   }
   
   const result = Array.from(seen.values());
-  console.log('배민 파싱 완료:', result.length, '건');
+  console.log('바코드 폴백 파싱 완료:', result.length, '건');
   return result.length > 0 ? result : null;
 }
 

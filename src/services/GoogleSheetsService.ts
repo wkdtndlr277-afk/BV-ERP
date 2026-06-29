@@ -451,10 +451,16 @@ export class GoogleSheetsService {
       return (a.item_code || '').localeCompare(b.item_code || '');
     };
     
+    // ★★★ v3.6.08: 날짜 앞 따옴표(') 제거하여 비교 ★★★
+    const cleanDate = date.replace(/^'/, '');
+    
     return data
-      .filter(row => row[0] === date)
+      .filter(row => {
+        const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+        return rowDate === cleanDate;
+      })
       .map(row => ({
-        date: row[0],
+        date: row[0]?.toString().replace(/^'/, '') || '',
         item_code: row[1],
         item_name: row[2],
         prev_stock: parseFloat(row[3]) || 0,
@@ -467,13 +473,18 @@ export class GoogleSheetsService {
   }
 
   // 로트 매칭 결과 조회 (시트에서 FEFO 계산된 결과)
+  // ★★★ v3.6.08: 날짜 앞 따옴표(') 제거하여 비교 ★★★
   async getLotMatching(prodDate: string, productLot: string): Promise<any[]> {
     const data = await this.readSheet('로트매칭', 'A2:G');
+    const cleanProdDate = prodDate.replace(/^'/, '');
     
     return data
-      .filter(row => row[0] === prodDate && row[1] === productLot)
+      .filter(row => {
+        const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+        return rowDate === cleanProdDate && row[1] === productLot;
+      })
       .map(row => ({
-        prod_date: row[0],
+        prod_date: row[0]?.toString().replace(/^'/, '') || '',
         product_lot: row[1],
         item_code: row[2],
         item_name: row[3],

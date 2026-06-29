@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
-// Version: 3.5.99 Build: 20260629
-const APP_VERSION = '3.5.99';
-const APP_BUILD = '20260629-3';
+// Version: 3.6.00 Build: 20260629
+const APP_VERSION = '3.6.00';
+const APP_BUILD = '20260629-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -24074,40 +24074,86 @@ async function printDailyReportById(reportId) {
       }
     });
     
-    // 원재료 행 생성 (원료 LOT 포함, 안전하게 처리)
+    // ★★★ v3.6.01: 원재료 행 생성 - LOT별 개별 행 + 소비기한 컬럼 추가 ★★★
     let materialRows = '';
     let materialSection = '';
     if (materials.length > 0) {
+      let rowNum = 0;
       materials.forEach((m, i) => {
         try {
-          // 원료 LOT 정보 (FEFO 순서대로 최대 2개 표시)
           const lots = Array.isArray(m.lots) ? m.lots : [];
-          const lotText = lots.length > 0 
-            ? lots.slice(0, 2).map(l => l.lot_number || '').filter(Boolean).join(', ') + (lots.length > 2 ? ' 외' : '')
-            : '-';
+          const totalQtyFormatted = formatWeight(Number(m.total_quantity) || 0, m.unit);
+          const unitText = m.unit || 'kg';
           
-          // v2.4.1: formatWeight로 소수점 4자리까지 표시
-          materialRows += '<tr>' +
-            '<td class="text-center">' + (i + 1) + '</td>' +
-            '<td class="text-center">' + (m.material_code || '-') + '</td>' +
-            '<td>' + (m.material_name || '-') + '</td>' +
-            '<td class="text-right">' + formatWeight(Number(m.total_quantity) || 0, m.unit) + '</td>' +
-            '<td class="text-center">' + (m.unit || 'kg') + '</td>' +
-            '<td style="font-size:7pt;">' + lotText + '</td>' +
-            '</tr>';
+          if (lots.length === 0) {
+            // LOT 정보 없는 경우 (이원물산 등)
+            rowNum++;
+            materialRows += '<tr>' +
+              '<td class="text-center">' + rowNum + '</td>' +
+              '<td class="text-center">' + (m.material_code || '-') + '</td>' +
+              '<td>' + (m.material_name || '-') + '</td>' +
+              '<td class="text-right">' + totalQtyFormatted + '</td>' +
+              '<td class="text-center">' + unitText + '</td>' +
+              '<td class="text-center">-</td>' +
+              '<td class="text-center">-</td>' +
+              '<td class="text-center">-</td>' +
+              '</tr>';
+          } else if (lots.length === 1) {
+            // LOT 1개인 경우
+            rowNum++;
+            const lot = lots[0];
+            materialRows += '<tr>' +
+              '<td class="text-center">' + rowNum + '</td>' +
+              '<td class="text-center">' + (m.material_code || '-') + '</td>' +
+              '<td>' + (m.material_name || '-') + '</td>' +
+              '<td class="text-right">' + totalQtyFormatted + '</td>' +
+              '<td class="text-center">' + unitText + '</td>' +
+              '<td class="text-center" style="font-size:7pt;">' + (lot.lot_number || '-') + '</td>' +
+              '<td class="text-right">' + formatWeight(Number(lot.used_qty) || 0, unitText) + '</td>' +
+              '<td class="text-center">' + (lot.expiry_date || '-') + '</td>' +
+              '</tr>';
+          } else {
+            // LOT 여러 개인 경우 - rowspan으로 개별 행 표시
+            rowNum++;
+            lots.forEach((lot, lotIdx) => {
+              if (lotIdx === 0) {
+                // 첫 번째 LOT: rowspan 적용
+                materialRows += '<tr>' +
+                  '<td class="text-center" rowspan="' + lots.length + '">' + rowNum + '</td>' +
+                  '<td class="text-center" rowspan="' + lots.length + '">' + (m.material_code || '-') + '</td>' +
+                  '<td rowspan="' + lots.length + '">' + (m.material_name || '-') + '</td>' +
+                  '<td class="text-right" rowspan="' + lots.length + '">' + totalQtyFormatted + '</td>' +
+                  '<td class="text-center" rowspan="' + lots.length + '">' + unitText + '</td>' +
+                  '<td class="text-center" style="font-size:7pt;">' + (lot.lot_number || '-') + '</td>' +
+                  '<td class="text-right">' + formatWeight(Number(lot.used_qty) || 0, unitText) + '</td>' +
+                  '<td class="text-center">' + (lot.expiry_date || '-') + '</td>' +
+                  '</tr>';
+              } else {
+                // 두 번째 이후 LOT: LOT/수량/소비기한만
+                materialRows += '<tr>' +
+                  '<td class="text-center" style="font-size:7pt;">' + (lot.lot_number || '-') + '</td>' +
+                  '<td class="text-right">' + formatWeight(Number(lot.used_qty) || 0, unitText) + '</td>' +
+                  '<td class="text-center">' + (lot.expiry_date || '-') + '</td>' +
+                  '</tr>';
+              }
+            });
+          }
         } catch (matError) {
           console.error('원재료 행 생성 오류:', matError, m);
         }
       });
       
+      // ★ v3.6.01: 소비기한 컬럼 추가된 테이블 헤더
       materialSection = '<div class="section-title">2. 원재료 사용 현황 (총 ' + materials.length + '종)</div>' +
         '<table><thead><tr>' +
-        '<th style="width:5%">No</th>' +
-        '<th style="width:10%">품목코드</th>' +
-        '<th style="width:20%">원재료명</th>' +
-        '<th style="width:12%">총사용량</th>' +
-        '<th style="width:6%">단위</th>' +
-        '<th style="width:25%">원료LOT</th>' +
+        '<th style="width:4%">No</th>' +
+        '<th style="width:9%">품목코드</th>' +
+        '<th style="width:18%">원재료명</th>' +
+        '<th style="width:10%">총사용량</th>' +
+        '<th style="width:5%">단위</th>' +
+        '<th style="width:20%">원료LOT</th>' +
+        '<th style="width:10%">LOT수량</th>' +
+        '<th style="width:10%">소비기한</th>' +
         '</tr></thead><tbody>' + materialRows + '</tbody></table>';
     }
     

@@ -53,13 +53,17 @@ sheets.get('/debug/raw-read', async (c) => {
   try {
     const sheetName = c.req.query('sheet') || '출고일지';
     const range = c.req.query('range') || 'A1:J20';
+    const showFormulas = c.req.query('formulas') === 'true';  // ★ 수식 보기 옵션
     
-    const data = await service.readSheet(sheetName, range);
+    const data = showFormulas 
+      ? await service.readSheetFormulas(sheetName, range)
+      : await service.readSheet(sheetName, range);
     
     return c.json({
       success: true,
       sheet: sheetName,
       range,
+      show_formulas: showFormulas,
       row_count: data.length,
       data
     });
@@ -4564,6 +4568,96 @@ sheets.post('/add-daily-stock-date', async (c) => {
       success: true,
       message: `${date} 일별수불부 생성 완료`,
       ...result
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ 테스트 데이터 삭제 (일회성 유틸리티) ★★★
+sheets.post('/delete-test-production-data', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const dryRun = body.dry_run !== false;  // 기본값: true (시뮬레이션)
+
+    // 1. 생산실적 데이터 읽기
+    const data = await service.readSheet('생산실적', 'A2:H5000');
+    
+    // 2. 테스트 데이터 식별 (제품명이 "테스트" 또는 빈값이고 수량이 1인 것)
+    const testRows: { row: number; data: any[] }[] = [];
+    const keepRows: any[][] = [];
+    
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const productName = row[2]?.toString() || '';
+      const quantity = parseFloat(row[3]?.toString() || '0') || 0;
+      const channel = row[5]?.toString() || '';
+      
+      // 테스트 데이터 조건: 제품명이 "테스트"이거나 빈값이고, 수량이 1이거나, 채널이 "테스트"
+      const isTestData = (
+        (productName === '테스트' || productName === '') && 
+        quantity === 1
+      ) || channel === '테스트';
+      
+      if (isTestData) {
+        testRows.push({ row: i + 2, data: row });  // +2: 헤더(1행) + 0-index
+      } else {
+        keepRows.push(row);
+      }
+    }
+
+    if (testRows.length === 0) {
+      return c.json({ 
+        success: true, 
+        message: '삭제할 테스트 데이터 없음',
+        deleted_count: 0
+      });
+    }
+
+    if (dryRun) {
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        message: '시뮬레이션 결과 (실제 삭제 없음)',
+        test_data_found: testRows.length,
+        test_data: testRows.map(t => ({
+          row: t.row,
+          date: t.data[0],
+          product_code: t.data[1],
+          product_name: t.data[2],
+          quantity: t.data[3],
+          lot: t.data[4],
+          channel: t.data[5]
+        })),
+        keep_rows: keepRows.length,
+        note: 'dry_run: false로 설정하면 실제 삭제 실행'
+      });
+    }
+
+    // 3. 실제 삭제 실행: 기존 데이터 클리어 후 정상 데이터만 다시 쓰기
+    await service.clearRange('생산실적', 'A2:H5000');
+    if (keepRows.length > 0) {
+      await service.writeSheet('생산실적', 'A2', keepRows);
+    }
+
+    return c.json({
+      success: true,
+      mode: 'executed',
+      message: `테스트 데이터 ${testRows.length}건 삭제 완료`,
+      deleted_count: testRows.length,
+      deleted_data: testRows.map(t => ({
+        row: t.row,
+        date: t.data[0],
+        product_code: t.data[1],
+        product_name: t.data[2],
+        lot: t.data[4]
+      })),
+      remaining_rows: keepRows.length
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

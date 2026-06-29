@@ -117,6 +117,22 @@ export class GoogleSheetsService {
     return data.values || [];
   }
 
+  // ★★★ 수식 읽기 (valueRenderOption=FORMULA) ★★★
+  async readSheetFormulas(sheetName: string, range: string = ''): Promise<any[][]> {
+    const token = await this.getToken();
+    const fullRange = range ? `${sheetName}!${range}` : sheetName;
+    
+    const response = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}?valueRenderOption=FORMULA`,
+      {
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+
+    const data = await response.json() as { values?: any[][] };
+    return data.values || [];
+  }
+
   // 시트에 데이터 쓰기 (덮어쓰기)
   async writeSheet(sheetName: string, range: string, values: any[][]): Promise<boolean> {
     const token = await this.getToken();
@@ -1336,6 +1352,7 @@ export class GoogleSheetsService {
   }
 
   // ★ v3.5.77: 일별수불부 날짜 추가 (연속성 보장)
+  // ★★★ v3.6.12: 수식 방식으로 변경 - 로트매칭 변경 시 자동 반영 ★★★
   async addDailyStockDate(targetDate: string): Promise<{ date: string; prev_date: string; new_rows: number; total_rows: number }> {
     const cleanDate = targetDate.replace(/^'/, '');
     
@@ -1423,50 +1440,57 @@ export class GoogleSheetsService {
       inboundMap[code] = (inboundMap[code] || 0) + qty;
     }
     
-    // 6. 당일 사용량 가져오기 (LOT 매칭에서)
-    // ★★★ v3.6.11: 로트매칭 읽기 범위 확장 (10000 → 50000) ★★★
-    const lotData = await this.readSheet('로트매칭', 'A2:G50000');
-    const usageMap: Record<string, number> = {};
-    for (const row of lotData) {
-      const lotDate = row[0]?.toString().replace(/^'/, '') || '';
-      if (lotDate !== cleanDate) continue;
-      
-      const code = row[2]?.toString() || '';
-      const usage = parseFloat(row[4]?.toString() || '0') || 0;
-      if (code.startsWith('SF') || code.startsWith('SM') || code === 'RM184') continue;
-      
-      usageMap[code] = (usageMap[code] || 0) + usage;
-    }
+    // 6. 기존 데이터 행 수 계산 (수식의 행 번호 결정용)
+    const startRow = otherDates.length + 2;  // 헤더(1행) + 기존 데이터 수 + 1
     
-    // 7. 새 날짜 행 생성
+    // 7. 새 날짜 행 생성 ★★★ v3.6.12: 수식 방식 ★★★
     const newRows: any[][] = [];
+    let rowIndex = 0;
     for (const code in prevStockMap) {
       const { name, current: prevStock, unit } = prevStockMap[code];
       const inbound = inboundMap[code] || 0;
-      const usage = usageMap[code] || 0;
-      const currentStock = Math.round((prevStock + inbound - usage) * 10000) / 10000;
+      const rowNum = startRow + rowIndex;
       
       newRows.push([
         `'${cleanDate}`,   // A: 날짜
         code,              // B: 품목코드
         name,              // C: 품목명
-        prevStock,         // D: 전일재고 (= 전날 현재고 그대로)
-        inbound,           // E: 입고량
-        usage,             // F: 사용량
-        currentStock,      // G: 현재고
+        prevStock,         // D: 전일재고 (= 전날 현재고 값)
+        inbound,           // E: 입고량 (값)
+        // ★★★ F: 사용량 - 수식 (로트매칭에서 자동 합산) ★★★
+        `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!A:A,A${rowNum},로트매칭!C:C,B${rowNum}),0)`,
+        // ★★★ G: 현재고 - 수식 (전일재고 + 입고 - 사용) ★★★
+        `=ROUND(D${rowNum}+E${rowNum}-F${rowNum},4)`,
         unit               // H: 단위
       ]);
+      rowIndex++;
     }
     
     // 8. 기존 + 새 데이터 합치기
     const allRows = [...otherDates, ...newRows];
     
-    // 날짜순 정렬
+    // 날짜순 정렬 (수식 행은 정렬 시 행 번호가 틀어지므로 주의)
+    // ★★★ v3.6.12: 정렬 후 수식 행 번호 재계산 ★★★
     allRows.sort((a, b) => {
       const dateA = a[0]?.toString().replace(/^'/, '') || '';
       const dateB = b[0]?.toString().replace(/^'/, '') || '';
       return dateA.localeCompare(dateB) || (a[1]?.toString() || '').localeCompare(b[1]?.toString() || '');
     });
+    
+    // 9. 정렬 후 수식 행 번호 재계산
+    for (let i = 0; i < allRows.length; i++) {
+      const row = allRows[i];
+      const rowNum = i + 2;  // 시트 행 번호 (헤더가 1행)
+      
+      // F열(사용량)이 수식인 경우 행 번호 업데이트
+      if (typeof row[5] === 'string' && row[5].startsWith('=')) {
+        row[5] = `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!A:A,A${rowNum},로트매칭!C:C,B${rowNum}),0)`;
+      }
+      // G열(현재고)이 수식인 경우 행 번호 업데이트
+      if (typeof row[6] === 'string' && row[6].startsWith('=')) {
+        row[6] = `=ROUND(D${rowNum}+E${rowNum}-F${rowNum},4)`;
+      }
+    }
     
     // 9. 클리어 후 저장
     await this.clearRange('일별수불부', 'A2:H5000');

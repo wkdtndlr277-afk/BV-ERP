@@ -48530,8 +48530,7 @@ async function handleOrderFileUpload() {
         try {
           const arrayBuffer = await file.arrayBuffer();
           
-          // ★★★ 배민 PDF 감지 및 AI 파싱 우선 시도 ★★★
-          // 채널이 배민이거나 파일명에 배민 관련 키워드가 있으면 AI 파싱 사용
+          // ★★★ v3.5.92: 배민 PDF는 PDF.js로 직접 파싱 (AI 파싱 비활성화) ★★★
           const selectedChannel = channelSelect?.value || '';
           const isBaeminFile = selectedChannel === '배민' || 
                                fileName.includes('배민') || 
@@ -48540,53 +48539,8 @@ async function handleOrderFileUpload() {
                                fileName.includes('우아한');
           
           if (isBaeminFile) {
-            console.log('★★★ 배민 PDF 감지 → AI 파싱 시도 ★★★');
-            showLoading('AI 분석 중... (배민 입고확인서)');
-            
-            try {
-              // Base64 변환
-              const uint8Array = new Uint8Array(arrayBuffer);
-              let binary = '';
-              for (let i = 0; i < uint8Array.length; i++) {
-                binary += String.fromCharCode(uint8Array[i]);
-              }
-              const pdfBase64 = btoa(binary);
-              
-              // AI 파싱 API 호출
-              const aiResponse = await axios.post(`${API_BASE}/order-upload/ai-parse`, {
-                pdf_base64: pdfBase64,
-                file_name: file.name
-              }, {
-                headers: { 'Content-Type': 'application/json' },
-                timeout: 60000  // AI 분석은 시간이 걸릴 수 있음
-              });
-              
-              if (aiResponse.data.success && aiResponse.data.items?.length > 0) {
-                const aiItems = aiResponse.data.items;
-                console.log('★ AI 파싱 성공:', aiItems.length, '건');
-                console.log('AI 추출 결과:', aiItems);
-                
-                // allItems에 추가 (barcode 포함)
-                for (const item of aiItems) {
-                  allItems.push({
-                    product_name: item.product_name || item.barcode,
-                    quantity: item.quantity,
-                    barcode: item.barcode
-                  });
-                }
-                
-                showToast(`AI 분석 완료: ${aiItems.length}건 추출`, 'success');
-                console.log('배민 PDF AI 처리 완료:', file.name);
-                continue;  // 다음 파일로
-              } else {
-                console.warn('AI 파싱 결과 없음, PDF.js로 폴백:', aiResponse.data);
-                // AI 파싱 실패 시 PDF.js로 폴백
-              }
-            } catch (aiError) {
-              console.error('AI 파싱 오류 (PDF.js로 폴백):', aiError);
-              showToast('AI 파싱 실패, 기본 파싱으로 전환', 'warning');
-              // AI 파싱 실패 시 PDF.js로 폴백 계속 진행
-            }
+            console.log('★★★ 배민 PDF 감지 → PDF.js 파싱 사용 ★★★');
+            showLoading('배민 입고확인서 분석 중...');
           }
           
           // ★★★ PDF.js 기본 파싱 (배민 아니거나 AI 파싱 실패 시) ★★★

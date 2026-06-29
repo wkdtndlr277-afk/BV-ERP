@@ -48921,9 +48921,9 @@ async function handleOrderFileUpload() {
       const header = rows[headerRowIdx].map(h => String(h || '').toLowerCase().trim());
       console.log('헤더 컬럼들:', header);
       
-      // ★ v3.5.84: 바코드 컬럼 찾기
+      // ★ v3.5.85: 바코드 컬럼 찾기 - 대체코드 추가 (컬리)
       let barcodeColIdx = -1;
-      const barcodePatterns = ['바코드', 'barcode', 'sku', '상품코드', '품목코드'];
+      const barcodePatterns = ['바코드', 'barcode', 'sku', '상품코드', '품목코드', '대체코드'];
       for (let i = 0; i < header.length; i++) {
         if (barcodePatterns.some(p => header[i].includes(p))) {
           barcodeColIdx = i;

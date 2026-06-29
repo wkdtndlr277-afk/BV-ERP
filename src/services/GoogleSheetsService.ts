@@ -1402,6 +1402,8 @@ export class GoogleSheetsService {
     }
     
     // 5. 당일 입고량 가져오기
+    // ★★★ v3.6.09: 원료입고 시트 구조 수정 ★★★
+    // A:입고일자, B:원료코드, C:원료명, D:로트번호, E:입고량(row[4]), F:단위, G:공급업체, H:소비기한, I:잔량
     const inboundData = await this.readSheet('원료입고', 'A2:J5000');
     const inboundMap: Record<string, number> = {};
     for (const row of inboundData) {
@@ -1409,7 +1411,7 @@ export class GoogleSheetsService {
       if (inboundDate !== cleanDate) continue;
       
       const code = row[1]?.toString() || '';
-      const qty = parseFloat(row[5]?.toString() || '0') || 0;
+      const qty = parseFloat(row[4]?.toString() || '0') || 0;  // ★ E열(row[4])이 입고량
       if (code.startsWith('SF') || code.startsWith('SM') || code === 'RM184') continue;
       
       inboundMap[code] = (inboundMap[code] || 0) + qty;

@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
-// Version: 3.5.96 Build: 20260629
-const APP_VERSION = '3.5.96';
-const APP_BUILD = '20260625-2';
+// Version: 3.5.97 Build: 20260629
+const APP_VERSION = '3.5.97';
+const APP_BUILD = '20260629-1';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -49733,24 +49733,12 @@ async function loadOrderList() {
     if (orders.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">발주 데이터가 없습니다</td></tr>';
     } else {
+      // ★ v3.5.97: 채널을 드롭다운이 아닌 텍스트로 표시 (업로드 시 자동 저장됨)
       tbody.innerHTML = orders.map(order => `
         <tr class="hover:bg-gray-50" data-order-id="${order.id}">
           <td class="px-4 py-3"><input type="checkbox" class="order-checkbox" value="${order.id}"></td>
           <td class="px-4 py-3">
-            <select class="order-channel-select px-2 py-1 rounded text-xs border ${getChannelColor(order.channel)}" 
-                    data-order-id="${order.id}" data-original="${order.channel || ''}"
-                    onchange="updateOrderChannel(this, ${order.id})">
-              <option value="" ${!order.channel ? 'selected' : ''}>(미지정)</option>
-              <option value="쿠팡" ${order.channel === '쿠팡' ? 'selected' : ''}>쿠팡</option>
-              <option value="컬리" ${order.channel === '컬리' ? 'selected' : ''}>컬리</option>
-              <option value="배민" ${order.channel === '배민' ? 'selected' : ''}>배민</option>
-              <option value="오아시스" ${order.channel === '오아시스' ? 'selected' : ''}>오아시스</option>
-              <option value="GS" ${order.channel === 'GS' ? 'selected' : ''}>GS</option>
-              <option value="온도감" ${order.channel === '온도감' ? 'selected' : ''}>온도감</option>
-              <option value="CJ" ${order.channel === 'CJ' ? 'selected' : ''}>CJ</option>
-              <option value="비마트" ${order.channel === '비마트' ? 'selected' : ''}>비마트</option>
-              <option value="직영" ${order.channel === '직영' ? 'selected' : ''}>직영</option>
-            </select>
+            <span class="px-2 py-1 rounded text-xs ${getChannelColor(order.channel)}">${order.channel || '(미지정)'}</span>
           </td>
           <td class="px-4 py-3 font-mono">${order.product_code}</td>
           <td class="px-4 py-3">${order.product_name || ''}</td>

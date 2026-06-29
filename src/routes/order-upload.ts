@@ -959,10 +959,13 @@ async function matchOasisBarcodesFromSheetsInternal(
 
 // ===== 텍스트 직접 입력 (PDF 복사 붙여넣기용) =====
 // ★ v3.5.89: 텍스트 붙여넣기 업로드 - 판매처(seller) 추가
+// ★ v3.5.97: 빈 문자열 채널도 기본값 적용
 orderUpload.post('/upload-text', async (c) => {
   try {
     const body = await c.req.json();
-    const { text, parsed_items, channel = '기타', seller = '', order_date } = body;
+    const { text, parsed_items, seller = '', order_date } = body;
+    // ★ v3.5.97: 빈 문자열인 경우에도 '기타' 적용
+    const channel = body.channel || '기타';
     const orderDate = order_date || new Date().toISOString().split('T')[0];
     
     if (!text && (!parsed_items || parsed_items.length === 0)) {
@@ -1011,10 +1014,13 @@ orderUpload.post('/upload-text', async (c) => {
 });
 
 // ★ v3.5.89: JSON 직접 입력 - 판매처(seller) 추가
+// ★ v3.5.97: 빈 문자열 채널도 기본값 적용
 orderUpload.post('/upload-json', async (c) => {
   try {
     const body = await c.req.json();
-    const { items, channel = '기타', seller = '', order_date } = body;
+    const { items, seller = '', order_date } = body;
+    // ★ v3.5.97: 빈 문자열인 경우에도 '기타' 적용 (자동감지 선택 시)
+    const channel = body.channel || '기타';
     const orderDate = order_date || new Date().toISOString().split('T')[0];
     
     if (!items || !Array.isArray(items) || items.length === 0) {

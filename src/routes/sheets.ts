@@ -3889,6 +3889,10 @@ sheets.post('/recalculate-lot-matching', async (c) => {
 
     for (const prod of productions) {
       const bom = bomMap.get(prod.product_code) || [];
+      // ★★★ v3.6.10: 제품LOT 형식 통일 (LOT번호-제품코드) ★★★
+      const productLot = prod.lot_number.includes('-') 
+        ? prod.lot_number  // 이미 제품코드 포함
+        : `${prod.lot_number}-${prod.product_code}`;  // 제품코드 추가
       
       for (const material of bom) {
         const usageKg = material.quantity * prod.quantity;
@@ -3901,7 +3905,7 @@ sheets.post('/recalculate-lot-matching', async (c) => {
         // 제외 원료 (정제수)
         if (EXCLUDE_STOCK.includes(material.item_code)) {
           newLotMatchingRows.push([
-            `'${date}`, prod.lot_number, material.item_code, material.item_name,
+            `'${date}`, productLot, material.item_code, material.item_name,
             usageKg.toFixed(5), '-', '-'
           ]);
           continue;
@@ -3910,7 +3914,7 @@ sheets.post('/recalculate-lot-matching', async (c) => {
         // SF 원료 (자체 생산)
         if (SF_ITEMS.includes(material.item_code)) {
           newLotMatchingRows.push([
-            `'${date}`, prod.lot_number, material.item_code, material.item_name,
+            `'${date}`, productLot, material.item_code, material.item_name,
             usageKg.toFixed(5), '', ''
           ]);
           continue;
@@ -3934,7 +3938,7 @@ sheets.post('/recalculate-lot-matching', async (c) => {
           lot.remain_qty -= useFromLot;  // 메모리상 차감
           
           newLotMatchingRows.push([
-            `'${date}`, prod.lot_number, material.item_code, material.item_name,
+            `'${date}`, productLot, material.item_code, material.item_name,
             useFromLot.toFixed(5), lot.lot_number, lot.expiry_date
           ]);
         }
@@ -3942,7 +3946,7 @@ sheets.post('/recalculate-lot-matching', async (c) => {
         // 재고 부족 시
         if (remaining > 0) {
           newLotMatchingRows.push([
-            `'${date}`, prod.lot_number, material.item_code, material.item_name,
+            `'${date}`, productLot, material.item_code, material.item_name,
             remaining.toFixed(5), '재고부족', ''
           ]);
         }

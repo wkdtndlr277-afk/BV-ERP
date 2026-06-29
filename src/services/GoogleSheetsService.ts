@@ -1149,7 +1149,8 @@ export class GoogleSheetsService {
     expiredLotsWarning?: string[];  // 만료로 건너뛴 LOT 경고 목록
   }> {
     // 1. 기존 로트매칭 데이터 읽기
-    const existingData = await this.readSheet('로트매칭', 'A2:G10000');
+    // ★★★ v3.6.11: 로트매칭 읽기 범위 확장 (10000 → 50000) ★★★
+    const existingData = await this.readSheet('로트매칭', 'A2:G50000');
     
     // 2. 대상 날짜 제외한 기존 데이터 보존
     const dateSet = new Set(dates.map(d => d.replace(/^'/, '')));
@@ -1232,7 +1233,11 @@ export class GoogleSheetsService {
         const productCode = prod[1]?.toString() || '';
         const productName = prod[2]?.toString() || '';
         const quantity = parseFloat(prod[3]?.toString() || '0') || 0;
-        const productLot = prod[4]?.toString() || '';
+        const rawLot = prod[4]?.toString() || '';
+        // ★★★ v3.6.10: 제품LOT 형식 통일 (LOT번호-제품코드) ★★★
+        const productLot = rawLot.includes('-') 
+          ? rawLot  // 이미 제품코드 포함
+          : `${rawLot}-${productCode}`;  // 제품코드 추가
         
         const bom = bomMap[productCode] || [];
         
@@ -1316,7 +1321,8 @@ export class GoogleSheetsService {
     });
     
     // 클리어 후 다시 쓰기
-    await this.clearRange('로트매칭', 'A2:G10000');
+    // ★★★ v3.6.11: 로트매칭 클리어 범위 확장 (10000 → 50000) ★★★
+    await this.clearRange('로트매칭', 'A2:G50000');
     if (allRows.length > 0) {
       await this.writeSheet('로트매칭', 'A2', allRows);
     }
@@ -1418,7 +1424,8 @@ export class GoogleSheetsService {
     }
     
     // 6. 당일 사용량 가져오기 (LOT 매칭에서)
-    const lotData = await this.readSheet('로트매칭', 'A2:G10000');
+    // ★★★ v3.6.11: 로트매칭 읽기 범위 확장 (10000 → 50000) ★★★
+    const lotData = await this.readSheet('로트매칭', 'A2:G50000');
     const usageMap: Record<string, number> = {};
     for (const row of lotData) {
       const lotDate = row[0]?.toString().replace(/^'/, '') || '';

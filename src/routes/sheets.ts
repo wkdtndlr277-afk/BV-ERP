@@ -650,8 +650,8 @@ sheets.post('/test/calculate-usage', async (c) => {
         inbound_date: row[0],
         lot_number: row[3],
         remain_qty: parseFloat(row[8]) || 0,
-        // ★★★ v3.6.02 BUG FIX: row[6]이 소비기한 (G열), row[7]은 품질상태(H열) ★★★
-        expiry_date: row[6]
+        // ★★★ v3.6.03 BUG FIX: 원료입고 시트 구조 - G열(6)=공급업체, H열(7)=소비기한 ★★★
+        expiry_date: row[7]
       });
     }
     // FEFO 정렬 (유통기한 빠른 순)
@@ -2225,30 +2225,42 @@ sheets.get('/v2/output/production-report', async (c) => {
     }
     
     // 4. 생산일보 데이터 구성 - ★ materials 선택적 포함 ★
+    // ★★★ v3.6.03: 채널이 여러 개인 경우 (쿠팡, 오아시스) 개별 행으로 분리 ★★★
     const reportItems = [];
     
     for (const prod of productions) {
-      const expiryDays = expiryMap.get(`${prod.product_code}|${prod.channel || ''}`) 
-                      || expiryMap.get(prod.product_code) 
-                      || 24;
-
-      const item: any = {
-        prod_date: prod.prod_date,
-        product_code: prod.product_code,
-        product_name: prod.product_name,
-        quantity: prod.quantity,
-        lot_number: prod.lot_number,
-        channel: prod.channel,
-        expiry_days: expiryDays
-      };
+      // 채널이 ','로 구분된 경우 분리 (예: "쿠팡, 오아시스" → ["쿠팡", "오아시스"])
+      const channels = prod.channel 
+        ? prod.channel.split(',').map((c: string) => c.trim()).filter((c: string) => c)
+        : [''];
       
-      // ★ include_materials=true 일 때만 materials 추가
-      if (includeMaterials) {
-        const key = `${date}|${prod.lot_number}`;
-        item.materials = lotMatchingMap.get(key) || [];
-      }
+      // 채널별로 개별 행 생성 (수량은 동일하게 표시 - 실제로는 별도 관리 필요)
+      for (const channel of channels) {
+        // 채널별 소비기한 조회
+        const expiryDays = expiryMap.get(`${prod.product_code}|${channel}`) 
+                        || expiryMap.get(prod.product_code) 
+                        || 24;
 
-      reportItems.push(item);
+        const item: any = {
+          prod_date: prod.prod_date,
+          product_code: prod.product_code,
+          product_name: prod.product_name,
+          quantity: prod.quantity,  // ★ 현재는 동일 수량 (추후 채널별 수량 분리 필요)
+          lot_number: prod.lot_number,
+          channel: channel,
+          expiry_days: expiryDays,
+          // ★ 원본 채널 (여러 채널 합쳐진 경우)
+          original_channel: channels.length > 1 ? prod.channel : undefined
+        };
+        
+        // ★ include_materials=true 일 때만 materials 추가
+        if (includeMaterials) {
+          const key = `${date}|${prod.lot_number}`;
+          item.materials = lotMatchingMap.get(key) || [];
+        }
+
+        reportItems.push(item);
+      }
     }
 
     return c.json({
@@ -3855,8 +3867,8 @@ sheets.post('/recalculate-lot-matching', async (c) => {
       inboundMap.get(itemCode)!.push({
         lot_number: row[3]?.toString() || '',
         remain_qty: remainQty,
-        // ★★★ v3.6.02 BUG FIX: row[6]이 소비기한 (G열) ★★★
-        expiry_date: row[6]?.toString() || ''
+        // ★★★ v3.6.03 BUG FIX: 원료입고 시트 구조 - G열(6)=공급업체, H열(7)=소비기한 ★★★
+        expiry_date: row[7]?.toString() || ''
       });
     }
     // FEFO 정렬
@@ -4088,8 +4100,8 @@ sheets.post('/rebuild-lot-matching-dates', async (c) => {
         inboundMap.get(itemCode)!.push({
           lot_number: row[3]?.toString() || '',
           remain_qty: remainQty,
-          // ★★★ v3.6.02 BUG FIX: row[6]이 소비기한 (G열) ★★★
-          expiry_date: row[6]?.toString() || ''
+          // ★★★ v3.6.03 BUG FIX: 원료입고 시트 구조 - G열(6)=공급업체, H열(7)=소비기한 ★★★
+          expiry_date: row[7]?.toString() || ''
         });
       }
       // FEFO 정렬

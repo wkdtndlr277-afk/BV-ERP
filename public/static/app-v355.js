@@ -48581,74 +48581,44 @@ async function handleOrderFileUpload() {
         const arrayBuffer = await file.arrayBuffer();
         const data = new Uint8Array(arrayBuffer);
         
-        // ★★★ v3.5.79: 오아시스 HTML 형식 xls 감지 ★★★
+        // ★★★ v3.5.80: 오아시스 HTML 형식 xls 감지 (더 정확한 조건) ★★★
         // 오아시스 발주서는 .xls 확장자지만 실제로는 HTML 파일임
-        const textPreview = new TextDecoder('utf-8', { fatal: false }).decode(data.slice(0, 500));
-        const isOasisHtml = textPreview.includes('<meta ht') || 
-                           textPreview.includes('<table') ||
-                           (textPreview.includes('<td') && textPreview.includes('tr'));
+        // 파일 시작 부분에서 HTML 시그니처 확인
+        const textPreview = new TextDecoder('utf-8', { fatal: false }).decode(data.slice(0, 1000));
+        const lowerPreview = textPreview.toLowerCase();
+        const isHtmlFile = lowerPreview.includes('<html') || 
+                          lowerPreview.includes('<meta') ||
+                          lowerPreview.includes('<!doctype') ||
+                          (lowerPreview.includes('<table') && lowerPreview.includes('<tr'));
         
-        if (isOasisHtml) {
-          console.log('★★★ 오아시스 HTML 형식 xls 감지! 서버 API로 전송 ★★★');
-          showLoading('오아시스 발주서 분석 중...');
+        if (isHtmlFile && fileName.endsWith('.xls')) {
+          console.log('★★★ HTML 형식 xls 감지! (오아시스 발주서) ★★★');
+          console.log('파일명:', file.name, '크기:', file.size);
           
-          try {
-            // FormData로 서버에 파일 직접 전송
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('order_date', dateInput.value);
-            formData.append('channel', '오아시스');
-            
-            const oasisResponse = await fetch(`${API_BASE}/order/upload`, {
-              method: 'POST',
-              body: formData
-            });
-            
-            const oasisResult = await oasisResponse.json();
-            console.log('오아시스 서버 응답:', oasisResult);
-            
-            if (oasisResult.success && oasisResult.matched_items?.length > 0) {
-              // 매칭된 항목을 allItems에 추가
-              for (const item of oasisResult.matched_items) {
-                allItems.push({
-                  product_name: item.product_name,
-                  quantity: item.quantity,
-                  barcode: item.barcode,
-                  product_code: item.product_code,
-                  _matched: true  // 이미 매칭됨 표시
-                });
-              }
-              
-              // 미매칭 항목도 추가
-              if (oasisResult.unmatched_items?.length > 0) {
-                for (const item of oasisResult.unmatched_items) {
-                  allItems.push({
-                    product_name: item.product_name,
-                    quantity: item.quantity,
-                    barcode: item.barcode,
-                    _unmatched: true,
-                    _fail_reason: item.fail_reason
-                  });
-                }
-              }
-              
-              showToast(`오아시스 발주서: ${oasisResult.matched_items.length}건 매칭, ${oasisResult.unmatched_items?.length || 0}건 미매칭`, 'success');
-              
-              // 이미 시트에 저장되었으므로 결과 화면으로 바로 이동
-              hideLoading();
-              displayOrderUploadResult(oasisResult, allItems.length);
-              return;  // 함수 종료
-            } else {
-              console.warn('오아시스 서버 파싱 실패:', oasisResult);
-              showToast('오아시스 파싱 실패: ' + (oasisResult.error || '알 수 없는 오류'), 'error');
-            }
-          } catch (oasisError) {
-            console.error('오아시스 API 오류:', oasisError);
-            showToast('오아시스 처리 실패: ' + oasisError.message, 'error');
+          // FormData로 서버에 파일 직접 전송
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('order_date', dateInput.value);
+          formData.append('channel', '오아시스');
+          
+          const oasisResponse = await fetch('/api/order/upload', {
+            method: 'POST',
+            body: formData
+          });
+          
+          const oasisResult = await oasisResponse.json();
+          console.log('오아시스 서버 응답:', oasisResult);
+          
+          if (oasisResult.success) {
+            hideLoading();
+            showToast(`오아시스: ${oasisResult.summary?.matched || 0}건 매칭`, 'success');
+            displayOrderUploadResult(oasisResult, oasisResult.summary?.total_parsed || 0);
+            return;  // 전체 함수 종료
+          } else {
+            hideLoading();
+            showToast('오아시스 파싱 실패: ' + (oasisResult.error || '오류'), 'error');
+            return;
           }
-          
-          hideLoading();
-          return;  // 오아시스 파일 처리 후 종료
         }
         
         // 일반 엑셀 파일 처리 (XLSX 라이브러리)

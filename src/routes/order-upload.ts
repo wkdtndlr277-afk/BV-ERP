@@ -1237,12 +1237,12 @@ orderUpload.post('/to-production', async (c) => {
       });
     }
     
-    // 제품별 합계 및 채널 수집
-    const productTotals: Record<string, { 
+    // ★★★ v3.5.94: 제품코드+채널 조합으로 그룹핑 (채널별 개별 행) ★★★
+    const productChannelTotals: Record<string, { 
       product_code: string; 
       product_name: string; 
       order_qty: number;
-      channels: Set<string>;
+      channel: string;  // 개별 채널
     }> = {};
     
     for (const row of filtered) {
@@ -1253,26 +1253,26 @@ orderUpload.post('/to-production', async (c) => {
       
       if (!productCode) continue;
       
-      if (!productTotals[productCode]) {
-        productTotals[productCode] = { 
+      // ★ 제품코드+채널 조합을 키로 사용 (채널별 개별 행)
+      const key = `${productCode}|${channel}`;
+      
+      if (!productChannelTotals[key]) {
+        productChannelTotals[key] = { 
           product_code: productCode, 
           product_name: productName, 
           order_qty: 0,
-          channels: new Set()
+          channel: channel  // 개별 채널
         };
       }
-      productTotals[productCode].order_qty += quantity;
-      if (channel) {
-        productTotals[productCode].channels.add(channel);
-      }
+      productChannelTotals[key].order_qty += quantity;
     }
     
-    // Set을 문자열로 변환
-    const items = Object.values(productTotals).map(p => ({
+    // 개별 채널별 항목으로 변환
+    const items = Object.values(productChannelTotals).map(p => ({
       product_code: p.product_code,
       product_name: p.product_name,
       order_qty: p.order_qty,
-      channels: Array.from(p.channels).join(', ')
+      channels: p.channel  // 개별 채널 (합치지 않음)
     }));
     
     return c.json({

@@ -4487,4 +4487,171 @@ sheets.post('/reset-daily-stock-complete', async (c) => {
   }
 });
 
+// ★★★ v3.5.76: 일별수불부 새 날짜 추가 API ★★★
+// 전일 마감재고를 기준으로 새 날짜 행 추가
+sheets.post('/add-daily-stock-date', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const date = body.date;  // 추가할 날짜 (예: 2026-06-03)
+    
+    if (!date) {
+      return c.json({ success: false, error: 'date 필수' }, 400);
+    }
+
+    // 1. 현재 일별수불부 데이터 읽기
+    const allData = await service.readSheet('일별수불부', 'A2:H');
+    
+    // 2. 전일 날짜 계산
+    const targetDate = new Date(date);
+    targetDate.setDate(targetDate.getDate() - 1);
+    const prevDate = targetDate.toISOString().split('T')[0];
+    
+    // 3. 전일 데이터에서 현재고 추출
+    const prevDayData = allData.filter(row => {
+      const rowDate = row[0]?.toString().replace(/^'/, '');
+      return rowDate === prevDate;
+    });
+    
+    if (prevDayData.length === 0) {
+      return c.json({ 
+        success: false, 
+        error: `전일(${prevDate}) 데이터가 없습니다. 먼저 전일 데이터를 생성하세요.` 
+      }, 400);
+    }
+    
+    // 4. 전일 마감재고 맵 생성
+    const prevStockMap = new Map<string, { stock: number; name: string }>();
+    for (const row of prevDayData) {
+      const itemCode = row[1]?.toString();
+      const itemName = row[2]?.toString() || '';
+      const currentStock = parseFloat(row[6]) || 0;
+      if (itemCode && !itemCode.startsWith('SM')) {
+        prevStockMap.set(itemCode, { stock: currentStock, name: itemName });
+      }
+    }
+    
+    // 5. 당일 입고량 계산 (원료입고 시트에서)
+    const inboundData = await service.readSheet('원료입고', 'A2:I');
+    const inboundMap = new Map<string, number>();
+    for (const row of inboundData) {
+      let inboundDate = row[0]?.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(inboundDate)) {
+        const excelDate = parseInt(inboundDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        inboundDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (inboundDate === date) {
+        const itemCode = row[1]?.toString();
+        const originQty = parseFloat(row[4]) || 0;
+        if (itemCode) {
+          inboundMap.set(itemCode, (inboundMap.get(itemCode) || 0) + originQty);
+        }
+      }
+    }
+    
+    // 6. 당일 사용량 계산 (로트매칭 시트에서)
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:E');
+    const usageMap = new Map<string, number>();
+    for (const row of lotMatchingData) {
+      let matchDate = row[0]?.toString().replace(/^'/, '');
+      if (/^\d{5}$/.test(matchDate)) {
+        const excelDate = parseInt(matchDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        matchDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (matchDate === date) {
+        const itemCode = row[2]?.toString();
+        const usageQty = parseFloat(row[4]) || 0;
+        if (itemCode) {
+          usageMap.set(itemCode, (usageMap.get(itemCode) || 0) + usageQty);
+        }
+      }
+    }
+    
+    // 7. 품목코드 정렬
+    const itemCodes = Array.from(prevStockMap.keys()).sort((a, b) => {
+      const aMatch = a.match(/^([A-Z]+)(\d+)$/);
+      const bMatch = b.match(/^([A-Z]+)(\d+)$/);
+      if (aMatch && bMatch) {
+        if (aMatch[1] === bMatch[1]) {
+          return parseInt(aMatch[2]) - parseInt(bMatch[2]);
+        }
+        return aMatch[1].localeCompare(bMatch[1]);
+      }
+      return a.localeCompare(b);
+    });
+    
+    // 8. 새 날짜 행 생성
+    const newRows: any[][] = [];
+    for (const itemCode of itemCodes) {
+      const itemInfo = prevStockMap.get(itemCode)!;
+      const prevStock = itemInfo.stock;
+      const inboundQty = inboundMap.get(itemCode) || 0;
+      const usageQty = usageMap.get(itemCode) || 0;
+      const currentStock = prevStock + inboundQty - usageQty;
+      
+      newRows.push([
+        `'${date}`,
+        itemCode,
+        itemInfo.name,
+        Math.round(prevStock * 10000) / 10000,
+        Math.round(inboundQty * 10000) / 10000,
+        Math.round(usageQty * 10000) / 10000,
+        Math.round(currentStock * 10000) / 10000,
+        'kg'
+      ]);
+    }
+    
+    // 9. 기존 해당 날짜 데이터 확인 및 제거
+    const existingDateRows = allData.filter(row => {
+      const rowDate = row[0]?.toString().replace(/^'/, '');
+      return rowDate === date;
+    });
+    
+    // 해당 날짜 외의 데이터
+    const otherData = allData.filter(row => {
+      const rowDate = row[0]?.toString().replace(/^'/, '');
+      return rowDate !== date && row[0];
+    });
+    
+    // 10. 전체 데이터 다시 쓰기
+    await service.clearRange('일별수불부', `A2:H${allData.length + 500}`);
+    
+    const finalData = [...otherData, ...newRows];
+    if (finalData.length > 0) {
+      await service.writeSheet('일별수불부', `A2:H${finalData.length + 1}`, finalData);
+    }
+    
+    return c.json({
+      success: true,
+      message: `${date} 일별수불부 생성 완료`,
+      data: {
+        date,
+        prev_date: prevDate,
+        prev_day_items: prevDayData.length,
+        new_rows: newRows.length,
+        replaced_rows: existingDateRows.length,
+        total_rows: finalData.length,
+        sample: newRows.slice(0, 3).map(r => ({
+          code: r[1],
+          name: r[2],
+          prev: r[3],
+          inbound: r[4],
+          usage: r[5],
+          current: r[6]
+        }))
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;

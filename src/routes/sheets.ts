@@ -650,7 +650,8 @@ sheets.post('/test/calculate-usage', async (c) => {
         inbound_date: row[0],
         lot_number: row[3],
         remain_qty: parseFloat(row[8]) || 0,
-        expiry_date: row[7]
+        // ★★★ v3.6.02 BUG FIX: row[6]이 소비기한 (G열), row[7]은 품질상태(H열) ★★★
+        expiry_date: row[6]
       });
     }
     // FEFO 정렬 (유통기한 빠른 순)
@@ -3854,7 +3855,8 @@ sheets.post('/recalculate-lot-matching', async (c) => {
       inboundMap.get(itemCode)!.push({
         lot_number: row[3]?.toString() || '',
         remain_qty: remainQty,
-        expiry_date: row[7]?.toString() || ''
+        // ★★★ v3.6.02 BUG FIX: row[6]이 소비기한 (G열) ★★★
+        expiry_date: row[6]?.toString() || ''
       });
     }
     // FEFO 정렬
@@ -4086,7 +4088,8 @@ sheets.post('/rebuild-lot-matching-dates', async (c) => {
         inboundMap.get(itemCode)!.push({
           lot_number: row[3]?.toString() || '',
           remain_qty: remainQty,
-          expiry_date: row[7]?.toString() || ''
+          // ★★★ v3.6.02 BUG FIX: row[6]이 소비기한 (G열) ★★★
+          expiry_date: row[6]?.toString() || ''
         });
       }
       // FEFO 정렬

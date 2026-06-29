@@ -20041,14 +20041,18 @@ async function processMultipleOrderFiles(files) {
   
   console.log(`전체 파싱된 항목: ${allItems.length}개`);
   
-  // 동일 상품 수량 합산 (정규화된 키 사용)
+  // ★★★ v3.6.02: 동일 상품 + 동일 채널만 수량 합산 (채널별 분리 유지) ★★★
+  // 소비기한이 채널별로 다르므로 합치면 안 됨
   const itemMap = new Map();
   for (const item of allItems) {
     // 정규화: 공백/특수문자 제거, 소문자 변환
-    const normalizedKey = (item.cleanName || item.originalName)
+    const normalizedName = (item.cleanName || item.originalName)
       .replace(/\s+/g, '')
       .replace(/[,._\-]/g, '')
       .toLowerCase();
+    // ★ 채널을 키에 포함 - 같은 상품이라도 채널 다르면 분리
+    const channel = item.channel || 'unknown';
+    const normalizedKey = `${normalizedName}|${channel}`;
     
     if (itemMap.has(normalizedKey)) {
       itemMap.get(normalizedKey).quantity += item.quantity;
@@ -20058,7 +20062,7 @@ async function processMultipleOrderFiles(files) {
   }
   
   const mergedItems = Array.from(itemMap.values());
-  console.log(`합산 후 품목: ${mergedItems.length}개`);
+  console.log(`합산 후 품목: ${mergedItems.length}개 (채널별 분리 유지)`);
   
   // 마스터 제품과 매칭
   const matchedItems = matchOrderToProducts(mergedItems);
@@ -20179,10 +20183,12 @@ async function processMultiplePdfFiles(pdfFiles) {
       return;
     }
     
-    // 동일 바코드 품목 수량 합산
+    // ★★★ v3.6.02: 동일 바코드 + 동일 채널만 수량 합산 (채널별 분리 유지) ★★★
     const itemMap = new Map();
     for (const item of allMatchedItems) {
-      const key = item.barcode || item.cleanName || item.originalName;
+      const nameKey = item.barcode || item.cleanName || item.originalName;
+      const channel = item.channel || 'unknown';
+      const key = `${nameKey}|${channel}`;  // ★ 채널 포함
       if (itemMap.has(key)) {
         itemMap.get(key).quantity += item.quantity;
       } else {
@@ -20191,7 +20197,7 @@ async function processMultiplePdfFiles(pdfFiles) {
     }
     const mergedItems = Array.from(itemMap.values());
     
-    console.log('📄 총 추출 품목:', allMatchedItems.length, '개, 합산 후:', mergedItems.length, '개');
+    console.log('📄 총 추출 품목:', allMatchedItems.length, '개, 합산 후:', mergedItems.length, '개 (채널별 분리)');
     
     // 미리보기 표시
     window.orderUploadData = {

@@ -713,12 +713,17 @@ sheets.post('/test/calculate-usage', async (c) => {
           continue;
         }
 
-        // FEFO 로트 매칭
+        // ★★★ v3.6.04: FEFO 로트 매칭 + 소비기한 만료 LOT 자동 제외 ★★★
         const lots = inboundMap.get(material.item_code) || [];
         let remaining = usageKg;
         for (const lot of lots) {
           if (remaining <= 0) break;
           if (lot.remain_qty <= 0) continue;
+          
+          // ★★★ v3.6.04: 소비기한이 생산일 이전인 LOT는 건너뛰기 ★★★
+          if (lot.expiry_date && lot.expiry_date < prod_date) {
+            continue;  // 만료된 LOT 건너뛰기
+          }
 
           const useFromLot = Math.min(remaining, lot.remain_qty);
           remaining -= useFromLot;
@@ -3911,13 +3916,18 @@ sheets.post('/recalculate-lot-matching', async (c) => {
           continue;
         }
 
-        // FEFO 로트 매칭
+        // ★★★ v3.6.04: FEFO 로트 매칭 + 소비기한 만료 LOT 자동 제외 ★★★
         const lots = inboundMap.get(material.item_code) || [];
         let remaining = usageKg;
         
         for (const lot of lots) {
           if (remaining <= 0) break;
           if (lot.remain_qty <= 0) continue;
+          
+          // ★★★ v3.6.04: 소비기한이 생산일 이전인 LOT는 건너뛰기 ★★★
+          if (lot.expiry_date && lot.expiry_date < date) {
+            continue;  // 만료된 LOT 건너뛰기
+          }
           
           const useFromLot = Math.min(remaining, lot.remain_qty);
           remaining -= useFromLot;
@@ -4136,13 +4146,18 @@ sheets.post('/rebuild-lot-matching-dates', async (c) => {
             continue;
           }
 
-          // FEFO 로트 매칭
+          // ★★★ v3.6.04: FEFO 로트 매칭 + 소비기한 만료 LOT 자동 제외 ★★★
           const lots = inboundMap.get(material.item_code) || [];
           let remaining = usageKg;
           
           for (const lot of lots) {
             if (remaining <= 0) break;
             if (lot.remain_qty <= 0) continue;
+            
+            // ★★★ v3.6.04: 소비기한이 생산일 이전인 LOT는 건너뛰기 ★★★
+            if (lot.expiry_date && lot.expiry_date < date) {
+              continue;  // 만료된 LOT 건너뛰기
+            }
             
             const useFromLot = Math.min(remaining, lot.remain_qty);
             remaining -= useFromLot;

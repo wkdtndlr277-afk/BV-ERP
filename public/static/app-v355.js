@@ -18433,6 +18433,15 @@ async function loadClosingStatus() {
       console.log('v2 API 실패, 기존 데이터 사용:', e.message);
     }
     
+    // ★★★ v3.5.96: material-usage API로 LOT 정보 포함 원료 사용량 조회 ★★★
+    let materialUsageResult = { success: false, data: [] };
+    try {
+      materialUsageResult = await api(`/sheets/v2/output/material-usage?date=${date}`);
+      console.log('v3.5.96 material-usage API 성공:', materialUsageResult.total_items, '종');
+    } catch (e) {
+      console.log('material-usage API 실패:', e.message);
+    }
+    
     // 캐시 저장 - v2 API 결과 우선 사용
     window.closingStatusCache = {
       date: date,
@@ -18444,6 +18453,11 @@ async function loadClosingStatus() {
       inventoryV2: {
         data: inventoryV2Result.data || [],
         summary: inventoryV2Result.summary || {}
+      },
+      // ★★★ v3.5.96: LOT 정보 포함 원료 사용량 ★★★
+      materialUsage: {
+        data: materialUsageResult.data || [],
+        total_items: materialUsageResult.total_items || 0
       }
     };
     
@@ -18808,17 +18822,21 @@ function printProductionClosing() {
   }, 500);
 }
 
-// ★★★ v3.5.60 HACCP - 생산일보: 생산량/소비기한만 + 구글시트 일별수불부 사용량 ★★★
+// ★★★ v3.5.96 HACCP - 생산일보: 생산량/소비기한 + LOT 정보 포함 원료 사용량 ★★★
 function generateClosingPrintHtml(cache, date) {
   const items = cache.dailyReport || [];
   
-  // ★★★ 구글시트 일별수불부에서 사용량 가져오기 (SSOT) ★★★
+  // ★★★ v3.5.96: material-usage API 데이터 우선 사용 (LOT 정보 포함) ★★★
+  const materialUsageData = cache.materialUsage?.data || [];
   const inventoryV2 = cache.inventoryV2 || {};
   const dailyStockData = inventoryV2.data || [];
   
+  // LOT 정보 포함 데이터가 있으면 우선 사용
+  const rawUsageData = materialUsageData.length > 0 ? materialUsageData : dailyStockData;
+  
   // 정제수(물), 무효 원료(R169~R172), 반제품(SF) 제외
   const excludeCodes = ['R184', 'RM184', 'R169', 'R170', 'R171', 'R172'];
-  const filteredUsage = dailyStockData.filter(item => {
+  const filteredUsage = rawUsageData.filter(item => {
     const code = (item.item_code || '').toUpperCase();
     const name = (item.item_name || '').toLowerCase();
     if (name.includes('정제수') || name.includes('물') || code === 'R184' || code === 'RM184') return false;
@@ -18827,6 +18845,8 @@ function generateClosingPrintHtml(cache, date) {
     if ((item.usage_qty || 0) <= 0) return false; // 사용량 없는 항목 제외
     return true;
   });
+  
+  console.log(`[v3.5.96] 생산일보 원료사용: ${filteredUsage.length}종, LOT정보: ${materialUsageData.length > 0 ? 'O' : 'X'}`);
   
   const totalQty = items.reduce((sum, i) => sum + (i.quantity || 0), 0);
   const totalUsage = filteredUsage.reduce((sum, m) => sum + Math.abs(m.usage_qty || 0), 0);
@@ -19147,24 +19167,31 @@ function generateClosingPrintHtml(cache, date) {
       
       <div class="section-header">2. 원재료 사용 현황 <span>(총 ${filteredUsage.length}종)</span></div>
       
+      <!-- ★★★ v3.5.96: 원료LOT/소비기한 컬럼 추가 (FEFO 선입선출 증빙) ★★★ -->
       <table class="sub-table">
         <thead>
           <tr>
-            <th style="width:6%">No</th>
-            <th style="width:12%">품목코드</th>
-            <th style="width:50%" class="text-left">원재료명</th>
-            <th style="width:16%">사용량</th>
-            <th style="width:16%">단위</th>
+            <th style="width:4%">No</th>
+            <th style="width:10%">품목코드</th>
+            <th style="width:30%" class="text-left">원재료명</th>
+            <th style="width:12%">사용량</th>
+            <th style="width:24%">원료LOT(사용량)</th>
+            <th style="width:14%">소비기한</th>
+            <th style="width:6%">단위</th>
           </tr>
         </thead>
         <tbody>
           ${filteredUsage.map((item, idx) => {
-            // ★★★ v3.5.60: 구글시트 일별수불부의 usage_qty 사용 ★★★
+            // ★★★ v3.5.96: 원료LOT + 소비기한 표시 (여러 LOT 지원) ★★★
+            const lotDisplay = item.lot_number || '-';
+            const expiryDisplay = item.expiry_date || '-';
             return '<tr>' +
               '<td>' + (idx + 1) + '</td>' +
               '<td>' + (item.item_code || '-') + '</td>' +
               '<td class="text-left">' + (item.item_name || item.item_code || '-') + '</td>' +
               '<td class="text-right">' + formatNumber(Math.abs(item.usage_qty || 0), 3) + '</td>' +
+              '<td class="font-small">' + lotDisplay + '</td>' +
+              '<td>' + expiryDisplay + '</td>' +
               '<td>' + (item.unit || 'kg') + '</td>' +
             '</tr>';
           }).join('')}

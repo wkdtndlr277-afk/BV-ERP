@@ -1456,7 +1456,8 @@ sheets.get('/v2/output/material-usage', async (c) => {
     // 구조: A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한
     const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
     
-    const lotMap = new Map<string, { lot_number: string; expiry_date: string }>();
+    // ★★★ v3.5.96: 여러 LOT 사용 시 모두 저장 (배열) ★★★
+    const lotMap = new Map<string, Array<{ lot_number: string; expiry_date: string; usage_qty: number }>>();
     
     lotMatchingData.forEach(row => {
       // 날짜 필터링
@@ -1477,6 +1478,7 @@ sheets.get('/v2/output/material-usage', async (c) => {
       
       const lotNumber = row[5] || '-';
       let expiryDate = row[6] || '-';
+      const lotUsageQty = parseFloat(row[4]) || 0;  // E열: 사용량
       
       // 유통기한 형식 변환 (엑셀 숫자 → YYYY-MM-DD)
       if (expiryDate && !isNaN(expiryDate as any) && parseInt(expiryDate) > 40000) {
@@ -1484,25 +1486,48 @@ sheets.get('/v2/output/material-usage', async (c) => {
         expiryDate = d.toISOString().split('T')[0];
       }
       
-      // 원료코드별 첫 번째 LOT 정보만 저장 (또는 덮어쓰기)
+      // ★★★ v3.5.96: 원료코드별 모든 LOT 정보 배열로 저장 ★★★
       if (!lotMap.has(itemCode)) {
-        lotMap.set(itemCode, { lot_number: lotNumber, expiry_date: expiryDate });
+        lotMap.set(itemCode, []);
+      }
+      // 같은 LOT는 합산
+      const existingLot = lotMap.get(itemCode)!.find(l => l.lot_number === lotNumber);
+      if (existingLot) {
+        existingLot.usage_qty += lotUsageQty;
+      } else {
+        lotMap.get(itemCode)!.push({ lot_number: lotNumber, expiry_date: expiryDate, usage_qty: lotUsageQty });
       }
     });
     
-    // ★★★ 3. 두 데이터 조합 ★★★
+    // ★★★ v3.5.96: 두 데이터 조합 - 여러 LOT 지원 ★★★
     const records = Array.from(usageMap.values()).map(item => {
       // ★★★ 이원료(SF001~SF010): LOT/소비기한 표시 안함 ★★★
       const isIwon = !!IWON_MATERIALS[item.item_code];
-      const lotInfo = isIwon ? null : lotMap.get(item.item_code);
+      const lotInfoArray = isIwon ? [] : (lotMap.get(item.item_code) || []);
+      
+      // 여러 LOT 사용 시 상세 정보 (LOT별 사용량 포함)
+      // 예: "LOT001(18kg), LOT002(2kg)"
+      const lotDetails = lotInfoArray.map(l => 
+        `${l.lot_number}(${l.usage_qty.toFixed(2)}kg)`
+      ).join(', ') || '-';
+      
+      // 소비기한은 가장 빠른 것 (첫 번째 LOT)
+      const firstExpiry = lotInfoArray.length > 0 ? lotInfoArray[0].expiry_date : '-';
+      // 모든 소비기한 (다르면 모두 표시)
+      const uniqueExpiries = [...new Set(lotInfoArray.map(l => l.expiry_date))];
+      const expiryDisplay = uniqueExpiries.length > 1 
+        ? uniqueExpiries.join(', ') 
+        : (firstExpiry || '-');
       
       return {
         item_code: item.item_code,
         item_name: item.item_name,
         usage_qty: item.usage_qty,
         unit: item.unit,
-        lot_number: isIwon ? '-' : (lotInfo?.lot_number || '-'),
-        expiry_date: isIwon ? '-' : (lotInfo?.expiry_date || '-'),
+        // ★★★ v3.5.96: 개별 LOT 정보 + 통합 표시 ★★★
+        lot_number: isIwon ? '-' : lotDetails,  // 여러 LOT 시 "LOT001(18kg), LOT002(2kg)"
+        expiry_date: isIwon ? '-' : expiryDisplay,  // 여러 소비기한 시 모두 표시
+        lots: isIwon ? [] : lotInfoArray,  // 상세 LOT 배열 (프론트엔드에서 활용 가능)
         is_iwon: isIwon  // 이원료 여부 플래그
       };
     });

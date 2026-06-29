@@ -958,17 +958,21 @@ async function matchOasisBarcodesFromSheetsInternal(
 }
 
 // ===== 텍스트 직접 입력 (PDF 복사 붙여넣기용) =====
+// ★ v3.5.89: 텍스트 붙여넣기 업로드 - 판매처(seller) 추가
 orderUpload.post('/upload-text', async (c) => {
   try {
     const body = await c.req.json();
-    const { text, channel = '기타', order_date } = body;
+    const { text, parsed_items, channel = '기타', seller = '', order_date } = body;
     const orderDate = order_date || new Date().toISOString().split('T')[0];
     
-    if (!text) {
+    if (!text && (!parsed_items || parsed_items.length === 0)) {
       return c.json({ success: false, error: '텍스트가 없습니다' }, 400);
     }
     
-    const parsedItems = parsePdfText(text, channel);
+    // 클라이언트에서 파싱된 결과가 있으면 사용, 없으면 서버에서 파싱
+    let parsedItems = parsed_items && parsed_items.length > 0 
+      ? parsed_items 
+      : parsePdfText(text, channel);
     
     if (parsedItems.length === 0) {
       return c.json({ success: false, error: '파싱된 데이터가 없습니다' }, 400);
@@ -976,17 +980,19 @@ orderUpload.post('/upload-text', async (c) => {
     
     const { matched, unmatched } = await matchProductCodes(c, parsedItems);
     
-    // Google Sheets에 저장
+    // Google Sheets에 저장 (판매처 포함)
     let sheetsSaved = 0;
     const service = getSheetService(c);
     if (service && matched.length > 0) {
-      const saveResult = await saveOrdersToSheets(service, orderDate, channel, matched);
+      const channelWithSeller = seller ? `${channel}(${seller})` : channel;
+      const saveResult = await saveOrdersToSheets(service, orderDate, channelWithSeller, matched);
       sheetsSaved = saveResult.count;
     }
     
     return c.json({
       success: true,
       channel,
+      seller,
       order_date: orderDate,
       summary: {
         total_parsed: parsedItems.length,
@@ -1004,11 +1010,11 @@ orderUpload.post('/upload-text', async (c) => {
   }
 });
 
-// ===== JSON 직접 입력 (제품코드 + 수량) =====
+// ★ v3.5.89: JSON 직접 입력 - 판매처(seller) 추가
 orderUpload.post('/upload-json', async (c) => {
   try {
     const body = await c.req.json();
-    const { items, channel = '기타', order_date } = body;
+    const { items, channel = '기타', seller = '', order_date } = body;
     const orderDate = order_date || new Date().toISOString().split('T')[0];
     
     if (!items || !Array.isArray(items) || items.length === 0) {
@@ -1049,16 +1055,18 @@ orderUpload.post('/upload-json', async (c) => {
     
     const allMatched = [...directItems, ...matched];
     
-    // Google Sheets에 저장
+    // ★ v3.5.89: Google Sheets에 저장 (판매처 포함)
     let sheetsSaved = 0;
     if (service && allMatched.length > 0) {
-      const saveResult = await saveOrdersToSheets(service, orderDate, channel, allMatched);
+      const channelWithSeller = seller ? `${channel}(${seller})` : channel;
+      const saveResult = await saveOrdersToSheets(service, orderDate, channelWithSeller, allMatched);
       sheetsSaved = saveResult.count;
     }
     
     return c.json({
       success: true,
       channel,
+      seller,
       order_date: orderDate,
       summary: {
         total: items.length,

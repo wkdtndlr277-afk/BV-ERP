@@ -48031,6 +48031,7 @@ window.updateBarcodeExpiryFromValidation = updateBarcodeExpiryFromValidation;
 window.updateAllBarcodeExpiryFromValidation = updateAllBarcodeExpiryFromValidation;
 
 // ==================== 발주서 업로드 페이지 ====================
+// ★ v3.5.89: 판매처 입력 추가, 기타 발주서 텍스트 붙여넣기 탭 (GS, 온도감, CJ)
 function renderOrderUpload() {
   const content = document.getElementById('page-content');
   const today = new Date().toISOString().split('T')[0];
@@ -48042,41 +48043,79 @@ function renderOrderUpload() {
         <h2 class="text-2xl font-bold text-gray-800">
           <i class="fas fa-file-upload mr-3 text-blue-600"></i>발주서 업로드
         </h2>
-        <span class="text-sm text-gray-500">엑셀(쿠팡/컬리) · PDF(배민/오아시스) 자동 감지</span>
+        <span class="text-sm text-gray-500">엑셀 · PDF · 텍스트 붙여넣기 지원</span>
       </div>
       
-      <!-- 업로드 카드 -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- 파일 업로드 -->
-        <div class="bg-white rounded-xl shadow-md p-6">
-          <h3 class="text-lg font-semibold text-gray-800 mb-4">
-            <i class="fas fa-file-excel mr-2 text-green-600"></i>파일 업로드 (엑셀)
-          </h3>
-          
+      <!-- 공통 설정 -->
+      <div class="bg-white rounded-xl shadow-md p-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">발주일</label>
+            <input type="date" id="order-upload-date" value="${today}" 
+              class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">채널 (자동감지)</label>
+            <select id="order-upload-channel" 
+              class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
+              <option value="">자동 감지</option>
+              <option value="쿠팡">쿠팡</option>
+              <option value="컬리">컬리</option>
+              <option value="배민">배민</option>
+              <option value="오아시스">오아시스</option>
+              <option value="GS">GS</option>
+              <option value="온도감">온도감</option>
+              <option value="CJ">CJ</option>
+              <option value="기타">기타</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">판매처 (선택)</label>
+            <input type="text" id="order-upload-seller" placeholder="예: 본비반트, 직영점" 
+              class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+      </div>
+      
+      <!-- 탭 메뉴 -->
+      <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <div class="flex border-b">
+          <button onclick="switchOrderUploadTab('file')" id="tab-file"
+            class="flex-1 px-4 py-3 text-center font-medium text-blue-600 border-b-2 border-blue-600 bg-blue-50">
+            <i class="fas fa-file-excel mr-2"></i>파일 업로드
+          </button>
+          <button onclick="switchOrderUploadTab('text')" id="tab-text"
+            class="flex-1 px-4 py-3 text-center font-medium text-gray-600 hover:bg-gray-50">
+            <i class="fas fa-paste mr-2"></i>텍스트 붙여넣기
+          </button>
+          <button onclick="switchOrderUploadTab('json')" id="tab-json"
+            class="flex-1 px-4 py-3 text-center font-medium text-gray-600 hover:bg-gray-50">
+            <i class="fas fa-code mr-2"></i>JSON 입력
+          </button>
+        </div>
+        
+        <!-- 파일 업로드 탭 -->
+        <div id="panel-file" class="p-6">
           <div class="space-y-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">발주일</label>
-              <input type="date" id="order-upload-date" value="${today}" 
-                class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
-            </div>
-            
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">채널</label>
-              <select id="order-upload-channel" 
-                class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500">
-                <option value="쿠팡">쿠팡</option>
-                <option value="컬리">컬리</option>
-                <option value="배민">배민</option>
-                <option value="오아시스">오아시스</option>
-                <option value="기타">기타</option>
-              </select>
-            </div>
-            
-            <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">발주서 파일 (엑셀/PDF)</label>
-              <input type="file" id="order-upload-file" accept=".csv,.tsv,.txt,.xlsx,.xls,.pdf" multiple
-                class="w-full px-3 py-2 border rounded-lg">
-              <p class="text-xs text-gray-500 mt-1">※ 여러 파일 선택 가능 (Ctrl+클릭) | PDF, 엑셀 모두 지원</p>
+              <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition-colors">
+                <input type="file" id="order-upload-file" accept=".csv,.tsv,.txt,.xlsx,.xls,.pdf" multiple
+                  class="hidden" onchange="updateFileLabel()">
+                <label for="order-upload-file" class="cursor-pointer">
+                  <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-2"></i>
+                  <p id="file-label" class="text-gray-600">클릭하거나 파일을 드래그하세요</p>
+                  <p class="text-xs text-gray-400 mt-1">엑셀(.xlsx, .xls), PDF, CSV 지원 | 다중 파일 가능</p>
+                </label>
+              </div>
+            </div>
+            
+            <div class="flex gap-2 text-xs text-gray-500">
+              <span class="px-2 py-1 bg-orange-100 text-orange-700 rounded">쿠팡</span>
+              <span class="px-2 py-1 bg-purple-100 text-purple-700 rounded">컬리</span>
+              <span class="px-2 py-1 bg-blue-100 text-blue-700 rounded">배민</span>
+              <span class="px-2 py-1 bg-green-100 text-green-700 rounded">오아시스</span>
+              <span class="text-gray-400">← 자동 감지</span>
             </div>
             
             <button onclick="handleOrderFileUpload()" 
@@ -48086,43 +48125,67 @@ function renderOrderUpload() {
           </div>
         </div>
         
-        <!-- 텍스트 직접 입력 (PDF 복사 붙여넣기용) -->
-        <div class="bg-white rounded-xl shadow-md p-6">
-          <h3 class="text-lg font-semibold text-gray-800 mb-4">
-            <i class="fas fa-paste mr-2 text-purple-600"></i>텍스트 붙여넣기 (PDF용)
-          </h3>
-          
+        <!-- 텍스트 붙여넣기 탭 -->
+        <div id="panel-text" class="p-6 hidden">
           <div class="space-y-4">
+            <div class="flex gap-2 mb-3">
+              <span class="text-sm text-gray-600">지원 형식:</span>
+              <span class="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs">GS</span>
+              <span class="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs">온도감</span>
+              <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">CJ</span>
+              <span class="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-xs">기타</span>
+            </div>
+            
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">발주 내용 (PDF에서 복사)</label>
-              <textarea id="order-upload-text" rows="8" 
-                placeholder="PDF에서 복사한 내용을 붙여넣기&#10;예시:&#10;플틴플러스 300g 50개&#10;잡곡빵 밋슈디 100개"
+              <label class="block text-sm font-medium text-gray-700 mb-1">발주 내용 (복사 붙여넣기)</label>
+              <textarea id="order-upload-text" rows="10" 
+                placeholder="발주서에서 복사한 내용을 붙여넣기하세요.
+
+[지원 형식 예시]
+
+■ 바코드 + 수량:
+8809424537015  50
+8809424537022  30
+
+■ 제품명 + 수량:
+플틴플러스 300g  50개
+잡곡빵 밋슈디  100
+
+■ 탭/콤마 구분:
+8809424537015	플틴플러스	50
+"
                 class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500 font-mono text-sm"></textarea>
-              <p class="text-xs text-gray-500 mt-1">※ 형식: 제품명 수량개 (예: 플틴플러스 50개)</p>
+            </div>
+            
+            <div class="bg-gray-50 rounded-lg p-3 text-sm">
+              <p class="font-medium text-gray-700 mb-1"><i class="fas fa-info-circle mr-1 text-blue-500"></i>자동 인식 규칙:</p>
+              <ul class="text-gray-600 text-xs space-y-1 ml-4 list-disc">
+                <li><b>바코드</b>: 13자리 숫자 (8809로 시작)</li>
+                <li><b>수량</b>: 숫자 또는 "50개", "100박스" 형식</li>
+                <li><b>제품명</b>: 바코드/수량 외 텍스트는 제품명으로 처리</li>
+              </ul>
             </div>
             
             <button onclick="handleOrderTextUpload()" 
               class="w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 font-medium">
-              <i class="fas fa-paper-plane mr-2"></i>텍스트 업로드
+              <i class="fas fa-paper-plane mr-2"></i>텍스트 파싱 & 업로드
             </button>
           </div>
         </div>
-      </div>
-      
-      <!-- JSON 직접 입력 (고급) -->
-      <div class="bg-white rounded-xl shadow-md p-6">
-        <details>
-          <summary class="text-lg font-semibold text-gray-800 cursor-pointer">
-            <i class="fas fa-code mr-2 text-blue-600"></i>고급: JSON 직접 입력
-          </summary>
-          
-          <div class="mt-4 space-y-4">
+        
+        <!-- JSON 입력 탭 -->
+        <div id="panel-json" class="p-6 hidden">
+          <div class="space-y-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">제품 목록 (JSON 배열)</label>
-              <textarea id="order-upload-json" rows="6" 
-                placeholder='[&#10;  {"product_code": "PR001", "quantity": 100},&#10;  {"product_code": "PR010", "quantity": 50}&#10;]'
+              <textarea id="order-upload-json" rows="8" 
+                placeholder='[
+  {"barcode": "8809424537015", "quantity": 50},
+  {"product_code": "PR001", "quantity": 100},
+  {"product_name": "플틴플러스 300g", "quantity": 30}
+]'
                 class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 font-mono text-sm"></textarea>
-              <p class="text-xs text-gray-500 mt-1">※ product_code 또는 product_name + quantity</p>
+              <p class="text-xs text-gray-500 mt-1">※ barcode, product_code, product_name 중 하나 + quantity</p>
             </div>
             
             <button onclick="handleOrderJsonUpload()" 
@@ -48130,7 +48193,7 @@ function renderOrderUpload() {
               <i class="fas fa-database mr-2"></i>JSON 업로드
             </button>
           </div>
-        </details>
+        </div>
       </div>
       
       <!-- 결과 영역 -->
@@ -48144,6 +48207,36 @@ function renderOrderUpload() {
       </div>
     </div>
   `;
+}
+
+// ★ v3.5.89: 발주서 업로드 탭 전환
+function switchOrderUploadTab(tab) {
+  const tabs = ['file', 'text', 'json'];
+  tabs.forEach(t => {
+    const tabBtn = document.getElementById('tab-' + t);
+    const panel = document.getElementById('panel-' + t);
+    if (t === tab) {
+      tabBtn.className = 'flex-1 px-4 py-3 text-center font-medium text-blue-600 border-b-2 border-blue-600 bg-blue-50';
+      panel.classList.remove('hidden');
+    } else {
+      tabBtn.className = 'flex-1 px-4 py-3 text-center font-medium text-gray-600 hover:bg-gray-50';
+      panel.classList.add('hidden');
+    }
+  });
+}
+
+// ★ v3.5.89: 파일 선택 시 라벨 업데이트
+function updateFileLabel() {
+  const input = document.getElementById('order-upload-file');
+  const label = document.getElementById('file-label');
+  if (input.files && input.files.length > 0) {
+    if (input.files.length === 1) {
+      label.textContent = input.files[0].name;
+    } else {
+      label.textContent = input.files.length + '개 파일 선택됨';
+    }
+    label.classList.add('text-blue-600', 'font-medium');
+  }
 }
 
 // ============================================================
@@ -48390,10 +48483,12 @@ function parsePdfText(text) {
 }
 
 // 파일 업로드 처리 (엑셀/PDF)
+// ★ v3.5.89: 파일 업로드 - 판매처 추가
 async function handleOrderFileUpload() {
   const fileInput = document.getElementById('order-upload-file');
   const dateInput = document.getElementById('order-upload-date');
   const channelSelect = document.getElementById('order-upload-channel');
+  const sellerInput = document.getElementById('order-upload-seller');  // ★ 판매처 추가
   
   if (!fileInput.files || fileInput.files.length === 0) {
     showToast('파일을 선택하세요', 'warning');
@@ -49073,13 +49168,14 @@ async function handleOrderFileUpload() {
     if (window._oasisFiles && window._oasisFiles.length > 0) {
       console.log('★★★ 오아시스 파일 일괄 처리 시작:', window._oasisFiles.length, '개 ★★★');
       
-      // 모든 오아시스 파일을 하나의 FormData로 전송
+      // ★ v3.5.89: 모든 오아시스 파일을 하나의 FormData로 전송 (판매처 추가)
       const formData = new FormData();
       for (const oasisFile of window._oasisFiles) {
         formData.append('files', oasisFile);  // 복수 파일
       }
       formData.append('order_date', dateInput.value);
       formData.append('channel', '오아시스');
+      formData.append('seller', sellerInput?.value || '');  // ★ 판매처 추가
       
       try {
         const oasisResponse = await fetch('/api/order/upload-multi', {
@@ -49124,7 +49220,7 @@ async function handleOrderFileUpload() {
       console.log(`  [${idx}] ${item.product_name} x${item.quantity} | barcode: ${item.barcode || '없음'} | sku: ${item.sku_code || '없음'}`);
     });
     
-    // JSON API로 업로드 (바코드 포함, 제품명 매칭)
+    // ★ v3.5.89: JSON API로 업로드 (바코드 포함, 판매처 추가)
     const result = await api('/order/upload-json', 'POST', {
       items: allItems.map(i => ({ 
         product_name: i.product_name, 
@@ -49132,7 +49228,8 @@ async function handleOrderFileUpload() {
         barcode: i.barcode || undefined,
         sku_code: i.sku_code || undefined  // ★ SKU코드 추가 (배민용)
       })),
-      channel: channelSelect.value,
+      channel: channelSelect.value || '',
+      seller: sellerInput?.value || '',  // ★ 판매처 추가
       order_date: dateInput.value
     });
     
@@ -49148,10 +49245,12 @@ async function handleOrderFileUpload() {
 }
 
 // 텍스트 업로드 처리
+// ★ v3.5.89: 텍스트 붙여넣기 업로드 - 판매처 추가, 클라이언트 파싱 개선
 async function handleOrderTextUpload() {
   const textInput = document.getElementById('order-upload-text');
   const dateInput = document.getElementById('order-upload-date');
   const channelSelect = document.getElementById('order-upload-channel');
+  const sellerInput = document.getElementById('order-upload-seller');
   
   const text = textInput.value.trim();
   if (!text) {
@@ -49162,14 +49261,20 @@ async function handleOrderTextUpload() {
   showLoading('텍스트 분석 중...');
   
   try {
+    // ★ v3.5.89: 클라이언트에서 먼저 기본 파싱 시도
+    const parsedItems = parseOrderText(text);
+    console.log('★ 텍스트 파싱 결과:', parsedItems);
+    
     const result = await api('/order/upload-text', 'POST', {
       text: text,
-      channel: channelSelect.value,
+      parsed_items: parsedItems,  // 파싱 결과도 함께 전송
+      channel: channelSelect.value || '',
+      seller: sellerInput?.value || '',  // ★ 판매처 추가
       order_date: dateInput.value
     });
     
     hideLoading();
-    displayOrderUploadResult(result, result.summary?.total_parsed || 0);
+    displayOrderUploadResult(result, result.summary?.total_parsed || parsedItems.length);
     
   } catch (error) {
     hideLoading();
@@ -49177,11 +49282,69 @@ async function handleOrderTextUpload() {
   }
 }
 
+// ★ v3.5.89: 텍스트 파싱 함수 (GS, 온도감, CJ 등 범용)
+function parseOrderText(text) {
+  const items = [];
+  const lines = text.split(/\n/).map(l => l.trim()).filter(l => l);
+  
+  console.log('★ parseOrderText 시작, 라인 수:', lines.length);
+  
+  for (const line of lines) {
+    // 빈 줄, 헤더 행 스킵
+    if (!line || /^(번호|품목|제품|바코드|수량|합계|No|#)/i.test(line)) continue;
+    
+    // 탭이나 여러 공백으로 구분된 컬럼 분리
+    const parts = line.split(/\t|  +/).map(p => p.trim()).filter(p => p);
+    
+    let barcode = '';
+    let productName = '';
+    let quantity = 0;
+    
+    for (const part of parts) {
+      // 바코드 패턴 (13자리 또는 8809로 시작하는 숫자)
+      if (/^(880\d{10}|\d{13})$/.test(part)) {
+        barcode = part;
+      }
+      // 수량 패턴: 숫자 또는 "50개", "100박스" 등
+      else if (/^(\d+)(개|박스|ea|EA|EA개|box)?$/.test(part)) {
+        const match = part.match(/^(\d+)/);
+        if (match) {
+          const num = parseInt(match[1]);
+          // 수량은 보통 1-9999 범위
+          if (num > 0 && num < 10000) {
+            quantity = num;
+          }
+        }
+      }
+      // 그 외 텍스트는 제품명
+      else if (part.length > 1 && !/^\d+$/.test(part)) {
+        // 이미 제품명이 있으면 합치기
+        productName = productName ? productName + ' ' + part : part;
+      }
+    }
+    
+    // 최소 수량은 있어야 함
+    if (quantity > 0 && (barcode || productName)) {
+      items.push({
+        barcode: barcode || null,
+        product_name: productName || null,
+        quantity: quantity,
+        raw_line: line
+      });
+    }
+  }
+  
+  console.log('★ parseOrderText 결과:', items.length, '건');
+  return items;
+}
+
 // JSON 업로드 처리
+// ★ v3.5.89: JSON 업로드 - 판매처 추가
 async function handleOrderJsonUpload() {
   const jsonInput = document.getElementById('order-upload-json');
   const dateInput = document.getElementById('order-upload-date');
   const channelSelect = document.getElementById('order-upload-channel');
+  const sellerInput = document.getElementById('order-upload-seller');
   
   const jsonText = jsonInput.value.trim();
   if (!jsonText) {
@@ -49205,7 +49368,8 @@ async function handleOrderJsonUpload() {
   try {
     const result = await api('/order/upload-json', 'POST', {
       items: items,
-      channel: channelSelect.value,
+      channel: channelSelect.value || '',
+      seller: sellerInput?.value || '',  // ★ 판매처 추가
       order_date: dateInput.value
     });
     

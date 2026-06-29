@@ -655,6 +655,52 @@ function showToast(message, type = 'success') {
   setTimeout(() => toast.remove(), 3000);
 }
 
+// ★★★ v3.5.95: 만료 LOT 경고 모달 ★★★
+function showExpiredLotsWarningModal(warnings) {
+  if (!warnings || warnings.length === 0) return;
+  
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+  modal.id = 'expired-lots-modal';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden">
+      <div class="bg-yellow-500 px-6 py-4">
+        <h2 class="text-xl font-bold text-white flex items-center">
+          <i class="fas fa-exclamation-triangle mr-2"></i>
+          소비기한 만료 LOT 제외 알림
+        </h2>
+      </div>
+      <div class="p-6">
+        <p class="text-gray-700 mb-4">
+          <strong>FEFO(선입선출) 원칙에 따라 다음 LOT들은 소비기한이 만료되어 제외되고,<br>
+          유효한 다음 LOT가 사용되었습니다.</strong>
+        </p>
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 max-h-60 overflow-y-auto">
+          <ul class="space-y-2 text-sm">
+            ${warnings.map(w => `<li class="flex items-start gap-2">
+              <i class="fas fa-exclamation-circle text-yellow-600 mt-0.5"></i>
+              <span>${w}</span>
+            </li>`).join('')}
+          </ul>
+        </div>
+        <div class="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <p class="text-red-700 text-sm">
+            <i class="fas fa-info-circle mr-1"></i>
+            <strong>조치 필요:</strong> 만료된 원료 LOT는 폐기 처리하거나 재고 조정이 필요합니다.
+          </p>
+        </div>
+      </div>
+      <div class="px-6 py-4 bg-gray-50 flex justify-end">
+        <button onclick="document.getElementById('expired-lots-modal').remove()" 
+                class="px-6 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+          확인
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
 // 전역 로딩 오버레이 표시/숨김
 let loadingCount = 0;
 function showLoading(text = '처리 중...') {
@@ -24701,6 +24747,17 @@ async function executeOrderProduction() {
         if (lotRows > 0 || stockRows > 0) {
           console.log(`[v3.5.91] 자동 갱신 성공: LOT매칭 ${lotRows}건, 일별수불부 ${stockRows}건`);
         }
+      }
+      
+      // ★★★ v3.5.95: 만료 LOT 경고 표시 ★★★
+      if (result.expired_lots_warning && result.expired_lots_warning.length > 0) {
+        console.warn('[v3.5.95] 만료 LOT 제외됨:', result.expired_lots_warning);
+        const warningCount = result.expired_lots_warning.length;
+        showToast(`⚠️ 소비기한 만료 LOT ${warningCount}건 제외됨 (다음 LOT 사용)`, 'warning');
+        // 상세 경고 모달 표시
+        setTimeout(() => {
+          showExpiredLotsWarningModal(result.expired_lots_warning);
+        }, 500);
       }
       
       cancelOrderUpload();

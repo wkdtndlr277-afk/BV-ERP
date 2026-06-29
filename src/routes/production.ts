@@ -4187,6 +4187,8 @@ productionRoutes.post('/simple-batch', async (c) => {
       lot_matching: lotMatchingResult ? { success: true, rows: lotMatchingResult.totalRows } : { success: false, error: autoUpdateError },
       daily_stock: dailyStockResult ? { success: true, rows: dailyStockResult.new_rows } : { success: false, error: autoUpdateError },
       auto_update_error: autoUpdateError,
+      // ★★★ v3.5.95: 만료 LOT 경고 추가 ★★★
+      expired_lots_warning: lotMatchingResult?.expiredLotsWarning || null,
       message: `${items.length}건 생산 등록 완료${lotMatchingResult ? ' + LOT매칭 자동생성' : ''}${dailyStockResult ? ' + 일별수불부 자동추가' : ''}`,
       note: autoUpdateError ? `자동 갱신 오류: ${autoUpdateError}` : '생산 등록 시 LOT 매칭과 일별수불부가 자동으로 연속성 있게 갱신됩니다.'
     });

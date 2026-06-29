@@ -1131,7 +1131,12 @@ export class GoogleSheetsService {
   }
 
   // ★ v3.5.77: LOT 매칭 재구축 (특정 날짜들)
-  async rebuildLotMatchingForDates(dates: string[]): Promise<{ totalRows: number; dateResults: Record<string, number> }> {
+  // ★★★ v3.5.95: 만료 LOT 정보 포함 반환 ★★★
+  async rebuildLotMatchingForDates(dates: string[]): Promise<{ 
+    totalRows: number; 
+    dateResults: Record<string, number>;
+    expiredLotsWarning?: string[];  // 만료로 건너뛴 LOT 경고 목록
+  }> {
     // 1. 기존 로트매칭 데이터 읽기
     const existingData = await this.readSheet('로트매칭', 'A2:G10000');
     
@@ -1167,6 +1172,10 @@ export class GoogleSheetsService {
       inboundByMaterial[code].sort((a, b) => a.expiry.localeCompare(b.expiry));
     }
     
+    // ★★★ v3.5.95: 소비기한 만료 LOT 필터링을 위한 기준일 ★★★
+    const today = new Date().toISOString().split('T')[0];  // YYYY-MM-DD
+    console.log(`[updateLotMatching] 소비기한 검증 기준일: ${today}`);
+    
     // 4. 생산실적 데이터 읽기
     const productionData = await this.readSheet('생산실적', 'A2:H5000');
     
@@ -1196,6 +1205,7 @@ export class GoogleSheetsService {
     // 6. 대상 날짜별 LOT 매칭 생성
     const newRows: any[][] = [];
     const dateResults: Record<string, number> = {};
+    const allExpiredLotsWarnings: string[] = [];  // ★★★ v3.5.95: 만료 LOT 경고 수집 ★★★
     
     for (const targetDate of dates) {
       const cleanDate = targetDate.replace(/^'/, '');
@@ -1219,13 +1229,24 @@ export class GoogleSheetsService {
           const totalUsage = item.usage * quantity;
           if (totalUsage <= 0) continue;
           
-          // FEFO: 소비기한 빠른 LOT부터 차감
+          // ★★★ v3.5.95: FEFO + 소비기한 만료 검증 ★★★
+          // 소비기한 빠른 LOT부터 차감하되, 만료된 LOT는 건너뜀
           let remainingUsage = totalUsage;
           const lots = inboundByMaterial[item.materialCode] || [];
+          const skippedExpiredLots: string[] = [];  // 만료로 건너뛴 LOT 목록
           
           for (const lot of lots) {
             if (remainingUsage <= 0) break;
             if (lot.remaining <= 0) continue;
+            
+            // ★★★ 소비기한 만료 체크 (생산일 기준) ★★★
+            const productionDateForCheck = cleanDate;  // 생산일
+            if (lot.expiry && lot.expiry < productionDateForCheck) {
+              // 만료된 LOT는 건너뛰기
+              console.log(`[FEFO] 만료 LOT 건너뜀: ${item.materialCode} LOT:${lot.lot} 소비기한:${lot.expiry} < 생산일:${productionDateForCheck}`);
+              skippedExpiredLots.push(`${lot.lot}(만료:${lot.expiry})`);
+              continue;
+            }
             
             const useQty = Math.min(lot.remaining, remainingUsage);
             lot.remaining -= useQty;
@@ -1244,15 +1265,25 @@ export class GoogleSheetsService {
             dateRowCount++;
           }
           
+          // 만료 LOT로 인한 재고 부족 경고 로깅 + 응답용 수집
+          if (skippedExpiredLots.length > 0) {
+            const warningMsg = `${cleanDate} ${item.materialCode}(${item.materialName}): 만료LOT ${skippedExpiredLots.length}건 제외 - ${skippedExpiredLots.join(', ')}`;
+            console.warn(`[FEFO] ${warningMsg}`);
+            allExpiredLotsWarnings.push(warningMsg);
+          }
+          
           // 재고 부족 시 로트 없이 기록
           if (remainingUsage > 0) {
+            const expiredNote = skippedExpiredLots.length > 0 
+              ? `재고부족(만료LOT제외)` 
+              : 'N/A';
             newRows.push([
               `'${cleanDate}`,
               productLot,
               item.materialCode,
               item.materialName,
               Math.round(remainingUsage * 10000) / 10000,
-              'N/A',
+              expiredNote,
               'N/A'
             ]);
             dateRowCount++;
@@ -1279,7 +1310,12 @@ export class GoogleSheetsService {
       await this.writeSheet('로트매칭', 'A2', allRows);
     }
     
-    return { totalRows: newRows.length, dateResults };
+    // ★★★ v3.5.95: 만료 LOT 경고 포함 반환 ★★★
+    return { 
+      totalRows: newRows.length, 
+      dateResults,
+      expiredLotsWarning: allExpiredLotsWarnings.length > 0 ? allExpiredLotsWarnings : undefined
+    };
   }
 
   // ★ v3.5.77: 일별수불부 날짜 추가 (연속성 보장)

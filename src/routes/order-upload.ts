@@ -1862,4 +1862,298 @@ orderUpload.post('/ai-match', async (c) => {
   }
 });
 
+// ★ v3.5.78: 오아시스 발주서 파싱 (HTML 형식 .xls 파일)
+// 바코드, 제품명, 수량 추출 → 생산등록/일별수불부 연동
+orderUpload.post('/parse-oasis', async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get('file') as File;
+    const orderDate = (formData.get('order_date') as string) || new Date().toISOString().split('T')[0];
+    const deliveryDate = (formData.get('delivery_date') as string) || '';
+    
+    if (!file) {
+      return c.json({ success: false, error: '파일이 없습니다' }, 400);
+    }
+    
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.xls') && !fileName.endsWith('.xlsx')) {
+      return c.json({ success: false, error: '오아시스 발주서는 .xls 또는 .xlsx 파일만 지원합니다' }, 400);
+    }
+    
+    // 파일 내용 읽기
+    const arrayBuffer = await file.arrayBuffer();
+    const content = new TextDecoder('euc-kr').decode(arrayBuffer);
+    
+    // HTML 테이블 파싱
+    const items = parseOasisHtmlTable(content);
+    
+    if (items.length === 0) {
+      // UTF-8로 다시 시도
+      const contentUtf8 = new TextDecoder('utf-8').decode(arrayBuffer);
+      const itemsUtf8 = parseOasisHtmlTable(contentUtf8);
+      if (itemsUtf8.length === 0) {
+        return c.json({ 
+          success: false, 
+          error: '오아시스 발주서를 파싱할 수 없습니다. 파일 형식을 확인하세요.',
+          hint: '오아시스에서 다운로드한 .xls 파일을 업로드하세요'
+        }, 400);
+      }
+      items.push(...itemsUtf8);
+    }
+    
+    // 바코드별 합계 (같은 바코드는 수량 합산)
+    const barcodeMap = new Map<string, { barcode: string; product_name: string; quantity: number }>();
+    for (const item of items) {
+      const existing = barcodeMap.get(item.barcode);
+      if (existing) {
+        existing.quantity += item.quantity;
+      } else {
+        barcodeMap.set(item.barcode, { ...item });
+      }
+    }
+    const aggregatedItems = Array.from(barcodeMap.values());
+    
+    // 입고예정일 추출 (첫 번째 아이템의 delivery_date)
+    const extractedDeliveryDate = items[0]?.delivery_date || deliveryDate;
+    
+    // 제품마스터와 매칭 (바코드 기준)
+    const service = getSheetService(c);
+    let matched: any[] = [];
+    let unmatched: any[] = [];
+    
+    if (service) {
+      const matchResult = await matchOasisBarcodesFromSheets(service, aggregatedItems);
+      matched = matchResult.matched;
+      unmatched = matchResult.unmatched;
+    } else {
+      // 시트 서비스 없으면 모두 미매칭
+      unmatched = aggregatedItems.map(item => ({
+        barcode: item.barcode,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        fail_reason: 'Google Sheets 연결 실패'
+      }));
+    }
+    
+    return c.json({
+      success: true,
+      channel: '오아시스',
+      order_date: orderDate,
+      delivery_date: extractedDeliveryDate,
+      summary: {
+        total_rows: items.length,
+        unique_products: aggregatedItems.length,
+        total_quantity: aggregatedItems.reduce((sum, item) => sum + item.quantity, 0),
+        matched: matched.length,
+        unmatched: unmatched.length
+      },
+      matched_items: matched,
+      unmatched_items: unmatched,
+      message: `오아시스 발주서 파싱 완료: ${matched.length}건 매칭, ${unmatched.length}건 미매칭`
+    });
+    
+  } catch (error: any) {
+    console.error('[오아시스 파싱] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★ 오아시스 HTML 테이블 파싱 함수
+function parseOasisHtmlTable(html: string): { barcode: string; product_name: string; quantity: number; delivery_date: string }[] {
+  const results: { barcode: string; product_name: string; quantity: number; delivery_date: string }[] = [];
+  
+  // <tr> 태그로 행 추출
+  const rowRegex = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  const cellRegex = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+  
+  let rowMatch;
+  let isHeader = true;
+  let headerMap: Record<string, number> = {};
+  
+  while ((rowMatch = rowRegex.exec(html)) !== null) {
+    const rowContent = rowMatch[1];
+    const cells: string[] = [];
+    
+    let cellMatch;
+    const cellRegexLocal = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    while ((cellMatch = cellRegexLocal.exec(rowContent)) !== null) {
+      // HTML 태그 제거하고 텍스트만 추출
+      const cellText = cellMatch[1]
+        .replace(/<[^>]*>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .trim();
+      cells.push(cellText);
+    }
+    
+    if (cells.length === 0) continue;
+    
+    // 첫 번째 유효한 행을 헤더로 인식
+    if (isHeader && cells.some(c => c.includes('바코드') || c.includes('상품코드') || c.includes('No'))) {
+      // 헤더 매핑
+      cells.forEach((cell, idx) => {
+        if (cell.includes('바코드')) headerMap['barcode'] = idx;
+        if (cell.includes('상 품 명') || cell.includes('상품명')) headerMap['product_name'] = idx;
+        if (cell.includes('출고수량') || cell.includes('수량')) headerMap['quantity'] = idx;
+        if (cell.includes('입고예정') || cell.includes('납품일')) headerMap['delivery_date'] = idx;
+      });
+      isHeader = false;
+      continue;
+    }
+    
+    // 소계/분류소계 행 건너뛰기
+    if (cells[0]?.includes('소 계') || cells[0]?.includes('분 류')) continue;
+    
+    // No 컬럼이 숫자인 행만 처리 (실제 데이터 행)
+    const firstCell = cells[0] || '';
+    if (!/^\d+$/.test(firstCell)) continue;
+    
+    // 기본 인덱스 (오아시스 표준 형식)
+    // 0:No, 1:주문구분, 2:매입처, 3:분류명, 4:상품코드, 5:상품명, 6:매장코드, 7:매장명, 8:입고예정, 9:출고수량, 10:단위, 11:출고금액, 12:바코드, 13:주문일자, 14:전표번호
+    const barcodeIdx = headerMap['barcode'] ?? 12;
+    const productNameIdx = headerMap['product_name'] ?? 5;
+    const quantityIdx = headerMap['quantity'] ?? 9;
+    const deliveryDateIdx = headerMap['delivery_date'] ?? 8;
+    
+    const barcode = cells[barcodeIdx]?.trim() || '';
+    let productName = cells[productNameIdx]?.trim() || '';
+    const quantityStr = cells[quantityIdx]?.trim() || '0';
+    const deliveryDate = cells[deliveryDateIdx]?.trim() || '';
+    
+    // 제품명 앞의 + 기호 제거
+    productName = productName.replace(/^\+/, '').trim();
+    
+    // 수량 파싱
+    const quantity = parseInt(quantityStr.replace(/,/g, '')) || 0;
+    
+    // 유효한 데이터만 추가
+    if (barcode && productName && quantity > 0) {
+      results.push({ barcode, product_name: productName, quantity, delivery_date: deliveryDate });
+    }
+  }
+  
+  return results;
+}
+
+// ★ 오아시스 바코드 매칭 (제품마스터 시트 기준)
+async function matchOasisBarcodesFromSheets(
+  service: GoogleSheetsService,
+  items: { barcode: string; product_name: string; quantity: number }[]
+): Promise<{
+  matched: { product_code: string; product_name: string; barcode: string; quantity: number; matched_name: string }[];
+  unmatched: { barcode: string; product_name: string; quantity: number; fail_reason: string }[];
+}> {
+  const matched: any[] = [];
+  const unmatched: any[] = [];
+  
+  // 제품마스터 시트에서 바코드 매핑 로드
+  // 구조: A=제품코드, B=제품명, C=바코드/SKU코드, D=발주상품명, E=판매채널, F=소비기한, G=박스수량, H=등록일
+  let productMaster: any[][] = [];
+  try {
+    productMaster = await service.readSheet('제품마스터', 'A2:H');
+  } catch (e) {
+    console.error('[오아시스 매칭] 제품마스터 읽기 실패:', e);
+    return {
+      matched: [],
+      unmatched: items.map(item => ({
+        barcode: item.barcode,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        fail_reason: '제품마스터 시트 읽기 실패'
+      }))
+    };
+  }
+  
+  // 바코드 → 제품 매핑 생성
+  const barcodeToProduct = new Map<string, { code: string; name: string }>();
+  for (const row of productMaster) {
+    const productCode = row[0]?.toString().trim() || '';
+    const productName = row[1]?.toString().trim() || '';
+    const barcode = row[2]?.toString().trim() || '';
+    
+    if (barcode && productCode) {
+      barcodeToProduct.set(barcode, { code: productCode, name: productName });
+    }
+  }
+  
+  console.log('[오아시스 매칭] 바코드 등록 수:', barcodeToProduct.size);
+  
+  // 매칭 수행
+  for (const item of items) {
+    const product = barcodeToProduct.get(item.barcode);
+    
+    if (product) {
+      matched.push({
+        product_code: product.code,
+        product_name: product.name,
+        barcode: item.barcode,
+        quantity: item.quantity,
+        matched_name: item.product_name,
+        channel: '오아시스'
+      });
+    } else {
+      unmatched.push({
+        barcode: item.barcode,
+        product_name: item.product_name,
+        quantity: item.quantity,
+        fail_reason: '바코드 미등록'
+      });
+    }
+  }
+  
+  return { matched, unmatched };
+}
+
+// ★ v3.5.78: 오아시스 발주 등록 (파싱 후 발주서 시트 저장 + 생산등록 연동)
+orderUpload.post('/register-oasis', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { items, order_date, delivery_date } = body;
+    
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: 'items 배열이 필요합니다' }, 400);
+    }
+    
+    const orderDate = order_date || new Date().toISOString().split('T')[0];
+    const channel = '오아시스';
+    
+    const service = getSheetService(c);
+    if (!service) {
+      return c.json({ success: false, error: 'Google Sheets 연결 실패' }, 500);
+    }
+    
+    // 1. 발주서 시트에 저장
+    // 구조: A=날짜, B=제품코드, C=제품명, D=수량, E=납품일, F=채널, G=비고, H=상태
+    const orderRows = items.map((item: any) => [
+      `'${orderDate}`,           // A: 발주일
+      item.product_code,          // B: 제품코드
+      item.product_name,          // C: 제품명
+      item.quantity,              // D: 수량
+      delivery_date || '',        // E: 납품일
+      channel,                    // F: 채널 (오아시스)
+      `바코드:${item.barcode}`,   // G: 비고 (원본 바코드)
+      '대기'                      // H: 상태
+    ]);
+    
+    await service.appendSheet('발주서', orderRows);
+    
+    return c.json({
+      success: true,
+      channel,
+      order_date: orderDate,
+      delivery_date,
+      registered_count: items.length,
+      total_quantity: items.reduce((sum: number, item: any) => sum + item.quantity, 0),
+      message: `오아시스 발주 ${items.length}건 등록 완료`,
+      next_step: '발주목록에서 생산시작 → 생산완료 진행하면 LOT매칭 및 일별수불부가 자동 갱신됩니다.'
+    });
+    
+  } catch (error: any) {
+    console.error('[오아시스 등록] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default orderUpload;

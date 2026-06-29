@@ -1306,8 +1306,40 @@ export class GoogleSheetsService {
       return rowDate === prevDate;
     });
     
+    // ★★★ v3.5.90: 전일 데이터 없으면 자동 생성 (재귀) ★★★
     if (prevDayData.length === 0) {
-      throw new Error(`전일(${prevDate}) 데이터가 없습니다. 먼저 전일 데이터를 생성하세요.`);
+      console.log(`[addDailyStockDate] 전일(${prevDate}) 데이터 없음 → 자동 생성 시도`);
+      
+      // 무한 재귀 방지: 최대 7일까지만 (1주일)
+      const baseDate = new Date('2026-06-01');  // 기준일 (이 날짜 이전은 생성 불가)
+      if (prevDateObj < baseDate) {
+        throw new Error(`기준일(${baseDate.toISOString().split('T')[0]}) 이전 데이터는 생성할 수 없습니다.`);
+      }
+      
+      // 전일 데이터 재귀 생성
+      await this.addDailyStockDate(prevDate);
+      
+      // 재귀 후 다시 데이터 읽기
+      const refreshedData = await this.readSheet('일별수불부', 'A2:H5000');
+      const refreshedPrevData = refreshedData.filter(row => {
+        const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+        return rowDate === prevDate;
+      });
+      
+      if (refreshedPrevData.length === 0) {
+        throw new Error(`전일(${prevDate}) 데이터 자동 생성 실패`);
+      }
+      
+      // 새로 읽은 전일 데이터로 계속 진행
+      for (const row of refreshedPrevData) {
+        const code = row[1]?.toString() || '';
+        const name = row[2]?.toString() || '';
+        const current = parseFloat(row[6]?.toString() || '0') || 0;
+        const unit = row[7]?.toString() || 'kg';
+        prevStockMap[code] = { name, current, unit };
+      }
+      
+      console.log(`[addDailyStockDate] 전일(${prevDate}) 자동 생성 완료, ${refreshedPrevData.length}건`);
     }
     
     // 전날 현재고 맵

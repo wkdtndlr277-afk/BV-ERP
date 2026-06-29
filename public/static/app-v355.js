@@ -49150,8 +49150,12 @@ async function handleOrderJsonUpload() {
   }
 }
 
-// 업로드 결과 표시
+// ★ v3.5.81: 업로드 결과 표시 - 오아시스 지원 개선
 function displayOrderUploadResult(result, totalParsed) {
+  console.log('★★★ displayOrderUploadResult 호출 ★★★');
+  console.log('result:', result);
+  console.log('totalParsed:', totalParsed);
+  
   const resultDiv = document.getElementById('order-upload-result');
   const contentDiv = document.getElementById('order-upload-result-content');
   
@@ -49170,20 +49174,31 @@ function displayOrderUploadResult(result, totalParsed) {
   const matched = result.matched_items || result.registered_items || [];
   const unmatched = result.unmatched_items || [];
   
+  // ★ v3.5.81: summary에서 직접 값 가져오기 (우선순위 높음)
+  const displayTotalParsed = summary.total_parsed || totalParsed || 0;
+  const displayUniqueProducts = summary.unique_products || matched.length + unmatched.length;
+  const displayMatched = summary.matched || summary.registered || matched.length;
+  const displayUnmatched = summary.unmatched || unmatched.length;
+  
+  console.log('표시값 - totalParsed:', displayTotalParsed, 'unique:', displayUniqueProducts, 'matched:', displayMatched, 'unmatched:', displayUnmatched);
+  
+  // ★ v3.5.81: 오아시스 파일 타입 확인
+  const isOasis = result.file_type === 'oasis_html' || result.channel === '오아시스';
+  
   contentDiv.innerHTML = `
     <div class="space-y-4">
       <!-- 요약 -->
       <div class="grid grid-cols-4 gap-4">
         <div class="bg-blue-50 rounded-lg p-4 text-center">
-          <p class="text-2xl font-bold text-blue-700">${totalParsed}</p>
-          <p class="text-sm text-gray-600">파싱된 항목</p>
+          <p class="text-2xl font-bold text-blue-700">${isOasis ? displayUniqueProducts : displayTotalParsed}</p>
+          <p class="text-sm text-gray-600">${isOasis ? '고유 제품' : '파싱된 항목'}</p>
         </div>
         <div class="bg-green-50 rounded-lg p-4 text-center">
-          <p class="text-2xl font-bold text-green-700">${summary.matched || summary.registered || matched.length}</p>
+          <p class="text-2xl font-bold text-green-700">${displayMatched}</p>
           <p class="text-sm text-gray-600">매칭 성공</p>
         </div>
         <div class="bg-red-50 rounded-lg p-4 text-center">
-          <p class="text-2xl font-bold text-red-700">${summary.unmatched || unmatched.length}</p>
+          <p class="text-2xl font-bold text-red-700">${displayUnmatched}</p>
           <p class="text-sm text-gray-600">매칭 실패</p>
         </div>
         <div class="bg-gray-50 rounded-lg p-4 text-center">

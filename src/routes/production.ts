@@ -4143,6 +4143,27 @@ productionRoutes.post('/simple-batch', async (c) => {
       }
     }
     
+    // ★ v3.5.77: LOT 매칭 + 일별수불부 자동 갱신
+    let lotMatchingResult = null;
+    let dailyStockResult = null;
+    
+    if (service && sheetSent) {
+      try {
+        // 4-1. LOT 매칭 자동 생성 (해당 날짜만)
+        console.log(`[production/simple-batch] LOT 매칭 생성 시작: ${prod_date}`);
+        lotMatchingResult = await service.rebuildLotMatchingForDates([prod_date]);
+        console.log(`[production/simple-batch] LOT 매칭 완료: ${lotMatchingResult.totalRows}행`);
+        
+        // 4-2. 일별수불부 자동 추가 (전일 현재고 → 당일 전일재고 연속성 유지)
+        console.log(`[production/simple-batch] 일별수불부 추가 시작: ${prod_date}`);
+        dailyStockResult = await service.addDailyStockDate(prod_date);
+        console.log(`[production/simple-batch] 일별수불부 완료: ${dailyStockResult.new_rows}행`);
+      } catch (autoError: any) {
+        console.error('[production/simple-batch] 자동 갱신 실패:', autoError.message);
+        // 자동 갱신 실패해도 생산 등록은 성공으로 처리
+      }
+    }
+    
     return c.json({
       success: true,
       prod_date,
@@ -4151,8 +4172,10 @@ productionRoutes.post('/simple-batch', async (c) => {
       db_saved: dbSaved,
       sheet_sent: sheetSent,
       orders_updated: ordersUpdated,
-      message: `${items.length}건 생산 등록 완료`,
-      note: '원료 사용량, FEFO 로트매칭은 구글시트에서 자동 계산됩니다.'
+      lot_matching: lotMatchingResult ? { success: true, rows: lotMatchingResult.totalRows } : null,
+      daily_stock: dailyStockResult ? { success: true, rows: dailyStockResult.new_rows } : null,
+      message: `${items.length}건 생산 등록 완료${lotMatchingResult ? ' + LOT매칭 자동생성' : ''}${dailyStockResult ? ' + 일별수불부 자동추가' : ''}`,
+      note: '생산 등록 시 LOT 매칭과 일별수불부가 자동으로 연속성 있게 갱신됩니다.'
     });
     
   } catch (error: any) {

@@ -4053,6 +4053,38 @@ productionRoutes.post('/simple', async (c) => {
       }
     }
     
+    // ★★★ v3.6.26: LOT 매칭 + 일별수불부 자동 갱신 추가 (simple-batch와 동일하게) ★★★
+    let lotMatchingResult: any = null;
+    let dailyStockResult: any = null;
+    let autoUpdateError: string | null = null;
+    
+    console.log(`[production/simple] 자동 갱신 조건: service=${!!service}`);
+    
+    if (service) {
+      try {
+        // LOT 매칭 자동 생성 (해당 날짜만)
+        console.log(`[production/simple] LOT 매칭 생성 시작: ${prod_date}`);
+        lotMatchingResult = await service.rebuildLotMatchingForDates([prod_date]);
+        console.log(`[production/simple] LOT 매칭 완료: ${lotMatchingResult?.totalRows || 0}행`);
+      } catch (lotError: any) {
+        console.error('[production/simple] LOT 매칭 실패:', lotError.message);
+        autoUpdateError = `LOT매칭 실패: ${lotError.message}`;
+      }
+      
+      try {
+        // 일별수불부 자동 추가
+        console.log(`[production/simple] 일별수불부 추가 시작: ${prod_date}`);
+        dailyStockResult = await service.addDailyStockDate(prod_date);
+        console.log(`[production/simple] 일별수불부 완료: ${dailyStockResult?.new_rows || 0}행`);
+      } catch (stockError: any) {
+        console.error('[production/simple] 일별수불부 실패:', stockError.message);
+        autoUpdateError = (autoUpdateError ? autoUpdateError + ' / ' : '') + `일별수불부 실패: ${stockError.message}`;
+      }
+    } else {
+      console.warn(`[production/simple] 자동 갱신 건너뜀: service 없음`);
+      autoUpdateError = 'Google Sheets 서비스 없음';
+    }
+    
     return c.json({
       success: true,
       prod_date,
@@ -4060,8 +4092,11 @@ productionRoutes.post('/simple', async (c) => {
       items_count: items.length,
       db_saved: dbSaved,
       sheet_sent: sheetSent,
-      message: `${items.length}건 생산 등록 완료 (시트: ${sheetSent ? 'O' : 'X'})`,
-      note: '원료 사용량은 구글시트에서 자동 계산됩니다. 중복 데이터는 자동 스킵됩니다.'
+      lot_matching: lotMatchingResult ? { success: true, rows: lotMatchingResult.totalRows } : { success: false, error: autoUpdateError },
+      daily_stock: dailyStockResult ? { success: true, rows: dailyStockResult.new_rows } : { success: false, error: autoUpdateError },
+      auto_update_error: autoUpdateError,
+      message: `${items.length}건 생산 등록 완료${lotMatchingResult ? ' + LOT매칭' : ''}${dailyStockResult ? ' + 일별수불부' : ''}`,
+      note: autoUpdateError ? `자동 갱신 오류: ${autoUpdateError}` : '생산 등록 시 LOT 매칭과 일별수불부가 자동으로 갱신됩니다.'
     });
     
   } catch (error: any) {

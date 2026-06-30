@@ -3996,11 +3996,28 @@ productionRoutes.post('/simple', async (c) => {
     const { 
       prod_date,
       lot_number,
-      items
+      product_code,
+      product_name,
+      quantity,
+      channel,
+      memo
     } = body;
     
+    // ★★★ v3.6.28: 단일 객체도 items 배열로 변환 (프론트엔드 호환성) ★★★
+    let items = body.items;
+    if (!items && product_code) {
+      // 단일 객체로 전달된 경우 배열로 변환
+      items = [{
+        product_code,
+        product_name: product_name || '',
+        quantity: quantity || 0,
+        channel: channel || '',
+        memo: memo || ''
+      }];
+    }
+    
     if (!prod_date || !items || !Array.isArray(items) || items.length === 0) {
-      return c.json({ success: false, error: 'prod_date, items 필수' }, 400);
+      return c.json({ success: false, error: 'prod_date, items 또는 product_code 필수' }, 400);
     }
     
     const lotNum = lot_number || prod_date.replace(/-/g, '').slice(2);

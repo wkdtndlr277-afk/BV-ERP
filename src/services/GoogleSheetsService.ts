@@ -1488,33 +1488,40 @@ export class GoogleSheetsService {
     const sortedCodes = Object.keys(prevStockMap).sort();
     const newRows: any[][] = [];
     
-    for (const code of sortedCodes) {
-      const { name, current: prevStock, unit } = prevStockMap[code];
-      const inbound = inboundMap[code] || 0;
-      const usage = usageMap[code] || 0;  // ★ 수식 대신 계산된 값
-      const currentStock = Math.round((prevStock + inbound - usage) * 10000) / 10000;  // ★ 값으로 계산
+    // ★★★ v3.6.27: 현재 일별수불부 시트의 마지막 행 번호 확인 ★★★
+    const startRowNum = existingData.length + 2;  // 헤더(1행) + 기존데이터 + 1
+    
+    for (let i = 0; i < sortedCodes.length; i++) {
+      const code = sortedCodes[i];
+      const { name, unit } = prevStockMap[code];
+      const rowNum = startRowNum + i;
       
+      // ★★★ v3.6.27: 수식 기반으로 변경 ★★★
       newRows.push([
         `'${cleanDate}`,   // A: 날짜 (문자열 강제)
         code,              // B: 품목코드
         name,              // C: 품목명
-        prevStock,         // D: 전일재고
-        inbound,           // E: 입고량
-        usage,             // F: 사용량 (★ 값)
-        currentStock,      // G: 현재고 (★ 값)
+        // D: 전일재고 - 원료입고 시트에서 해당 날짜 이전 입고 합계 (간소화: 전일 현재고 참조)
+        `=IFERROR(SUMIFS(원료입고!I:I,원료입고!B:B,B${rowNum},원료입고!A:A,"<"&A${rowNum}),0)`,
+        // E: 입고량 - 원료입고 시트에서 해당 날짜 입고량
+        `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
+        // F: 사용량 - 로트매칭 시트에서 해당 일자+원료코드 합계
+        `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,
+        // G: 현재고 = 전일재고 + 입고 - 사용
+        `=D${rowNum}+E${rowNum}-F${rowNum}`,
         unit               // H: 단위
       ]);
     }
     
-    // ★★★ 7. APPEND 방식으로 추가 (기존 데이터 보존) ★★★
+    // ★★★ 7. 수식 포함 APPEND (USER_ENTERED 모드) ★★★
     if (newRows.length > 0) {
-      await this.appendSheet('일별수불부', newRows);
-      console.log(`[addDailyStockDate v3.6.21] ${newRows.length}건 APPEND 완료 (값 방식)`);
+      await this.appendSheetWithFormulas('일별수불부', newRows);
+      console.log(`[addDailyStockDate v3.6.27] ${newRows.length}건 APPEND 완료 (수식 방식, 시작행: ${startRowNum})`);
     } else {
-      console.warn(`[addDailyStockDate v3.6.21] 경고: 새 행이 0건 - prevStockMap 크기: ${Object.keys(prevStockMap).length}`);
+      console.warn(`[addDailyStockDate v3.6.27] 경고: 새 행이 0건 - prevStockMap 크기: ${Object.keys(prevStockMap).length}`);
     }
     
-    console.log(`[addDailyStockDate v3.6.21] ========== 완료: ${cleanDate}, 기존 ${existingData.length}행 + 신규 ${newRows.length}행 ==========`);
+    console.log(`[addDailyStockDate v3.6.27] ========== 완료: ${cleanDate}, 기존 ${existingData.length}행 + 신규 ${newRows.length}행 ==========`);
     
     return {
       date: cleanDate,

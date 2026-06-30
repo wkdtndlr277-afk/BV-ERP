@@ -417,6 +417,17 @@ export class GoogleSheetsService {
   async getProductionRecords(date?: string): Promise<any[]> {
     const data = await this.readSheet('생산실적', 'A2:H');
     
+    // ★★★ v3.6.35: 제품마스터에서 제품명 맵 조회 (생산실적에 제품명 없을 때 대비) ★★★
+    const productMasterData = await this.readSheet('제품마스터', 'A2:B');
+    const productNameMap = new Map<string, string>();
+    for (const row of productMasterData) {
+      const code = row[0]?.toString() || '';
+      const name = row[1]?.toString() || '';
+      if (code && name && !productNameMap.has(code)) {
+        productNameMap.set(code, name);
+      }
+    }
+    
     const records = data.map(row => {
       // ★ 날짜 처리: 엑셀 숫자 또는 문자열 모두 지원
       let prodDate = row[0];
@@ -430,12 +441,16 @@ export class GoogleSheetsService {
         prodDate = prodDate.replace(/^'/, '');
       }
       
+      const productCode = row[1]?.toString() || '';
+      // ★ 제품명: 생산실적에 없으면 제품마스터에서 조회
+      const productName = row[2]?.toString() || productNameMap.get(productCode) || '';
+      
       // ★ 실제 시트 구조에 맞춤 (단위 컬럼 없음)
       // A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
       return {
         prod_date: prodDate,
-        product_code: row[1]?.toString() || '',
-        product_name: row[2]?.toString() || '',
+        product_code: productCode,
+        product_name: productName,
         quantity: parseFloat(row[3]) || 0,
         lot_number: row[4]?.toString() || '',
         channel: row[5]?.toString() || '',

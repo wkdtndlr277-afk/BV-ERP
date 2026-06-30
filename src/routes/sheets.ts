@@ -854,6 +854,82 @@ sheets.post('/setup-formulas', async (c) => {
   }
 });
 
+// ★★★ v3.6.15: 일별수불부 재생성 API ★★★
+// 생산실적 시트에서 날짜 목록을 가져와서 일별수불부 재생성
+sheets.post('/rebuild-daily-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { start_date, end_date } = body;
+    
+    // 1. 생산실적 시트에서 날짜 목록 가져오기
+    const productionData = await service.readSheet('생산실적', 'A2:A5000');
+    const uniqueDates = new Set<string>();
+    
+    for (const row of productionData) {
+      const dateStr = row[0]?.toString().replace(/^'/, '') || '';
+      if (dateStr && dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        // 날짜 필터링 (start_date, end_date)
+        if (start_date && dateStr < start_date) continue;
+        if (end_date && dateStr > end_date) continue;
+        uniqueDates.add(dateStr);
+      }
+    }
+    
+    if (uniqueDates.size === 0) {
+      return c.json({ 
+        success: false, 
+        error: '생산실적 시트에 유효한 날짜 데이터가 없습니다.',
+        filter: { start_date, end_date }
+      }, 400);
+    }
+    
+    // 날짜 정렬 (오름차순)
+    const sortedDates = Array.from(uniqueDates).sort();
+    console.log(`[rebuild-daily-stock] 처리할 날짜: ${sortedDates.join(', ')}`);
+    
+    // 2. 각 날짜별로 일별수불부 생성
+    const results: any[] = [];
+    for (const date of sortedDates) {
+      try {
+        const result = await service.addDailyStockDate(date);
+        results.push({
+          date,
+          status: 'success',
+          new_rows: result.new_rows,
+          total_rows: result.total_rows
+        });
+        console.log(`[rebuild-daily-stock] ${date} 완료: ${result.new_rows}행 추가`);
+      } catch (err: any) {
+        results.push({
+          date,
+          status: 'error',
+          error: err.message
+        });
+        console.error(`[rebuild-daily-stock] ${date} 실패:`, err.message);
+      }
+    }
+    
+    const successCount = results.filter(r => r.status === 'success').length;
+    const errorCount = results.filter(r => r.status === 'error').length;
+    
+    return c.json({
+      success: true,
+      message: `일별수불부 재생성 완료: ${successCount}개 성공, ${errorCount}개 실패`,
+      total_dates: sortedDates.length,
+      results,
+      note: '★ 각 날짜의 사용량(F열)은 로트매칭 시트 참조 수식으로 자동 계산됩니다.'
+    });
+  } catch (error: any) {
+    console.error('[rebuild-daily-stock] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 원료별 현재고 조회 (시트 기반 SSOT)
 sheets.get('/current-stock', async (c) => {
   const service = getSheetService(c);

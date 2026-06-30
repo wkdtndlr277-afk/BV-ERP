@@ -1352,18 +1352,32 @@ export class GoogleSheetsService {
   }
 
   // ★ v3.5.77: 일별수불부 날짜 추가 (연속성 보장)
-  // ★★★ v3.6.12: 수식 방식으로 변경 - 로트매칭 변경 시 자동 반영 ★★★
+  // ★★★ v3.6.15: APPEND 방식으로 완전 재작성 - 기존 데이터 보존 ★★★
+  // 버그 수정: 전체 클리어/재작성 시 기존 날짜가 손상되는 문제 해결
   async addDailyStockDate(targetDate: string): Promise<{ date: string; prev_date: string; new_rows: number; total_rows: number }> {
     const cleanDate = targetDate.replace(/^'/, '');
+    console.log(`[addDailyStockDate v3.6.15] 시작: ${cleanDate}`);
     
-    // 1. 기존 일별수불부 데이터 읽기
+    // 1. 기존 일별수불부 데이터 읽기 (A, B열만 - 날짜와 품목코드)
     const existingData = await this.readSheet('일별수불부', 'A2:H5000');
     
-    // 2. 이미 해당 날짜 데이터 있으면 제거 (재생성)
-    const otherDates = existingData.filter(row => {
+    // 2. 해당 날짜 데이터가 이미 있는지 확인
+    const existingDateRows = existingData.filter(row => {
       const rowDate = row[0]?.toString().replace(/^'/, '') || '';
-      return rowDate !== cleanDate;
+      return rowDate === cleanDate;
     });
+    
+    if (existingDateRows.length > 0) {
+      console.log(`[addDailyStockDate v3.6.15] 이미 ${cleanDate} 데이터 ${existingDateRows.length}건 있음 - 스킵 (중복 방지)`);
+      // 이미 해당 날짜 데이터가 있으면 새로 추가하지 않음
+      // 기존 데이터 보존을 위해 재생성하지 않음
+      return {
+        date: cleanDate,
+        prev_date: '',
+        new_rows: 0,
+        total_rows: existingData.length
+      };
+    }
     
     // 3. 전날 날짜 계산
     const dateParts = cleanDate.split('-').map(Number);
@@ -1376,43 +1390,33 @@ export class GoogleSheetsService {
       return rowDate === prevDate;
     });
     
-    // ★★★ v3.6.07: 전날 현재고 맵 - 선언을 먼저! ★★★
     const prevStockMap: Record<string, { name: string; current: number; unit: string }> = {};
     
-    // ★★★ v3.5.90: 전일 데이터 없으면 자동 생성 (재귀) ★★★
+    // ★★★ v3.6.15: 재귀 제거 - 전날 데이터 없으면 경고만 ★★★
     if (prevDayData.length === 0) {
-      console.log(`[addDailyStockDate] 전일(${prevDate}) 데이터 없음 → 자동 생성 시도`);
+      console.warn(`[addDailyStockDate v3.6.15] 전일(${prevDate}) 데이터 없음 - 원료마스터에서 품목 목록 가져옴`);
       
-      // 무한 재귀 방지: 최대 7일까지만 (1주일)
-      const baseDate = new Date('2026-06-01');  // 기준일 (이 날짜 이전은 생성 불가)
-      if (prevDateObj < baseDate) {
-        throw new Error(`기준일(${baseDate.toISOString().split('T')[0]}) 이전 데이터는 생성할 수 없습니다.`);
+      // 전일 데이터가 없으면 원료마스터에서 품목 목록 조회
+      const rawMaterialData = await this.readSheet('원료입고', 'B2:F5000');  // B:원료코드, C:원료명, F:단위
+      const uniqueItems = new Map<string, { name: string; unit: string }>();
+      
+      for (const row of rawMaterialData) {
+        const code = row[0]?.toString() || '';
+        const name = row[1]?.toString() || '';
+        const unit = row[4]?.toString() || 'kg';
+        
+        if (code && !code.startsWith('SF') && !code.startsWith('SM') && code !== 'RM184') {
+          if (!uniqueItems.has(code)) {
+            uniqueItems.set(code, { name, unit });
+          }
+        }
       }
       
-      // 전일 데이터 재귀 생성
-      await this.addDailyStockDate(prevDate);
-      
-      // 재귀 후 다시 데이터 읽기
-      const refreshedData = await this.readSheet('일별수불부', 'A2:H5000');
-      const refreshedPrevData = refreshedData.filter(row => {
-        const rowDate = row[0]?.toString().replace(/^'/, '') || '';
-        return rowDate === prevDate;
-      });
-      
-      if (refreshedPrevData.length === 0) {
-        throw new Error(`전일(${prevDate}) 데이터 자동 생성 실패`);
+      // 전일재고 = 0으로 초기화
+      for (const [code, info] of uniqueItems) {
+        prevStockMap[code] = { name: info.name, current: 0, unit: info.unit };
       }
-      
-      // 새로 읽은 전일 데이터로 계속 진행
-      for (const row of refreshedPrevData) {
-        const code = row[1]?.toString() || '';
-        const name = row[2]?.toString() || '';
-        const current = parseFloat(row[6]?.toString() || '0') || 0;
-        const unit = row[7]?.toString() || 'kg';
-        prevStockMap[code] = { name, current, unit };
-      }
-      
-      console.log(`[addDailyStockDate] 전일(${prevDate}) 자동 생성 완료, ${refreshedPrevData.length}건`);
+      console.log(`[addDailyStockDate v3.6.15] 원료마스터에서 ${uniqueItems.size}개 품목 조회`);
     } else {
       // 전일 데이터가 있는 경우 - prevStockMap 채우기
       for (const row of prevDayData) {
@@ -1422,11 +1426,10 @@ export class GoogleSheetsService {
         const unit = row[7]?.toString() || 'kg';
         prevStockMap[code] = { name, current, unit };
       }
+      console.log(`[addDailyStockDate v3.6.15] 전일(${prevDate}) 데이터에서 ${prevDayData.length}개 품목 조회`);
     }
     
     // 5. 당일 입고량 가져오기
-    // ★★★ v3.6.09: 원료입고 시트 구조 수정 ★★★
-    // A:입고일자, B:원료코드, C:원료명, D:로트번호, E:입고량(row[4]), F:단위, G:공급업체, H:소비기한, I:잔량
     const inboundData = await this.readSheet('원료입고', 'A2:J5000');
     const inboundMap: Record<string, number> = {};
     for (const row of inboundData) {
@@ -1434,75 +1437,52 @@ export class GoogleSheetsService {
       if (inboundDate !== cleanDate) continue;
       
       const code = row[1]?.toString() || '';
-      const qty = parseFloat(row[4]?.toString() || '0') || 0;  // ★ E열(row[4])이 입고량
+      const qty = parseFloat(row[4]?.toString() || '0') || 0;
       if (code.startsWith('SF') || code.startsWith('SM') || code === 'RM184') continue;
       
       inboundMap[code] = (inboundMap[code] || 0) + qty;
     }
     
-    // 6. 기존 데이터 행 수 계산 (수식의 행 번호 결정용)
-    const startRow = otherDates.length + 2;  // 헤더(1행) + 기존 데이터 수 + 1
+    // ★★★ 6. 마지막 행 번호 계산 (APPEND 위치) ★★★
+    const lastRowNum = existingData.length + 1;  // 헤더(1행) + 기존 데이터 수
+    console.log(`[addDailyStockDate v3.6.15] 기존 데이터 ${existingData.length}건, 새 데이터 시작 행: ${lastRowNum + 1}`);
     
-    // 7. 새 날짜 행 생성 ★★★ v3.6.12: 수식 방식 ★★★
+    // 7. 새 날짜 행 생성 - 품목코드 순 정렬
+    const sortedCodes = Object.keys(prevStockMap).sort();
     const newRows: any[][] = [];
-    let rowIndex = 0;
-    for (const code in prevStockMap) {
+    
+    for (let i = 0; i < sortedCodes.length; i++) {
+      const code = sortedCodes[i];
       const { name, current: prevStock, unit } = prevStockMap[code];
       const inbound = inboundMap[code] || 0;
-      const rowNum = startRow + rowIndex;
+      const rowNum = lastRowNum + 1 + i;  // 실제 시트 행 번호
       
       newRows.push([
-        `'${cleanDate}`,   // A: 날짜
+        `'${cleanDate}`,   // A: 날짜 (문자열 강제)
         code,              // B: 품목코드
         name,              // C: 품목명
-        prevStock,         // D: 전일재고 (= 전날 현재고 값)
-        inbound,           // E: 입고량 (값)
-        // ★★★ F: 사용량 - 수식 (로트매칭에서 자동 합산) ★★★
+        prevStock,         // D: 전일재고
+        inbound,           // E: 입고량
+        // ★★★ F: 사용량 수식 - 로트매칭 참조 ★★★
         `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!A:A,A${rowNum},로트매칭!C:C,B${rowNum}),0)`,
-        // ★★★ G: 현재고 - 수식 (전일재고 + 입고 - 사용) ★★★
+        // ★★★ G: 현재고 수식 ★★★
         `=ROUND(D${rowNum}+E${rowNum}-F${rowNum},4)`,
         unit               // H: 단위
       ]);
-      rowIndex++;
     }
     
-    // 8. 기존 + 새 데이터 합치기
-    const allRows = [...otherDates, ...newRows];
-    
-    // 날짜순 정렬 (수식 행은 정렬 시 행 번호가 틀어지므로 주의)
-    // ★★★ v3.6.12: 정렬 후 수식 행 번호 재계산 ★★★
-    allRows.sort((a, b) => {
-      const dateA = a[0]?.toString().replace(/^'/, '') || '';
-      const dateB = b[0]?.toString().replace(/^'/, '') || '';
-      return dateA.localeCompare(dateB) || (a[1]?.toString() || '').localeCompare(b[1]?.toString() || '');
-    });
-    
-    // 9. 정렬 후 수식 행 번호 재계산
-    for (let i = 0; i < allRows.length; i++) {
-      const row = allRows[i];
-      const rowNum = i + 2;  // 시트 행 번호 (헤더가 1행)
-      
-      // F열(사용량)이 수식인 경우 행 번호 업데이트
-      if (typeof row[5] === 'string' && row[5].startsWith('=')) {
-        row[5] = `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!A:A,A${rowNum},로트매칭!C:C,B${rowNum}),0)`;
-      }
-      // G열(현재고)이 수식인 경우 행 번호 업데이트
-      if (typeof row[6] === 'string' && row[6].startsWith('=')) {
-        row[6] = `=ROUND(D${rowNum}+E${rowNum}-F${rowNum},4)`;
-      }
-    }
-    
-    // 9. 클리어 후 저장
-    await this.clearRange('일별수불부', 'A2:H5000');
-    if (allRows.length > 0) {
-      await this.writeSheet('일별수불부', 'A2', allRows);
+    // ★★★ 8. APPEND 방식으로 추가 (기존 데이터 보존) ★★★
+    if (newRows.length > 0) {
+      // appendSheet는 마지막 행 다음에 추가 (USER_ENTERED로 수식 해석)
+      await this.appendSheet('일별수불부', newRows);
+      console.log(`[addDailyStockDate v3.6.15] ${newRows.length}건 APPEND 완료`);
     }
     
     return {
       date: cleanDate,
       prev_date: prevDate,
       new_rows: newRows.length,
-      total_rows: allRows.length
+      total_rows: existingData.length + newRows.length
     };
   }
 }

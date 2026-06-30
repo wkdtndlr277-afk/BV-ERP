@@ -1493,6 +1493,19 @@ orderUpload.post('/complete-production', async (c) => {
       }
     }
     
+    // ★★★ v3.6.29: 일별수불부 자동 생성 추가 ★★★
+    let dailyStockResult: any = null;
+    let autoUpdateError: string | null = null;
+    
+    try {
+      console.log(`[complete-production] 일별수불부 생성 시작: ${production_date}`);
+      dailyStockResult = await service.addDailyStockDate(production_date);
+      console.log(`[complete-production] 일별수불부 완료: ${dailyStockResult?.new_rows || 0}행`);
+    } catch (stockError: any) {
+      console.error('[complete-production] 일별수불부 실패:', stockError.message);
+      autoUpdateError = `일별수불부 실패: ${stockError.message}`;
+    }
+    
     return c.json({
       success: true,
       production_date,
@@ -1500,7 +1513,9 @@ orderUpload.post('/complete-production', async (c) => {
       completed_products: items.length,
       lot_matching_rows: lotMatchingRows.length,
       material_usage: materialUsageSummary,
-      message: `${items.length}개 제품 생산완료 + ${lotMatchingRows.length}건 로트매칭 등록`
+      daily_stock: dailyStockResult ? { success: true, rows: dailyStockResult.new_rows } : { success: false, error: autoUpdateError },
+      auto_update_error: autoUpdateError,
+      message: `${items.length}개 제품 생산완료 + ${lotMatchingRows.length}건 로트매칭 등록${dailyStockResult ? ' + 일별수불부 자동생성' : ''}`
     });
     
   } catch (error: any) {

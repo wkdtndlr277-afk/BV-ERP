@@ -39182,6 +39182,16 @@ async function addBarcode(productionCode, productionName) {
       expiry_days: expiryDays
     });
     showToast('바코드가 추가되었습니다', 'success');
+    
+    // ★★★ v3.6.22: 구글시트 제품마스터 자동 동기화 ★★★
+    try {
+      await api('/sheets/sync/product-master', 'POST');
+      console.log('[바코드 추가] 구글시트 제품마스터 동기화 완료');
+    } catch (syncErr) {
+      console.warn('[바코드 추가] 구글시트 동기화 실패 (무시됨):', syncErr);
+      // 동기화 실패해도 바코드 추가는 성공한 것이므로 에러 표시 안 함
+    }
+    
     // 데이터 새로고침 (UI 업데이트 위해)
     await loadSystemMgmtData();
     // 테이블의 해당 행 바코드 카운트 즉시 업데이트
@@ -39234,6 +39244,14 @@ async function updateBarcodeBoxQuantity(id, newQuantity, productionCode, product
   try {
     await api(`/admin/barcodes/${id}/box-quantity`, 'PUT', { box_quantity: quantity });
     showToast(`입수량이 ${quantity}개로 수정되었습니다`, 'success');
+    
+    // ★★★ v3.6.22: 구글시트 제품마스터 자동 동기화 ★★★
+    try {
+      await api('/sheets/sync/product-master', 'POST');
+      console.log('[입수량 수정] 구글시트 제품마스터 동기화 완료');
+    } catch (syncErr) {
+      console.warn('[입수량 수정] 구글시트 동기화 실패 (무시됨):', syncErr);
+    }
   } catch (e) {
     showToast('입수량 수정 실패: ' + (e.message || e), 'error');
     // 모달 새로고침하여 원래 값 복원
@@ -39275,6 +39293,14 @@ async function updateBarcodeExpiryDays(id, newDays, productionCode, productionNa
   try {
     await api(`/admin/barcodes/${id}/expiry-days`, 'PUT', { expiry_days: days });
     showToast(days ? `소비기한이 ${days}일로 설정되었습니다` : '소비기한이 초기화되었습니다', 'success');
+    
+    // ★★★ v3.6.22: 구글시트 제품마스터 자동 동기화 ★★★
+    try {
+      await api('/sheets/sync/product-master', 'POST');
+      console.log('[소비기한 수정] 구글시트 제품마스터 동기화 완료');
+    } catch (syncErr) {
+      console.warn('[소비기한 수정] 구글시트 동기화 실패 (무시됨):', syncErr);
+    }
   } catch (e) {
     showToast('소비기한 수정 실패: ' + (e.message || e), 'error');
     // 모달 새로고침하여 원래 값 복원
@@ -39297,6 +39323,15 @@ async function deleteBarcode(id, productionCode, productionName) {
   try {
     await api(`/daily-report/barcodes/${id}`, 'DELETE');
     showToast('바코드가 삭제되었습니다', 'success');
+    
+    // ★★★ v3.6.22: 구글시트 제품마스터 자동 동기화 ★★★
+    try {
+      await api('/sheets/sync/product-master', 'POST');
+      console.log('[바코드 삭제] 구글시트 제품마스터 동기화 완료');
+    } catch (syncErr) {
+      console.warn('[바코드 삭제] 구글시트 동기화 실패 (무시됨):', syncErr);
+    }
+    
     // 데이터 새로고침
     await loadSystemMgmtData();
     // 테이블 업데이트

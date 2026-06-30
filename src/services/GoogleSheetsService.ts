@@ -1356,10 +1356,11 @@ export class GoogleSheetsService {
   // 버그 수정: 전체 클리어/재작성 시 기존 날짜가 손상되는 문제 해결
   async addDailyStockDate(targetDate: string): Promise<{ date: string; prev_date: string; new_rows: number; total_rows: number }> {
     const cleanDate = targetDate.replace(/^'/, '');
-    console.log(`[addDailyStockDate v3.6.15] 시작: ${cleanDate}`);
+    console.log(`[addDailyStockDate v3.6.21] ========== 시작: ${cleanDate} ==========`);
     
-    // 1. 기존 일별수불부 데이터 읽기 (A, B열만 - 날짜와 품목코드)
-    const existingData = await this.readSheet('일별수불부', 'A2:H5000');
+    // 1. 기존 일별수불부 데이터 읽기
+    // ★★★ v3.6.21: 읽기 범위 확장 (5000 → 50000) ★★★
+    const existingData = await this.readSheet('일별수불부', 'A2:H50000');
     
     // ★★★ v3.6.20: 해당 날짜 데이터가 있으면 삭제 후 재생성 ★★★
     const existingDateRows = existingData.filter(row => {
@@ -1368,7 +1369,7 @@ export class GoogleSheetsService {
     });
     
     if (existingDateRows.length > 0) {
-      console.log(`[addDailyStockDate v3.6.20] 이미 ${cleanDate} 데이터 ${existingDateRows.length}건 있음 - 삭제 후 재생성`);
+      console.log(`[addDailyStockDate v3.6.21] 이미 ${cleanDate} 데이터 ${existingDateRows.length}건 있음 - 삭제 후 재생성`);
       
       // 해당 날짜 제외한 데이터만 유지
       const remainingData = existingData.filter(row => {
@@ -1395,7 +1396,7 @@ export class GoogleSheetsService {
       // existingData를 remainingData로 업데이트 (아래 로직에서 사용)
       existingData.length = 0;
       existingData.push(...remainingData);
-      console.log(`[addDailyStockDate v3.6.20] ${cleanDate} 데이터 삭제 완료, ${remainingData.length}행 유지`);
+      console.log(`[addDailyStockDate v3.6.21] ${cleanDate} 데이터 삭제 완료, ${remainingData.length}행 유지`);
     }
     
     // 3. 전날 날짜 계산
@@ -1481,7 +1482,7 @@ export class GoogleSheetsService {
       
       usageMap[code] = (usageMap[code] || 0) + usage;
     }
-    console.log(`[addDailyStockDate v3.6.18] 로트매칭에서 ${Object.keys(usageMap).length}개 원료 사용량 계산`);
+    console.log(`[addDailyStockDate v3.6.21] 로트매칭에서 ${Object.keys(usageMap).length}개 원료 사용량 계산`);
     
     // 6. 새 날짜 행 생성 - 품목코드 순 정렬
     const sortedCodes = Object.keys(prevStockMap).sort();
@@ -1508,8 +1509,12 @@ export class GoogleSheetsService {
     // ★★★ 7. APPEND 방식으로 추가 (기존 데이터 보존) ★★★
     if (newRows.length > 0) {
       await this.appendSheet('일별수불부', newRows);
-      console.log(`[addDailyStockDate v3.6.18] ${newRows.length}건 APPEND 완료 (값 방식)`);
+      console.log(`[addDailyStockDate v3.6.21] ${newRows.length}건 APPEND 완료 (값 방식)`);
+    } else {
+      console.warn(`[addDailyStockDate v3.6.21] 경고: 새 행이 0건 - prevStockMap 크기: ${Object.keys(prevStockMap).length}`);
     }
+    
+    console.log(`[addDailyStockDate v3.6.21] ========== 완료: ${cleanDate}, 기존 ${existingData.length}행 + 신규 ${newRows.length}행 ==========`);
     
     return {
       date: cleanDate,

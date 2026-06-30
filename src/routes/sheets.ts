@@ -892,7 +892,7 @@ sheets.post('/rebuild-daily-stock', async (c) => {
     const sortedDates = Array.from(uniqueDates).sort();
     console.log(`[rebuild-daily-stock] 처리할 날짜: ${sortedDates.join(', ')}, force=${force}`);
     
-    // ★★★ v3.6.16: force=true면 해당 날짜 데이터 먼저 삭제 ★★★
+    // ★★★ v3.6.19: force=true면 해당 날짜 데이터 먼저 삭제 + 정렬 ★★★
     if (force) {
       console.log(`[rebuild-daily-stock] force 모드: ${sortedDates.length}개 날짜 데이터 삭제 후 재생성`);
       
@@ -906,12 +906,22 @@ sheets.post('/rebuild-daily-stock', async (c) => {
         return !datesToDelete.has(rowDate);
       });
       
-      // 클리어 후 남은 데이터만 다시 쓰기
+      // ★★★ v3.6.19: 날짜 + 품목코드 순 정렬 ★★★
+      remainingData.sort((a, b) => {
+        const dateA = a[0]?.toString().replace(/^'/, '') || '';
+        const dateB = b[0]?.toString().replace(/^'/, '') || '';
+        if (dateA !== dateB) return dateA.localeCompare(dateB);
+        const codeA = a[1]?.toString() || '';
+        const codeB = b[1]?.toString() || '';
+        return codeA.localeCompare(codeB);
+      });
+      
+      // 클리어 후 남은 데이터만 다시 쓰기 (정렬된 상태로)
       await service.clearRange('일별수불부', 'A2:H50000');
       if (remainingData.length > 0) {
         await service.writeSheet('일별수불부', 'A2', remainingData);
       }
-      console.log(`[rebuild-daily-stock] 기존 ${existingData.length}행 중 ${existingData.length - remainingData.length}행 삭제, ${remainingData.length}행 유지`);
+      console.log(`[rebuild-daily-stock] 기존 ${existingData.length}행 중 ${existingData.length - remainingData.length}행 삭제, ${remainingData.length}행 유지 (정렬됨)`);
     }
     
     // 2. 각 날짜별로 일별수불부 생성
@@ -949,6 +959,46 @@ sheets.post('/rebuild-daily-stock', async (c) => {
     });
   } catch (error: any) {
     console.error('[rebuild-daily-stock] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.19: 일별수불부 전체 정렬 API ★★★
+sheets.post('/sort-daily-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // 전체 데이터 읽기
+    const existingData = await service.readSheet('일별수불부', 'A2:H50000');
+    
+    if (existingData.length === 0) {
+      return c.json({ success: true, message: '정렬할 데이터 없음', rows: 0 });
+    }
+    
+    // 날짜 + 품목코드 순 정렬
+    existingData.sort((a, b) => {
+      const dateA = a[0]?.toString().replace(/^'/, '') || '';
+      const dateB = b[0]?.toString().replace(/^'/, '') || '';
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      const codeA = a[1]?.toString() || '';
+      const codeB = b[1]?.toString() || '';
+      return codeA.localeCompare(codeB);
+    });
+    
+    // 클리어 후 정렬된 데이터 쓰기
+    await service.clearRange('일별수불부', 'A2:H50000');
+    await service.writeSheet('일별수불부', 'A2', existingData);
+    
+    return c.json({
+      success: true,
+      message: '일별수불부 정렬 완료',
+      rows: existingData.length
+    });
+  } catch (error: any) {
+    console.error('[sort-daily-stock] 오류:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });

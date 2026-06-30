@@ -35,6 +35,9 @@ function escapeLikePattern(str: string): string {
 
 // ★ 제품명에서 검색 키워드 추출 (공백, 숫자, 특수문자 정리)
 function extractSearchKeywords(productName: string): string[] {
+  // ★★★ v3.6.14: null/undefined 처리 추가 ★★★
+  if (!productName) return [];
+  
   const cleaned = productName
     .replace(/\d+[gGmMlLkKpPeEaA개입박스]+/g, ' ')  // 용량 정보 제거
     .replace(/[^\w\sㄱ-ㅎㅏ-ㅣ가-힣]/g, ' ')  // 특수문자 제거 (한글, 영문, 숫자만 유지)
@@ -287,7 +290,9 @@ async function matchProductCodesFromSheets(
   
   // 아이템 매칭
   for (const item of items) {
-    const searchName = item.product_name.toLowerCase().trim();
+    // ★★★ v3.6.14: null/undefined 처리 추가 ★★★
+    const productName = item.product_name || '';
+    const searchName = productName.toLowerCase().trim();
     let found: { code: string; name: string } | undefined;
     let matchType = '';
     

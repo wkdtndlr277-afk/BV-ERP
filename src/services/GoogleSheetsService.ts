@@ -1447,19 +1447,32 @@ export class GoogleSheetsService {
       inboundMap[code] = (inboundMap[code] || 0) + qty;
     }
     
-    // ★★★ 6. 마지막 행 번호 계산 (APPEND 위치) ★★★
-    const lastRowNum = existingData.length + 1;  // 헤더(1행) + 기존 데이터 수
-    console.log(`[addDailyStockDate v3.6.15] 기존 데이터 ${existingData.length}건, 새 데이터 시작 행: ${lastRowNum + 1}`);
+    // ★★★ v3.6.18: 로트매칭에서 사용량 직접 계산 (수식 대신 값) ★★★
+    const lotMatchingData = await this.readSheet('로트매칭', 'A2:G50000');
+    const usageMap: Record<string, number> = {};
+    for (const row of lotMatchingData) {
+      const lotDate = row[0]?.toString().replace(/^'/, '') || '';
+      if (lotDate !== cleanDate) continue;
+      
+      const code = row[2]?.toString() || '';  // C열: 원료코드
+      const usage = parseFloat(row[4]?.toString() || '0') || 0;  // E열: 사용량
+      
+      // 제외 품목
+      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184' || code === 'RM1054') continue;
+      
+      usageMap[code] = (usageMap[code] || 0) + usage;
+    }
+    console.log(`[addDailyStockDate v3.6.18] 로트매칭에서 ${Object.keys(usageMap).length}개 원료 사용량 계산`);
     
-    // 7. 새 날짜 행 생성 - 품목코드 순 정렬
+    // 6. 새 날짜 행 생성 - 품목코드 순 정렬
     const sortedCodes = Object.keys(prevStockMap).sort();
     const newRows: any[][] = [];
     
-    for (let i = 0; i < sortedCodes.length; i++) {
-      const code = sortedCodes[i];
+    for (const code of sortedCodes) {
       const { name, current: prevStock, unit } = prevStockMap[code];
       const inbound = inboundMap[code] || 0;
-      const rowNum = lastRowNum + 1 + i;  // 실제 시트 행 번호
+      const usage = usageMap[code] || 0;  // ★ 수식 대신 계산된 값
+      const currentStock = Math.round((prevStock + inbound - usage) * 10000) / 10000;  // ★ 값으로 계산
       
       newRows.push([
         `'${cleanDate}`,   // A: 날짜 (문자열 강제)
@@ -1467,19 +1480,16 @@ export class GoogleSheetsService {
         name,              // C: 품목명
         prevStock,         // D: 전일재고
         inbound,           // E: 입고량
-        // ★★★ F: 사용량 수식 - 로트매칭 참조 ★★★
-        `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!A:A,A${rowNum},로트매칭!C:C,B${rowNum}),0)`,
-        // ★★★ G: 현재고 수식 ★★★
-        `=ROUND(D${rowNum}+E${rowNum}-F${rowNum},4)`,
+        usage,             // F: 사용량 (★ 값)
+        currentStock,      // G: 현재고 (★ 값)
         unit               // H: 단위
       ]);
     }
     
-    // ★★★ 8. APPEND 방식으로 추가 (기존 데이터 보존) ★★★
+    // ★★★ 7. APPEND 방식으로 추가 (기존 데이터 보존) ★★★
     if (newRows.length > 0) {
-      // appendSheet는 마지막 행 다음에 추가 (USER_ENTERED로 수식 해석)
       await this.appendSheet('일별수불부', newRows);
-      console.log(`[addDailyStockDate v3.6.15] ${newRows.length}건 APPEND 완료`);
+      console.log(`[addDailyStockDate v3.6.18] ${newRows.length}건 APPEND 완료 (값 방식)`);
     }
     
     return {

@@ -38746,6 +38746,16 @@ async function addBarcode(productionCode, productionName) {
       expiry_days: expiryDays
     });
     showToast('바코드가 추가되었습니다', 'success');
+    
+    // ★★★ v3.6.13: 구글시트 제품마스터 자동 동기화 ★★★
+    try {
+      await api('/sheets/sync/product-master', 'POST');
+      console.log('[바코드 추가] 구글시트 제품마스터 동기화 완료');
+    } catch (syncErr) {
+      console.warn('[바코드 추가] 구글시트 동기화 실패 (무시됨):', syncErr);
+      // 동기화 실패해도 바코드 추가는 성공한 것이므로 에러 표시 안 함
+    }
+    
     // 데이터 새로고침 (UI 업데이트 위해)
     await loadSystemMgmtData();
     // 테이블의 해당 행 바코드 카운트 즉시 업데이트
@@ -38798,6 +38808,14 @@ async function updateBarcodeBoxQuantity(id, newQuantity, productionCode, product
   try {
     await api(`/admin/barcodes/${id}/box-quantity`, 'PUT', { box_quantity: quantity });
     showToast(`입수량이 ${quantity}개로 수정되었습니다`, 'success');
+    
+    // ★★★ v3.6.13: 구글시트 제품마스터 자동 동기화 ★★★
+    try {
+      await api('/sheets/sync/product-master', 'POST');
+      console.log('[바코드 수정] 구글시트 제품마스터 동기화 완료');
+    } catch (syncErr) {
+      console.warn('[바코드 수정] 구글시트 동기화 실패 (무시됨):', syncErr);
+    }
   } catch (e) {
     showToast('입수량 수정 실패: ' + (e.message || e), 'error');
     // 모달 새로고침하여 원래 값 복원
@@ -38839,6 +38857,14 @@ async function updateBarcodeExpiryDays(id, newDays, productionCode, productionNa
   try {
     await api(`/admin/barcodes/${id}/expiry-days`, 'PUT', { expiry_days: days });
     showToast(days ? `소비기한이 ${days}일로 설정되었습니다` : '소비기한이 초기화되었습니다', 'success');
+    
+    // ★★★ v3.6.13: 구글시트 제품마스터 자동 동기화 ★★★
+    try {
+      await api('/sheets/sync/product-master', 'POST');
+      console.log('[바코드 수정] 구글시트 제품마스터 동기화 완료');
+    } catch (syncErr) {
+      console.warn('[바코드 수정] 구글시트 동기화 실패 (무시됨):', syncErr);
+    }
   } catch (e) {
     showToast('소비기한 수정 실패: ' + (e.message || e), 'error');
     // 모달 새로고침하여 원래 값 복원
@@ -38861,6 +38887,15 @@ async function deleteBarcode(id, productionCode, productionName) {
   try {
     await api(`/daily-report/barcodes/${id}`, 'DELETE');
     showToast('바코드가 삭제되었습니다', 'success');
+    
+    // ★★★ v3.6.13: 구글시트 제품마스터 자동 동기화 ★★★
+    try {
+      await api('/sheets/sync/product-master', 'POST');
+      console.log('[바코드 삭제] 구글시트 제품마스터 동기화 완료');
+    } catch (syncErr) {
+      console.warn('[바코드 삭제] 구글시트 동기화 실패 (무시됨):', syncErr);
+    }
+    
     // 데이터 새로고침
     await loadSystemMgmtData();
     // 테이블 업데이트
@@ -48749,7 +48784,7 @@ async function renderSheetsConfig() {
           <h3 class="font-bold text-gray-800 mb-4"><i class="fas fa-sync mr-2"></i>데이터 동기화</h3>
           <div class="space-y-3">
             <button onclick="syncSheetsData('all')" class="w-full px-4 py-3 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
-              <i class="fas fa-sync-alt mr-2"></i>전체 동기화 (입고 + BOM)
+              <i class="fas fa-sync-alt mr-2"></i>전체 동기화 (입고 + BOM + 제품마스터)
             </button>
             <button onclick="syncSheetsData('inbound')" class="w-full px-4 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600">
               <i class="fas fa-truck-loading mr-2"></i>원료 입고 동기화

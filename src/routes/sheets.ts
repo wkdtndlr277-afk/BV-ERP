@@ -311,6 +311,24 @@ sheets.post('/sync/all', async (c) => {
     await service.syncBomData(bomData.results || []);
     results.push(`BOM ${bomData.results?.length || 0}건`);
 
+    // ★★★ v3.6.13: 3. 제품마스터(바코드) 동기화 추가 ★★★
+    const barcodeData = await c.env.DB.prepare(`
+      SELECT 
+        pb.production_code,
+        COALESCE(pi.production_name, pb.production_code) as production_name,
+        pb.barcode,
+        pb.product_name as order_product_name,
+        pb.channel,
+        COALESCE(pb.expiry_days, 24) as expiry_days,
+        COALESCE(pb.box_quantity, 1) as box_quantity,
+        pb.created_at
+      FROM production_barcodes pb
+      LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+      ORDER BY pb.production_code, pb.channel, pb.barcode
+    `).all<any>();
+    await service.syncProductMaster(barcodeData.results || []);
+    results.push(`제품마스터 ${barcodeData.results?.length || 0}건`);
+
     return c.json({ 
       success: true, 
       message: `전체 동기화 완료: ${results.join(', ')}` 

@@ -1788,6 +1788,17 @@ sheets.post('/v2/shipment/generate', async (c) => {
       existingShipments.add(key);
     }
 
+    // ★★★ v3.6.34: 제품마스터에서 제품명 맵 조회 (생산실적에 제품명 없을 때 대비) ★★★
+    const productMasterData = await service.readSheet('제품마스터', 'A2:B');
+    const productNameMap = new Map<string, string>();
+    for (const row of productMasterData) {
+      const code = row[0]?.toString() || '';
+      const name = row[1]?.toString() || '';
+      if (code && name && !productNameMap.has(code)) {
+        productNameMap.set(code, name);
+      }
+    }
+
     // 5. 출고일지 데이터 생성
     const shipmentRows: any[][] = [];
     let skippedCount = 0;
@@ -1800,11 +1811,14 @@ sheets.post('/v2/shipment/generate', async (c) => {
         continue;  // 이미 출고일지에 있으면 스킵
       }
 
+      // ★ 제품명: 생산실적에 없으면 제품마스터에서 조회
+      const productName = prod.product_name || productNameMap.get(prod.product_code) || '';
+
       shipmentRows.push([
         `'${shipmentDate}`,         // A: 출고일 (생산일+1)
         `'${production_date}`,      // B: 생산일
         prod.product_code,          // C: 제품코드
-        prod.product_name || '',    // D: 제품명
+        productName,                // D: 제품명 (마스터에서 조회)
         prod.quantity,              // E: 수량
         'EA',                       // F: 단위
         prod.channel || '',         // G: 채널
@@ -2205,13 +2219,24 @@ sheets.post('/v2/shipment/auto-process', async (c) => {
         existingData.map(row => `${row[0]?.toString().replace(/^'/, '')}|${row[2]}|${row[7]}`)
       );
 
+      // ★★★ v3.6.34: 제품마스터에서 제품명 맵 조회 ★★★
+      const productMasterData = await service.readSheet('제품마스터', 'A2:B');
+      const productNameMap = new Map<string, string>();
+      for (const row of productMasterData) {
+        const code = row[0]?.toString() || '';
+        const name = row[1]?.toString() || '';
+        if (code && name && !productNameMap.has(code)) {
+          productNameMap.set(code, name);
+        }
+      }
+
       const shipmentRows = productions
         .filter(prod => !existingKeys.has(`${shipmentDate}|${prod.product_code}|${prod.lot_number}`))
         .map(prod => [
           `'${shipmentDate}`,
           `'${production_date}`,
           prod.product_code,
-          prod.product_name || '',
+          prod.product_name || productNameMap.get(prod.product_code) || '',  // ★ 마스터에서 조회
           prod.quantity,
           'EA',
           prod.channel || '',

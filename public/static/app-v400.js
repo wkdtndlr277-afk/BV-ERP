@@ -17795,10 +17795,10 @@ async function renderProduction() {
           <!-- 파일 업로드 영역 -->
           <div id="order-drop-zone" 
                class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-haccp-primary hover:bg-blue-50 transition cursor-pointer">
-            <input type="file" id="order-file-input" class="hidden" accept=".xlsx,.xls,.csv,.pdf" multiple>
+            <input type="file" id="order-file-input" class="hidden" accept=".xlsx,.xls,.xlsb,.csv,.pdf" multiple>
             <i id="order-file-icon" class="fas fa-file-excel text-4xl text-gray-400 mb-3"></i>
             <p id="order-file-desc" class="text-gray-600">발주서 엑셀 파일을 드래그하거나 클릭하여 선택</p>
-            <p id="order-file-types" class="text-sm text-gray-400 mt-1">.xlsx, .xls, .csv, .pdf 지원</p>
+            <p id="order-file-types" class="text-sm text-gray-400 mt-1">.xlsx, .xls, .xlsb, .csv, .pdf 지원</p>
           </div>
           
           <!-- 컬리 붙여넣기 영역 (숨김) -->
@@ -20091,6 +20091,12 @@ async function parseSingleOrderFile(file) {
   
   const data = await file.arrayBuffer();
   
+  // ★★★ v3.6.24: 오아시스 xlsb 파일 특별 처리 ★★★
+  if (fileName.endsWith('.xlsb') && (fileName.includes('오아시스') || fileName.includes('oasis'))) {
+    console.log('parseSingleOrderFile: 오아시스 xlsb 파일 감지 ->', file.name);
+    return await parseOasisXlsbFile(data, file.name);
+  }
+  
   // 직영점 HTML xls 파일 특별 처리
   if (fileName.includes('직영점') || fileName.includes('직영')) {
     console.log('parseSingleOrderFile: 직영점 파일 감지 ->', file.name);
@@ -22275,6 +22281,147 @@ function parseOasisOrder(rows) {
         quantity: qty
       });
     }
+  }
+  
+  return items;
+}
+
+// ★★★ v3.6.24: 오아시스 xlsb 파일 파싱 (data 시트에서 바코드+수량 추출) ★★★
+async function parseOasisXlsbFile(data, fileName) {
+  const items = [];
+  
+  try {
+    // SheetJS로 xlsb 파일 읽기
+    const wb = XLSX.read(data, { type: 'array' });
+    
+    console.log('[오아시스 xlsb] 시트 목록:', wb.SheetNames);
+    
+    // 'data' 시트 찾기 (대소문자 구분 없이)
+    const dataSheetName = wb.SheetNames.find(name => name.toLowerCase() === 'data');
+    
+    if (!dataSheetName) {
+      console.error('[오아시스 xlsb] data 시트를 찾을 수 없습니다');
+      showToast('xlsb 파일에서 data 시트를 찾을 수 없습니다', 'error');
+      return items;
+    }
+    
+    const ws = wb.Sheets[dataSheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    
+    console.log(`[오아시스 xlsb] data 시트 총 ${rows.length}행`);
+    
+    if (rows.length < 2) {
+      console.error('[오아시스 xlsb] data 시트에 데이터가 없습니다');
+      return items;
+    }
+    
+    // 헤더 행 찾기 (바코드, 출고수량 컬럼 확인)
+    const header = rows[0] || [];
+    let barcodeCol = -1, qtyCol = -1, nameCol = -1;
+    
+    for (let i = 0; i < header.length; i++) {
+      const col = String(header[i] || '').trim();
+      if (col === '바코드' || col.includes('바코드')) barcodeCol = i;
+      if (col === '출고수량' || col.includes('출고수량')) qtyCol = i;
+      if (col === '상 품 명' || col === '상품명' || col.includes('상 품 명')) nameCol = i;
+    }
+    
+    // 컬럼 인덱스 기본값 (xlsb 구조 기준: 바코드=12, 출고수량=9, 상품명=5)
+    if (barcodeCol === -1) barcodeCol = 12;
+    if (qtyCol === -1) qtyCol = 9;
+    if (nameCol === -1) nameCol = 5;
+    
+    console.log(`[오아시스 xlsb] 컬럼: 바코드=${barcodeCol}, 출고수량=${qtyCol}, 상품명=${nameCol}`);
+    
+    // 바코드별 수량 집계
+    const barcodeMap = new Map();
+    let skippedRows = 0;
+    
+    for (let i = 1; i < rows.length; i++) {
+      const row = rows[i];
+      if (!row || row.length === 0) continue;
+      
+      // 바코드 추출 (숫자만)
+      let barcode = String(row[barcodeCol] || '').trim();
+      // 소수점 제거 (예: 3300000048161.0 → 3300000048161)
+      if (barcode.includes('.')) {
+        barcode = barcode.split('.')[0];
+      }
+      
+      // 바코드가 유효한지 확인 (숫자만, 최소 8자리)
+      if (!barcode || !/^\d{8,}$/.test(barcode)) {
+        skippedRows++;
+        continue;
+      }
+      
+      // 수량 추출
+      const qty = parseInt(row[qtyCol]) || 0;
+      if (qty <= 0) {
+        skippedRows++;
+        continue;
+      }
+      
+      // 상품명 추출
+      const productName = String(row[nameCol] || '').trim();
+      
+      // 바코드별 수량 합산
+      if (barcodeMap.has(barcode)) {
+        const existing = barcodeMap.get(barcode);
+        existing.quantity += qty;
+      } else {
+        barcodeMap.set(barcode, {
+          barcode: barcode,
+          originalName: productName,
+          cleanName: productName.replace(/^\+/, '').replace(/\*\d+g\*.*$/, '').trim(),
+          quantity: qty,
+          channel: 'oasis'
+        });
+      }
+    }
+    
+    console.log(`[오아시스 xlsb] 바코드 집계: ${barcodeMap.size}개 품목 (스킵된 행: ${skippedRows})`);
+    
+    // 구글시트 제품마스터(바코드)와 매칭 검증
+    const barcodes = window.productionBarcodes || [];
+    let matchedCount = 0;
+    let unmatchedBarcodes = [];
+    
+    for (const [barcode, item] of barcodeMap) {
+      // 바코드 매칭 (production_barcodes에서 찾기)
+      const matched = barcodes.find(b => b.barcode === barcode);
+      
+      if (matched) {
+        matchedCount++;
+        // 매칭된 바코드: 생산명 정보 추가
+        item.productionItemName = matched.production_item_name || null;
+        item.productionItemId = matched.production_item_id || null;
+        item.expiryDays = matched.expiry_days || null;
+        item.packQuantity = matched.pack_quantity || null;
+        items.push(item);
+        console.log(`[오아시스 xlsb] ✓ 매칭: ${barcode} → ${matched.production_item_name} (수량: ${item.quantity})`);
+      } else {
+        unmatchedBarcodes.push({ barcode, name: item.originalName, qty: item.quantity });
+        // 미매칭 바코드도 일단 추가 (나중에 사용자가 확인 가능)
+        item.unmatched = true;
+        items.push(item);
+        console.warn(`[오아시스 xlsb] ✗ 미매칭: ${barcode} - ${item.originalName} (수량: ${item.quantity})`);
+      }
+    }
+    
+    console.log(`[오아시스 xlsb] 매칭 결과: ${matchedCount}/${barcodeMap.size}개 성공`);
+    
+    // 미매칭 바코드가 있으면 경고
+    if (unmatchedBarcodes.length > 0) {
+      const unmatchedList = unmatchedBarcodes.slice(0, 5).map(u => `${u.barcode} (${u.name})`).join(', ');
+      const moreCount = unmatchedBarcodes.length > 5 ? ` 외 ${unmatchedBarcodes.length - 5}개` : '';
+      showToast(`⚠️ 미등록 바코드 ${unmatchedBarcodes.length}개: ${unmatchedList}${moreCount}`, 'warning');
+    }
+    
+    showToast(`오아시스 xlsb: ${items.length}개 품목 파싱 완료 (매칭: ${matchedCount}개)`, 'success');
+    
+  } catch (error) {
+    console.error('[오아시스 xlsb] 파싱 오류:', error);
+    showToast('xlsb 파일 파싱 중 오류가 발생했습니다', 'error');
   }
   
   return items;

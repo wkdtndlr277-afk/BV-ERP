@@ -4831,4 +4831,138 @@ sheets.post('/delete-test-production-data', async (c) => {
   }
 });
 
+// ★★★ v3.6.32: 일별수불부 수식 복구 API ★★★
+// #REF! 오류가 발생한 E/F/G열 수식을 올바르게 복구
+sheets.post('/repair-daily-stock-formulas', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const targetDate = body.date;  // 특정 날짜만 복구 (선택)
+    const dryRun = body.dry_run !== false;  // 기본값: true
+
+    // 1. 일별수불부 시트 전체 읽기 (수식 모드)
+    const data = await service.readSheetFormulas('일별수불부', 'A2:H');
+    
+    // 2. #REF! 오류가 있는 행 찾기
+    const brokenRows: { row: number; date: any; code: string; name: string }[] = [];
+    const fixedFormulas: { range: string; values: any[][] }[] = [];
+    
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const sheetRow = i + 2;  // 실제 시트 행 번호 (1-indexed, 헤더 제외)
+      
+      // 날짜 확인 (숫자일 수 있음)
+      const dateVal = row[0];
+      let dateStr = '';
+      if (typeof dateVal === 'number') {
+        // 엑셀 시리얼 넘버를 날짜 문자열로 변환
+        const excelDate = new Date((dateVal - 25569) * 86400 * 1000);
+        dateStr = excelDate.toISOString().split('T')[0];
+      } else {
+        dateStr = dateVal?.toString().replace(/^'/, '') || '';
+      }
+      
+      // 특정 날짜만 처리하는 경우
+      if (targetDate && dateStr !== targetDate) continue;
+      
+      const code = row[1]?.toString() || '';
+      const name = row[2]?.toString() || '';
+      
+      // E열(입고량), F열(사용량), G열(현재고) 수식 확인
+      const eFormula = row[4]?.toString() || '';
+      const fFormula = row[5]?.toString() || '';
+      const gFormula = row[6]?.toString() || '';
+      
+      // #REF! 포함 여부 확인
+      const hasRefError = eFormula.includes('#REF!') || fFormula.includes('#REF!') || gFormula.includes('#REF!');
+      
+      if (hasRefError) {
+        brokenRows.push({ row: sheetRow, date: dateStr, code, name });
+        
+        // 올바른 수식 생성
+        const correctFormulas = [
+          // E열: 입고량 = 원료입고 시트에서 해당 날짜+원료코드 합계
+          `=IFERROR(SUMIFS('원료입고'!E:E,'원료입고'!B:B,B${sheetRow},'원료입고'!A:A,A${sheetRow}),0)`,
+          // F열: 사용량 = 로트매칭 시트에서 해당 날짜+원료코드 합계
+          `=IFERROR(SUMIFS('로트매칭'!E:E,'로트매칭'!C:C,B${sheetRow},'로트매칭'!A:A,A${sheetRow}),0)`,
+          // G열: 현재고 = 전일재고 + 입고 - 사용
+          `=D${sheetRow}+E${sheetRow}-F${sheetRow}`
+        ];
+        
+        fixedFormulas.push({
+          range: `일별수불부!E${sheetRow}:G${sheetRow}`,
+          values: [correctFormulas]
+        });
+      }
+    }
+
+    if (brokenRows.length === 0) {
+      return c.json({
+        success: true,
+        message: targetDate 
+          ? `${targetDate} 날짜에 복구할 수식이 없습니다.`
+          : '복구할 수식이 없습니다. (모든 수식 정상)',
+        broken_count: 0
+      });
+    }
+
+    if (dryRun) {
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        message: `${brokenRows.length}개 행의 수식 복구 필요 (dry_run=false로 실제 복구)`,
+        broken_count: brokenRows.length,
+        sample_rows: brokenRows.slice(0, 10),
+        sample_fix: fixedFormulas.slice(0, 3).map(f => ({
+          range: f.range,
+          formulas: f.values[0]
+        }))
+      });
+    }
+
+    // 3. 수식 일괄 업데이트 (USER_ENTERED 모드로 수식 적용)
+    // batchWriteSheet 사용하여 일괄 처리
+    const BATCH_SIZE = 50;  // API 제한 고려
+    let fixedCount = 0;
+    
+    for (let i = 0; i < fixedFormulas.length; i += BATCH_SIZE) {
+      const batch = fixedFormulas.slice(i, i + BATCH_SIZE);
+      
+      // batchWriteSheet용 형식으로 변환
+      const updates = batch.map(f => {
+        // range 형식: "일별수불부!E3352:G3352" -> sheetName: "일별수불부", range: "E3352:G3352"
+        const parts = f.range.split('!');
+        return {
+          sheetName: parts[0],
+          range: parts[1],
+          values: f.values
+        };
+      });
+      
+      const success = await service.batchWriteSheet(updates);
+      
+      if (!success) {
+        throw new Error(`배치 ${Math.floor(i/BATCH_SIZE) + 1} 업데이트 실패`);
+      }
+      
+      fixedCount += batch.length;
+    }
+
+    return c.json({
+      success: true,
+      mode: 'executed',
+      message: `${fixedCount}개 행의 수식 복구 완료`,
+      fixed_count: fixedCount,
+      target_date: targetDate || 'all',
+      sample_rows: brokenRows.slice(0, 10)
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;

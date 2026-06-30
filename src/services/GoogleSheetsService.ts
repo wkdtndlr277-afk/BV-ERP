@@ -1496,13 +1496,16 @@ export class GoogleSheetsService {
       const { name, unit } = prevStockMap[code];
       const rowNum = startRowNum + i;
       
-      // ★★★ v3.6.27: 수식 기반으로 변경 ★★★
+      // ★★★ v3.6.31: 전일재고는 값으로 직접 입력 (수식 순환참조 방지) ★★★
+      // prevStockMap에서 가져온 전일 현재고 값을 직접 사용
+      const prevStock = prevStockMap[code]?.current || 0;
+      
       newRows.push([
         `'${cleanDate}`,   // A: 날짜 (문자열 강제)
         code,              // B: 품목코드
         name,              // C: 품목명
-        // D: 전일재고 - 원료입고 시트에서 해당 날짜 이전 입고 합계 (간소화: 전일 현재고 참조)
-        `=IFERROR(SUMIFS(원료입고!I:I,원료입고!B:B,B${rowNum},원료입고!A:A,"<"&A${rowNum}),0)`,
+        // D: 전일재고 - 이미 조회한 전날 현재고 값 사용
+        prevStock,
         // E: 입고량 - 원료입고 시트에서 해당 날짜 입고량
         `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
         // F: 사용량 - 로트매칭 시트에서 해당 일자+원료코드 합계

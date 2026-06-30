@@ -1361,22 +1361,41 @@ export class GoogleSheetsService {
     // 1. 기존 일별수불부 데이터 읽기 (A, B열만 - 날짜와 품목코드)
     const existingData = await this.readSheet('일별수불부', 'A2:H5000');
     
-    // 2. 해당 날짜 데이터가 이미 있는지 확인
+    // ★★★ v3.6.20: 해당 날짜 데이터가 있으면 삭제 후 재생성 ★★★
     const existingDateRows = existingData.filter(row => {
       const rowDate = row[0]?.toString().replace(/^'/, '') || '';
       return rowDate === cleanDate;
     });
     
     if (existingDateRows.length > 0) {
-      console.log(`[addDailyStockDate v3.6.15] 이미 ${cleanDate} 데이터 ${existingDateRows.length}건 있음 - 스킵 (중복 방지)`);
-      // 이미 해당 날짜 데이터가 있으면 새로 추가하지 않음
-      // 기존 데이터 보존을 위해 재생성하지 않음
-      return {
-        date: cleanDate,
-        prev_date: '',
-        new_rows: 0,
-        total_rows: existingData.length
-      };
+      console.log(`[addDailyStockDate v3.6.20] 이미 ${cleanDate} 데이터 ${existingDateRows.length}건 있음 - 삭제 후 재생성`);
+      
+      // 해당 날짜 제외한 데이터만 유지
+      const remainingData = existingData.filter(row => {
+        const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+        return rowDate !== cleanDate;
+      });
+      
+      // 날짜 + 품목코드 순 정렬
+      remainingData.sort((a, b) => {
+        const dateA = a[0]?.toString().replace(/^'/, '') || '';
+        const dateB = b[0]?.toString().replace(/^'/, '') || '';
+        if (dateA !== dateB) return dateA.localeCompare(dateB);
+        const codeA = a[1]?.toString() || '';
+        const codeB = b[1]?.toString() || '';
+        return codeA.localeCompare(codeB);
+      });
+      
+      // 클리어 후 남은 데이터 쓰기
+      await this.clearRange('일별수불부', 'A2:H50000');
+      if (remainingData.length > 0) {
+        await this.writeSheet('일별수불부', 'A2', remainingData);
+      }
+      
+      // existingData를 remainingData로 업데이트 (아래 로직에서 사용)
+      existingData.length = 0;
+      existingData.push(...remainingData);
+      console.log(`[addDailyStockDate v3.6.20] ${cleanDate} 데이터 삭제 완료, ${remainingData.length}행 유지`);
     }
     
     // 3. 전날 날짜 계산

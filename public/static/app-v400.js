@@ -20024,9 +20024,16 @@ async function processMultipleOrderFiles(files) {
         
         // 첫 번째 파일에서 채널 감지
         if (!detectedChannel) {
-          const data = await file.arrayBuffer();
-          const wb = XLSX.read(data, { type: 'array', codepage: 949 });
-          detectedChannel = detectOrderChannel(file.name, wb);
+          const fn = file.name.toLowerCase();
+          // ★★★ v3.6.24: xlsb 파일은 별도 처리 (XLSX.read 재호출 불필요) ★★★
+          if (fn.endsWith('.xlsb')) {
+            detectedChannel = fn.includes('오아시스') || fn.includes('oasis') ? 'oasis' : 'generic';
+            console.log(`[xlsb] 채널 감지: ${detectedChannel}`);
+          } else {
+            const data = await file.arrayBuffer();
+            const wb = XLSX.read(data, { type: 'array', codepage: 949 });
+            detectedChannel = detectOrderChannel(file.name, wb);
+          }
         }
       }
     } catch (e) {

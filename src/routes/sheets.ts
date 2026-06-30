@@ -854,7 +854,7 @@ sheets.post('/setup-formulas', async (c) => {
   }
 });
 
-// ★★★ v3.6.15: 일별수불부 재생성 API ★★★
+// ★★★ v3.6.16: 일별수불부 재생성 API (force 옵션 추가) ★★★
 // 생산실적 시트에서 날짜 목록을 가져와서 일별수불부 재생성
 sheets.post('/rebuild-daily-stock', async (c) => {
   const service = getSheetService(c);
@@ -864,7 +864,7 @@ sheets.post('/rebuild-daily-stock', async (c) => {
 
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { start_date, end_date } = body;
+    const { start_date, end_date, force = false } = body;
     
     // 1. 생산실적 시트에서 날짜 목록 가져오기
     const productionData = await service.readSheet('생산실적', 'A2:A5000');
@@ -890,7 +890,29 @@ sheets.post('/rebuild-daily-stock', async (c) => {
     
     // 날짜 정렬 (오름차순)
     const sortedDates = Array.from(uniqueDates).sort();
-    console.log(`[rebuild-daily-stock] 처리할 날짜: ${sortedDates.join(', ')}`);
+    console.log(`[rebuild-daily-stock] 처리할 날짜: ${sortedDates.join(', ')}, force=${force}`);
+    
+    // ★★★ v3.6.16: force=true면 해당 날짜 데이터 먼저 삭제 ★★★
+    if (force) {
+      console.log(`[rebuild-daily-stock] force 모드: ${sortedDates.length}개 날짜 데이터 삭제 후 재생성`);
+      
+      // 일별수불부 전체 읽기
+      const existingData = await service.readSheet('일별수불부', 'A2:H50000');
+      
+      // 삭제할 날짜가 아닌 행만 필터링
+      const datesToDelete = new Set(sortedDates);
+      const remainingData = existingData.filter(row => {
+        const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+        return !datesToDelete.has(rowDate);
+      });
+      
+      // 클리어 후 남은 데이터만 다시 쓰기
+      await service.clearRange('일별수불부', 'A2:H50000');
+      if (remainingData.length > 0) {
+        await service.writeSheet('일별수불부', 'A2', remainingData);
+      }
+      console.log(`[rebuild-daily-stock] 기존 ${existingData.length}행 중 ${existingData.length - remainingData.length}행 삭제, ${remainingData.length}행 유지`);
+    }
     
     // 2. 각 날짜별로 일별수불부 생성
     const results: any[] = [];
@@ -921,6 +943,7 @@ sheets.post('/rebuild-daily-stock', async (c) => {
       success: true,
       message: `일별수불부 재생성 완료: ${successCount}개 성공, ${errorCount}개 실패`,
       total_dates: sortedDates.length,
+      force_mode: force,
       results,
       note: '★ 각 날짜의 사용량(F열)은 로트매칭 시트 참조 수식으로 자동 계산됩니다.'
     });

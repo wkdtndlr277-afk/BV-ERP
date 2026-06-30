@@ -1405,7 +1405,8 @@ export class GoogleSheetsService {
         const name = row[1]?.toString() || '';
         const unit = row[4]?.toString() || 'kg';
         
-        if (code && !code.startsWith('SF') && !code.startsWith('SM') && code !== 'RM184') {
+        // ★★★ v3.6.16: RT(자재), SF(반제품), SM(반제품), RM184(정제수) 제외 ★★★
+        if (code && !code.startsWith('SF') && !code.startsWith('SM') && !code.startsWith('RT') && code !== 'RM184') {
           if (!uniqueItems.has(code)) {
             uniqueItems.set(code, { name, unit });
           }
@@ -1424,9 +1425,11 @@ export class GoogleSheetsService {
         const name = row[2]?.toString() || '';
         const current = parseFloat(row[6]?.toString() || '0') || 0;
         const unit = row[7]?.toString() || 'kg';
+        // ★★★ v3.6.16: RT(자재) 제외 ★★★
+        if (code.startsWith('RT')) continue;
         prevStockMap[code] = { name, current, unit };
       }
-      console.log(`[addDailyStockDate v3.6.15] 전일(${prevDate}) 데이터에서 ${prevDayData.length}개 품목 조회`);
+      console.log(`[addDailyStockDate v3.6.16] 전일(${prevDate}) 데이터에서 ${Object.keys(prevStockMap).length}개 품목 조회 (RT 제외)`);
     }
     
     // 5. 당일 입고량 가져오기
@@ -1438,7 +1441,8 @@ export class GoogleSheetsService {
       
       const code = row[1]?.toString() || '';
       const qty = parseFloat(row[4]?.toString() || '0') || 0;
-      if (code.startsWith('SF') || code.startsWith('SM') || code === 'RM184') continue;
+      // ★★★ v3.6.16: RT(자재), SF(반제품), SM(반제품), RM184(정제수) 제외 ★★★
+      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184') continue;
       
       inboundMap[code] = (inboundMap[code] || 0) + qty;
     }

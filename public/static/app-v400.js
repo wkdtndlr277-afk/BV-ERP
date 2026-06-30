@@ -24348,6 +24348,26 @@ async function registerDailyReportById(reportId) {
           totalFail += registerResult.data.fail || 0;
           totalSkipped += registerResult.data.skipped || 0;
           console.log(`배치 ${currentBatch}/${totalBatches} 완료: 성공=${registerResult.data.success}, 실패=${registerResult.data.fail}`);
+          
+          // ★★★ v3.6.23: 자동 갱신 오류 체크 및 재시도 ★★★
+          const autoError = registerResult.data.auto_update_error;
+          if (autoError) {
+            console.warn(`[생산등록] 자동 갱신 오류: ${autoError}`);
+            // 일별수불부 또는 LOT매칭 실패 시 재시도
+            try {
+              const prodDate = registerResult.data.prod_date || report.report_date;
+              console.log(`[생산등록] 일별수불부/LOT매칭 재생성 시도: ${prodDate}`);
+              await api('/sheets/rebuild-daily-stock', 'POST', { 
+                start_date: prodDate, 
+                end_date: prodDate, 
+                force: true 
+              });
+              console.log(`[생산등록] 일별수불부 재생성 완료`);
+            } catch (retryErr) {
+              console.error(`[생산등록] 재생성 실패:`, retryErr);
+              showToast(`⚠️ 구글시트 자동 갱신 실패 - 관리자 모드에서 수동 동기화 필요`, 'warning');
+            }
+          }
         } else if (registerResult.already_registered) {
           totalSkipped += registerResult.already_registered;
           console.log(`배치 ${currentBatch}/${totalBatches}: ${registerResult.already_registered}건 이미 등록됨`);
@@ -24475,6 +24495,25 @@ async function registerProductionFromDailyReport() {
         if (result.success) {
           totalSuccess += result.data?.success || 0;
           totalFail += result.data?.fail || 0;
+          
+          // ★★★ v3.6.23: 자동 갱신 오류 체크 및 재시도 ★★★
+          const autoError = result.auto_update_error;
+          if (autoError) {
+            console.warn(`[생산등록] 자동 갱신 오류: ${autoError}`);
+            try {
+              const prodDate = result.prod_date || productionDate;
+              console.log(`[생산등록] 일별수불부/LOT매칭 재생성 시도: ${prodDate}`);
+              await axios.post(`${API_BASE}/sheets/rebuild-daily-stock`, { 
+                start_date: prodDate, 
+                end_date: prodDate, 
+                force: true 
+              }, { timeout: 30000 });
+              console.log(`[생산등록] 일별수불부 재생성 완료`);
+            } catch (retryErr) {
+              console.error(`[생산등록] 재생성 실패:`, retryErr);
+              showToast(`⚠️ 구글시트 자동 갱신 실패`, 'warning');
+            }
+          }
         } else if (result.already_registered) {
           // 이미 등록된 경우
           totalSkipped += result.already_registered;

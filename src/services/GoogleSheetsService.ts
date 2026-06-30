@@ -1405,8 +1405,8 @@ export class GoogleSheetsService {
         const name = row[1]?.toString() || '';
         const unit = row[4]?.toString() || 'kg';
         
-        // ★★★ v3.6.16: RT(자재), SF(반제품), SM(반제품), RM184(정제수) 제외 ★★★
-        if (code && !code.startsWith('SF') && !code.startsWith('SM') && !code.startsWith('RT') && code !== 'RM184') {
+        // ★★★ v3.6.17: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재) 제외 ★★★
+        if (code && !code.startsWith('SF') && !code.startsWith('SM') && !code.startsWith('RT') && code !== 'RM184' && code !== 'RM1054') {
           if (!uniqueItems.has(code)) {
             uniqueItems.set(code, { name, unit });
           }
@@ -1425,8 +1425,8 @@ export class GoogleSheetsService {
         const name = row[2]?.toString() || '';
         const current = parseFloat(row[6]?.toString() || '0') || 0;
         const unit = row[7]?.toString() || 'kg';
-        // ★★★ v3.6.16: RT(자재) 제외 ★★★
-        if (code.startsWith('RT')) continue;
+        // ★★★ v3.6.17: RT(자재), RM1054(부자재) 제외 ★★★
+        if (code.startsWith('RT') || code === 'RM1054') continue;
         prevStockMap[code] = { name, current, unit };
       }
       console.log(`[addDailyStockDate v3.6.16] 전일(${prevDate}) 데이터에서 ${Object.keys(prevStockMap).length}개 품목 조회 (RT 제외)`);
@@ -1441,8 +1441,8 @@ export class GoogleSheetsService {
       
       const code = row[1]?.toString() || '';
       const qty = parseFloat(row[4]?.toString() || '0') || 0;
-      // ★★★ v3.6.16: RT(자재), SF(반제품), SM(반제품), RM184(정제수) 제외 ★★★
-      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184') continue;
+      // ★★★ v3.6.17: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재) 제외 ★★★
+      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184' || code === 'RM1054') continue;
       
       inboundMap[code] = (inboundMap[code] || 0) + qty;
     }

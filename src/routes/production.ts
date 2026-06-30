@@ -4145,14 +4145,16 @@ productionRoutes.post('/simple-batch', async (c) => {
       }
     }
     
-    // ★ v3.5.83: LOT 매칭 + 일별수불부 자동 갱신 (에러 상세 로깅)
+    // ★★★ v3.6.25: LOT 매칭 + 일별수불부 자동 갱신 (시트 전송 실패해도 실행) ★★★
+    // 근본 수정: sheetSent 실패해도 service가 있으면 자동 갱신 시도
     let lotMatchingResult: any = null;
     let dailyStockResult: any = null;
     let autoUpdateError: string | null = null;
     
     console.log(`[production/simple-batch] 자동 갱신 조건: service=${!!service}, sheetSent=${sheetSent}`);
     
-    if (service && sheetSent) {
+    // ★ v3.6.25: service만 있으면 자동 갱신 시도 (sheetSent 조건 제거)
+    if (service) {
       try {
         // 4-1. LOT 매칭 자동 생성 (해당 날짜만)
         console.log(`[production/simple-batch] LOT 매칭 생성 시작: ${actualProdDate}`);
@@ -4173,9 +4175,8 @@ productionRoutes.post('/simple-batch', async (c) => {
         autoUpdateError = (autoUpdateError ? autoUpdateError + ' / ' : '') + `일별수불부 실패: ${stockError.message}`;
       }
     } else {
-      console.warn(`[production/simple-batch] 자동 갱신 건너뜀: service=${!!service}, sheetSent=${sheetSent}`);
-      if (!service) autoUpdateError = 'Google Sheets 서비스 없음';
-      else if (!sheetSent) autoUpdateError = '시트 전송 실패로 자동 갱신 건너뜀';
+      console.warn(`[production/simple-batch] 자동 갱신 건너뜀: service=${!!service}`);
+      autoUpdateError = 'Google Sheets 서비스 없음 (환경변수 확인 필요)';
     }
     
     return c.json({

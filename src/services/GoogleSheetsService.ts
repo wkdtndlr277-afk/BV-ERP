@@ -1502,49 +1502,47 @@ export class GoogleSheetsService {
       
       usageMap[code] = (usageMap[code] || 0) + usage;
     }
-    console.log(`[addDailyStockDate v3.6.21] 로트매칭에서 ${Object.keys(usageMap).length}개 원료 사용량 계산`);
+    console.log(`[addDailyStockDate v3.6.41] 로트매칭에서 ${Object.keys(usageMap).length}개 원료 사용량 계산`);
+    console.log(`[addDailyStockDate v3.6.41] 원료입고에서 ${Object.keys(inboundMap).length}개 원료 입고량 계산`);
     
     // 6. 새 날짜 행 생성 - 품목코드 순 정렬
     const sortedCodes = Object.keys(prevStockMap).sort();
     const newRows: any[][] = [];
     
-    // ★★★ v3.6.27: 현재 일별수불부 시트의 마지막 행 번호 확인 ★★★
-    const startRowNum = existingData.length + 2;  // 헤더(1행) + 기존데이터 + 1
-    
     for (let i = 0; i < sortedCodes.length; i++) {
       const code = sortedCodes[i];
       const { name, unit } = prevStockMap[code];
-      const rowNum = startRowNum + i;
       
-      // ★★★ v3.6.31: 전일재고는 값으로 직접 입력 (수식 순환참조 방지) ★★★
-      // prevStockMap에서 가져온 전일 현재고 값을 직접 사용
+      // ★★★ v3.6.41: 전일재고는 값으로 직접 입력 ★★★
       const prevStock = prevStockMap[code]?.current || 0;
+      
+      // ★★★ v3.6.41: 입고량, 사용량도 수식 대신 계산된 값으로 직접 입력 ★★★
+      // SUMIFS 수식이 날짜 형식 차이로 매칭 실패하는 문제 해결
+      const inboundQty = inboundMap[code] || 0;
+      const usageQty = usageMap[code] || 0;
+      const currentStock = prevStock + inboundQty - usageQty;
       
       newRows.push([
         `'${cleanDate}`,   // A: 날짜 (문자열 강제)
         code,              // B: 품목코드
         name,              // C: 품목명
-        // D: 전일재고 - 이미 조회한 전날 현재고 값 사용
-        prevStock,
-        // E: 입고량 - 원료입고 시트에서 해당 날짜 입고량
-        `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
-        // F: 사용량 - 로트매칭 시트에서 해당 일자+원료코드 합계
-        `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,
-        // G: 현재고 = 전일재고 + 입고 - 사용
-        `=D${rowNum}+E${rowNum}-F${rowNum}`,
+        prevStock,         // D: 전일재고 (값)
+        inboundQty,        // E: 입고량 (값) - 수식→값 변경!
+        usageQty,          // F: 사용량 (값) - 수식→값 변경!
+        currentStock,      // G: 현재고 (값) - 수식→값 변경!
         unit               // H: 단위
       ]);
     }
     
-    // ★★★ 7. 수식 포함 APPEND (USER_ENTERED 모드) ★★★
+    // ★★★ 7. 값 APPEND (수식 없음) ★★★
     if (newRows.length > 0) {
       await this.appendSheetWithFormulas('일별수불부', newRows);
-      console.log(`[addDailyStockDate v3.6.27] ${newRows.length}건 APPEND 완료 (수식 방식, 시작행: ${startRowNum})`);
+      console.log(`[addDailyStockDate v3.6.41] ${newRows.length}건 APPEND 완료 (값 직접 입력 방식)`);
     } else {
-      console.warn(`[addDailyStockDate v3.6.27] 경고: 새 행이 0건 - prevStockMap 크기: ${Object.keys(prevStockMap).length}`);
+      console.warn(`[addDailyStockDate v3.6.41] 경고: 새 행이 0건 - prevStockMap 크기: ${Object.keys(prevStockMap).length}`);
     }
     
-    console.log(`[addDailyStockDate v3.6.27] ========== 완료: ${cleanDate}, 기존 ${existingData.length}행 + 신규 ${newRows.length}행 ==========`);
+    console.log(`[addDailyStockDate v3.6.41] ========== 완료: ${cleanDate}, 기존 ${existingData.length}행 + 신규 ${newRows.length}행 ==========`);
     
     return {
       date: cleanDate,

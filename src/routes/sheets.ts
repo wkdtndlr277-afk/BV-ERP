@@ -200,6 +200,127 @@ sheets.get('/product-master', async (c) => {
   }
 });
 
+// ★★★ v3.6.39: 제품마스터 역방향 동기화 (구글시트 → D1) ★★★
+// SSOT: 구글시트가 원본, D1에 반영
+sheets.post('/sync/product-master-from-sheet', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const dryRun = body.dry_run !== false;
+    
+    // 구글시트 제품마스터 읽기 (A=제품코드, B=제품명, C=바코드, D=발주상품명, E=채널, F=소비기한, G=박스수량)
+    const sheetData = await service.readSheet('제품마스터', 'A2:H');
+    
+    if (!sheetData || sheetData.length === 0) {
+      return c.json({ success: false, error: '구글시트 제품마스터가 비어있습니다.' }, 400);
+    }
+    
+    // D1에서 현재 데이터 조회
+    const d1Data = await c.env.DB.prepare(`
+      SELECT id, production_code, barcode, product_name, channel, expiry_days, box_quantity
+      FROM production_barcodes
+    `).all<any>();
+    
+    const d1Map = new Map<string, any>();
+    for (const row of d1Data.results || []) {
+      d1Map.set(`${row.production_code}|${row.barcode}`, row);
+    }
+    
+    const updates: any[] = [];
+    const inserts: any[] = [];
+    const skipped: any[] = [];
+    
+    for (const row of sheetData) {
+      const productCode = row[0]?.toString().trim() || '';
+      const barcode = row[2]?.toString().trim() || '';
+      const orderProductName = row[3]?.toString().trim() || '';
+      const channel = row[4]?.toString().trim() || '';
+      const expiryDays = parseInt(row[5]?.toString().trim()) || null;
+      const boxQuantity = parseInt(row[6]?.toString().trim()) || 1;
+      
+      if (!productCode || !barcode) {
+        skipped.push({ productCode, barcode, reason: '제품코드/바코드 없음' });
+        continue;
+      }
+      
+      const existing = d1Map.get(`${productCode}|${barcode}`);
+      
+      if (existing) {
+        const hasChange = existing.product_name !== orderProductName ||
+          existing.channel !== channel ||
+          existing.expiry_days !== expiryDays ||
+          existing.box_quantity !== boxQuantity;
+        
+        if (hasChange) {
+          updates.push({
+            id: existing.id, production_code: productCode, barcode,
+            product_name: orderProductName, channel, expiry_days: expiryDays, box_quantity: boxQuantity,
+            changes: {
+              expiry_days: existing.expiry_days !== expiryDays ? `${existing.expiry_days}→${expiryDays}` : null,
+              product_name: existing.product_name !== orderProductName ? `변경됨` : null
+            }
+          });
+        }
+      } else {
+        inserts.push({ production_code: productCode, barcode, product_name: orderProductName, channel, expiry_days: expiryDays, box_quantity: boxQuantity });
+      }
+    }
+    
+    if (dryRun) {
+      return c.json({
+        success: true, dry_run: true,
+        message: '미리보기 (실제 반영: dry_run: false)',
+        summary: { sheet_total: sheetData.length, to_update: updates.length, to_insert: inserts.length, skipped: skipped.length },
+        updates: updates.slice(0, 20), inserts: inserts.slice(0, 20)
+      });
+    }
+    
+    let updatedCount = 0, insertedCount = 0;
+    const updateErrors: string[] = [];
+    
+    for (const item of updates) {
+      try {
+        await c.env.DB.prepare(`UPDATE production_barcodes SET product_name=?, channel=?, expiry_days=?, box_quantity=? WHERE id=?`)
+          .bind(item.product_name, item.channel, item.expiry_days, item.box_quantity, item.id).run();
+        updatedCount++;
+      } catch (e: any) {
+        updateErrors.push(`${item.production_code}/${item.barcode}: ${e.message}`);
+      }
+    }
+    
+    // ★★★ v3.6.39: INSERT OR IGNORE로 중복 시 무시 ★★★
+    const insertErrors: string[] = [];
+    for (const item of inserts) {
+      try {
+        await c.env.DB.prepare(`INSERT OR IGNORE INTO production_barcodes (production_code, barcode, product_name, channel, expiry_days, box_quantity) VALUES (?,?,?,?,?,?)`)
+          .bind(item.production_code, item.barcode, item.product_name, item.channel, item.expiry_days, item.box_quantity).run();
+        insertedCount++;
+      } catch (e: any) {
+        insertErrors.push(`${item.production_code}/${item.barcode}: ${e.message}`);
+      }
+    }
+    
+    return c.json({
+      success: true, dry_run: false,
+      message: `제품마스터 구글시트→D1 동기화 완료`,
+      summary: { 
+        updated: updatedCount, 
+        inserted: insertedCount, 
+        skipped: skipped.length,
+        update_errors: updateErrors.length,
+        insert_errors: insertErrors.length
+      },
+      errors: [...updateErrors, ...insertErrors].slice(0, 10)  // 최대 10개 에러만 표시
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 제품 소비기한 조회 (생산일보용)
 sheets.get('/product-expiry', async (c) => {
   const service = getSheetService(c);
@@ -4737,6 +4858,56 @@ sheets.post('/reset-daily-stock-complete', async (c) => {
   }
 });
 
+// ★★★ v3.6.40: 일별수불부 생성 디버그 API ★★★
+sheets.get('/debug/daily-stock-calc', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+    const cleanDate = date.replace(/^'/, '');
+    
+    // 1. 로트매칭 시트에서 해당 날짜 데이터 확인
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:G50000');
+    const usageMap: Record<string, number> = {};
+    let matchedRows = 0;
+    let dateFormats: string[] = [];
+    
+    for (const row of lotMatchingData) {
+      const lotDate = row[0]?.toString().replace(/^'/, '') || '';
+      
+      // 처음 10개 날짜 형식 기록
+      if (dateFormats.length < 10 && lotDate && !dateFormats.includes(lotDate)) {
+        dateFormats.push(lotDate);
+      }
+      
+      if (lotDate !== cleanDate) continue;
+      matchedRows++;
+      
+      const code = row[2]?.toString() || '';
+      const usage = parseFloat(row[4]?.toString() || '0') || 0;
+      
+      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184' || code === 'RM1054') continue;
+      
+      usageMap[code] = (usageMap[code] || 0) + usage;
+    }
+    
+    return c.json({
+      success: true,
+      date: cleanDate,
+      lot_matching_total_rows: lotMatchingData.length,
+      matched_rows_for_date: matchedRows,
+      usage_items_count: Object.keys(usageMap).length,
+      sample_date_formats: dateFormats,
+      sample_usage: Object.entries(usageMap).slice(0, 10).map(([k, v]) => ({ code: k, usage: v }))
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.6.09: 일별수불부 새 날짜 추가 API - Service 함수로 일원화 ★★★
 // GoogleSheetsService.addDailyStockDate() 호출로 로직 통일
 sheets.post('/add-daily-stock-date', async (c) => {
@@ -5110,6 +5281,46 @@ sheets.post('/cleanup-excluded-codes', async (c) => {
       excluded_count: excludedRows.length,
       remaining_count: cleanedData.length,
       sample_excluded: excludedRows.slice(0, 20)
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.38: 구글시트 원료입고 디버그 API ★★★
+sheets.get('/debug/inbound-lots', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const itemCode = c.req.query('item_code') || '';
+    
+    // 구글시트 원료입고 시트 직접 읽기
+    // A:입고일자, B:원료코드, C:원료명, D:로트번호, E:입고량, F:단위, G:공급업체, H:소비기한
+    const inboundData = await service.readSheet('원료입고', 'A2:J5000');
+    
+    const filtered = inboundData
+      .filter(row => !itemCode || row[1]?.toString() === itemCode)
+      .map(row => ({
+        inbound_date: row[0],
+        item_code: row[1],
+        item_name: row[2],
+        lot_number: row[3],
+        qty: row[4],
+        unit: row[5],
+        supplier: row[6],
+        expiry_date: row[7],  // H열: 소비기한
+        raw_row: row
+      }));
+    
+    return c.json({
+      success: true,
+      item_code: itemCode || 'all',
+      count: filtered.length,
+      data: filtered.slice(0, 50),
+      note: '구글시트 원료입고 시트 직접 조회 (H열=소비기한)'
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

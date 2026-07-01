@@ -50356,6 +50356,10 @@ async function renderSheetsConfig() {
             <button onclick="syncSheetsData('bom')" class="w-full px-4 py-3 bg-purple-500 text-white rounded-lg hover:bg-purple-600">
               <i class="fas fa-list-alt mr-2"></i>BOM 마스터 동기화
             </button>
+            <!-- ★★★ v3.6.39: 제품마스터 역방향 동기화 ★★★ -->
+            <button onclick="syncProductMasterFromSheet()" class="w-full px-4 py-3 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600">
+              <i class="fas fa-file-import mr-2"></i>제품마스터 시트→ERP 동기화
+            </button>
           </div>
         </div>
         
@@ -50426,6 +50430,70 @@ async function syncSheetsData(type) {
   }
 }
 
+// ★★★ v3.6.39: 제품마스터 구글시트→ERP 역방향 동기화 ★★★
+async function syncProductMasterFromSheet() {
+  const logDiv = document.getElementById('sync-log');
+  
+  // 먼저 미리보기 실행
+  logDiv.innerHTML = `<div class="text-blue-600">[${new Date().toLocaleTimeString()}] 제품마스터 시트→ERP 동기화 미리보기...</div>`;
+  
+  try {
+    // 1단계: dry run으로 변경사항 확인
+    const previewRes = await axios.post('/api/sheets/sync/product-master-from-sheet', { dry_run: true });
+    
+    if (!previewRes.data.success) {
+      logDiv.innerHTML += `<div class="text-red-600">[${new Date().toLocaleTimeString()}] 실패: ${previewRes.data.error}</div>`;
+      showToast('동기화 실패: ' + previewRes.data.error, 'error');
+      return;
+    }
+    
+    const summary = previewRes.data.summary;
+    const updates = previewRes.data.updates || [];
+    const inserts = previewRes.data.inserts || [];
+    
+    // 변경사항 없으면 종료
+    if (summary.to_update === 0 && summary.to_insert === 0) {
+      logDiv.innerHTML += `<div class="text-green-600">[${new Date().toLocaleTimeString()}] 변경사항 없음 (시트 ${summary.sheet_total}건, ERP 동일)</div>`;
+      showToast('변경사항이 없습니다.', 'info');
+      return;
+    }
+    
+    // 미리보기 표시
+    logDiv.innerHTML += `<div class="text-yellow-600">[${new Date().toLocaleTimeString()}] 변경 예정: 수정 ${summary.to_update}건, 추가 ${summary.to_insert}건</div>`;
+    
+    // 변경 상세 표시
+    if (updates.length > 0) {
+      logDiv.innerHTML += `<div class="text-gray-500 ml-4">수정: ${updates.slice(0,5).map(u => u.production_code + (u.changes.expiry_days ? ` (소비기한 ${u.changes.expiry_days})` : '')).join(', ')}${updates.length > 5 ? ` 외 ${updates.length-5}건` : ''}</div>`;
+    }
+    if (inserts.length > 0) {
+      logDiv.innerHTML += `<div class="text-gray-500 ml-4">추가: ${inserts.slice(0,5).map(i => i.production_code).join(', ')}${inserts.length > 5 ? ` 외 ${inserts.length-5}건` : ''}</div>`;
+    }
+    
+    // 사용자 확인
+    if (!confirm(`구글시트 제품마스터를 ERP에 반영하시겠습니까?\n\n• 수정: ${summary.to_update}건\n• 추가: ${summary.to_insert}건\n\n(구글시트가 원본, ERP에 덮어쓰기)`)) {
+      logDiv.innerHTML += `<div class="text-gray-500">[${new Date().toLocaleTimeString()}] 사용자 취소</div>`;
+      return;
+    }
+    
+    // 2단계: 실제 반영
+    logDiv.innerHTML += `<div class="text-blue-600">[${new Date().toLocaleTimeString()}] 동기화 실행 중...</div>`;
+    
+    const execRes = await axios.post('/api/sheets/sync/product-master-from-sheet', { dry_run: false });
+    
+    if (execRes.data.success) {
+      const result = execRes.data.summary;
+      logDiv.innerHTML += `<div class="text-green-600">[${new Date().toLocaleTimeString()}] ✅ 완료: 수정 ${result.updated}건, 추가 ${result.inserted}건</div>`;
+      showToast(`제품마스터 동기화 완료! (수정 ${result.updated}, 추가 ${result.inserted})`, 'success');
+    } else {
+      logDiv.innerHTML += `<div class="text-red-600">[${new Date().toLocaleTimeString()}] 실패: ${execRes.data.error}</div>`;
+      showToast('동기화 실패: ' + execRes.data.error, 'error');
+    }
+  } catch (error) {
+    logDiv.innerHTML += `<div class="text-red-600">[${new Date().toLocaleTimeString()}] 오류: ${error.message}</div>`;
+    showToast('동기화 실패', 'error');
+  }
+}
+
 async function initSheets() {
   if (!confirm('시트를 초기화하시겠습니까? 기존 데이터가 삭제될 수 있습니다.')) return;
   
@@ -50449,6 +50517,7 @@ async function initSheets() {
 
 window.renderSheetsConfig = renderSheetsConfig;
 window.syncSheetsData = syncSheetsData;
+window.syncProductMasterFromSheet = syncProductMasterFromSheet;  // v3.6.39
 window.initSheets = initSheets;
 
 // ========================================

@@ -4999,4 +4999,121 @@ sheets.post('/repair-daily-stock-formulas', async (c) => {
   }
 });
 
+// ★★★ v3.6.37: 일별수불부에서 제외 대상 코드(RT, SF, SM, RM184, RM1054) 삭제 API ★★★
+sheets.post('/cleanup-excluded-codes', async (c) => {
+  try {
+    const service = getSheetService(c);
+    if (!service) {
+      return c.json({ success: false, error: '구글 시트 인증 정보가 설정되지 않았습니다.' }, 400);
+    }
+    const body = await c.req.json().catch(() => ({}));
+    const dryRun = body.dry_run !== false;
+    
+    // 1. 기존 일별수불부 데이터 읽기
+    console.log('[cleanup-excluded-codes v3.6.37] 일별수불부 읽기 시작...');
+    let rawData: any[][];
+    try {
+      rawData = await service.readSheet('일별수불부', 'A2:H50000');
+    } catch (readError: any) {
+      return c.json({ success: false, error: `시트 읽기 실패: ${readError.message}` }, 500);
+    }
+    console.log(`[cleanup-excluded-codes v3.6.37] 총 ${rawData?.length ?? 0}행 읽음`);
+    
+    // ★★★ v3.6.37: 데이터 유효성 검증 ★★★
+    const existingData = (rawData || []).filter(row => row && Array.isArray(row) && row.length > 0);
+    console.log(`[cleanup-excluded-codes v3.6.37] 유효 데이터: ${existingData.length}행`);
+    
+    // 2. 제외 대상 코드 필터링 (v3.6.37: null check 강화)
+    const excludedRows: any[] = [];
+    const cleanedData = existingData.filter(row => {
+      try {
+        const code = String(row[1] || '').trim();
+        const date = String(row[0] || '').replace(/^'/, '').trim();
+        const name = String(row[2] || '').trim();
+        
+        // 빈 행 제외
+        if (!code && !date) return false;
+        
+        // 제외 대상: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재)
+        if (code.startsWith('RT') || code.startsWith('SF') || code.startsWith('SM') || code === 'RM184' || code === 'RM1054') {
+          excludedRows.push({ date, code, name });
+          return false;
+        }
+        return true;
+      } catch (e) {
+        console.error('[cleanup-excluded-codes] 행 처리 오류:', row, e);
+        return false;
+      }
+    });
+    
+    console.log(`[cleanup-excluded-codes v3.6.37] 제외 대상: ${excludedRows.length}건, 유지: ${cleanedData.length}건`);
+    
+    if (excludedRows.length === 0) {
+      return c.json({
+        success: true,
+        message: '제외 대상 코드가 없습니다.',
+        excluded_count: 0
+      });
+    }
+    
+    if (dryRun) {
+      // RT, SF, SM 각각 개수 세기
+      const rtCount = excludedRows.filter(r => r.code.startsWith('RT')).length;
+      const sfCount = excludedRows.filter(r => r.code.startsWith('SF')).length;
+      const smCount = excludedRows.filter(r => r.code.startsWith('SM')).length;
+      const rm184Count = excludedRows.filter(r => r.code === 'RM184').length;
+      const rm1054Count = excludedRows.filter(r => r.code === 'RM1054').length;
+      
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        message: `${excludedRows.length}개 행 삭제 예정 (dry_run=false로 실제 삭제)`,
+        excluded_count: excludedRows.length,
+        breakdown: {
+          RT: rtCount,
+          SF: sfCount,
+          SM: smCount,
+          RM184: rm184Count,
+          RM1054: rm1054Count
+        },
+        remaining_count: cleanedData.length,
+        sample_excluded: excludedRows.slice(0, 20)
+      });
+    }
+    
+    // 3. 날짜 + 품목코드 순 정렬 (v3.6.37: null check 강화)
+    cleanedData.sort((a, b) => {
+      try {
+        const dateA = String(a?.[0] || '').replace(/^'/, '');
+        const dateB = String(b?.[0] || '').replace(/^'/, '');
+        if (dateA !== dateB) return dateA.localeCompare(dateB);
+        const codeA = String(a?.[1] || '');
+        const codeB = String(b?.[1] || '');
+        return codeA.localeCompare(codeB);
+      } catch (e) {
+        return 0;
+      }
+    });
+    
+    // 4. 클리어 후 정제된 데이터 쓰기
+    await service.clearRange('일별수불부', 'A2:H50000');
+    if (cleanedData.length > 0) {
+      await service.writeSheet('일별수불부', 'A2', cleanedData);
+    }
+    
+    console.log(`[cleanup-excluded-codes v3.6.37] ${excludedRows.length}개 행 삭제 완료`);
+    
+    return c.json({
+      success: true,
+      mode: 'executed',
+      message: `${excludedRows.length}개 제외 대상 코드 삭제 완료`,
+      excluded_count: excludedRows.length,
+      remaining_count: cleanedData.length,
+      sample_excluded: excludedRows.slice(0, 20)
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;

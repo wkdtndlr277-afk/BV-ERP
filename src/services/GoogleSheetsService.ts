@@ -1386,10 +1386,15 @@ export class GoogleSheetsService {
     if (existingDateRows.length > 0) {
       console.log(`[addDailyStockDate v3.6.21] 이미 ${cleanDate} 데이터 ${existingDateRows.length}건 있음 - 삭제 후 재생성`);
       
-      // 해당 날짜 제외한 데이터만 유지
+      // ★★★ v3.6.37: 해당 날짜 제외 + RT(자재), SF(반제품), SM(반제품), RM184, RM1054 제외 ★★★
       const remainingData = existingData.filter(row => {
         const rowDate = row[0]?.toString().replace(/^'/, '') || '';
-        return rowDate !== cleanDate;
+        const code = row[1]?.toString() || '';
+        // 해당 날짜 제외
+        if (rowDate === cleanDate) return false;
+        // ★★★ v3.6.37: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재) 제외 ★★★
+        if (code.startsWith('RT') || code.startsWith('SF') || code.startsWith('SM') || code === 'RM184' || code === 'RM1054') return false;
+        return true;
       });
       
       // 날짜 + 품목코드 순 정렬

@@ -978,6 +978,14 @@ sheets.post('/setup-formulas', async (c) => {
 // ★★★ v3.6.16: 일별수불부 재생성 API (force 옵션 추가) ★★★
 // 생산실적 시트에서 날짜 목록을 가져와서 일별수불부 재생성
 sheets.post('/rebuild-daily-stock', async (c) => {
+  // ★★★ v3.6.42: 데이터 삭제 방지 - API 비활성화 ★★★
+  return c.json({ 
+    success: false, 
+    error: '🚫 데이터 보호: 이 API는 비활성화되었습니다. 일별수불부 데이터는 삭제할 수 없습니다.',
+    message: '데이터 무결성 보호를 위해 rebuild-daily-stock API가 비활성화되었습니다.'
+  }, 403);
+
+  // 아래 코드는 실행되지 않음 (데이터 보호)
   const service = getSheetService(c);
   if (!service) {
     return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
@@ -1270,6 +1278,14 @@ sheets.post('/add-production-batch', async (c) => {
 
 // 시트 데이터 초기화 (헤더 유지, 데이터만 삭제)
 sheets.post('/clear-data', async (c) => {
+  // ★★★ v3.6.42: 데이터 삭제 방지 - API 비활성화 ★★★
+  return c.json({ 
+    success: false, 
+    error: '🚫 데이터 보호: 이 API는 비활성화되었습니다. 시트 데이터를 삭제할 수 없습니다.',
+    message: '데이터 무결성 보호를 위해 clear-data API가 비활성화되었습니다.'
+  }, 403);
+
+  // 아래 코드는 실행되지 않음 (데이터 보호)
   const service = getSheetService(c);
   if (!service) {
     return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
@@ -2791,6 +2807,14 @@ sheets.post('/sync/semi-finished/manual', async (c) => {
  * Body: { dates: ["2026-06-01", "2026-06-02"], sheets: ["생산실적", "일별수불부", "로트매칭"] }
  */
 sheets.post('/delete-by-date', async (c) => {
+  // ★★★ v3.6.42: 데이터 삭제 방지 - API 비활성화 ★★★
+  return c.json({ 
+    success: false, 
+    error: '🚫 데이터 보호: 이 API는 비활성화되었습니다. 시트 데이터를 삭제할 수 없습니다.',
+    message: '데이터 무결성 보호를 위해 delete-by-date API가 비활성화되었습니다.'
+  }, 403);
+
+  // 아래 코드는 실행되지 않음 (데이터 보호)
   const service = getSheetService(c);
   if (!service) {
     return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
@@ -4327,6 +4351,14 @@ sheets.post('/recalculate-lot-matching', async (c) => {
 
 // ★★★ v3.5.74: 시트 범위 클리어 API ★★★
 sheets.post('/clear-range', async (c) => {
+  // ★★★ v3.6.42: 데이터 삭제 방지 - API 비활성화 ★★★
+  return c.json({ 
+    success: false, 
+    error: '🚫 데이터 보호: 이 API는 비활성화되었습니다. 시트 범위를 클리어할 수 없습니다.',
+    message: '데이터 무결성 보호를 위해 clear-range API가 비활성화되었습니다.'
+  }, 403);
+
+  // 아래 코드는 실행되지 않음 (데이터 보호)
   const service = getSheetService(c);
   if (!service) {
     return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
@@ -4553,6 +4585,14 @@ sheets.post('/rebuild-lot-matching-dates', async (c) => {
 // ★★★ v3.5.73: 일별수불부 완전 초기화 및 재구성 API ★★★
 // 구글시트 일별수불부 전체를 클리어하고 6월 1일부터 다시 생성
 sheets.post('/reset-daily-stock-complete', async (c) => {
+  // ★★★ v3.6.42: 데이터 삭제 방지 - API 비활성화 ★★★
+  return c.json({ 
+    success: false, 
+    error: '🚫 데이터 보호: 이 API는 비활성화되었습니다. 일별수불부를 초기화할 수 없습니다.',
+    message: '데이터 무결성 보호를 위해 reset-daily-stock-complete API가 비활성화되었습니다.'
+  }, 403);
+
+  // 아래 코드는 실행되지 않음 (데이터 보호)
   const service = getSheetService(c);
   if (!service) {
     return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
@@ -4939,6 +4979,14 @@ sheets.post('/add-daily-stock-date', async (c) => {
 
 // ★★★ 테스트 데이터 삭제 (일회성 유틸리티) ★★★
 sheets.post('/delete-test-production-data', async (c) => {
+  // ★★★ v3.6.42: 데이터 삭제 방지 - API 비활성화 ★★★
+  return c.json({ 
+    success: false, 
+    error: '🚫 데이터 보호: 이 API는 비활성화되었습니다. 생산 데이터를 삭제할 수 없습니다.',
+    message: '데이터 무결성 보호를 위해 delete-test-production-data API가 비활성화되었습니다.'
+  }, 403);
+
+  // 아래 코드는 실행되지 않음 (데이터 보호)
   const service = getSheetService(c);
   if (!service) {
     return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);

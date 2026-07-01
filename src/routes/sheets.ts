@@ -4902,10 +4902,19 @@ sheets.post('/repair-daily-stock-formulas', async (c) => {
       const fFormula = row[5]?.toString() || '';
       const gFormula = row[6]?.toString() || '';
       
-      // #REF! 포함 여부 확인
+      // ★★★ v3.6.36: #REF! 오류 또는 행 번호 불일치 감지 ★★★
       const hasRefError = eFormula.includes('#REF!') || fFormula.includes('#REF!') || gFormula.includes('#REF!');
       
-      if (hasRefError) {
+      // 수식에서 참조하는 행 번호가 현재 행과 일치하는지 확인
+      const expectedRowRef = `B${sheetRow}`;
+      const hasWrongRowRef = (eFormula && !eFormula.includes(expectedRowRef)) || 
+                              (fFormula && !fFormula.includes(expectedRowRef)) ||
+                              (gFormula && !gFormula.includes(`D${sheetRow}`));
+      
+      // 수식이 아예 없는 경우 (숫자 0만 있음)
+      const hasMissingFormula = (row[5] === 0 || row[5] === '0') && !fFormula.startsWith('=');
+      
+      if (hasRefError || hasWrongRowRef || hasMissingFormula) {
         brokenRows.push({ row: sheetRow, date: dateStr, code, name });
         
         // 올바른 수식 생성

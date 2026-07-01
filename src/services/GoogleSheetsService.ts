@@ -1525,9 +1525,11 @@ export class GoogleSheetsService {
         name,              // C: 품목명
         // D: 전일재고 - 이미 조회한 전날 현재고 값 사용
         prevStock,
-        // E: 입고량 - 원료입고 시트에서 해당 날짜 입고량 (수식 유지)
+        // E: 입고량 - 원료입고 시트에서 해당 날짜 입고량
+        // ★★★ v3.6.45: SUMPRODUCT + TEXT() 함수로 날짜 형식 통일 (텍스트 vs 날짜 매칭 문제 해결) ★★★
+        // 참고: 전체 열(A:A) 대신 실제 데이터 범위로 제한하면 더 빠름
         `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
-        // F: 사용량 - 로트매칭 시트에서 해당 일자+원료코드 합계 (수식 유지)
+        // F: 사용량 - 로트매칭 시트에서 해당 일자+원료코드 합계
         `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,
         // G: 현재고 = 전일재고 + 입고 - 사용 (수식 유지)
         `=D${rowNum}+E${rowNum}-F${rowNum}`,
@@ -1535,12 +1537,14 @@ export class GoogleSheetsService {
       ]);
     }
     
-    // ★★★ 7. 수식 포함 APPEND (USER_ENTERED 모드) ★★★
+    // ★★★ 7. 수식 포함 - 특정 위치에 직접 쓰기 (공란 방지) ★★★
+    // v3.6.49: append 대신 write로 변경 - 공란 생성 버그 수정
     if (newRows.length > 0) {
-      await this.appendSheetWithFormulas('일별수불부', newRows);
-      console.log(`[addDailyStockDate v3.6.43] ${newRows.length}건 APPEND 완료 (수식 방식, 시작행: ${startRowNum})`);
+      const writeRange = `A${startRowNum}:H${startRowNum + newRows.length - 1}`;
+      await this.writeSheetWithFormulas('일별수불부', writeRange, newRows);
+      console.log(`[addDailyStockDate v3.6.49] ${newRows.length}건 WRITE 완료 (범위: ${writeRange})`);
     } else {
-      console.warn(`[addDailyStockDate v3.6.43] 경고: 새 행이 0건 - prevStockMap 크기: ${Object.keys(prevStockMap).length}`);
+      console.warn(`[addDailyStockDate v3.6.49] 경고: 새 행이 0건 - prevStockMap 크기: ${Object.keys(prevStockMap).length}`);
     }
     
     console.log(`[addDailyStockDate v3.6.43] ========== 완료: ${cleanDate}, 기존 ${existingData.length}행 + 신규 ${newRows.length}행 ==========`);

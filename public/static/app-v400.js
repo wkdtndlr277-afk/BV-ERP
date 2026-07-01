@@ -51213,7 +51213,9 @@ async function syncGoogleSheetManual(prodDate) {
     });
     
     if (lotRes.data.success) {
-      results.push(`✅ 로트매칭: ${lotRes.data.created_rows || 0}건 생성`);
+      // v3.6.44: 버그 수정 - API 응답 구조: { data: { new_rows: N } }
+      const lotCount = lotRes.data.data?.new_rows || lotRes.data.created_rows || 0;
+      results.push(`✅ 로트매칭: ${lotCount}건 생성`);
     } else {
       results.push(`⚠️ 로트매칭: ${lotRes.data.error || '실패'}`);
       hasError = true;

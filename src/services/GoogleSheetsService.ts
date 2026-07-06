@@ -527,6 +527,32 @@ export class GoogleSheetsService {
 
   // ===== v3.5.21: 고급 시트 작업 =====
 
+  // ★★★ v3.6.51: SF_BOM 읽기 (반제품 BOM 마스터) ★★★
+  // SF 1kg 제조 시 필요한 원료 비율 반환
+  async getSfBom(): Promise<Record<string, Array<{ materialCode: string; materialName: string; ratio: number; expiryDays: number }>>> {
+    const data = await this.readSheet('SF_BOM', 'A2:G100');
+    const sfBomMap: Record<string, Array<{ materialCode: string; materialName: string; ratio: number; expiryDays: number }>> = {};
+    
+    // SF_BOM 시트 구조: A:SF코드, B:SF명, C:원료코드, D:원료명, E:배합비(1kg기준), F:단위, G:소비기한(일)
+    for (const row of data) {
+      const sfCode = row[0]?.toString() || '';
+      const materialCode = row[2]?.toString() || '';
+      const materialName = row[3]?.toString() || '';
+      const ratio = parseFloat(row[4]?.toString() || '0') || 0;
+      const expiryDays = parseInt(row[6]?.toString() || '5') || 5;
+      
+      if (!sfCode || !materialCode || ratio <= 0) continue;
+      
+      if (!sfBomMap[sfCode]) {
+        sfBomMap[sfCode] = [];
+      }
+      sfBomMap[sfCode].push({ materialCode, materialName, ratio, expiryDays });
+    }
+    
+    console.log(`[getSfBom] SF_BOM 로드 완료: ${Object.keys(sfBomMap).length}개 SF, 총 ${data.length}개 원료`);
+    return sfBomMap;
+  }
+
   // 시트 ID 조회 (sheetId 필요한 작업용)
   async getSheetId(sheetName: string): Promise<number | null> {
     const token = await this.getToken();
@@ -1245,6 +1271,10 @@ export class GoogleSheetsService {
       bomMap[productCode].push({ materialCode, materialName, usage });
     }
     
+    // ★★★ v3.6.51: SF_BOM 데이터 읽기 (반제품 → 원료 전개용) ★★★
+    const sfBomMap = await this.getSfBom();
+    console.log(`[rebuildLotMatchingForDates v3.6.51] SF_BOM 로드: ${Object.keys(sfBomMap).length}개 SF`);
+    
     // 6. 대상 날짜별 LOT 매칭 생성
     const newRows: any[][] = [];
     const dateResults: Record<string, number> = {};
@@ -1276,6 +1306,90 @@ export class GoogleSheetsService {
           const totalUsage = item.usage * quantity;
           if (totalUsage <= 0) continue;
           
+          // ★★★ v3.6.51: SF 원료 분기 - SF_BOM 전개 ★★★
+          if (item.materialCode.startsWith('SF')) {
+            const sfBomItems = sfBomMap[item.materialCode] || [];
+            
+            if (sfBomItems.length === 0) {
+              // SF_BOM에 정의되지 않은 SF → 기존처럼 N/A로 기록
+              console.warn(`[SF전개] ${item.materialCode} SF_BOM 미정의 - 건너뜀`);
+              newRows.push([
+                `'${cleanDate}`,
+                productLot,
+                item.materialCode,
+                item.materialName,
+                Math.round(totalUsage * 10000) / 10000,
+                'SF_BOM미정의',
+                'N/A'
+              ]);
+              dateRowCount++;
+              continue;
+            }
+            
+            // SF 사용량 기준으로 실제 원료 전개
+            console.log(`[SF전개] ${item.materialCode} ${totalUsage}kg → ${sfBomItems.length}개 원료 전개`);
+            
+            for (const sfItem of sfBomItems) {
+              const realUsage = totalUsage * sfItem.ratio;  // SF사용량 × 원료비율
+              if (realUsage <= 0) continue;
+              
+              // 실제 원료에 대해 FEFO 매칭 (기존 로직 재사용)
+              let remainingUsage = realUsage;
+              const lots = inboundByMaterial[sfItem.materialCode] || [];
+              const skippedExpiredLots: string[] = [];
+              
+              for (const lot of lots) {
+                if (remainingUsage <= 0) break;
+                if (lot.remaining <= 0) continue;
+                
+                // 소비기한 만료 체크
+                if (lot.expiry && lot.expiry < cleanDate) {
+                  skippedExpiredLots.push(`${lot.lot}(만료:${lot.expiry})`);
+                  continue;
+                }
+                
+                const useQty = Math.min(lot.remaining, remainingUsage);
+                lot.remaining -= useQty;
+                remainingUsage -= useQty;
+                
+                // 로트매칭 행 추가 (SF 전개된 원료)
+                newRows.push([
+                  `'${cleanDate}`,
+                  productLot,
+                  sfItem.materialCode,       // 실제 원료코드
+                  `[${item.materialCode}]${sfItem.materialName}`,  // [SF001]강력(사조) 형태
+                  Math.round(useQty * 10000) / 10000,
+                  lot.lot,
+                  lot.expiry
+                ]);
+                dateRowCount++;
+              }
+              
+              // 만료 경고
+              if (skippedExpiredLots.length > 0) {
+                const warningMsg = `${cleanDate} [SF전개]${sfItem.materialCode}(${sfItem.materialName}): 만료LOT ${skippedExpiredLots.length}건 제외`;
+                allExpiredLotsWarnings.push(warningMsg);
+              }
+              
+              // 재고 부족
+              if (remainingUsage > 0) {
+                newRows.push([
+                  `'${cleanDate}`,
+                  productLot,
+                  sfItem.materialCode,
+                  `[${item.materialCode}]${sfItem.materialName}`,
+                  Math.round(remainingUsage * 10000) / 10000,
+                  skippedExpiredLots.length > 0 ? '재고부족(만료LOT제외)' : 'N/A',
+                  'N/A'
+                ]);
+                dateRowCount++;
+              }
+            }
+            
+            continue;  // SF 처리 완료, 다음 BOM 항목으로
+          }
+          
+          // ★★★ 기존 로직 (R, RM 원료) - 수정 없음 ★★★
           // ★★★ v3.5.95: FEFO + 소비기한 만료 검증 ★★★
           // 소비기한 빠른 LOT부터 차감하되, 만료된 LOT는 건너뜀
           let remainingUsage = totalUsage;

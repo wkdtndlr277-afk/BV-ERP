@@ -1217,10 +1217,10 @@ orderUpload.get('/summary', async (c) => {
 });
 
 // ===== 발주 → 생산실적 변환 =====
-// ★ 별칭 라우트 - 프론트엔드 호환용
+// ★★★ v3.6.45: 상태 필터 개선 - 대기/미처리/빈값 모두 포함, 디버그 통계 추가 ★★★
 orderUpload.post('/to-production', async (c) => {
   const body = await c.req.json();
-  const { order_date, production_date } = body;
+  const { order_date, production_date, include_all_status } = body;
   const orderDate = order_date || new Date().toISOString().split('T')[0];
   const prodDate = production_date || orderDate;
   
@@ -1233,18 +1233,56 @@ orderUpload.post('/to-production', async (c) => {
     // 발주서 시트 구조: A=날짜, B=제품코드, C=제품명, D=수량, E=납품일, F=채널, G=비고, H=상태
     const data = await service.readSheet('발주서', 'A2:H');
     
+    // ★★★ v3.6.45: 상태별 통계 수집 ★★★
+    const statusStats: Record<string, number> = {};
+    const channelStats: Record<string, number> = {};
+    let dateMatchCount = 0;
+    
+    // ★★★ v3.6.45: 상태 필터 개선 - 대기, 빈값, 미처리 모두 포함 ★★★
+    const validStatuses = ['대기', '', '미처리'];
+    
     const filtered = data.filter(row => {
       const rowDate = row[0]?.toString().replace(/^'/, '') || '';
-      const rowStatus = row[7] || '대기';
-      return rowDate === orderDate && rowStatus === '대기';
+      const rowStatus = (row[7]?.toString() || '').trim();
+      const channel = row[5]?.toString() || '';
+      
+      // 날짜 매칭 통계
+      if (rowDate === orderDate) {
+        dateMatchCount++;
+        // 상태별 통계
+        const statusKey = rowStatus || '(빈값)';
+        statusStats[statusKey] = (statusStats[statusKey] || 0) + 1;
+        // 채널별 통계 (날짜 매칭된 것만)
+        channelStats[channel || '(미지정)'] = (channelStats[channel || '(미지정)'] || 0) + 1;
+      }
+      
+      // include_all_status=true면 상태 무관하게 모든 항목 포함 (삭제/생산완료 제외)
+      if (include_all_status) {
+        return rowDate === orderDate && rowStatus !== '삭제' && rowStatus !== '생산완료';
+      }
+      
+      // 기본: 대기, 빈값, 미처리 상태만 포함
+      return rowDate === orderDate && (validStatuses.includes(rowStatus) || rowStatus === '');
     });
+    
+    console.log(`[to-production] 날짜=${orderDate}, 전체=${data.length}행, 날짜일치=${dateMatchCount}건, 필터후=${filtered.length}건`);
+    console.log(`[to-production] 상태별: ${JSON.stringify(statusStats)}`);
+    console.log(`[to-production] 채널별: ${JSON.stringify(channelStats)}`);
     
     if (filtered.length === 0) {
       return c.json({ 
         success: true, 
         message: '변환할 발주가 없습니다', 
         total_products: 0,
-        items: []
+        items: [],
+        debug: {
+          order_date: orderDate,
+          total_rows: data.length,
+          date_match_count: dateMatchCount,
+          status_breakdown: statusStats,
+          channel_breakdown: channelStats,
+          note: dateMatchCount > 0 ? '해당 날짜의 발주가 있지만 모두 이미 처리됨 (생산완료/삭제)' : '해당 날짜의 발주가 없음'
+        }
       });
     }
     
@@ -1286,13 +1324,29 @@ orderUpload.post('/to-production', async (c) => {
       channels: p.channel  // 개별 채널 (합치지 않음)
     }));
     
+    // ★★★ v3.6.45: 채널별 제품 수 집계 ★★★
+    const channelProductCount: Record<string, number> = {};
+    for (const item of items) {
+      const ch = item.channels || '(미지정)';
+      channelProductCount[ch] = (channelProductCount[ch] || 0) + 1;
+    }
+    
     return c.json({
       success: true,
       order_date: orderDate,
       production_date: prodDate,
       total_products: items.length,
       items: items,
-      message: items.length + '개 제품이 준비되었습니다'
+      message: items.length + '개 제품이 준비되었습니다',
+      // ★★★ v3.6.45: 디버그 정보 추가 ★★★
+      debug: {
+        total_rows_in_sheet: data.length,
+        date_match_count: dateMatchCount,
+        filtered_count: filtered.length,
+        status_breakdown: statusStats,
+        channel_breakdown: channelStats,
+        channel_product_count: channelProductCount
+      }
     });
     
   } catch (error: any) {

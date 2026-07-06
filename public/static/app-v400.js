@@ -1374,6 +1374,7 @@ function renderPage(page) {
     case 'transaction-search': renderTransactionSearch(); break;
     case 'lot-history': renderLotHistory(); break;
     case 'daily-report': renderDailyReport(); break;
+    case 'monthly-stock-audit': renderMonthlyStockAudit(); break;
     case 'monthly-report': renderMonthlyReport(); break;
     case 'quality-kpi': renderQualityKPI(); break;
     case 'master': renderMaster(); break;
@@ -24440,10 +24441,28 @@ async function registerDailyReportById(reportId) {
       return;
     }
     
+    // ★★★ v3.6.54: 채널 기본값을 제품마스터에서 조회 (coupang 기본값 제거) ★★★
+    // 제품마스터에서 채널 정보 조회
+    let productMasterChannelMap = new Map();
+    try {
+      const pmRes = await api('/sheets/product-master');
+      if (pmRes.success && pmRes.data) {
+        for (const pm of pmRes.data) {
+          if (pm.product_code && pm.channel) {
+            productMasterChannelMap.set(pm.product_code, pm.channel);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[생산등록] 제품마스터 조회 실패, 채널 기본값 사용 안 함:', e);
+    }
+    
     // 같은 제품코드+채널은 수량 합산 (중복 등록 방지)
     const mergedMap = new Map();
     for (const item of matchedItems) {
-      const key = `${item.production_code}|${item.channel || 'coupang'}`;
+      // ★ 채널 우선순위: item.channel > 제품마스터 채널 > 빈 문자열 (coupang 기본값 제거)
+      const itemChannel = item.channel || productMasterChannelMap.get(item.production_code) || '';
+      const key = `${item.production_code}|${itemChannel}`;
       if (mergedMap.has(key)) {
         const existing = mergedMap.get(key);
         existing.quantity += item.quantity;
@@ -24456,7 +24475,7 @@ async function registerDailyReportById(reportId) {
           product_code: item.production_code,
           quantity: item.quantity,
           expiry_date: item.expiry_date || null,
-          channel: item.channel || 'coupang'
+          channel: itemChannel  // ★ v3.6.54: 제품마스터 기반 채널
         });
       }
     }
@@ -29089,7 +29108,7 @@ async function uploadProductionBom() {
 
 // 생산명 통합 관리 페이지 열기
 async function openProductionManagement() {
-  const content = document.getElementById('content');
+  const content = document.getElementById('page-content');
   
   content.innerHTML = `
     <div class="max-w-7xl mx-auto">
@@ -50288,6 +50307,7 @@ async function deleteSelectedOrders() {
   }
 }
 
+// ★★★ v3.6.45: 상태/채널별 통계 표시 개선 ★★★
 async function startProduction() {
   const orderDate = document.getElementById('order-list-date')?.value;
   if (!orderDate) {
@@ -50298,9 +50318,36 @@ async function startProduction() {
   try {
     const res = await axios.post('/api/order/to-production', { order_date: orderDate });
     if (res.data.success) {
+      const debug = res.data.debug;
+      
+      // ★★★ v3.6.45: 채널별 통계 표시 ★★★
+      if (debug?.channel_product_count) {
+        const channelInfo = Object.entries(debug.channel_product_count)
+          .map(([ch, cnt]) => `${ch}: ${cnt}개`)
+          .join(', ');
+        console.log(`[startProduction] 채널별 제품수: ${channelInfo}`);
+        console.log(`[startProduction] 상태별 통계: ${JSON.stringify(debug.status_breakdown)}`);
+      }
+      
+      // 0건인 경우 상태별 통계 안내
+      if (res.data.total_products === 0 && debug?.date_match_count > 0) {
+        showToast(`해당 날짜에 ${debug.date_match_count}건의 발주가 있지만 모두 이미 처리됨 (상태: ${Object.keys(debug.status_breakdown).join(', ')})`, 'warning');
+        return;
+      }
+      
       // 생산실적 페이지로 이동하면서 데이터 전달
       sessionStorage.setItem('production_from_order', JSON.stringify(res.data));
-      showToast(`${res.data.total_products}개 제품이 준비되었습니다. 생산실적 페이지로 이동합니다.`, 'success');
+      
+      // ★★★ v3.6.45: 채널별 통계 포함 메시지 ★★★
+      let msg = `${res.data.total_products}개 제품이 준비되었습니다.`;
+      if (debug?.channel_product_count) {
+        const channels = Object.keys(debug.channel_product_count).filter(c => c !== '(미지정)');
+        if (channels.length > 0) {
+          msg = `${res.data.total_products}개 제품 (${channels.join(', ')}) 준비완료.`;
+        }
+      }
+      showToast(msg + ' 생산실적 페이지로 이동합니다.', 'success');
+      
       setTimeout(() => {
         window.location.hash = 'production';
       }, 1000);
@@ -50578,6 +50625,8 @@ async function generateDailyReportPdf() {
     const res = prodRes;
     // ★ 로트매칭 시트 기반 원료 사용량 데이터 (LOT + 소비기한 포함)
     const materialUsageData = matRes.data.success ? (matRes.data.data || []) : [];
+    // ★★★ v3.6.51: 반제품(SF) 사용현황 데이터 ★★★
+    const sfUsageData = matRes.data.success && matRes.data.sf_usage ? (matRes.data.sf_usage.data || []) : [];
     
     if (res.data.success && res.data.report) {
       const report = res.data.report;
@@ -50665,6 +50714,39 @@ async function generateDailyReportPdf() {
               </tbody>
             </table>
           </div>
+          
+          <!-- ★★★ v3.6.51: 반제품(SF) 사용 현황 ★★★ -->
+          ${sfUsageData.length > 0 ? `
+          <div class="mt-6">
+            <h4 class="font-bold text-gray-700 mb-2">
+              <i class="fas fa-cogs text-cyan-500 mr-2"></i>반제품 사용 현황 (${sfUsageData.length}종)
+            </h4>
+            <div class="overflow-x-auto max-h-[200px] border rounded-lg">
+              <table class="w-full text-sm">
+                <thead class="bg-cyan-50 sticky top-0">
+                  <tr>
+                    <th class="px-3 py-2 text-left">SF코드</th>
+                    <th class="px-3 py-2 text-left">반제품명</th>
+                    <th class="px-3 py-2 text-right">총사용량</th>
+                    <th class="px-3 py-2 text-left">SF LOT</th>
+                    <th class="px-3 py-2 text-left">소비기한</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y">
+                  ${sfUsageData.map(sf => `
+                    <tr class="hover:bg-gray-50">
+                      <td class="px-3 py-2 font-mono text-xs">${sf.sf_code || '-'}</td>
+                      <td class="px-3 py-2">${sf.sf_name || '-'}</td>
+                      <td class="px-3 py-2 text-right text-cyan-600 font-bold">${(sf.total_usage || 0).toFixed(3)}</td>
+                      <td class="px-3 py-2 font-mono text-xs text-blue-600">${sf.sf_lot || '-'}</td>
+                      <td class="px-3 py-2 text-orange-600">${sf.expiry_date || '-'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          ` : ''}
           
           <!-- ★★★ v3.6.01: 원료 사용 현황 (LOT별 개별 행 표시) ★★★ -->
           <div class="mt-6">
@@ -50765,6 +50847,8 @@ async function printDailyReportPdf(date) {
     const res = prodRes;
     // ★ 일별수불부 시트 기반 원료 사용량 데이터 (SSOT)
     const materialUsageData = matRes.data.success ? (matRes.data.data || []) : [];
+    // ★★★ v3.6.51: 반제품(SF) 사용현황 데이터 ★★★
+    const sfUsageData = matRes.data.success && matRes.data.sf_usage ? (matRes.data.sf_usage.data || []) : [];
     
     if (!res.data.success || !res.data.report) {
       showToast('인쇄할 데이터가 없습니다', 'warning');
@@ -50829,7 +50913,40 @@ async function printDailyReportPdf(date) {
     
     productionTableHtml += '</tbody></table>';
     
-    // ========== 2. 원료사용 현황 테이블 (로트매칭 시트 기반) ==========
+    // ========== 2. 반제품(SF) 사용 현황 테이블 (v3.6.51 신규) ==========
+    let sfTableHtml = '';
+    if (sfUsageData.length > 0) {
+      sfTableHtml = `
+        <h3 style="margin-top:20px; margin-bottom:10px; font-size:14px; font-weight:bold; border-bottom:1px solid #333; padding-bottom:5px;">
+          ◆ 반제품 사용 현황 (총 ${sfUsageData.length}종)
+        </h3>
+        <table>
+          <thead>
+            <tr style="background:#e6f7ff;">
+              <th>SF코드</th>
+              <th>반제품명</th>
+              <th style="text-align:right;">총사용량</th>
+              <th>SF LOT</th>
+              <th>소비기한</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      sfUsageData.forEach(sf => {
+        sfTableHtml += `
+          <tr>
+            <td>${sf.sf_code || '-'}</td>
+            <td>${sf.sf_name || '-'}</td>
+            <td style="text-align:right;">${(sf.total_usage || 0).toFixed(3)}</td>
+            <td>${sf.sf_lot || '-'}</td>
+            <td>${sf.expiry_date || '-'}</td>
+          </tr>
+        `;
+      });
+      sfTableHtml += '</tbody></table>';
+    }
+    
+    // ========== 3. 원료사용 현황 테이블 (로트매칭 시트 기반) ==========
     // ★★★ v3.6.01: LOT별 개별 행 표시 + LOT수량/소비기한 컬럼 추가 ★★★
     let materialsTableHtml = '';
     if (materialUsageData.length > 0) {
@@ -50962,9 +51079,11 @@ async function printDailyReportPdf(date) {
     // ========== 전체 HTML 조합 ==========
     const totalProduction = items.reduce((s, i) => s + (i.quantity || i.production_qty || 0), 0);
     
-    const fullHtml = productionTableHtml + materialsTableHtml + remarksTableHtml;
+    // ★★★ v3.6.51: 반제품 테이블 추가 (생산실적 → 반제품 → 원료 순서) ★★★
+    const fullHtml = productionTableHtml + sfTableHtml + materialsTableHtml + remarksTableHtml;
     
-    const info = `<strong>조회일:</strong> ${date} | <strong>품목:</strong> ${items.length}건 | <strong>총생산:</strong> ${formatNumber(totalProduction)} | <strong>원료:</strong> ${materialUsageData.length}종`;
+    const sfInfo = sfUsageData.length > 0 ? ` | <strong>반제품:</strong> ${sfUsageData.length}종` : '';
+    const info = `<strong>조회일:</strong> ${date} | <strong>품목:</strong> ${items.length}건 | <strong>총생산:</strong> ${formatNumber(totalProduction)}${sfInfo} | <strong>원료:</strong> ${materialUsageData.length}종`;
     
     printData(`생산일보 (${date})`, fullHtml, info);
     
@@ -50980,6 +51099,7 @@ window.printDailyReportPdf = printDailyReportPdf;
 
 // ========================================
 // 발주 → 생산실적 자동 입력 페이지 (v3.5.18)
+// ★★★ v3.6.45: 채널별 통계 표시 추가 ★★★
 // ========================================
 
 function renderProductionFromOrder(data) {
@@ -50987,6 +51107,16 @@ function renderProductionFromOrder(data) {
   const items = data.items || [];
   const lotNumber = data.lot_number || '';
   const prodDate = data.production_date || data.order_date || '';
+  const debug = data.debug || {};
+  
+  // ★★★ v3.6.45: 채널별 통계 문자열 생성 ★★★
+  let channelStatsHtml = '';
+  if (debug.channel_product_count) {
+    const stats = Object.entries(debug.channel_product_count)
+      .map(([ch, cnt]) => `<span class="inline-block bg-blue-100 text-blue-800 px-2 py-1 rounded mr-2 mb-1">${ch}: ${cnt}개</span>`)
+      .join('');
+    channelStatsHtml = `<div class="mt-2">${stats}</div>`;
+  }
   
   content.innerHTML = `
     <div class="space-y-6">
@@ -50996,6 +51126,7 @@ function renderProductionFromOrder(data) {
             <i class="fas fa-industry text-green-500 mr-2"></i>생산실적 등록 (발주 기반)
           </h2>
           <p class="text-gray-500 mt-1">발주서에서 자동 입력된 ${items.length}개 제품</p>
+          ${channelStatsHtml}
         </div>
         <a href="#order-list" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
           <i class="fas fa-arrow-left mr-1"></i> 발주 목록으로
@@ -51628,3 +51759,490 @@ window.generateShipmentLog = generateShipmentLog;
 window.confirmShipment = confirmShipment;
 window.confirmAllShipments = confirmAllShipments;
 window.printShipmentLog = printShipmentLog;
+
+// =====================================================================
+// ★★★ v3.6.56: 월별수불부(재고실사) ★★★
+// =====================================================================
+
+// 월별수불부(재고실사) 메인 렌더링
+function renderMonthlyStockAudit() {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = String(now.getMonth() + 1).padStart(2, '0');
+  const defaultYearMonth = `${currentYear}-${currentMonth}`;
+  
+  const content = document.getElementById('page-content');
+  content.innerHTML = `
+    <div class="p-6">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-clipboard-check mr-2 text-indigo-600"></i>
+          월별수불부 (재고실사)
+        </h2>
+        <div class="flex items-center gap-2">
+          <input type="month" id="audit-month" value="${defaultYearMonth}" 
+                 class="px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500">
+          <button onclick="loadMonthlyStockAudit()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+            <i class="fas fa-search mr-1"></i> 조회
+          </button>
+          <button onclick="generateMonthlyStockAudit()" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
+            <i class="fas fa-sync-alt mr-1"></i> 자동 생성
+          </button>
+        </div>
+      </div>
+      
+      <!-- 월별 목록 요약 -->
+      <div id="monthly-summary" class="mb-6">
+        <div class="bg-white rounded-lg shadow p-4">
+          <h3 class="text-lg font-semibold text-gray-700 mb-3">
+            <i class="fas fa-calendar-alt mr-2"></i> 월별 현황
+          </h3>
+          <div id="monthly-summary-content" class="flex flex-wrap gap-3">
+            <p class="text-gray-500">로딩 중...</p>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 실사재고 입력 안내 -->
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div class="flex items-start">
+          <i class="fas fa-info-circle text-blue-500 mt-1 mr-3"></i>
+          <div>
+            <h4 class="font-semibold text-blue-800">월별수불부 사용 안내</h4>
+            <ul class="text-sm text-blue-700 mt-2 space-y-1">
+              <li>• <strong>기초재고</strong>: 전월 말일 기준 재고 (이월 수량)</li>
+              <li>• <strong>당월입고량</strong>: 해당 월에 입고된 총 수량</li>
+              <li>• <strong>당월사용량</strong>: 해당 월에 생산에 투입된 총 수량</li>
+              <li>• <strong>기말재고(이론)</strong>: 기초 + 입고 - 사용 (자동 계산)</li>
+              <li>• <strong>실사재고</strong>: 실제 창고에 남아있는 수량 (직접 입력)</li>
+              <li>• <strong>차이</strong>: 실사재고 - 이론재고 (자동 계산)</li>
+              <li>• <strong>비고/사유</strong>: 차이 발생 사유 기록 (직접 입력)</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 데이터 테이블 -->
+      <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="p-4 border-b flex items-center justify-between">
+          <h3 class="text-lg font-semibold text-gray-700">
+            <span id="audit-month-label">${defaultYearMonth}</span> 월별수불부
+          </h3>
+          <div class="flex gap-2">
+            <button onclick="downloadMonthlyStockAudit()" class="px-3 py-1.5 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm">
+              <i class="fas fa-download mr-1"></i> 엑셀 다운로드
+            </button>
+            <button onclick="printMonthlyStockAudit()" class="px-3 py-1.5 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 text-sm">
+              <i class="fas fa-print mr-1"></i> 인쇄
+            </button>
+          </div>
+        </div>
+        
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-3 py-3 text-left font-semibold text-gray-600">원료코드</th>
+                <th class="px-3 py-3 text-left font-semibold text-gray-600">원료명</th>
+                <th class="px-3 py-3 text-center font-semibold text-gray-600">단위</th>
+                <th class="px-3 py-3 text-right font-semibold text-gray-600 bg-yellow-50">기초재고</th>
+                <th class="px-3 py-3 text-right font-semibold text-gray-600 bg-green-50">당월입고량</th>
+                <th class="px-3 py-3 text-right font-semibold text-gray-600 bg-red-50">당월사용량</th>
+                <th class="px-3 py-3 text-right font-semibold text-gray-600 bg-blue-50">기말재고(이론)</th>
+                <th class="px-3 py-3 text-right font-semibold text-gray-600 bg-purple-50">실사재고</th>
+                <th class="px-3 py-3 text-right font-semibold text-gray-600">차이</th>
+                <th class="px-3 py-3 text-left font-semibold text-gray-600">비고/사유</th>
+                <th class="px-3 py-3 text-center font-semibold text-gray-600">저장</th>
+              </tr>
+            </thead>
+            <tbody id="monthly-stock-audit-body">
+              <tr><td colspan="11" class="px-4 py-8 text-center text-gray-500">조회 버튼을 클릭하세요</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <!-- 일괄 저장 버튼 -->
+      <div class="mt-4 flex justify-end">
+        <button onclick="saveAllMonthlyStockAudit()" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium">
+          <i class="fas fa-save mr-2"></i> 전체 저장
+        </button>
+      </div>
+    </div>
+  `;
+  
+  // 월별 요약 로드
+  loadMonthlyStockSummary();
+}
+
+// 월별 요약 로드
+async function loadMonthlyStockSummary() {
+  try {
+    const result = await api('/sheets/monthly-stock/summary');
+    const container = document.getElementById('monthly-summary-content');
+    
+    if (!result.success || !result.months || result.months.length === 0) {
+      container.innerHTML = '<p class="text-gray-500">생성된 월별수불부가 없습니다. "자동 생성" 버튼을 클릭하여 생성하세요.</p>';
+      return;
+    }
+    
+    container.innerHTML = result.months.map(m => {
+      const completionColor = m.completion_rate === 100 ? 'bg-green-100 text-green-800 border-green-300' :
+                              m.completion_rate >= 50 ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
+                              'bg-gray-100 text-gray-700 border-gray-300';
+      const hasIssue = m.with_difference > 0;
+      
+      return `
+        <div class="flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer hover:shadow ${completionColor}" 
+             onclick="selectMonthlyAudit('${m.year_month}')">
+          <span class="font-semibold">${m.year_month}</span>
+          <span class="text-xs">(${m.total_items}건)</span>
+          ${m.completion_rate > 0 ? `<span class="text-xs bg-white px-1.5 py-0.5 rounded">${m.completion_rate}%</span>` : ''}
+          ${hasIssue ? '<i class="fas fa-exclamation-triangle text-orange-500"></i>' : ''}
+        </div>
+      `;
+    }).join('');
+  } catch (error) {
+    console.error('월별 요약 로드 오류:', error);
+    document.getElementById('monthly-summary-content').innerHTML = 
+      '<p class="text-red-500">로드 오류: ' + error.message + '</p>';
+  }
+}
+
+// 월 선택
+function selectMonthlyAudit(yearMonth) {
+  document.getElementById('audit-month').value = yearMonth;
+  loadMonthlyStockAudit();
+}
+
+// 월별수불부 데이터 로드
+async function loadMonthlyStockAudit() {
+  const yearMonth = document.getElementById('audit-month').value;
+  document.getElementById('audit-month-label').textContent = yearMonth;
+  
+  const tbody = document.getElementById('monthly-stock-audit-body');
+  tbody.innerHTML = '<tr><td colspan="11" class="px-4 py-8 text-center text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>로딩 중...</td></tr>';
+  
+  try {
+    const result = await api(`/sheets/monthly-stock?month=${yearMonth}`);
+    
+    if (!result.success) {
+      tbody.innerHTML = `<tr><td colspan="11" class="px-4 py-8 text-center text-red-500">오류: ${result.error}</td></tr>`;
+      return;
+    }
+    
+    if (!result.data || result.data.length === 0) {
+      tbody.innerHTML = `
+        <tr><td colspan="11" class="px-4 py-8 text-center text-gray-500">
+          ${yearMonth} 데이터가 없습니다. "자동 생성" 버튼을 클릭하여 생성하세요.
+        </td></tr>`;
+      return;
+    }
+    
+    tbody.innerHTML = result.data.map((item, idx) => {
+      const diff = item.difference;
+      const diffClass = diff === null ? '' : diff > 0 ? 'text-blue-600' : diff < 0 ? 'text-red-600 font-semibold' : 'text-gray-500';
+      const diffText = diff === null ? '' : (diff > 0 ? '+' : '') + diff.toFixed(2);
+      
+      return `
+        <tr class="border-t hover:bg-gray-50" data-item-code="${item.item_code}" data-row="${item.row_number}">
+          <td class="px-3 py-2 font-mono text-xs">${item.item_code}</td>
+          <td class="px-3 py-2">${item.item_name}</td>
+          <td class="px-3 py-2 text-center text-gray-500">${item.unit}</td>
+          <td class="px-3 py-2 bg-yellow-50">
+            <input type="number" step="0.01" class="w-20 px-2 py-1 border rounded text-right text-sm opening-stock-input"
+                   value="${item.opening_stock}" 
+                   data-item-code="${item.item_code}"
+                   onchange="recalculateTheoryStock(this)">
+          </td>
+          <td class="px-3 py-2 bg-green-50">
+            <input type="number" step="0.01" class="w-20 px-2 py-1 border rounded text-right text-sm monthly-inbound-input"
+                   value="${item.monthly_inbound}" 
+                   data-item-code="${item.item_code}"
+                   onchange="recalculateTheoryStock(this)">
+          </td>
+          <td class="px-3 py-2 bg-red-50">
+            <input type="number" step="0.01" class="w-20 px-2 py-1 border rounded text-right text-sm monthly-usage-input"
+                   value="${item.monthly_usage}" 
+                   data-item-code="${item.item_code}"
+                   onchange="recalculateTheoryStock(this)">
+          </td>
+          <td class="px-3 py-2 bg-blue-50">
+            <input type="number" step="0.01" class="w-20 px-2 py-1 border rounded text-right text-sm font-semibold closing-theory-input"
+                   value="${item.closing_stock_theory}" 
+                   data-item-code="${item.item_code}"
+                   onchange="recalculateDifferenceFromTheory(this)">
+          </td>
+          <td class="px-3 py-2 bg-purple-50">
+            <input type="number" step="0.01" class="w-20 px-2 py-1 border rounded text-right text-sm actual-stock-input"
+                   value="${item.actual_stock !== null ? item.actual_stock : ''}" 
+                   data-item-code="${item.item_code}"
+                   onchange="recalculateDifferenceFromTheory(this)">
+          </td>
+          <td class="px-3 py-2 text-right ${diffClass} diff-cell">${diffText}</td>
+          <td class="px-3 py-2">
+            <input type="text" class="w-full px-2 py-1 border rounded text-sm remarks-input"
+                   value="${item.remarks || ''}" 
+                   data-item-code="${item.item_code}"
+                   placeholder="차이 사유 입력">
+          </td>
+          <td class="px-3 py-2 text-center">
+            <button onclick="saveMonthlyStockItem('${item.item_code}')" class="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600">
+              <i class="fas fa-save"></i>
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+    
+  } catch (error) {
+    console.error('월별수불부 로드 오류:', error);
+    tbody.innerHTML = `<tr><td colspan="11" class="px-4 py-8 text-center text-red-500">오류: ${error.message}</td></tr>`;
+  }
+}
+
+// 차이 자동 계산
+function calculateDifference(input, theoryStock) {
+  const actualStock = parseFloat(input.value) || 0;
+  const diff = actualStock - theoryStock;
+  
+  const row = input.closest('tr');
+  const diffCell = row.querySelector('.diff-cell');
+  
+  diffCell.textContent = (diff > 0 ? '+' : '') + diff.toFixed(2);
+  diffCell.className = 'px-3 py-2 text-right diff-cell ' + 
+    (diff > 0 ? 'text-blue-600' : diff < 0 ? 'text-red-600 font-semibold' : 'text-gray-500');
+}
+
+// ★ 기초/입고/사용 변경 시 기말재고(이론) 자동 계산
+function recalculateTheoryStock(input) {
+  const row = input.closest('tr');
+  const openingStock = parseFloat(row.querySelector('.opening-stock-input').value) || 0;
+  const monthlyInbound = parseFloat(row.querySelector('.monthly-inbound-input').value) || 0;
+  const monthlyUsage = parseFloat(row.querySelector('.monthly-usage-input').value) || 0;
+  
+  const theoryStock = openingStock + monthlyInbound - monthlyUsage;
+  row.querySelector('.closing-theory-input').value = theoryStock.toFixed(2);
+  
+  // 실사재고가 있으면 차이도 재계산
+  recalculateDifferenceFromTheory(row.querySelector('.closing-theory-input'));
+}
+
+// ★ 기말재고(이론) 또는 실사재고 변경 시 차이 재계산
+function recalculateDifferenceFromTheory(input) {
+  const row = input.closest('tr');
+  const theoryStock = parseFloat(row.querySelector('.closing-theory-input').value) || 0;
+  const actualStockInput = row.querySelector('.actual-stock-input');
+  const actualStock = parseFloat(actualStockInput.value);
+  
+  const diffCell = row.querySelector('.diff-cell');
+  
+  if (isNaN(actualStock) || actualStockInput.value === '') {
+    diffCell.textContent = '';
+    diffCell.className = 'px-3 py-2 text-right diff-cell';
+  } else {
+    const diff = actualStock - theoryStock;
+    diffCell.textContent = (diff > 0 ? '+' : '') + diff.toFixed(2);
+    diffCell.className = 'px-3 py-2 text-right diff-cell ' + 
+      (diff > 0 ? 'text-blue-600' : diff < 0 ? 'text-red-600 font-semibold' : 'text-gray-500');
+  }
+}
+
+// 개별 항목 저장
+async function saveMonthlyStockItem(itemCode) {
+  const yearMonth = document.getElementById('audit-month').value;
+  const row = document.querySelector(`tr[data-item-code="${itemCode}"]`);
+  
+  // 모든 입력 필드 값 수집
+  const openingStockInput = row.querySelector('.opening-stock-input');
+  const monthlyInboundInput = row.querySelector('.monthly-inbound-input');
+  const monthlyUsageInput = row.querySelector('.monthly-usage-input');
+  const closingTheoryInput = row.querySelector('.closing-theory-input');
+  const actualStockInput = row.querySelector('.actual-stock-input');
+  const remarksInput = row.querySelector('.remarks-input');
+  
+  const openingStock = parseFloat(openingStockInput.value) || 0;
+  const monthlyInbound = parseFloat(monthlyInboundInput.value) || 0;
+  const monthlyUsage = parseFloat(monthlyUsageInput.value) || 0;
+  const closingStockTheory = parseFloat(closingTheoryInput.value) || 0;
+  const actualStock = actualStockInput.value !== '' ? parseFloat(actualStockInput.value) : undefined;
+  const remarks = remarksInput.value;
+  
+  try {
+    const result = await api('/sheets/monthly-stock/update', 'PUT', {
+      year_month: yearMonth,
+      item_code: itemCode,
+      opening_stock: openingStock,
+      monthly_inbound: monthlyInbound,
+      monthly_usage: monthlyUsage,
+      closing_stock_theory: closingStockTheory,
+      actual_stock: actualStock,
+      remarks: remarks,
+      updated_by: window.currentUser?.name || 'USER'
+    });
+    
+    if (result.success) {
+      showToast('저장되었습니다.', 'success');
+      // 행 전체 배경색 변경으로 저장 완료 표시
+      row.classList.add('bg-green-100');
+      setTimeout(() => row.classList.remove('bg-green-100'), 1500);
+    } else {
+      showToast('저장 실패: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('저장 오류:', error);
+    showToast('저장 오류: ' + error.message, 'error');
+  }
+}
+
+// 전체 저장
+async function saveAllMonthlyStockAudit() {
+  const yearMonth = document.getElementById('audit-month').value;
+  const rows = document.querySelectorAll('#monthly-stock-audit-body tr[data-item-code]');
+  
+  const items = [];
+  rows.forEach(row => {
+    const itemCode = row.dataset.itemCode;
+    const actualStockInput = row.querySelector('.actual-stock-input');
+    const remarksInput = row.querySelector('.remarks-input');
+    
+    if (actualStockInput.value !== '') {
+      items.push({
+        item_code: itemCode,
+        actual_stock: parseFloat(actualStockInput.value),
+        remarks: remarksInput.value || ''
+      });
+    }
+  });
+  
+  if (items.length === 0) {
+    showToast('저장할 데이터가 없습니다. 실사재고를 입력하세요.', 'warning');
+    return;
+  }
+  
+  try {
+    const result = await api('/sheets/monthly-stock/bulk-actual', 'POST', {
+      year_month: yearMonth,
+      items: items,
+      updated_by: window.currentUser?.name || 'USER'
+    });
+    
+    if (result.success) {
+      showToast(`${result.summary.success}건 저장 완료`, 'success');
+      loadMonthlyStockSummary();  // 요약 갱신
+    } else {
+      showToast('저장 실패: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('일괄 저장 오류:', error);
+    showToast('저장 오류: ' + error.message, 'error');
+  }
+}
+
+// 월별수불부 자동 생성
+async function generateMonthlyStockAudit() {
+  const yearMonth = document.getElementById('audit-month').value;
+  
+  if (!confirm(`${yearMonth} 월별수불부를 자동 생성하시겠습니까?\n\n기초재고, 당월입고량, 당월사용량이 자동으로 계산됩니다.`)) {
+    return;
+  }
+  
+  try {
+    showToast('생성 중...', 'info');
+    
+    // 먼저 시트 초기화
+    await api('/sheets/monthly-stock/init', 'POST');
+    
+    // 데이터 생성
+    const result = await api('/sheets/monthly-stock/generate', 'POST', {
+      year_month: yearMonth,
+      overwrite: true
+    });
+    
+    if (result.success) {
+      showToast(`${result.generated_count}건 생성 완료`, 'success');
+      loadMonthlyStockAudit();
+      loadMonthlyStockSummary();
+    } else {
+      showToast('생성 실패: ' + result.error, 'error');
+    }
+  } catch (error) {
+    console.error('생성 오류:', error);
+    showToast('생성 오류: ' + error.message, 'error');
+  }
+}
+
+// 월별수불부 엑셀 다운로드
+function downloadMonthlyStockAudit() {
+  const yearMonth = document.getElementById('audit-month').value;
+  const rows = document.querySelectorAll('#monthly-stock-audit-body tr[data-item-code]');
+  
+  const data = [];
+  rows.forEach(row => {
+    const cells = row.querySelectorAll('td');
+    const actualInput = row.querySelector('.actual-stock-input');
+    const remarksInput = row.querySelector('.remarks-input');
+    
+    data.push({
+      '원료코드': cells[0].textContent,
+      '원료명': cells[1].textContent,
+      '단위': cells[2].textContent,
+      '기초재고': cells[3].textContent,
+      '당월입고량': cells[4].textContent,
+      '당월사용량': cells[5].textContent,
+      '기말재고(이론)': cells[6].textContent,
+      '실사재고': actualInput.value || '',
+      '차이': cells[8].textContent,
+      '비고/사유': remarksInput.value || ''
+    });
+  });
+  
+  const columns = [
+    { header: '원료코드', key: '원료코드', width: 12 },
+    { header: '원료명', key: '원료명', width: 25 },
+    { header: '단위', key: '단위', width: 8 },
+    { header: '기초재고', key: '기초재고', width: 12 },
+    { header: '당월입고량', key: '당월입고량', width: 12 },
+    { header: '당월사용량', key: '당월사용량', width: 12 },
+    { header: '기말재고(이론)', key: '기말재고(이론)', width: 14 },
+    { header: '실사재고', key: '실사재고', width: 12 },
+    { header: '차이', key: '차이', width: 10 },
+    { header: '비고/사유', key: '비고/사유', width: 30 }
+  ];
+  
+  downloadExcel(data, columns, `월별수불부_재고실사_${yearMonth}`);
+}
+
+// 월별수불부 인쇄
+function printMonthlyStockAudit() {
+  const yearMonth = document.getElementById('audit-month').value;
+  const table = document.querySelector('#monthly-stock-audit-body').closest('table');
+  
+  // 인쇄용 테이블 복사 및 입력 필드를 텍스트로 변환
+  const printTable = table.cloneNode(true);
+  printTable.querySelectorAll('input').forEach(input => {
+    const text = document.createTextNode(input.value || '');
+    input.parentNode.replaceChild(text, input);
+  });
+  printTable.querySelectorAll('button').forEach(btn => btn.remove());
+  
+  const title = `월별수불부 (재고실사) - ${yearMonth}`;
+  printData(title, printTable.outerHTML, {
+    landscape: true,
+    fontSize: '9pt'
+  });
+}
+
+// 전역 함수 등록
+window.renderMonthlyStockAudit = renderMonthlyStockAudit;
+window.loadMonthlyStockAudit = loadMonthlyStockAudit;
+window.loadMonthlyStockSummary = loadMonthlyStockSummary;
+window.selectMonthlyAudit = selectMonthlyAudit;
+window.generateMonthlyStockAudit = generateMonthlyStockAudit;
+window.saveMonthlyStockItem = saveMonthlyStockItem;
+window.saveAllMonthlyStockAudit = saveAllMonthlyStockAudit;
+window.downloadMonthlyStockAudit = downloadMonthlyStockAudit;
+window.printMonthlyStockAudit = printMonthlyStockAudit;
+window.calculateDifference = calculateDifference;
+window.recalculateTheoryStock = recalculateTheoryStock;
+window.recalculateDifferenceFromTheory = recalculateDifferenceFromTheory;

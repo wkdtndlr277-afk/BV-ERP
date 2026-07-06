@@ -75,38 +75,14 @@ sheets.get('/debug/raw-read', async (c) => {
 // ===== ERP → 시트 동기화 =====
 
 // 원료 입고 데이터 동기화 (원료 R/RM만, 부자재/제품 제외)
+// ★★★ 원료입고 동기화 비활성화 - 구글시트 원료입고는 수동 관리 ★★★
+// D1 → 구글시트 덮어쓰기 방지 (일별수불부 전일재고 영향)
 sheets.post('/sync/inbound', async (c) => {
-  const service = getSheetService(c);
-  if (!service) {
-    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
-  }
-
-  try {
-    // ERP DB에서 입고 데이터 조회 (R, RM 원료만, 잔량 있는 것만)
-    const inboundData = await c.env.DB.prepare(`
-      SELECT i.inbound_date, i.item_code, m.item_name, i.lot_number, 
-             i.origin_qty, COALESCE(m.unit, 'kg') as unit, 
-             i.supplier, i.expiry_date, i.remain_qty
-      FROM inbound i
-      LEFT JOIN master m ON i.item_code = m.item_code
-      WHERE (i.item_code LIKE 'R%' OR i.item_code LIKE 'RM%')
-        AND i.item_code NOT LIKE 'SM%'
-        AND i.item_code NOT LIKE 'SF%'
-        AND i.item_code NOT LIKE 'PD%'
-        AND i.item_code NOT LIKE 'PR%'
-        AND i.remain_qty > 0
-      ORDER BY i.item_code, i.expiry_date ASC, i.inbound_date DESC
-    `).all<any>();
-
-    await service.syncInboundData(inboundData.results || []);
-    
-    return c.json({ 
-      success: true, 
-      message: `원료 입고 ${inboundData.results?.length || 0}건 동기화 완료 (R/RM 원료만)` 
-    });
-  } catch (error: any) {
-    return c.json({ success: false, error: error.message }, 500);
-  }
+  return c.json({ 
+    success: false, 
+    error: '원료입고 동기화 비활성화됨. 구글시트 원료입고는 직접 관리하세요.',
+    note: 'D1 → 구글시트 덮어쓰기로 인한 일별수불부 전일재고 오류 방지'
+  }, 400);
 });
 
 // BOM 데이터 동기화 (SM 부자재 제외)
@@ -398,23 +374,9 @@ sheets.post('/sync/all', async (c) => {
   try {
     const results: string[] = [];
 
-    // 1. 입고 동기화 (R/RM 원료만, 잔량 있는 것만)
-    const inboundData = await c.env.DB.prepare(`
-      SELECT i.inbound_date, i.item_code, m.item_name, i.lot_number, 
-             i.origin_qty, COALESCE(m.unit, 'kg') as unit, 
-             i.supplier, i.expiry_date, i.remain_qty
-      FROM inbound i
-      LEFT JOIN master m ON i.item_code = m.item_code
-      WHERE (i.item_code LIKE 'R%' OR i.item_code LIKE 'RM%')
-        AND i.item_code NOT LIKE 'SM%'
-        AND i.item_code NOT LIKE 'SF%'
-        AND i.item_code NOT LIKE 'PD%'
-        AND i.item_code NOT LIKE 'PR%'
-        AND i.remain_qty > 0
-      ORDER BY i.item_code, i.expiry_date ASC, i.inbound_date DESC
-    `).all<any>();
-    await service.syncInboundData(inboundData.results || []);
-    results.push(`입고 ${inboundData.results?.length || 0}건`);
+    // ★★★ 1. 입고 동기화 비활성화 - 구글시트 원료입고는 수동 관리 ★★★
+    // D1 → 구글시트 덮어쓰기 방지 (일별수불부 전일재고 영향)
+    results.push(`입고: 동기화 비활성화 (구글시트 수동 관리)`);
 
     // 2. BOM 동기화 (SM 부자재 제외)
     const bomData = await c.env.DB.prepare(`
@@ -1844,13 +1806,94 @@ sheets.get('/v2/output/material-usage', async (c) => {
     // 품목코드 기준 정렬
     records.sort((a, b) => a.item_code.localeCompare(b.item_code));
     
+    // ★★★ v3.6.51: 반제품(SF) 사용현황 분리 추출 ★★★
+    // BOM마스터에서 SF 원료 사용량 계산 (생산실적 × BOM 배합비)
+    const productionData = await service.readSheet('생산실적', 'A2:H5000');
+    const bomData = await service.readSheet('BOM마스터', 'A2:F2000');
+    
+    // BOM에서 SF 원료만 추출
+    const sfBomMap: Record<string, Array<{ productCode: string; sfCode: string; sfName: string; usage: number }>> = {};
+    for (const row of bomData) {
+      const productCode = row[0]?.toString() || '';
+      const materialCode = row[2]?.toString() || '';
+      const materialName = row[3]?.toString() || '';
+      const usage = parseFloat(row[4]?.toString() || '0') || 0;
+      
+      if (!productCode || !materialCode.startsWith('SF')) continue;
+      
+      if (!sfBomMap[productCode]) {
+        sfBomMap[productCode] = [];
+      }
+      sfBomMap[productCode].push({ productCode, sfCode: materialCode, sfName: materialName, usage });
+    }
+    
+    // 해당 날짜 생산실적에서 SF 사용량 집계
+    const sfUsageMap = new Map<string, { sf_code: string; sf_name: string; total_usage: number; unit: string }>();
+    
+    for (const prod of productionData) {
+      let prodDate = prod[0]?.toString().replace(/^'/, '') || '';
+      if (prodDate !== date) continue;
+      
+      const productCode = prod[1]?.toString() || '';
+      const quantity = parseFloat(prod[3]?.toString() || '0') || 0;
+      
+      const sfItems = sfBomMap[productCode] || [];
+      for (const sf of sfItems) {
+        const sfUsage = sf.usage * quantity;
+        if (sfUsage <= 0) continue;
+        
+        const existing = sfUsageMap.get(sf.sfCode);
+        if (existing) {
+          existing.total_usage += sfUsage;
+        } else {
+          sfUsageMap.set(sf.sfCode, {
+            sf_code: sf.sfCode,
+            sf_name: IWON_MATERIALS[sf.sfCode] || sf.sfName,
+            total_usage: sfUsage,
+            unit: 'kg'
+          });
+        }
+      }
+    }
+    
+    // SF LOT 정보 생성 (제조일 기준)
+    // SF LOT: {제조일}-{SF코드}-001 형식, 소비기한: 제조일 + 5일
+    const sfRecords = Array.from(sfUsageMap.values()).map(sf => {
+      const sfLot = `${date.replace(/-/g, '').slice(2)}-${sf.sf_code}-001`;  // 260618-SF001-001
+      const expiryDate = new Date(date);
+      expiryDate.setDate(expiryDate.getDate() + 5);  // 소비기한 5일
+      const sfExpiry = expiryDate.toISOString().split('T')[0];
+      
+      return {
+        sf_code: sf.sf_code,
+        sf_name: sf.sf_name,
+        total_usage: Math.round(sf.total_usage * 10000) / 10000,
+        unit: sf.unit,
+        sf_lot: sfLot,
+        expiry_date: sfExpiry,
+        // SF_BOM 전개 원료 정보는 로트매칭에서 [SF코드] 접두어로 확인 가능
+        note: '생산실적 × BOM 배합비로 계산'
+      };
+    });
+    
+    sfRecords.sort((a, b) => a.sf_code.localeCompare(b.sf_code));
+    
+    // ★★★ v3.6.51: 원료 사용현황에서 SF 원료 제외 (중복 방지) ★★★
+    const materialsOnly = records.filter(r => !r.is_iwon);
+    
     return c.json({
       success: true,
       date,
-      total_items: records.length,
-      total_usage: records.reduce((sum, r) => sum + r.usage_qty, 0),
-      data: records,
-      note: '★ 사용량: 일별수불부(SSOT), LOT/소비기한: 로트매칭, 이원료(SF001~SF010): 사용량만'
+      total_items: materialsOnly.length,
+      total_usage: materialsOnly.reduce((sum, r) => sum + r.usage_qty, 0),
+      data: materialsOnly,  // 원료만 (SF 제외)
+      // ★★★ v3.6.51: 반제품 사용현황 별도 필드 ★★★
+      sf_usage: {
+        total_items: sfRecords.length,
+        total_usage: sfRecords.reduce((sum, r) => sum + r.total_usage, 0),
+        data: sfRecords
+      },
+      note: '★ v3.6.51: 원료(data) + 반제품(sf_usage) 분리. SF 원료는 SF_BOM 전개되어 원료로 변환됨'
     });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
@@ -4450,6 +4493,10 @@ sheets.post('/rebuild-lot-matching-dates', async (c) => {
     const SF_ITEMS = ['SF001', 'SF002', 'SF003', 'SF004', 'SF005', 'SF006', 'SF007', 'SF008', 'SF009', 'SF010'];
     const allNewRows: any[][] = [];
     const dateResults: any[] = [];
+    
+    // ★★★ v3.6.51: SF_BOM 데이터 로드 (반제품 → 원료 전개용) ★★★
+    const sfBomMap = await service.getSfBom();
+    console.log(`[rebuild-lot-matching-dates v3.6.51] SF_BOM 로드: ${Object.keys(sfBomMap).length}개 SF`);
 
     for (const date of dates) {
       // 원료입고 맵 초기화 (날짜별로 새로 시작)
@@ -4490,12 +4537,57 @@ sheets.post('/rebuild-lot-matching-dates', async (c) => {
           
           const usageKg = material.quantity * prod.quantity;
           
-          // SF 원료
+          // ★★★ v3.6.51: SF 원료 → SF_BOM 전개 (반제품 → 실제 원료) ★★★
           if (SF_ITEMS.includes(material.item_code)) {
-            newRows.push([
-              `'${date}`, prod.lot_number, material.item_code, material.item_name,
-              usageKg.toFixed(5), '', ''
-            ]);
+            const sfBomItems = sfBomMap[material.item_code] || [];
+            
+            if (sfBomItems.length === 0) {
+              // SF_BOM에 정의되지 않은 SF → 기존처럼 SF 자체로 기록
+              newRows.push([
+                `'${date}`, prod.lot_number, material.item_code, material.item_name,
+                usageKg.toFixed(5), 'SF_BOM미정의', ''
+              ]);
+              continue;
+            }
+            
+            // SF 사용량 기준으로 실제 원료 전개 후 FEFO 매칭
+            for (const sfItem of sfBomItems) {
+              const realUsage = usageKg * sfItem.ratio;  // SF사용량 × 원료비율
+              if (realUsage <= 0) continue;
+              
+              // 실제 원료에 대해 FEFO 매칭
+              const lots = inboundMap.get(sfItem.materialCode) || [];
+              let remaining = realUsage;
+              
+              for (const lot of lots) {
+                if (remaining <= 0) break;
+                if (lot.remain_qty <= 0) continue;
+                
+                // 소비기한이 생산일 이전인 LOT는 건너뛰기
+                if (lot.expiry_date && lot.expiry_date < date) {
+                  continue;
+                }
+                
+                const useFromLot = Math.min(remaining, lot.remain_qty);
+                remaining -= useFromLot;
+                lot.remain_qty -= useFromLot;
+                
+                // [SF001]원료명 형태로 기록 (SF 전개 표시)
+                newRows.push([
+                  `'${date}`, prod.lot_number, sfItem.materialCode, 
+                  `[${material.item_code}]${sfItem.materialName}`,
+                  useFromLot.toFixed(5), lot.lot_number, lot.expiry_date
+                ]);
+              }
+              
+              if (remaining > 0) {
+                newRows.push([
+                  `'${date}`, prod.lot_number, sfItem.materialCode,
+                  `[${material.item_code}]${sfItem.materialName}`,
+                  remaining.toFixed(5), '재고부족', ''
+                ]);
+              }
+            }
             continue;
           }
 
@@ -5729,6 +5821,1254 @@ sheets.post('/rebuild-daily-stock-date', async (c) => {
     });
   } catch (error: any) {
     console.error('[rebuild-daily-stock-date] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.50: SF_BOM 시트 생성 (반제품 BOM 마스터) ★★★
+sheets.post('/create-sf-bom-sheet', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // 1. SF_BOM 시트 생성 (없으면)
+    const created = await service.createSheetIfNotExists('SF_BOM');
+    
+    if (!created) {
+      return c.json({ success: false, error: 'SF_BOM 시트 생성 실패' }, 500);
+    }
+
+    // 2. 헤더 행 작성
+    const headers = [
+      ['SF코드', 'SF명', '원료코드', '원료명', '배합비', '단위', '비고']
+    ];
+    
+    await service.writeSheet('SF_BOM', 'A1:G1', headers);
+
+    // 3. 샘플 데이터 (사용자가 수정할 템플릿)
+    const sampleData = [
+      ['SF001', '르방종', 'R000', '(원료코드 입력)', 0, 'kg', '(배합비는 SF 1kg 기준)'],
+      ['SF001', '르방종', '', '', 0, 'kg', ''],
+      ['SF002', '사워종', 'R000', '(원료코드 입력)', 0, 'kg', ''],
+      ['SF002', '사워종', '', '', 0, 'kg', ''],
+    ];
+    
+    await service.writeSheet('SF_BOM', 'A2:G5', sampleData);
+
+    return c.json({
+      success: true,
+      message: 'SF_BOM 시트 생성 완료',
+      data: {
+        sheet_name: 'SF_BOM',
+        headers: headers[0],
+        sample_rows: sampleData.length,
+        note: '구글시트에서 SF별 원료 배합비를 입력해주세요. 배합비는 SF 1kg 제조 기준입니다.'
+      }
+    });
+  } catch (error: any) {
+    console.error('[create-sf-bom-sheet] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.50: SF_BOM 데이터 입력 (비율 변환된 데이터) ★★★
+sheets.post('/insert-sf-bom-data', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // SF_BOM 데이터 (1kg 기준 비율로 변환됨)
+    // [SF코드, SF명, 원료코드, 원료명, 배합비(1kg기준), 단위, 소비기한(일)]
+    const sfBomData = [
+      ['SF001', '발효종르방', 'R60', '강력(사조)', 0.5, 'kg', 5],
+      ['SF001', '발효종르방', 'RM184', '정제수', 0.5, 'kg', 5],
+      ['SF002', '통밀르방', 'RM211', '통밀(스테인메츠)', 0.5, 'kg', 5],
+      ['SF002', '통밀르방', 'RM184', '정제수', 0.5, 'kg', 5],
+      ['SF003', '폴리쉬', 'R76', '강력(사조)', 0.4995, 'kg', 5],
+      ['SF003', '폴리쉬', 'RM184', '정제수', 0.4995, 'kg', 5],
+      ['SF003', '폴리쉬', 'R068', '생이스트', 0.000999, 'kg', 5],
+      ['SF004', '쌀르방', 'R005', '햇방아쌀가루', 0.416667, 'kg', 5],
+      ['SF004', '쌀르방', 'R068', '생이스트', 0.166667, 'kg', 5],
+      ['SF004', '쌀르방', 'RM184', '정제수', 0.416667, 'kg', 5],
+      ['SF005', '쌀탕종', 'R071', '소금', 0.004975, 'kg', 5],
+      ['SF005', '쌀탕종', 'R005', '햇방아쌀가루', 0.497512, 'kg', 5],
+      ['SF005', '쌀탕종', 'RM184', '정제수', 0.497512, 'kg', 5],
+      ['SF006', '탕종', 'R113', '강력(스테인메츠)', 0.67642, 'kg', 5],
+      ['SF006', '탕종', 'RM184', '정제수', 0.319405, 'kg', 5],
+      ['SF006', '탕종', 'R071', '소금', 0.004175, 'kg', 5],
+      ['SF007', '통밀탕종', 'R114', '통밀(사조)', 0.321131, 'kg', 5],
+      ['SF007', '통밀탕종', 'RM184', '정제수', 0.678869, 'kg', 5],
+      ['SF008', '통밀폴리쉬', 'RM211', '통밀(스테인메츠)', 0.4995, 'kg', 5],
+      ['SF008', '통밀폴리쉬', 'RM184', '정제수', 0.4995, 'kg', 5],
+      ['SF008', '통밀폴리쉬', 'R068', '생이스트', 0.000999, 'kg', 5],
+      ['SF009', '호밀르방', 'R60', '강력(사조)', 0.25, 'kg', 5],
+      ['SF009', '호밀르방', 'RM184', '정제수', 0.5, 'kg', 5],
+      ['SF009', '호밀르방', 'RM143', '호밀가루', 0.25, 'kg', 5],
+      ['SF010', '솔트라이발효종르방', 'RM184', '정제수', 0.985197, 'kg', 5],
+      ['SF010', '솔트라이발효종르방', 'R071', '소금', 0.002488, 'kg', 5],
+      ['SF010', '솔트라이발효종르방', 'R60', '강력(사조)', 0.006157, 'kg', 5],
+      ['SF010', '솔트라이발효종르방', 'RM143', '호밀가루', 0.006157, 'kg', 5],
+    ];
+
+    // 1. 헤더 작성
+    const headers = [['SF코드', 'SF명', '원료코드', '원료명', '배합비(1kg기준)', '단위', '소비기한(일)']];
+    await service.writeSheet('SF_BOM', 'A1:G1', headers);
+
+    // 2. 데이터 작성
+    const range = `A2:G${sfBomData.length + 1}`;
+    await service.writeSheet('SF_BOM', range, sfBomData);
+
+    return c.json({
+      success: true,
+      message: 'SF_BOM 데이터 입력 완료',
+      data: {
+        total_rows: sfBomData.length,
+        sf_codes: [...new Set(sfBomData.map(r => r[0]))],
+        note: '배합비는 SF 1kg 제조 기준입니다. 예: SF001 1kg = R60 0.5kg + RM184 0.5kg'
+      }
+    });
+  } catch (error: any) {
+    console.error('[insert-sf-bom-data] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.51: SF_BOM 로드 테스트 API ★★★
+sheets.get('/debug/sf-bom', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const sfBomMap = await service.getSfBom();
+    const sfCodes = Object.keys(sfBomMap);
+    
+    return c.json({
+      success: true,
+      total_sf_codes: sfCodes.length,
+      sf_codes: sfCodes,
+      sample_data: {
+        SF001: sfBomMap['SF001'] || [],
+        SF003: sfBomMap['SF003'] || []
+      },
+      note: 'SF_BOM 데이터 로드 결과'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.52: 생산실적 채널 일괄 수정 (제품마스터 GS 채널 기준) ★★★
+// 제품마스터에서 GS로 설정된 제품의 생산실적 채널을 GS로 수정
+sheets.post('/fix-production-channel-gs', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // 1. 제품마스터에서 GS 채널 제품코드 목록 조회
+    const productMasterData = await service.readSheet('제품마스터', 'A2:E');
+    const gsProductCodes: string[] = [];
+    
+    for (const row of productMasterData) {
+      const productCode = row[0]?.toString() || '';
+      const channel = row[4]?.toString() || '';  // E열 = 채널
+      
+      if (channel === 'GS' && productCode) {
+        gsProductCodes.push(productCode);
+      }
+    }
+    
+    console.log(`[fix-production-channel-gs] GS 제품코드: ${gsProductCodes.join(', ')}`);
+    
+    if (gsProductCodes.length === 0) {
+      return c.json({ 
+        success: false, 
+        error: '제품마스터에 GS 채널 제품이 없습니다.' 
+      }, 400);
+    }
+    
+    // 2. 생산실적 시트 읽기 (A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널)
+    const productionData = await service.readSheet('생산실적', 'A2:H');
+    
+    // 3. 수정이 필요한 행 찾기 (GS 제품인데 채널이 GS가 아닌 경우)
+    const rowsToUpdate: { rowIndex: number; productCode: string; oldChannel: string }[] = [];
+    
+    for (let i = 0; i < productionData.length; i++) {
+      const row = productionData[i];
+      const productCode = row[1]?.toString() || '';
+      const channel = row[5]?.toString() || '';  // F열 = 채널
+      
+      if (gsProductCodes.includes(productCode) && channel !== 'GS') {
+        rowsToUpdate.push({
+          rowIndex: i + 2,  // 시트 행번호 (헤더 제외, 1-based)
+          productCode,
+          oldChannel: channel
+        });
+      }
+    }
+    
+    console.log(`[fix-production-channel-gs] 수정 필요 행: ${rowsToUpdate.length}건`);
+    
+    if (rowsToUpdate.length === 0) {
+      return c.json({
+        success: true,
+        message: '수정할 항목이 없습니다. 이미 모든 GS 제품이 GS 채널로 설정되어 있습니다.',
+        gs_products: gsProductCodes,
+        updated_count: 0
+      });
+    }
+    
+    // 4. 채널 일괄 수정 (F열) - batchWriteSheet 사용
+    const updates = rowsToUpdate.map(item => ({
+      sheetName: '생산실적',
+      range: `F${item.rowIndex}`,
+      values: [['GS']]
+    }));
+    
+    // 배치로 나눠서 처리 (Google API 제한 고려)
+    const batchSize = 100;
+    let updatedCount = 0;
+    
+    for (let i = 0; i < updates.length; i += batchSize) {
+      const batch = updates.slice(i, i + batchSize);
+      await service.batchWriteSheet(batch);
+      updatedCount += batch.length;
+      
+      // API 호출 간격 조절
+      if (i + batchSize < updates.length) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `생산실적 채널 수정 완료`,
+      gs_products: gsProductCodes,
+      updated_count: updatedCount,
+      updated_rows: rowsToUpdate.slice(0, 20),  // 샘플 20건만 반환
+      note: '★ v3.6.52: 제품마스터 GS 제품의 생산실적 채널을 GS로 수정'
+    });
+  } catch (error: any) {
+    console.error('[fix-production-channel-gs] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.53: 일별수불부 재생성 (전일 현재고 기반) ★★★
+// 특정 날짜들의 일별수불부를 전일 현재고를 기준으로 재생성
+sheets.post('/regenerate-daily-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const dates: string[] = body.dates || [];  // 재생성할 날짜들 (예: ["2026-06-26", "2026-06-27"])
+    
+    if (dates.length === 0) {
+      return c.json({ success: false, error: 'dates 배열 필수' }, 400);
+    }
+    
+    // 날짜 정렬 (오름차순)
+    const sortedDates = [...dates].sort();
+    console.log(`[regenerate-daily-stock] 재생성 날짜: ${sortedDates.join(', ')}`);
+    
+    // 1. 첫 번째 날짜의 전일 현재고 조회 (원료 목록도 여기서 가져옴)
+    const firstDate = sortedDates[0];
+    const prevDate = new Date(firstDate);
+    prevDate.setDate(prevDate.getDate() - 1);
+    const prevDateStr = prevDate.toISOString().split('T')[0];
+    
+    console.log(`[regenerate-daily-stock] 전일(${prevDateStr}) 현재고 조회`);
+    
+    const prevDayStock = await service.getDailyStockReport(prevDateStr);
+    
+    if (prevDayStock.length === 0) {
+      return c.json({ 
+        success: false, 
+        error: `전일(${prevDateStr}) 일별수불부 데이터가 없습니다.` 
+      }, 400);
+    }
+    
+    // ★ 전일 일별수불부에서 원료 목록과 현재고 추출
+    const materials: { code: string; name: string }[] = [];
+    const prevStockMap = new Map<string, number>();
+    
+    for (const item of prevDayStock) {
+      materials.push({ code: item.item_code, name: item.item_name });
+      prevStockMap.set(item.item_code, item.current_stock || 0);
+    }
+    
+    console.log(`[regenerate-daily-stock] 원료목록: ${materials.length}개, 전일재고 로드 완료`);
+    
+    // 3. 각 날짜별로 일별수불부 생성
+    const results: any[] = [];
+    let currentStockMap = new Map(prevStockMap);  // 누적 재고 (이전 날짜 현재고 → 다음 날짜 전일재고)
+    
+    for (const date of sortedDates) {
+      console.log(`[regenerate-daily-stock] ${date} 처리 중...`);
+      
+      // 해당 날짜 입고량 조회
+      const inboundData = await service.readSheet('원료입고', 'A2:E');
+      const inboundMap = new Map<string, number>();
+      
+      for (const row of inboundData) {
+        let inboundDate = row[0]?.toString().replace(/^'/, '') || '';
+        if (/^\d{5}$/.test(inboundDate)) {
+          const excelDate = parseInt(inboundDate);
+          const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+          inboundDate = jsDate.toISOString().split('T')[0];
+        }
+        
+        if (inboundDate === date) {
+          const code = row[1]?.toString() || '';
+          const qty = parseFloat(row[4]?.toString() || '0') || 0;
+          inboundMap.set(code, (inboundMap.get(code) || 0) + qty);
+        }
+      }
+      
+      // 해당 날짜 사용량 조회 (로트매칭)
+      const lotMatchingData = await service.readSheet('로트매칭', 'A2:E');
+      const usageMap = new Map<string, number>();
+      
+      for (const row of lotMatchingData) {
+        let matchDate = row[0]?.toString().replace(/^'/, '') || '';
+        if (/^\d{5}$/.test(matchDate)) {
+          const excelDate = parseInt(matchDate);
+          const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+          matchDate = jsDate.toISOString().split('T')[0];
+        }
+        
+        if (matchDate === date) {
+          const code = row[2]?.toString() || '';
+          const qty = parseFloat(row[4]?.toString() || '0') || 0;
+          usageMap.set(code, (usageMap.get(code) || 0) + qty);
+        }
+      }
+      
+      // 일별수불부 행 생성
+      const rows: any[][] = [];
+      const nextStockMap = new Map<string, number>();
+      
+      for (const mat of materials) {
+        const prevStock = currentStockMap.get(mat.code) || 0;
+        const inbound = inboundMap.get(mat.code) || 0;
+        const usage = usageMap.get(mat.code) || 0;
+        const currentStock = prevStock + inbound - usage;
+        
+        // 다음 날짜를 위해 현재고 저장
+        nextStockMap.set(mat.code, currentStock);
+        
+        // 행 번호는 나중에 결정 (수식에 사용)
+        rows.push([
+          `'${date}`,  // A: 일자
+          mat.code,     // B: 원료코드
+          mat.name,     // C: 원료명
+          prevStock,    // D: 전일재고 (값)
+          // E: 입고량 (수식)
+          // F: 사용량 (수식)
+          // G: 현재고 (수식)
+          'kg'          // H: 단위
+        ]);
+      }
+      
+      // 현재고를 다음 날짜 전일재고로
+      currentStockMap = nextStockMap;
+      
+      // 시트에 추가 (기존 데이터 끝에)
+      const existingData = await service.readSheet('일별수불부', 'A:A');
+      const startRow = existingData.length + 1;
+      
+      // 수식 포함 행 생성
+      const fullRows: any[][] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const rowNum = startRow + i;
+        const row = rows[i];
+        fullRows.push([
+          row[0],  // A: 일자
+          row[1],  // B: 원료코드
+          row[2],  // C: 원료명
+          row[3],  // D: 전일재고 (값)
+          `=IFERROR(SUMIFS('원료입고'!E:E,'원료입고'!B:B,B${rowNum},'원료입고'!A:A,A${rowNum}),0)`,  // E: 입고량
+          `=IFERROR(SUMIFS('로트매칭'!E:E,'로트매칭'!C:C,B${rowNum},'로트매칭'!A:A,A${rowNum}),0)`,  // F: 사용량
+          `=D${rowNum}+E${rowNum}-F${rowNum}`,  // G: 현재고
+          row[4]   // H: 단위
+        ]);
+      }
+      
+      // 시트에 쓰기
+      await service.writeSheet('일별수불부', `A${startRow}:H${startRow + fullRows.length - 1}`, fullRows);
+      
+      results.push({
+        date,
+        rows_added: fullRows.length,
+        start_row: startRow,
+        sample_inbound: Array.from(inboundMap.entries()).slice(0, 3),
+        sample_usage: Array.from(usageMap.entries()).slice(0, 3)
+      });
+      
+      console.log(`[regenerate-daily-stock] ${date} 완료: ${fullRows.length}행 추가`);
+    }
+    
+    return c.json({
+      success: true,
+      message: `일별수불부 재생성 완료`,
+      prev_date: prevDateStr,
+      prev_stock_count: prevStockMap.size,
+      results,
+      note: '★ v3.6.53: 전일 현재고 기반 일별수불부 재생성'
+    });
+  } catch (error: any) {
+    console.error('[regenerate-daily-stock] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.54: 생산실적 채널 일괄 복구 API (제품마스터 기준) ★★★
+// 특정 날짜의 생산실적에서 채널이 잘못된(쿠팡으로 저장된) 데이터를 제품마스터 기준으로 수정
+sheets.post('/fix-production-channel-by-date', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const targetDate = body.date;  // 수정할 날짜 (필수)
+    const dryRun = body.dry_run !== false;  // 기본값: true (시뮬레이션)
+
+    if (!targetDate) {
+      return c.json({ success: false, error: 'date 필수' }, 400);
+    }
+
+    // 1. 제품마스터에서 채널 맵 조회
+    // ★ 동일 제품코드에 여러 채널이 있으면 쿠팡이 아닌 채널 우선 (GS, 오아시스, 컬리, 배민 등)
+    const productMasterData = await service.readSheet('제품마스터', 'A2:E');
+    const channelMap = new Map<string, string>();
+    
+    for (const row of productMasterData) {
+      const productCode = row[0]?.toString() || '';
+      const channel = row[4]?.toString() || '';  // E열 = 채널
+      if (productCode && channel) {
+        const existingChannel = channelMap.get(productCode);
+        // 이미 쿠팡이 아닌 채널이 있으면 유지, 없으면 새 채널 설정
+        if (!existingChannel || existingChannel === '쿠팡') {
+          channelMap.set(productCode, channel);
+        }
+      }
+    }
+    console.log(`[fix-production-channel-by-date] 제품마스터 ${channelMap.size}개 채널 정보 로드`);
+
+    // 2. 생산실적에서 해당 날짜 데이터 조회
+    const productionData = await service.readSheet('생산실적', 'A2:H');
+    
+    const rowsToUpdate: { rowIndex: number; productCode: string; currentChannel: string; correctChannel: string }[] = [];
+    
+    for (let i = 0; i < productionData.length; i++) {
+      const row = productionData[i];
+      let prodDate = row[0]?.toString().replace(/^'/, '') || '';
+      
+      // 엑셀 날짜 숫자 변환
+      if (/^\d{5}$/.test(prodDate)) {
+        const excelDate = parseInt(prodDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        prodDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (prodDate !== targetDate) continue;
+      
+      const productCode = row[1]?.toString() || '';
+      const currentChannel = row[5]?.toString() || '';
+      const correctChannel = channelMap.get(productCode);
+      
+      // ★ v3.6.54: 현재 채널이 "쿠팡"이고, 제품마스터에 쿠팡이 아닌 채널이 있는 경우만 수정
+      // (쿠팡으로 잘못 저장된 데이터를 제품마스터 기준으로 복구)
+      const shouldFix = currentChannel === '쿠팡' && correctChannel && correctChannel !== '쿠팡';
+      
+      if (shouldFix) {
+        rowsToUpdate.push({
+          rowIndex: i + 2,  // 실제 시트 행 (1-indexed, 헤더 제외)
+          productCode,
+          currentChannel,
+          correctChannel
+        });
+      }
+    }
+
+    console.log(`[fix-production-channel-by-date] ${targetDate} 수정 대상: ${rowsToUpdate.length}건`);
+
+    if (rowsToUpdate.length === 0) {
+      return c.json({
+        success: true,
+        message: `${targetDate}에 수정할 데이터가 없습니다.`,
+        updates: 0
+      });
+    }
+
+    // 채널별 통계
+    const channelStats: Record<string, { from: Record<string, number>; count: number }> = {};
+    for (const item of rowsToUpdate) {
+      if (!channelStats[item.correctChannel]) {
+        channelStats[item.correctChannel] = { from: {}, count: 0 };
+      }
+      channelStats[item.correctChannel].count++;
+      channelStats[item.correctChannel].from[item.currentChannel] = 
+        (channelStats[item.correctChannel].from[item.currentChannel] || 0) + 1;
+    }
+
+    if (dryRun) {
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        date: targetDate,
+        message: `${rowsToUpdate.length}건 수정 예정 (dry_run=false로 실제 수정)`,
+        updates_preview: rowsToUpdate.length,
+        channel_stats: channelStats,
+        sample: rowsToUpdate.slice(0, 20).map(r => ({
+          row: r.rowIndex,
+          code: r.productCode,
+          from: r.currentChannel,
+          to: r.correctChannel
+        }))
+      });
+    }
+
+    // 3. 실제 수정 (개별 셀 업데이트)
+    const updates = rowsToUpdate.map(item => ({
+      sheetName: '생산실적',
+      range: `F${item.rowIndex}`,
+      values: [[item.correctChannel]]
+    }));
+
+    // batchWriteSheet 사용
+    await service.batchWriteSheet(updates);
+
+    return c.json({
+      success: true,
+      date: targetDate,
+      message: `${rowsToUpdate.length}건 채널 수정 완료`,
+      updates: rowsToUpdate.length,
+      channel_stats: channelStats,
+      note: '★ v3.6.54: 제품마스터 기준 채널 복구'
+    });
+  } catch (error: any) {
+    console.error('[fix-production-channel-by-date] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.55: 원료입고 시트 중복 행 삭제 API ★★★
+sheets.post('/fix-inbound-duplicates', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json<{ 
+      rowsToDelete?: number[];  // 삭제할 행 번호 배열 (1-indexed)
+      dryRun?: boolean;         // true면 실제 삭제 안 함
+    }>();
+    
+    const dryRun = body.dryRun ?? true;  // 기본값: 미리보기 모드
+    const rowsToDelete = body.rowsToDelete || [919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929, 930];
+    
+    // 1. 현재 원료입고 데이터 조회
+    const inboundData = await service.readSheet('원료입고', 'A1:I1000');
+    
+    if (!inboundData || inboundData.length === 0) {
+      return c.json({ success: false, error: '원료입고 시트 데이터 없음' }, 400);
+    }
+    
+    // 2. 삭제 대상 행 정보 수집
+    const deletionInfo: { row: number; data: any[] }[] = [];
+    for (const rowNum of rowsToDelete) {
+      const idx = rowNum - 1;  // 0-indexed
+      if (idx >= 0 && idx < inboundData.length) {
+        deletionInfo.push({
+          row: rowNum,
+          data: inboundData[idx]
+        });
+      }
+    }
+    
+    if (dryRun) {
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        message: `${deletionInfo.length}개 행 삭제 미리보기 (실제 삭제하려면 dryRun: false로 호출)`,
+        rows_to_delete: deletionInfo.map(d => ({
+          row: d.row,
+          date: d.data[0],
+          code: d.data[1],
+          name: d.data[2],
+          lot: d.data[3],
+          qty: d.data[4],
+          f_col: d.data[5],  // F열 (잘못된 경우 공급업체가 들어있음)
+          g_col: d.data[6],
+          h_col: d.data[7],
+          i_col: d.data[8]
+        }))
+      });
+    }
+    
+    // 3. 실제 삭제 - batchUpdate로 행 삭제
+    // 구글 시트 API의 deleteRows 사용
+    const spreadsheetId = '1VD3vL5ka-gVjkrxsT-dOEBMlKXFIn-SMj5jQ4ogv-x8';
+    
+    // 시트 ID 조회
+    const sheetId = await service.getSheetId('원료입고');
+    
+    // 행 삭제 (뒤에서부터 삭제해야 인덱스가 밀리지 않음)
+    const sortedRows = [...rowsToDelete].sort((a, b) => b - a);
+    
+    const deleteRequests = sortedRows.map(rowNum => ({
+      deleteDimension: {
+        range: {
+          sheetId: sheetId,
+          dimension: 'ROWS',
+          startIndex: rowNum - 1,  // 0-indexed
+          endIndex: rowNum         // 0-indexed, exclusive
+        }
+      }
+    }));
+    
+    await service.batchUpdate(deleteRequests);
+    
+    return c.json({
+      success: true,
+      mode: 'executed',
+      message: `${sortedRows.length}개 행 삭제 완료`,
+      deleted_rows: sortedRows,
+      note: '★ v3.6.55: 원료입고 중복 행 삭제'
+    });
+  } catch (error: any) {
+    console.error('[fix-inbound-duplicates] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// =====================================================================
+// ★★★ v3.6.56: 월별수불부 API ★★★
+// =====================================================================
+
+// 월별수불부 시트 초기화 (시트 생성)
+sheets.post('/monthly-stock/init', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // 시트 생성
+    const created = await service.createSheetIfNotExists('월별수불부');
+    
+    if (created) {
+      // 헤더 추가
+      const headers = [
+        ['년월', '원료코드', '원료명', '단위', '기초재고', '당월입고량', '당월사용량', '기말재고(이론)', '실사재고', '차이', '비고/사유', '작성일', '작성자']
+      ];
+      await service.writeSheet('월별수불부', 'A1:M1', headers);
+    }
+    
+    return c.json({
+      success: true,
+      message: created ? '월별수불부 시트가 생성되었습니다.' : '월별수불부 시트가 이미 존재합니다.',
+      headers: ['년월', '원료코드', '원료명', '단위', '기초재고', '당월입고량', '당월사용량', '기말재고(이론)', '실사재고', '차이', '비고/사유', '작성일', '작성자']
+    });
+  } catch (error: any) {
+    console.error('[monthly-stock/init] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 월별수불부 데이터 조회
+sheets.get('/monthly-stock', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const yearMonth = c.req.query('month');  // 예: 2026-07
+    
+    let data: any[] = [];
+    try {
+      data = await service.readSheet('월별수불부', 'A2:M1000') || [];
+    } catch (sheetError: any) {
+      console.log('[monthly-stock] 시트 조회 실패:', sheetError.message);
+      data = [];
+    }
+    
+    if (!data || data.length === 0) {
+      return c.json({
+        success: true,
+        data: [],
+        message: '월별수불부 데이터가 없습니다.'
+      });
+    }
+    
+    // 데이터 파싱
+    let results = data.map((row: any[], idx: number) => ({
+      row_number: idx + 2,
+      year_month: row[0] || '',
+      item_code: row[1] || '',
+      item_name: row[2] || '',
+      unit: row[3] || 'kg',
+      opening_stock: parseFloat(row[4]) || 0,      // 기초재고
+      monthly_inbound: parseFloat(row[5]) || 0,    // 당월입고량
+      monthly_usage: parseFloat(row[6]) || 0,      // 당월사용량
+      closing_stock_theory: parseFloat(row[7]) || 0, // 기말재고(이론)
+      actual_stock: row[8] !== undefined && row[8] !== '' ? parseFloat(row[8]) : null,  // 실사재고
+      difference: row[9] !== undefined && row[9] !== '' ? parseFloat(row[9]) : null,    // 차이
+      remarks: row[10] || '',                      // 비고/사유
+      created_date: row[11] || '',                 // 작성일
+      created_by: row[12] || ''                    // 작성자
+    }));
+    
+    // 특정 월 필터링
+    if (yearMonth) {
+      results = results.filter(r => r.year_month === yearMonth);
+    }
+    
+    return c.json({
+      success: true,
+      data: results,
+      total: results.length
+    });
+  } catch (error: any) {
+    console.error('[monthly-stock] 조회 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 월별수불부 자동 생성 (일별 데이터 기반)
+sheets.post('/monthly-stock/generate', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json<{ 
+      year_month: string;  // 예: "2026-07"
+      overwrite?: boolean; // 기존 데이터 덮어쓰기 여부
+    }>();
+    
+    const { year_month, overwrite = false } = body;
+    
+    if (!year_month || !/^\d{4}-\d{2}$/.test(year_month)) {
+      return c.json({ success: false, error: '년월 형식이 올바르지 않습니다. (예: 2026-07)' }, 400);
+    }
+    
+    const [year, month] = year_month.split('-');
+    const startDate = `${year}-${month}-01`;
+    const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+    const endDate = `${year}-${month}-${String(lastDay).padStart(2, '0')}`;
+    
+    // 전월 계산
+    const prevMonth = parseInt(month) === 1 ? 12 : parseInt(month) - 1;
+    const prevYear = parseInt(month) === 1 ? parseInt(year) - 1 : parseInt(year);
+    const prevYearMonth = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+    
+    // 1. 기존 월별수불부에서 해당 월 데이터 확인
+    const existingData = await service.readSheet('월별수불부', 'A2:M1000');
+    const existingMonthData = existingData?.filter((row: any[]) => row[0] === year_month) || [];
+    
+    if (existingMonthData.length > 0 && !overwrite) {
+      return c.json({
+        success: false,
+        error: `${year_month} 데이터가 이미 존재합니다. 덮어쓰려면 overwrite: true로 요청하세요.`,
+        existing_count: existingMonthData.length
+      });
+    }
+    
+    // 2. 원료마스터에서 원료명/단위 조회 (★ 추가)
+    const masterData = await service.readSheet('원료마스터', 'A2:E1000');
+    const masterMap: Map<string, { name: string; unit: string }> = new Map();
+    for (const row of masterData || []) {
+      const itemCode = String(row[0] || '');
+      const itemName = String(row[1] || '');
+      const unit = String(row[3] || 'kg');
+      if (itemCode && itemName) {
+        masterMap.set(itemCode, { name: itemName, unit });
+      }
+    }
+    
+    // 3. 원료입고 데이터에서 당월 입고량 계산
+    const inboundData = await service.readSheet('원료입고', 'A1:I5000');
+    const monthlyInbound: Map<string, { name: string; unit: string; qty: number }> = new Map();
+    
+    for (const row of inboundData || []) {
+      const inboundDate = String(row[0] || '').replace(/^'/, '');
+      if (inboundDate >= startDate && inboundDate <= endDate) {
+        const itemCode = String(row[1] || '');
+        const itemName = String(row[2] || '');
+        const qty = parseFloat(row[4]) || 0;
+        const unit = String(row[5] || 'kg');
+        
+        if (itemCode) {
+          const existing = monthlyInbound.get(itemCode) || { name: itemName, unit, qty: 0 };
+          existing.qty += qty;
+          if (!existing.name) existing.name = itemName;
+          monthlyInbound.set(itemCode, existing);
+        }
+      }
+    }
+    
+    // 3. 로트매칭에서 당월 사용량 계산
+    const lotMatchData = await service.readSheet('로트매칭', 'A2:G10000');
+    const monthlyUsage: Map<string, { name: string; qty: number }> = new Map();
+    
+    for (const row of lotMatchData || []) {
+      const prodDate = String(row[0] || '').replace(/^'/, '');
+      if (prodDate >= startDate && prodDate <= endDate) {
+        const itemCode = String(row[2] || '');
+        const itemName = String(row[3] || '');
+        const usageQty = parseFloat(row[4]) || 0;
+        
+        if (itemCode) {
+          const existing = monthlyUsage.get(itemCode) || { name: itemName, qty: 0 };
+          existing.qty += usageQty;
+          if (!existing.name) existing.name = itemName;
+          monthlyUsage.set(itemCode, existing);
+        }
+      }
+    }
+    
+    // 4. 전월 기말재고 = 이번 달 기초재고 (원료입고 잔량 기준으로 계산)
+    // 또는 전월 월별수불부의 기말재고(이론) 또는 실사재고 사용
+    const prevMonthData = existingData?.filter((row: any[]) => row[0] === prevYearMonth) || [];
+    const openingStockMap: Map<string, number> = new Map();
+    
+    for (const row of prevMonthData) {
+      const itemCode = String(row[1] || '');
+      // 실사재고가 있으면 실사재고, 없으면 이론재고 사용
+      const closingStock = row[8] !== undefined && row[8] !== '' ? parseFloat(row[8]) : parseFloat(row[7]) || 0;
+      openingStockMap.set(itemCode, closingStock);
+    }
+    
+    // 5. 전월 데이터가 없으면 원료입고 잔량에서 기초재고 계산
+    if (prevMonthData.length === 0) {
+      // 해당 월 시작일 기준으로 원료입고 잔량 합계
+      for (const row of inboundData || []) {
+        const inboundDate = String(row[0] || '').replace(/^'/, '');
+        if (inboundDate < startDate) {
+          const itemCode = String(row[1] || '');
+          const remainQty = parseFloat(row[8]) || 0;  // I열: 잔량
+          
+          if (itemCode && remainQty > 0) {
+            const existing = openingStockMap.get(itemCode) || 0;
+            openingStockMap.set(itemCode, existing + remainQty);
+          }
+        }
+      }
+    }
+    
+    // 6. 모든 원료 코드 수집
+    const allItemCodes = new Set<string>();
+    monthlyInbound.forEach((_, code) => allItemCodes.add(code));
+    monthlyUsage.forEach((_, code) => allItemCodes.add(code));
+    openingStockMap.forEach((_, code) => allItemCodes.add(code));
+    
+    // 7. 월별수불부 데이터 생성
+    const today = new Date().toISOString().split('T')[0];
+    const newRows: any[][] = [];
+    
+    // 원료코드 자연 정렬 (R001, R002, ..., R010, R011 순서)
+    const sortedItemCodes = Array.from(allItemCodes).sort((a, b) => {
+      const aMatch = a.match(/^([A-Z]+)(\d+)$/);
+      const bMatch = b.match(/^([A-Z]+)(\d+)$/);
+      if (aMatch && bMatch) {
+        if (aMatch[1] === bMatch[1]) {
+          return parseInt(aMatch[2]) - parseInt(bMatch[2]);
+        }
+        return aMatch[1].localeCompare(bMatch[1]);
+      }
+      return a.localeCompare(b);
+    });
+    
+    for (const itemCode of sortedItemCodes) {
+      const inboundInfo = monthlyInbound.get(itemCode) || { name: '', unit: 'kg', qty: 0 };
+      const usageInfo = monthlyUsage.get(itemCode) || { name: '', qty: 0 };
+      // ★ 원료명/단위: 원료마스터 > 원료입고 > 로트매칭 > 코드 순서로 조회
+      const masterInfo = masterMap.get(itemCode);
+      const itemName = masterInfo?.name || inboundInfo.name || usageInfo.name || itemCode;
+      const unit = masterInfo?.unit || inboundInfo.unit || 'kg';
+      
+      const openingStock = openingStockMap.get(itemCode) || 0;
+      const monthlyIn = inboundInfo.qty;
+      const monthlyUse = usageInfo.qty;
+      const closingStockTheory = openingStock + monthlyIn - monthlyUse;
+      
+      newRows.push([
+        year_month,           // A: 년월
+        itemCode,             // B: 원료코드
+        itemName,             // C: 원료명
+        unit,                 // D: 단위
+        openingStock.toFixed(2),  // E: 기초재고
+        monthlyIn.toFixed(2),     // F: 당월입고량
+        monthlyUse.toFixed(2),    // G: 당월사용량
+        closingStockTheory.toFixed(2), // H: 기말재고(이론)
+        '',                   // I: 실사재고 (수동 입력)
+        '',                   // J: 차이 (수식으로 계산)
+        '',                   // K: 비고/사유 (수동 입력)
+        today,                // L: 작성일
+        'SYSTEM'              // M: 작성자
+      ]);
+    }
+    
+    // 8. 기존 데이터 삭제 후 새 데이터 추가 (overwrite 모드)
+    if (overwrite && existingMonthData.length > 0) {
+      // 해당 월 데이터의 행 번호 찾기
+      const rowsToDelete: number[] = [];
+      for (let i = 0; i < (existingData?.length || 0); i++) {
+        if (existingData[i][0] === year_month) {
+          rowsToDelete.push(i + 2);  // 1-indexed, 헤더 제외
+        }
+      }
+      
+      // 뒤에서부터 삭제
+      if (rowsToDelete.length > 0) {
+        const sheetId = await service.getSheetId('월별수불부');
+        const sortedRows = rowsToDelete.sort((a, b) => b - a);
+        const deleteRequests = sortedRows.map(rowNum => ({
+          deleteDimension: {
+            range: {
+              sheetId: sheetId,
+              dimension: 'ROWS',
+              startIndex: rowNum - 1,
+              endIndex: rowNum
+            }
+          }
+        }));
+        await service.batchUpdate(deleteRequests);
+      }
+    }
+    
+    // 9. 새 데이터 추가
+    if (newRows.length > 0) {
+      await service.appendSheet('월별수불부', newRows);
+    }
+    
+    return c.json({
+      success: true,
+      message: `${year_month} 월별수불부 ${newRows.length}건 생성 완료`,
+      year_month,
+      generated_count: newRows.length,
+      summary: {
+        total_items: newRows.length,
+        with_inbound: monthlyInbound.size,
+        with_usage: monthlyUsage.size,
+        with_opening_stock: openingStockMap.size
+      }
+    });
+  } catch (error: any) {
+    console.error('[monthly-stock/generate] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 월별수불부 실사재고 및 비고 수정
+sheets.put('/monthly-stock/update', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json<{
+      year_month: string;
+      item_code: string;
+      opening_stock?: number;        // 기초재고
+      monthly_inbound?: number;      // 당월입고량
+      monthly_usage?: number;        // 당월사용량
+      closing_stock_theory?: number; // 기말재고(이론)
+      actual_stock?: number;         // 실사재고
+      remarks?: string;              // 비고/사유
+      updated_by?: string;           // 수정자
+    }>();
+    
+    const { year_month, item_code, opening_stock, monthly_inbound, monthly_usage, closing_stock_theory, actual_stock, remarks, updated_by = '' } = body;
+    
+    if (!year_month || !item_code) {
+      return c.json({ success: false, error: '년월과 원료코드는 필수입니다.' }, 400);
+    }
+    
+    // 해당 행 찾기
+    const data = await service.readSheet('월별수불부', 'A2:M5000');
+    let targetRowIndex = -1;
+    let targetRow: any[] = [];
+    
+    for (let i = 0; i < (data?.length || 0); i++) {
+      if (data[i][0] === year_month && data[i][1] === item_code) {
+        targetRowIndex = i + 2;  // 1-indexed, 헤더 제외
+        targetRow = data[i];
+        break;
+      }
+    }
+    
+    if (targetRowIndex === -1) {
+      return c.json({ success: false, error: `${year_month} ${item_code} 데이터를 찾을 수 없습니다.` }, 404);
+    }
+    
+    // 업데이트할 값 준비
+    const updates: { range: string; values: any[][] }[] = [];
+    const today = new Date().toISOString().split('T')[0];
+    
+    // E열: 기초재고
+    if (opening_stock !== undefined) {
+      updates.push({
+        range: `월별수불부!E${targetRowIndex}`,
+        values: [[opening_stock]]
+      });
+    }
+    
+    // F열: 당월입고량
+    if (monthly_inbound !== undefined) {
+      updates.push({
+        range: `월별수불부!F${targetRowIndex}`,
+        values: [[monthly_inbound]]
+      });
+    }
+    
+    // G열: 당월사용량
+    if (monthly_usage !== undefined) {
+      updates.push({
+        range: `월별수불부!G${targetRowIndex}`,
+        values: [[monthly_usage]]
+      });
+    }
+    
+    // H열: 기말재고(이론)
+    if (closing_stock_theory !== undefined) {
+      updates.push({
+        range: `월별수불부!H${targetRowIndex}`,
+        values: [[closing_stock_theory]]
+      });
+    }
+    
+    // I열: 실사재고, J열: 차이
+    if (actual_stock !== undefined) {
+      // 기말재고(이론) 값 결정: 새로 입력된 값 또는 기존 값
+      const theoryValue = closing_stock_theory !== undefined ? closing_stock_theory : (parseFloat(targetRow[7]) || 0);
+      const difference = actual_stock - theoryValue;
+      
+      updates.push({
+        range: `월별수불부!I${targetRowIndex}:J${targetRowIndex}`,
+        values: [[actual_stock, difference.toFixed(2)]]
+      });
+    }
+    
+    // K열: 비고/사유
+    if (remarks !== undefined) {
+      updates.push({
+        range: `월별수불부!K${targetRowIndex}`,
+        values: [[remarks]]
+      });
+    }
+    
+    // 수정일/수정자 업데이트
+    if (updates.length > 0) {
+      updates.push({
+        range: `월별수불부!L${targetRowIndex}:M${targetRowIndex}`,
+        values: [[today, updated_by || 'USER']]
+      });
+    }
+    
+    // 일괄 업데이트
+    for (const update of updates) {
+      await service.writeSheet('월별수불부', update.range.replace('월별수불부!', ''), update.values);
+    }
+    
+    return c.json({
+      success: true,
+      message: '월별수불부 업데이트 완료',
+      updated: {
+        year_month,
+        item_code,
+        actual_stock,
+        remarks,
+        row: targetRowIndex
+      }
+    });
+  } catch (error: any) {
+    console.error('[monthly-stock/update] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 월별수불부 일괄 실사재고 입력
+sheets.post('/monthly-stock/bulk-actual', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json<{
+      year_month: string;
+      items: Array<{
+        item_code: string;
+        actual_stock: number;
+        remarks?: string;
+      }>;
+      updated_by?: string;
+    }>();
+    
+    const { year_month, items, updated_by = 'USER' } = body;
+    
+    if (!year_month || !items || items.length === 0) {
+      return c.json({ success: false, error: '년월과 항목 목록은 필수입니다.' }, 400);
+    }
+    
+    // 현재 데이터 조회
+    const data = await service.readSheet('월별수불부', 'A2:M5000');
+    const rowMap: Map<string, { index: number; row: any[] }> = new Map();
+    
+    for (let i = 0; i < (data?.length || 0); i++) {
+      if (data[i][0] === year_month) {
+        rowMap.set(data[i][1], { index: i + 2, row: data[i] });
+      }
+    }
+    
+    const today = new Date().toISOString().split('T')[0];
+    const updates: { sheetName: string; range: string; values: any[][] }[] = [];
+    const results: any[] = [];
+    
+    for (const item of items) {
+      const rowInfo = rowMap.get(item.item_code);
+      if (!rowInfo) {
+        results.push({ item_code: item.item_code, success: false, error: '데이터 없음' });
+        continue;
+      }
+      
+      const closingStockTheory = parseFloat(rowInfo.row[7]) || 0;
+      const difference = item.actual_stock - closingStockTheory;
+      
+      // I열: 실사재고, J열: 차이, K열: 비고, L열: 작성일, M열: 작성자
+      updates.push({
+        sheetName: '월별수불부',
+        range: `I${rowInfo.index}:M${rowInfo.index}`,
+        values: [[item.actual_stock, difference.toFixed(2), item.remarks || '', today, updated_by]]
+      });
+      
+      results.push({
+        item_code: item.item_code,
+        success: true,
+        actual_stock: item.actual_stock,
+        theory_stock: closingStockTheory,
+        difference: difference.toFixed(2)
+      });
+    }
+    
+    // 일괄 쓰기
+    if (updates.length > 0) {
+      await service.batchWriteSheet(updates);
+    }
+    
+    return c.json({
+      success: true,
+      message: `${updates.length}건 실사재고 입력 완료`,
+      year_month,
+      results,
+      summary: {
+        total: items.length,
+        success: updates.length,
+        failed: items.length - updates.length
+      }
+    });
+  } catch (error: any) {
+    console.error('[monthly-stock/bulk-actual] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 월별수불부 요약 (월 목록 조회)
+sheets.get('/monthly-stock/summary', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    let data: any[] = [];
+    try {
+      data = await service.readSheet('월별수불부', 'A2:M5000') || [];
+    } catch (sheetError: any) {
+      // 시트가 없는 경우 빈 배열 반환
+      console.log('[monthly-stock/summary] 시트 조회 실패 (시트 없음 가능성):', sheetError.message);
+      data = [];
+    }
+    
+    if (!data || data.length === 0) {
+      return c.json({
+        success: true,
+        months: [],
+        message: '월별수불부 데이터가 없습니다.'
+      });
+    }
+    
+    // 월별 통계
+    const monthStats: Map<string, { 
+      total_items: number; 
+      with_actual: number; 
+      with_difference: number;
+      total_difference: number;
+    }> = new Map();
+    
+    for (const row of data) {
+      const yearMonth = String(row[0] || '');
+      if (!yearMonth) continue;
+      
+      const stats = monthStats.get(yearMonth) || { 
+        total_items: 0, 
+        with_actual: 0, 
+        with_difference: 0,
+        total_difference: 0
+      };
+      
+      stats.total_items++;
+      
+      if (row[8] !== undefined && row[8] !== '') {
+        stats.with_actual++;
+      }
+      
+      const diff = parseFloat(row[9]) || 0;
+      if (diff !== 0) {
+        stats.with_difference++;
+        stats.total_difference += diff;
+      }
+      
+      monthStats.set(yearMonth, stats);
+    }
+    
+    // 월 목록 정렬 (최신순)
+    const months = Array.from(monthStats.entries())
+      .map(([month, stats]) => ({
+        year_month: month,
+        ...stats,
+        completion_rate: stats.total_items > 0 
+          ? Math.round((stats.with_actual / stats.total_items) * 100) 
+          : 0
+      }))
+      .sort((a, b) => b.year_month.localeCompare(a.year_month));
+    
+    return c.json({
+      success: true,
+      months,
+      total_months: months.length
+    });
+  } catch (error: any) {
+    console.error('[monthly-stock/summary] 오류:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });

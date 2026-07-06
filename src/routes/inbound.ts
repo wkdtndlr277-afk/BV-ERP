@@ -525,17 +525,19 @@ inboundRoutes.post('/', async (c) => {
   try {
     const sheetService = getSheetService(c);
     if (sheetService) {
-      // 원료입고 시트 구조: A:입고일, B:품목코드, C:품목명, D:LOT, E:입고량, F:거래처, G:소비기한, H:품질상태, I:잔량
+      // ★★★ v3.6.54: 원료입고 시트 구조 수정 - 단위 필드 추가 ★★★
+      // 시트 헤더: A:입고일, B:품목코드, C:품목명, D:LOT, E:입고량, F:단위, G:공급업체, H:소비기한, I:잔량
       const itemName = (master as any).item_name || item_code;
+      const itemUnit = (master as any).unit || 'kg';  // ★ 원료마스터에서 단위 조회
       const row = [
         `'${inbound_date}`,  // A: 입고일 (문자열로 강제)
         item_code,            // B: 품목코드
         itemName,             // C: 품목명
         lot_number,           // D: LOT
         quantity,             // E: 입고량
-        supplier || '',       // F: 거래처
-        expiryDateValue ? `'${expiryDateValue}` : '',  // G: 소비기한
-        quality_status || '합격',  // H: 품질상태
+        itemUnit,             // F: 단위 ★ 추가
+        supplier || '',       // G: 공급업체
+        expiryDateValue ? `'${expiryDateValue}` : '',  // H: 소비기한
         quantity              // I: 잔량 (초기값 = 입고량)
       ];
       
@@ -841,6 +843,410 @@ inboundRoutes.get('/debug-missing', async (c) => {
       missing_items: missingResult.results
     });
   } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// =====================================================
+// 📦 재고 초기화 API (HACCP 기록 없이 잔량만 조정)
+// =====================================================
+
+/**
+ * 원료별 실사재고 기준 잔량 초기화 (관리자 전용)
+ * 
+ * POST /api/inbound/inventory-reset
+ * Body: { 
+ *   items: [
+ *     { item_code: "R001", actual_stock: 120 },
+ *     { item_code: "R002", actual_stock: 100 },
+ *     ...
+ *   ]
+ * }
+ * 
+ * 로직:
+ * 1. 해당 원료의 모든 LOT 조회 (소비기한 순)
+ * 2. 오래된 LOT부터 잔량 0으로 처리
+ * 3. 실사재고에 맞게 마지막 LOT에 잔량 배분
+ * 4. transactions 기록 없음 (HACCP 문서에 조정 내역 안 남음)
+ */
+inboundRoutes.post('/inventory-reset', async (c) => {
+  try {
+    const body = await c.req.json<{ items: Array<{ item_code: string; actual_stock: number }> }>();
+    const { items } = body;
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: 'items 배열이 필요합니다.' }, 400);
+    }
+
+    const results: Array<{
+      item_code: string;
+      before_total: number;
+      after_total: number;
+      actual_stock: number;
+      lots_updated: number;
+      status: string;
+    }> = [];
+
+    for (const item of items) {
+      const { item_code, actual_stock } = item;
+
+      if (!item_code || actual_stock === undefined || actual_stock < 0) {
+        results.push({
+          item_code: item_code || '(없음)',
+          before_total: 0,
+          after_total: 0,
+          actual_stock: actual_stock || 0,
+          lots_updated: 0,
+          status: 'error: 잘못된 입력'
+        });
+        continue;
+      }
+
+      // 해당 원료의 모든 LOT 조회 (소비기한 순, 오래된 것부터)
+      const lots = await c.env.DB.prepare(`
+        SELECT lot_number, remain_qty, expiry_date
+        FROM inbound
+        WHERE item_code = ? AND remain_qty > 0
+        ORDER BY expiry_date ASC, inbound_date ASC
+      `).bind(item_code).all<{ lot_number: string; remain_qty: number; expiry_date: string }>();
+
+      const lotList = lots.results || [];
+      
+      if (lotList.length === 0) {
+        results.push({
+          item_code,
+          before_total: 0,
+          after_total: 0,
+          actual_stock,
+          lots_updated: 0,
+          status: actual_stock === 0 ? 'ok: 잔량 LOT 없음' : 'warning: 잔량 LOT 없음, 실사재고 반영 불가'
+        });
+        continue;
+      }
+
+      // 현재 총 잔량
+      const beforeTotal = lotList.reduce((sum, lot) => sum + lot.remain_qty, 0);
+
+      // 실사재고 배분
+      let remainingActual = actual_stock;
+      let lotsUpdated = 0;
+
+      // 역순으로 처리 (최신 LOT부터 실사재고 배분)
+      const reversedLots = [...lotList].reverse();
+
+      for (const lot of reversedLots) {
+        if (remainingActual <= 0) {
+          // 실사재고 다 배분됨 → 나머지 LOT 잔량 0
+          await c.env.DB.prepare(`
+            UPDATE inbound SET remain_qty = 0, updated_at = CURRENT_TIMESTAMP
+            WHERE lot_number = ?
+          `).bind(lot.lot_number).run();
+          lotsUpdated++;
+        } else if (remainingActual >= lot.remain_qty) {
+          // 이 LOT 전체 유지
+          remainingActual -= lot.remain_qty;
+          // 변경 없음 (기존 잔량 유지)
+        } else {
+          // 이 LOT에서 일부만 남김
+          await c.env.DB.prepare(`
+            UPDATE inbound SET remain_qty = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE lot_number = ?
+          `).bind(remainingActual, lot.lot_number).run();
+          lotsUpdated++;
+          remainingActual = 0;
+        }
+      }
+
+      // 결과 검증
+      const afterCheck = await c.env.DB.prepare(`
+        SELECT SUM(remain_qty) as total FROM inbound WHERE item_code = ?
+      `).bind(item_code).first<{ total: number }>();
+
+      results.push({
+        item_code,
+        before_total: Math.round(beforeTotal * 100) / 100,
+        after_total: Math.round((afterCheck?.total || 0) * 100) / 100,
+        actual_stock,
+        lots_updated: lotsUpdated,
+        status: 'ok'
+      });
+    }
+
+    // master 테이블 current_stock도 업데이트
+    for (const item of items) {
+      if (item.actual_stock >= 0) {
+        await c.env.DB.prepare(`
+          UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE item_code = ?
+        `).bind(item.actual_stock, item.item_code).run();
+      }
+    }
+
+    return c.json({
+      success: true,
+      message: `${results.filter(r => r.status === 'ok').length}건 재고 초기화 완료`,
+      results
+    });
+
+  } catch (error: any) {
+    console.error('Inventory reset error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+/**
+ * 단일 원료 재고 초기화 (테스트용)
+ * 
+ * POST /api/inbound/inventory-reset/:item_code
+ * Body: { actual_stock: 120 }
+ */
+inboundRoutes.post('/inventory-reset/:item_code', async (c) => {
+  const item_code = c.req.param('item_code');
+  const body = await c.req.json<{ actual_stock: number }>();
+  const { actual_stock } = body;
+
+  if (actual_stock === undefined || actual_stock < 0) {
+    return c.json({ success: false, error: 'actual_stock은 0 이상이어야 합니다.' }, 400);
+  }
+
+  // 해당 원료의 모든 LOT 조회 (소비기한 순)
+  const lots = await c.env.DB.prepare(`
+    SELECT lot_number, remain_qty, expiry_date, origin_qty
+    FROM inbound
+    WHERE item_code = ? AND remain_qty > 0
+    ORDER BY expiry_date ASC, inbound_date ASC
+  `).bind(item_code).all<{ lot_number: string; remain_qty: number; expiry_date: string; origin_qty: number }>();
+
+  const lotList = lots.results || [];
+  
+  if (lotList.length === 0) {
+    return c.json({ 
+      success: false, 
+      error: '해당 원료의 잔량 있는 LOT이 없습니다.',
+      item_code
+    }, 404);
+  }
+
+  const beforeTotal = lotList.reduce((sum, lot) => sum + lot.remain_qty, 0);
+
+  // 실사재고 배분 (최신 LOT부터)
+  let remainingActual = actual_stock;
+  const updates: Array<{ lot_number: string; before: number; after: number }> = [];
+
+  const reversedLots = [...lotList].reverse();
+
+  for (const lot of reversedLots) {
+    const before = lot.remain_qty;
+    let after = 0;
+
+    if (remainingActual <= 0) {
+      after = 0;
+    } else if (remainingActual >= lot.remain_qty) {
+      after = lot.remain_qty;
+      remainingActual -= lot.remain_qty;
+    } else {
+      after = remainingActual;
+      remainingActual = 0;
+    }
+
+    if (before !== after) {
+      await c.env.DB.prepare(`
+        UPDATE inbound SET remain_qty = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE lot_number = ?
+      `).bind(after, lot.lot_number).run();
+    }
+
+    updates.push({ lot_number: lot.lot_number, before, after });
+  }
+
+  // master 테이블도 업데이트
+  await c.env.DB.prepare(`
+    UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE item_code = ?
+  `).bind(actual_stock, item_code).run();
+
+  return c.json({
+    success: true,
+    item_code,
+    before_total: Math.round(beforeTotal * 100) / 100,
+    after_total: actual_stock,
+    lots: updates.reverse() // 원래 순서로 반환
+  });
+});
+
+// =====================================================
+// 📦 일별수불부 기준 D1 재고 동기화 API
+// =====================================================
+
+/**
+ * 구글시트 일별수불부 기준으로 D1 inbound 잔량 동기화
+ * 
+ * POST /api/inbound/sync-from-daily-stock
+ * Query: ?date=2026-07-02 (기준 날짜)
+ * 
+ * 로직:
+ * 1. 구글시트 일별수불부에서 원료별 current_stock 조회
+ * 2. D1 inbound 테이블의 LOT별 잔량을 조정
+ * 3. 최신 LOT부터 잔량 배분 (입고량 한도 내에서)
+ */
+inboundRoutes.post('/sync-from-daily-stock', async (c) => {
+  try {
+    const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+    
+    // 구글시트 서비스 초기화
+    const clientEmail = c.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = c.env.GOOGLE_PRIVATE_KEY;
+    
+    if (!clientEmail || !privateKey) {
+      return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+    }
+    
+    const { GoogleSheetsService } = await import('../services/GoogleSheetsService');
+    const formattedKey = privateKey.replace(/\\n/g, '\n');
+    const sheetService = new GoogleSheetsService(clientEmail, formattedKey);
+    
+    // 1. 일별수불부에서 원료별 현재 재고 조회
+    const dailyStock = await sheetService.getDailyStockReport(date);
+    
+    if (!dailyStock || dailyStock.length === 0) {
+      return c.json({ success: false, error: `${date} 일별수불부 데이터 없음` }, 404);
+    }
+
+    const results: Array<{
+      item_code: string;
+      item_name: string;
+      daily_stock: number;
+      d1_before: number;
+      d1_after: number;
+      diff: number;
+      status: string;
+    }> = [];
+
+    let syncedCount = 0;
+    let errorCount = 0;
+
+    for (const item of dailyStock) {
+      const itemCode = item.item_code;
+      const targetStock = item.current_stock || 0;
+      
+      try {
+        // 2. D1에서 해당 원료의 모든 LOT 조회 (입고일 역순 - 최신부터)
+        const allLots = await c.env.DB.prepare(`
+          SELECT lot_number, remain_qty, origin_qty, inbound_date, expiry_date
+          FROM inbound
+          WHERE item_code = ?
+          ORDER BY inbound_date DESC, expiry_date DESC
+        `).bind(itemCode).all<{ 
+          lot_number: string; 
+          remain_qty: number; 
+          origin_qty: number;
+          inbound_date: string;
+          expiry_date: string;
+        }>();
+
+        const lotList = allLots.results || [];
+        
+        if (lotList.length === 0) {
+          results.push({
+            item_code: itemCode,
+            item_name: item.item_name || itemCode,
+            daily_stock: targetStock,
+            d1_before: 0,
+            d1_after: 0,
+            diff: targetStock,
+            status: targetStock === 0 ? 'ok: LOT 없음' : 'warning: LOT 없음, 입고 필요'
+          });
+          continue;
+        }
+
+        // 현재 D1 총 잔량
+        const d1Before = lotList.reduce((sum, lot) => sum + lot.remain_qty, 0);
+
+        // 3. 목표 재고에 맞게 LOT별 잔량 재배분 (최신 LOT부터)
+        let remainingTarget = targetStock;
+        
+        for (const lot of lotList) {
+          let newRemainQty = 0;
+          
+          if (remainingTarget <= 0) {
+            // 목표 재고 다 채움 → 이 LOT은 0
+            newRemainQty = 0;
+          } else if (remainingTarget >= lot.origin_qty) {
+            // 목표 재고가 이 LOT 입고량보다 많음 → 입고량 전체 사용
+            newRemainQty = lot.origin_qty;
+            remainingTarget -= lot.origin_qty;
+          } else {
+            // 목표 재고가 이 LOT 입고량보다 적음 → 남은 만큼만
+            newRemainQty = remainingTarget;
+            remainingTarget = 0;
+          }
+
+          // 변경이 있으면 업데이트
+          if (Math.abs(lot.remain_qty - newRemainQty) > 0.001) {
+            await c.env.DB.prepare(`
+              UPDATE inbound SET remain_qty = ?, updated_at = CURRENT_TIMESTAMP
+              WHERE lot_number = ?
+            `).bind(newRemainQty, lot.lot_number).run();
+          }
+        }
+
+        // 4. 검증
+        const afterCheck = await c.env.DB.prepare(`
+          SELECT SUM(remain_qty) as total FROM inbound WHERE item_code = ?
+        `).bind(itemCode).first<{ total: number }>();
+        
+        const d1After = afterCheck?.total || 0;
+
+        // master 테이블도 업데이트
+        await c.env.DB.prepare(`
+          UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE item_code = ?
+        `).bind(d1After, itemCode).run();
+
+        results.push({
+          item_code: itemCode,
+          item_name: item.item_name || itemCode,
+          daily_stock: Math.round(targetStock * 100) / 100,
+          d1_before: Math.round(d1Before * 100) / 100,
+          d1_after: Math.round(d1After * 100) / 100,
+          diff: Math.round((d1After - d1Before) * 100) / 100,
+          status: Math.abs(d1After - targetStock) < 0.01 ? 'ok' : 
+                  d1After < targetStock ? 'warning: 입고량 부족' : 'ok'
+        });
+        
+        syncedCount++;
+
+      } catch (err: any) {
+        results.push({
+          item_code: itemCode,
+          item_name: item.item_name || itemCode,
+          daily_stock: targetStock,
+          d1_before: 0,
+          d1_after: 0,
+          diff: 0,
+          status: `error: ${err.message}`
+        });
+        errorCount++;
+      }
+    }
+
+    // ★ 구글시트 원료입고 동기화 제거 (일별수불부 전일재고 영향 방지)
+    // D1만 업데이트하고 구글시트는 건드리지 않음
+
+    return c.json({
+      success: true,
+      message: `일별수불부 기준 D1 동기화 완료 (구글시트 미변경)`,
+      date,
+      summary: {
+        total: dailyStock.length,
+        synced: syncedCount,
+        errors: errorCount
+      },
+      results: results.filter(r => r.diff !== 0 || r.status !== 'ok')
+    });
+
+  } catch (error: any) {
+    console.error('Sync from daily stock error:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });

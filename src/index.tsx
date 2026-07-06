@@ -681,6 +681,11 @@ app.get('/*', (c) => {
                     <span>일별 수불부</span>
                 </a>
                 
+                <a href="#monthly-stock-audit" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="monthly-stock-audit">
+                    <i class="fas fa-clipboard-check w-5"></i>
+                    <span>월별수불부(재고실사)</span>
+                </a>
+                
                 <a href="#lot-history" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="lot-history">
                     <i class="fas fa-barcode w-5"></i>
                     <span>LOT 이력</span>

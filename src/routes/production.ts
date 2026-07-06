@@ -41,6 +41,20 @@ import {
 
 const productionRoutes = new Hono<{ Bindings: Bindings }>();
 
+// ===== GoogleSheetsService 헬퍼 함수 =====
+function getSheetService(c: any): GoogleSheetsService | null {
+  const clientEmail = c.env.GOOGLE_CLIENT_EMAIL;
+  const privateKey = c.env.GOOGLE_PRIVATE_KEY;
+  
+  if (!clientEmail || !privateKey) {
+    return null;
+  }
+  
+  // 환경변수에서 개행문자 복원
+  const formattedKey = privateKey.replace(/\\n/g, '\n');
+  return new GoogleSheetsService(clientEmail, formattedKey);
+}
+
 // ===== 채널명 정규화 함수 =====
 // 생산일보 채널(영문) ↔ 바코드 채널(한글) 매핑
 const CHANNEL_MAP: Record<string, string[]> = {
@@ -204,12 +218,11 @@ productionRoutes.get('/debug-stock', async (c) => {
   }
 });
 
-// ★★★ v3.5.0: closing-status - transactions 테이블 기반 수불부 (Single Source of Truth) ★★★
+// ★★★ v3.6.47: closing-status - 생산 데이터는 구글시트에서 조회 ★★★
 // 핵심 개선:
-// 1. 모든 재고 계산을 transactions 테이블의 시계열 누적 합산으로 수행
-// 2. 전일재고 = SUM(quantity) WHERE trans_date < 기준일
-// 3. 당일입고/사용/조정 = SUM() WHERE trans_date = 기준일 AND trans_type = ?
-// 4. 현재재고 = SUM(quantity) WHERE trans_date <= 기준일
+// 1. 생산 데이터는 구글시트 '생산실적' 시트에서 조회 (SSOT)
+// 2. 수불부 데이터는 기존 transactions 테이블 기반 유지
+// 3. 채널별 집계 정상 표시
 productionRoutes.get('/closing-status', async (c) => {
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
@@ -218,18 +231,68 @@ productionRoutes.get('/closing-status', async (c) => {
     const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172', 'RM266'];
     const excludeClause = EXCLUDE_CODES.map(() => '?').join(',');
     
-    // 1. 당일 생산 현황
-    const productionData = await c.env.DB.prepare(`
-      SELECT p.id, p.prod_date, p.product_code, p.quantity, p.lot_number, 
-             p.channel, p.expiry_date, p.status, p.created_at,
-             COALESCE(pi.production_name, m.item_name, p.product_code) as product_name,
-             (SELECT COUNT(*) FROM production_materials WHERE production_id = p.id) as material_count
-      FROM production p
-      LEFT JOIN production_items pi ON p.product_code = pi.production_code
-      LEFT JOIN master m ON p.product_code = m.item_code
-      WHERE p.prod_date = ?
-      ORDER BY p.created_at DESC
-    `).bind(date).all<any>();
+    // ★★★ 1. 당일 생산 현황 - 구글시트에서 조회 (SSOT) ★★★
+    let productionItems: any[] = [];
+    const service = getSheetService(c);
+    
+    if (service) {
+      try {
+        const spreadsheetId = c.env.GOOGLE_SHEET_ID;
+        if (spreadsheetId) {
+          service.setSpreadsheetId(spreadsheetId);
+        }
+        
+        // 구글시트 생산실적에서 데이터 조회
+        const sheetRecords = await service.getProductionRecords(date);
+        
+        // API 응답 형식으로 변환
+        productionItems = sheetRecords.map((record: any, index: number) => ({
+          id: `sheet-${index + 1}`,
+          prod_date: record.prod_date,
+          product_code: record.product_code,
+          product_name: record.product_name || record.product_code,
+          quantity: record.quantity || 0,
+          lot_number: record.lot_number || '',
+          channel: record.channel || '',
+          expiry_date: '',
+          status: 'completed',
+          created_at: record.created_at || '',
+          material_count: 0,
+          source: 'google_sheets'
+        }));
+        
+        console.log(`[closing-status/v3.6.47] 구글시트에서 ${productionItems.length}건 조회 (날짜: ${date})`);
+      } catch (sheetError: any) {
+        console.error('[closing-status/v3.6.47] 구글시트 조회 실패:', sheetError.message);
+        // 구글시트 실패 시 D1 폴백
+        const productionData = await c.env.DB.prepare(`
+          SELECT p.id, p.prod_date, p.product_code, p.quantity, p.lot_number, 
+                 p.channel, p.expiry_date, p.status, p.created_at,
+                 COALESCE(pi.production_name, m.item_name, p.product_code) as product_name,
+                 (SELECT COUNT(*) FROM production_materials WHERE production_id = p.id) as material_count
+          FROM production p
+          LEFT JOIN production_items pi ON p.product_code = pi.production_code
+          LEFT JOIN master m ON p.product_code = m.item_code
+          WHERE p.prod_date = ?
+          ORDER BY p.created_at DESC
+        `).bind(date).all<any>();
+        productionItems = (productionData.results || []).map((p: any) => ({ ...p, source: 'd1_fallback' }));
+      }
+    } else {
+      // 구글시트 서비스 없으면 D1에서 조회
+      const productionData = await c.env.DB.prepare(`
+        SELECT p.id, p.prod_date, p.product_code, p.quantity, p.lot_number, 
+               p.channel, p.expiry_date, p.status, p.created_at,
+               COALESCE(pi.production_name, m.item_name, p.product_code) as product_name,
+               (SELECT COUNT(*) FROM production_materials WHERE production_id = p.id) as material_count
+        FROM production p
+        LEFT JOIN production_items pi ON p.product_code = pi.production_code
+        LEFT JOIN master m ON p.product_code = m.item_code
+        WHERE p.prod_date = ?
+        ORDER BY p.created_at DESC
+      `).bind(date).all<any>();
+      productionItems = (productionData.results || []).map((p: any) => ({ ...p, source: 'd1' }));
+    }
     
     // ★★★ 2. transactions 테이블 기반 수불부 데이터 (Single Source of Truth) ★★★
     const stockReport = await getDailyStockReport(c.env.DB, date, EXCLUDE_CODES);
@@ -239,7 +302,7 @@ productionRoutes.get('/closing-status', async (c) => {
     const sfUsageMap: Record<string, { item_code: string; item_name: string; used_qty: number }> = {};
     
     // 당일 생산된 제품들의 BOM에서 SF 원료 사용량 집계
-    for (const prod of productionData.results || []) {
+    for (const prod of productionItems) {
       const productCode = prod.product_code;
       const quantity = prod.quantity || 0;
       
@@ -321,9 +384,9 @@ productionRoutes.get('/closing-status', async (c) => {
       ORDER BY total_inbound DESC
     `).bind(date, ...EXCLUDE_CODES).all<any>();
     
-    // 5. 채널별 집계
+    // 5. 채널별 집계 - 구글시트 데이터 기반
     const channelSummary: Record<string, { count: number, quantity: number }> = {};
-    for (const p of productionData.results || []) {
+    for (const p of productionItems) {
       const ch = p.channel || '기타';
       if (!channelSummary[ch]) channelSummary[ch] = { count: 0, quantity: 0 };
       channelSummary[ch].count++;
@@ -331,8 +394,8 @@ productionRoutes.get('/closing-status', async (c) => {
     }
     
     // 6. 요약 계산
-    const totalProducts = productionData.results?.length || 0;
-    const totalQuantity = (productionData.results || []).reduce((sum: number, p: any) => sum + (p.quantity || 0), 0);
+    const totalProducts = productionItems.length;
+    const totalQuantity = productionItems.reduce((sum: number, p: any) => sum + (p.quantity || 0), 0);
     
     // ★★★ v3.5.10: 일반 원료(SF 제외) + 반제품(SF) 합산 ★★★
     // stockReport에서 SF 코드 제외 (sfReport에서 BOM 기반으로 계산)
@@ -362,10 +425,10 @@ productionRoutes.get('/closing-status', async (c) => {
     
     return c.json({
       success: true,
-      version: 'v3.5.0',
+      version: 'v3.6.47',
       date,
       production: {
-        items: productionData.results || [],
+        items: productionItems,
         summary: { 
           total_products: totalProducts, 
           total_quantity: totalQuantity, 
@@ -395,15 +458,16 @@ productionRoutes.get('/closing-status', async (c) => {
       },
       // 추가 메타데이터
       metadata: {
-        data_source: 'transactions_table',
+        production_source: 'google_sheets',
+        material_source: 'transactions_table',
         calculation_method: 'time_series_accumulation',
-        note: '전일재고=SUM(~<date), 입고=SUM(date,입고), 사용=SUM(date,사용), 현재고=SUM(~<=date)'
+        note: '생산데이터=구글시트 생산실적, 수불부=D1 transactions 테이블'
       }
     });
     
   } catch (error: any) {
-    console.error('[closing-status/v3.5.0] D1_ERROR:', error);
-    return c.json({ success: false, error: `D1_ERROR: ${error.message}`, errorCode: 'D1_QUERY_ERROR' }, 500);
+    console.error('[closing-status/v3.6.47] ERROR:', error);
+    return c.json({ success: false, error: `ERROR: ${error.message}`, errorCode: 'CLOSING_STATUS_ERROR' }, 500);
   }
 });
 

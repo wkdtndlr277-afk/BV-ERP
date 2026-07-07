@@ -1326,18 +1326,26 @@ orderUpload.post('/to-production', async (c) => {
     
     // ★★★ v3.6.45: 채널별 제품 수 집계 ★★★
     const channelProductCount: Record<string, number> = {};
+    // ★★★ v3.6.52: 채널별 수량 집계 추가 ★★★
+    const channelQuantitySum: Record<string, number> = {};
+    
     for (const item of items) {
       const ch = item.channels || '(미지정)';
       channelProductCount[ch] = (channelProductCount[ch] || 0) + 1;
+      channelQuantitySum[ch] = (channelQuantitySum[ch] || 0) + item.order_qty;
     }
+    
+    // 총 수량 합계
+    const totalQuantity = items.reduce((sum, item) => sum + item.order_qty, 0);
     
     return c.json({
       success: true,
       order_date: orderDate,
       production_date: prodDate,
       total_products: items.length,
+      total_quantity: totalQuantity,  // ★★★ v3.6.52: 총 수량 추가 ★★★
       items: items,
-      message: items.length + '개 제품이 준비되었습니다',
+      message: `${items.length}개 제품, ${totalQuantity.toLocaleString()}개 준비되었습니다`,
       // ★★★ v3.6.45: 디버그 정보 추가 ★★★
       debug: {
         total_rows_in_sheet: data.length,
@@ -1345,7 +1353,8 @@ orderUpload.post('/to-production', async (c) => {
         filtered_count: filtered.length,
         status_breakdown: statusStats,
         channel_breakdown: channelStats,
-        channel_product_count: channelProductCount
+        channel_product_count: channelProductCount,
+        channel_quantity_sum: channelQuantitySum  // ★★★ v3.6.52: 채널별 수량 합계 ★★★
       }
     });
     
@@ -1370,6 +1379,15 @@ orderUpload.post('/complete-production', async (c) => {
       return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
     }
     
+    // ★★★ v3.6.52: 입력 데이터 검증 및 로깅 ★★★
+    const inputTotalQty = items.reduce((sum: number, item: any) => sum + (item.production_qty || 0), 0);
+    const channelQtyInput: Record<string, number> = {};
+    for (const item of items) {
+      const ch = item.channels || '(미지정)';
+      channelQtyInput[ch] = (channelQtyInput[ch] || 0) + (item.production_qty || 0);
+    }
+    console.log(`[complete-production] 입력: ${items.length}건, 총수량: ${inputTotalQty}, 채널별: ${JSON.stringify(channelQtyInput)}`);
+    
     // 생산실적 시트에 추가
     // ★ 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
     const productionRows = items.map((item: any) => [
@@ -1385,7 +1403,7 @@ orderUpload.post('/complete-production', async (c) => {
     
     // ★★★ v3.5.66: 중복 방지 - 생산실적 추가 ★★★
     const prodResult = await service.appendProductionWithDedup(productionRows);
-    console.log(`생산실적 추가: ${prodResult.added}건 추가, ${prodResult.skipped}건 중복 스킵`);
+    console.log(`[complete-production] 생산실적 저장: ${prodResult.added}건 추가, ${prodResult.skipped}건 중복 스킵`);
     
     // ★★★ BOM 기반 원료사용량 자동 계산 + 로트매칭 시트 저장 ★★★
     // 로트매칭 시트 구조: A:생산일, B:제품LOT, C:원료코드, D:원료명, E:사용량, F:원료LOT, G:유통기한
@@ -1565,11 +1583,18 @@ orderUpload.post('/complete-production', async (c) => {
       production_date,
       lot_number,
       completed_products: items.length,
+      // ★★★ v3.6.52: 수량 검증용 정보 추가 ★★★
+      completed_quantity: inputTotalQty,
+      channel_quantity: channelQtyInput,
+      sheet_result: {
+        added: prodResult.added,
+        skipped: prodResult.skipped
+      },
       lot_matching_rows: lotMatchingRows.length,
       material_usage: materialUsageSummary,
       daily_stock: dailyStockResult ? { success: true, rows: dailyStockResult.new_rows } : { success: false, error: autoUpdateError },
       auto_update_error: autoUpdateError,
-      message: `${items.length}개 제품 생산완료 + ${lotMatchingRows.length}건 로트매칭 등록${dailyStockResult ? ' + 일별수불부 자동생성' : ''}`
+      message: `${items.length}개 제품(${inputTotalQty.toLocaleString()}개) 생산완료 + ${lotMatchingRows.length}건 로트매칭 등록${dailyStockResult ? ' + 일별수불부 자동생성' : ''}`
     });
     
   } catch (error: any) {

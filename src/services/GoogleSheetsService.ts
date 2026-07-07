@@ -1103,12 +1103,13 @@ export class GoogleSheetsService {
     return false;  // 중복 없음
   }
 
-  // ★★★ v3.5.66: 중복 방지 - 생산실적 필터링 후 추가 ★★★
-  // 중복 제거 후 새로운 행만 추가
+  // ★★★ v3.6.52: 중복 방지 - 채널 포함하여 정확한 중복 체크 ★★★
+  // 중복 키: 날짜_제품코드_LOT번호_채널 (같은 제품이 다른 채널로 들어올 수 있음)
   async appendProductionWithDedup(rows: any[][]): Promise<{ added: number; skipped: number }> {
-    const existing = await this.readSheet('생산실적', 'A2:E');
+    // ★ 채널 정보도 읽어야 하므로 F컬럼까지 조회
+    const existing = await this.readSheet('생산실적', 'A2:F');
     
-    // 기존 키 세트 생성
+    // 기존 키 세트 생성 (날짜_제품코드_LOT번호_채널)
     const existingKeys = new Set<string>();
     for (const row of existing) {
       let rowDate = row[0]?.toString().replace(/^'/, '') || '';
@@ -1119,7 +1120,8 @@ export class GoogleSheetsService {
       }
       const productCode = row[1]?.toString() || '';
       const lotNumber = row[4]?.toString() || '';
-      existingKeys.add(`${rowDate}_${productCode}_${lotNumber}`);
+      const channel = row[5]?.toString() || '';  // ★ 채널 추가
+      existingKeys.add(`${rowDate}_${productCode}_${lotNumber}_${channel}`);
     }
     
     // 새 행에서 중복 필터링
@@ -1130,15 +1132,19 @@ export class GoogleSheetsService {
       const date = row[0]?.toString().replace(/^'/, '') || '';
       const productCode = row[1]?.toString() || '';
       const lotNumber = row[4]?.toString() || '';
-      const key = `${date}_${productCode}_${lotNumber}`;
+      const channel = row[5]?.toString() || '';  // ★ 채널 추가
+      const key = `${date}_${productCode}_${lotNumber}_${channel}`;
       
       if (existingKeys.has(key)) {
         skipped++;
+        console.log(`[appendProductionWithDedup] 중복 스킵: ${key}`);
       } else {
         newRows.push(row);
         existingKeys.add(key);  // 새로 추가된 것도 중복 방지
       }
     }
+    
+    console.log(`[appendProductionWithDedup] 입력: ${rows.length}건, 추가: ${newRows.length}건, 스킵: ${skipped}건`);
     
     if (newRows.length > 0) {
       await this.appendSheet('생산실적', newRows);

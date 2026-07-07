@@ -1526,13 +1526,13 @@ async function renderDashboard() {
           </div>
           <div class="p-4">
             <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              ${Object.entries(data.production.byChannel).map(([channel, stats]) => \`
-                <div class="text-center p-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition">
-                  <span class="inline-block px-3 py-1 rounded-full text-sm font-medium mb-2 \${getChannelBadgeClass(channel)}">\${channel || '기타'}</span>
-                  <p class="text-2xl font-bold text-gray-800">\${stats.count}<span class="text-sm text-gray-400">건</span></p>
-                  <p class="text-sm text-gray-500">\${formatNumber(stats.quantity)}개</p>
-                </div>
-              \`).join('')}
+              ${Object.entries(data.production.byChannel).map(([channel, stats]) => 
+                '<div class="text-center p-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition">' +
+                  '<span class="inline-block px-3 py-1 rounded-full text-sm font-medium mb-2 ' + getChannelBadgeClass(channel) + '">' + (channel || '기타') + '</span>' +
+                  '<p class="text-2xl font-bold text-gray-800">' + stats.count + '<span class="text-sm text-gray-400">건</span></p>' +
+                  '<p class="text-sm text-gray-500">' + formatNumber(stats.quantity) + '개</p>' +
+                '</div>'
+              ).join('')}
             </div>
           </div>
         </div>

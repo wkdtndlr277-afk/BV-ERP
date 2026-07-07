@@ -20023,17 +20023,25 @@ async function processMultipleOrderFiles(files) {
         allItems = allItems.concat(items);
         fileNames.push(file.name);
         
-        // 첫 번째 파일에서 채널 감지
+        // ★★★ v3.6.48: 파싱된 아이템의 채널 정보 활용 ★★★
+        // 첫 번째 파일/아이템에서 채널 감지 (아이템에 채널 정보가 있으면 그것 사용)
         if (!detectedChannel) {
-          const fn = file.name.toLowerCase();
-          // ★★★ v3.6.24: xlsb 파일은 별도 처리 (XLSX.read 재호출 불필요) ★★★
-          if (fn.endsWith('.xlsb')) {
-            detectedChannel = fn.includes('오아시스') || fn.includes('oasis') ? 'oasis' : 'generic';
-            console.log(`[xlsb] 채널 감지: ${detectedChannel}`);
+          // 아이템에서 채널 정보 확인
+          const itemChannel = items[0]?.channel;
+          if (itemChannel && itemChannel !== 'generic' && itemChannel !== 'unknown') {
+            detectedChannel = itemChannel;
+            console.log(`[파싱 결과] 채널 감지: ${detectedChannel} (아이템에서)`);
           } else {
-            const data = await file.arrayBuffer();
-            const wb = XLSX.read(data, { type: 'array', codepage: 949 });
-            detectedChannel = detectOrderChannel(file.name, wb);
+            // 기존 방식: 파일명/엑셀 내용에서 감지
+            const fn = file.name.toLowerCase();
+            if (fn.endsWith('.xlsb')) {
+              detectedChannel = fn.includes('오아시스') || fn.includes('oasis') ? 'oasis' : 'generic';
+              console.log(`[xlsb] 채널 감지: ${detectedChannel}`);
+            } else {
+              const data = await file.arrayBuffer();
+              const wb = XLSX.read(data, { type: 'array', codepage: 949 });
+              detectedChannel = detectOrderChannel(file.name, wb);
+            }
           }
         }
       }
@@ -20099,23 +20107,28 @@ async function parseSingleOrderFile(file) {
   
   const data = await file.arrayBuffer();
   
-  // ★★★ v3.6.24: 오아시스 xlsb 파일 특별 처리 ★★★
+  // ★★★ v3.6.48: 오아시스 xlsb 파일 특별 처리 - 채널 정보 추가 ★★★
   if (fileName.endsWith('.xlsb') && (fileName.includes('오아시스') || fileName.includes('oasis'))) {
     console.log('parseSingleOrderFile: 오아시스 xlsb 파일 감지 ->', file.name);
-    return await parseOasisXlsbFile(data, file.name);
+    const items = await parseOasisXlsbFile(data, file.name);
+    // 각 아이템에 채널 정보 추가
+    return items.map(item => ({ ...item, channel: 'oasis' }));
   }
   
-  // 직영점 HTML xls 파일 특별 처리
+  // ★★★ v3.6.48: 직영점 HTML xls 파일 특별 처리 - 채널 정보 추가 ★★★
   if (fileName.includes('직영점') || fileName.includes('직영')) {
     console.log('parseSingleOrderFile: 직영점 파일 감지 ->', file.name);
-    return await parseDirectStoreHtmlXls(data);
+    const items = await parseDirectStoreHtmlXls(data);
+    return items.map(item => ({ ...item, channel: 'direct_store' }));
   }
   
-  // 컬리 파일 특별 처리
+  // ★★★ v3.6.48: 컬리 파일 특별 처리 - 채널 정보 추가 ★★★
   if (fileName.includes('컬리') || fileName.includes('72시간') || fileName.includes('쿠키')) {
     console.log('parseSingleOrderFile: 컬리 파일 감지 ->', file.name);
     const wb = XLSX.read(data, { type: 'array', codepage: 949 });
-    return parseKurlyMultiSheet(wb, fileName);
+    const items = parseKurlyMultiSheet(wb, fileName);
+    // 각 아이템에 채널 정보 추가
+    return items.map(item => ({ ...item, channel: 'kurly' }));
   }
   
   const wb = XLSX.read(data, { type: 'array', codepage: 949 });
@@ -20123,8 +20136,10 @@ async function parseSingleOrderFile(file) {
   // 판매처 감지
   const channel = detectOrderChannel(fileName, wb);
   
-  // 판매처별 파싱
-  return parseOrderByChannel(wb, channel);
+  // ★★★ v3.6.48: 판매처별 파싱 - 채널 정보 추가 ★★★
+  const items = parseOrderByChannel(wb, channel);
+  // 각 아이템에 채널 정보 추가 (기존에 없는 경우에만)
+  return items.map(item => ({ ...item, channel: item.channel || channel }));
 }
 
 // ========== 컬리 PDF 거래명세서 처리 ==========

@@ -3974,18 +3974,71 @@ productionRoutes.post('/confirm', async (c) => {
       }
     }
     
+    // ★★★ v3.6.51: 구글시트 생산실적에도 저장 (SSOT 유지) ★★★
+    let sheetSaveResult = { saved: 0, skipped: 0, error: null as string | null };
+    
+    if (successCount > 0) {
+      const service = getSheetService(c);
+      if (service) {
+        try {
+          const spreadsheetId = c.env.GOOGLE_SHEET_ID;
+          if (spreadsheetId) {
+            service.setSpreadsheetId(spreadsheetId);
+          }
+          
+          // 성공한 항목들을 구글시트 형식으로 변환
+          // 생산실적 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
+          const successResults = results.filter(r => r.status === 'SUCCESS');
+          const productionRows = successResults.map((r: any) => {
+            // 원본 items에서 product_name 찾기
+            const originalItem = items.find((i: any) => i.product_code === r.product_code);
+            return [
+              "'" + productionDate,                    // A: 생산일
+              r.product_code,                         // B: 제품코드
+              originalItem?.product_name || r.product_code, // C: 제품명
+              originalItem?.quantity || 0,            // D: 수량
+              r.lot_number,                           // E: LOT번호
+              originalItem?.channel || channel || '', // F: 채널
+              '완료',                                 // G: 비고/상태
+              now                                     // H: 생성일
+            ];
+          });
+          
+          if (productionRows.length > 0) {
+            // 중복 방지 저장
+            const saveResult = await service.appendProductionWithDedup(productionRows);
+            sheetSaveResult.saved = saveResult.added;
+            sheetSaveResult.skipped = saveResult.skipped;
+            console.log(`[confirm/v3.6.51] 구글시트 저장: ${saveResult.added}건 추가, ${saveResult.skipped}건 중복 스킵`);
+          }
+        } catch (sheetError: any) {
+          console.error('[confirm/v3.6.51] 구글시트 저장 실패:', sheetError.message);
+          sheetSaveResult.error = sheetError.message;
+          // 구글시트 저장 실패해도 D1은 이미 성공했으므로 계속 진행
+        }
+      } else {
+        console.warn('[confirm/v3.6.51] 구글시트 서비스 없음 - D1만 저장됨');
+      }
+    }
+    
     return c.json({
       success: failCount === 0,
       message: `생산 등록 완료: 성공 ${successCount}건, 실패 ${failCount}건`,
-      version: 'v3.5.0',
+      version: 'v3.6.51',
       results,
       production_date: productionDate,
       warnings: allWarnings.length > 0 ? allWarnings : undefined,
-      stockShortages: stockShortages.length > 0 ? stockShortages : undefined
+      stockShortages: stockShortages.length > 0 ? stockShortages : undefined,
+      // ★★★ v3.6.51: 구글시트 저장 결과 추가 ★★★
+      google_sheets: {
+        saved: sheetSaveResult.saved,
+        skipped: sheetSaveResult.skipped,
+        error: sheetSaveResult.error
+      }
     });
     
   } catch (error: any) {
-    console.error('[confirm/v3.5.0] D1_TRANSACTION_ERROR:', error);
+    console.error('[confirm/v3.6.51] D1_TRANSACTION_ERROR:', error);
     return c.json({
       success: false,
       error: `D1_TRANSACTION_ERROR: ${error.message}`,

@@ -4046,6 +4046,125 @@ productionRoutes.post('/confirm', async (c) => {
     }, 500);
   }
 });
+
+// ★★★ v3.6.51: D1 → 구글시트 생산실적 동기화 API ★★★
+// 특정 날짜의 D1 production 데이터를 구글시트에 동기화 (누락분만 추가)
+productionRoutes.post('/sync-to-sheets', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { date, dry_run } = body;
+    
+    if (!date) {
+      return c.json({ success: false, error: '날짜를 입력하세요 (date: YYYY-MM-DD)' }, 400);
+    }
+    
+    const service = getSheetService(c);
+    if (!service) {
+      return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+    }
+    
+    const spreadsheetId = c.env.GOOGLE_SHEET_ID;
+    if (spreadsheetId) {
+      service.setSpreadsheetId(spreadsheetId);
+    }
+    
+    // 1. D1에서 해당 날짜 생산 데이터 조회
+    const d1Data = await c.env.DB.prepare(`
+      SELECT p.id, p.prod_date, p.product_code, p.quantity, p.lot_number, p.channel, p.expiry_date, p.created_at,
+             m.item_name as product_name
+      FROM production p
+      LEFT JOIN master m ON p.product_code = m.item_code
+      WHERE p.prod_date = ?
+      ORDER BY p.id
+    `).bind(date).all();
+    
+    const d1Items = d1Data.results || [];
+    console.log(`[sync-to-sheets] D1에서 ${date} 데이터 조회: ${d1Items.length}건`);
+    
+    if (d1Items.length === 0) {
+      return c.json({ 
+        success: true, 
+        message: '동기화할 데이터가 없습니다',
+        d1_count: 0,
+        sheet_count: 0,
+        synced: 0
+      });
+    }
+    
+    // 2. 구글시트에서 해당 날짜 생산 데이터 조회
+    const sheetData = await service.getProductionRecords(date);
+    console.log(`[sync-to-sheets] 구글시트에서 ${date} 데이터 조회: ${sheetData.length}건`);
+    
+    // 3. 구글시트에 없는 D1 데이터 찾기 (제품코드+LOT번호+수량으로 비교)
+    const sheetKeys = new Set(sheetData.map((s: any) => 
+      `${s.product_code}|${s.lot_number}|${s.quantity}`
+    ));
+    
+    const missingItems = d1Items.filter((d: any) => {
+      const key = `${d.product_code}|${d.lot_number}|${d.quantity}`;
+      return !sheetKeys.has(key);
+    });
+    
+    console.log(`[sync-to-sheets] 누락된 항목: ${missingItems.length}건`);
+    
+    if (missingItems.length === 0) {
+      return c.json({
+        success: true,
+        message: '이미 동기화되어 있습니다',
+        d1_count: d1Items.length,
+        sheet_count: sheetData.length,
+        synced: 0
+      });
+    }
+    
+    // 4. dry_run 모드면 실제 저장하지 않고 결과만 반환
+    if (dry_run) {
+      return c.json({
+        success: true,
+        message: `[DRY RUN] ${missingItems.length}건 동기화 예정`,
+        d1_count: d1Items.length,
+        sheet_count: sheetData.length,
+        to_sync: missingItems.length,
+        items: missingItems.map((d: any) => ({
+          product_code: d.product_code,
+          product_name: d.product_name,
+          quantity: d.quantity,
+          lot_number: d.lot_number,
+          channel: d.channel
+        }))
+      });
+    }
+    
+    // 5. 누락된 항목을 구글시트에 추가
+    const now = new Date().toISOString();
+    const productionRows = missingItems.map((d: any) => [
+      "'" + date,                           // A: 생산일
+      d.product_code,                       // B: 제품코드
+      d.product_name || d.product_code,     // C: 제품명
+      d.quantity,                           // D: 수량
+      d.lot_number,                         // E: LOT번호
+      d.channel || '',                      // F: 채널
+      '완료',                               // G: 비고/상태
+      d.created_at || now                   // H: 생성일
+    ]);
+    
+    const saveResult = await service.appendProductionWithDedup(productionRows);
+    
+    return c.json({
+      success: true,
+      message: `동기화 완료: ${saveResult.added}건 추가, ${saveResult.skipped}건 중복 스킵`,
+      d1_count: d1Items.length,
+      sheet_count: sheetData.length,
+      synced: saveResult.added,
+      skipped: saveResult.skipped
+    });
+    
+  } catch (error: any) {
+    console.error('[sync-to-sheets] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default productionRoutes;
 
 // v2.2.8: 개별 바코드 소비기한(expiry_days) 수정 API

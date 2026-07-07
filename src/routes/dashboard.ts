@@ -228,6 +228,94 @@ dashboardRoutes.get('/', async (c) => {
     LIMIT 10
   `).all();
   
+  // ★★★ v3.6.49: 생산 현황 추가 (구글시트 기준) ★★★
+  let productionStats = {
+    todayTotal: 0,        // 오늘 총 생산 수량
+    todayProducts: 0,     // 오늘 생산 품목 수
+    todayRecords: 0,      // 오늘 생산 등록 건수
+    weekTotal: 0,         // 이번주 총 생산 수량
+    weekProducts: 0,      // 이번주 생산 품목 수
+    byChannel: {} as Record<string, { count: number; quantity: number }>,  // 채널별 현황
+    recentProduction: [] as any[]  // 최근 생산 내역
+  };
+  
+  if (service) {
+    try {
+      const spreadsheetId = c.env.GOOGLE_SHEET_ID;
+      if (spreadsheetId) {
+        service.setSpreadsheetId(spreadsheetId);
+      }
+      
+      // 생산실적 시트에서 데이터 조회
+      // 컬럼: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
+      const productionData = await service.readSheet('생산실적', 'A2:H10000');
+      
+      // 날짜 계산
+      const todayStr = today;
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      const weekAgoStr = weekAgo.toISOString().split('T')[0];
+      
+      const todayItems = new Set<string>();
+      const weekItems = new Set<string>();
+      const channelStats: Record<string, { count: number; quantity: number }> = {};
+      const recentItems: any[] = [];
+      
+      for (const row of productionData || []) {
+        const prodDate = String(row[0] || '').trim().replace(/^'/, '');
+        const productCode = String(row[1] || '').trim();
+        const productName = String(row[2] || '').trim();
+        const quantity = parseInt(row[3]) || 0;
+        const lotNumber = String(row[4] || '').trim();
+        const channel = String(row[5] || '').trim() || '기타';
+        
+        if (!prodDate || !productCode) continue;
+        
+        // 오늘 생산 현황
+        if (prodDate === todayStr) {
+          productionStats.todayTotal += quantity;
+          productionStats.todayRecords++;
+          todayItems.add(productCode);
+          
+          // 채널별 집계 (오늘 기준)
+          if (!channelStats[channel]) {
+            channelStats[channel] = { count: 0, quantity: 0 };
+          }
+          channelStats[channel].count++;
+          channelStats[channel].quantity += quantity;
+        }
+        
+        // 이번주 생산 현황
+        if (prodDate >= weekAgoStr && prodDate <= todayStr) {
+          productionStats.weekTotal += quantity;
+          weekItems.add(productCode);
+        }
+        
+        // 최근 생산 내역 (최근 10건)
+        if (recentItems.length < 10 && prodDate >= weekAgoStr) {
+          recentItems.push({
+            prod_date: prodDate,
+            product_code: productCode,
+            product_name: productName,
+            quantity,
+            lot_number: lotNumber,
+            channel
+          });
+        }
+      }
+      
+      productionStats.todayProducts = todayItems.size;
+      productionStats.weekProducts = weekItems.size;
+      productionStats.byChannel = channelStats;
+      productionStats.recentProduction = recentItems.sort((a, b) => 
+        b.prod_date.localeCompare(a.prod_date) || b.quantity - a.quantity
+      ).slice(0, 10);
+      
+    } catch (prodError: any) {
+      console.error('[dashboard] 생산 현황 조회 오류:', prodError.message);
+    }
+  }
+  
   return c.json({
     success: true,
     data: {
@@ -250,7 +338,9 @@ dashboardRoutes.get('/', async (c) => {
         stock: stockSummary.results,
         recentInbound: recentInbound.results,
         recentTransactions: recentTransactions.results
-      }
+      },
+      // ★★★ v3.6.49: 생산 현황 추가 ★★★
+      production: productionStats
     }
   });
 });

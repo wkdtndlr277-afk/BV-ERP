@@ -1620,10 +1620,11 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
       // 재고 증가: 조정용 LOT 생성 (inbound에만 추가)
       const lotNumber = `BADJ-${today.replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
       
+      // ★★★ v3.6.64: inbound 테이블에 memo 컬럼이 없음 - storage_location에 저장 ★★★
       batchStatements.push(
         c.env.DB.prepare(`
-          INSERT INTO inbound (lot_number, item_code, inbound_date, origin_qty, remain_qty, quality_status, storage_location, memo, created_at)
-          VALUES (?, ?, ?, ?, ?, '합격', '바코드조정', ?, ?)
+          INSERT INTO inbound (lot_number, item_code, inbound_date, origin_qty, remain_qty, quality_status, storage_location, created_at)
+          VALUES (?, ?, ?, ?, ?, '합격', ?, ?)
         `).bind(lotNumber, item_code, today, adjustQty, adjustQty, fullMemo, timestamp)
       );
       

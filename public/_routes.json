@@ -4,9 +4,13 @@
   "exclude": [
     "/_headers",
     "/static/*",
+    "/barcode",
     "/barcode.html",
+    "/scanner-setup",
     "/scanner-setup.html",
+    "/debug_print",
     "/debug_print.html",
+    "/test_print",
     "/test_print.html",
     "/erp_database_export.xlsx"
   ]

@@ -42510,15 +42510,15 @@ async function executeSyncSheetsInbound() {
   }
 }
 
-// ★★★ v3.6.66: 입고량 기준 안전재고 일괄 설정 ★★★
+// ★★★ v3.6.67: 입고 패턴 기반 안전재고 자동 설정 ★★★
+// 평균 입고량(≈사용량)과 입고 주기를 분석하여 "며칠치 재고"를 안전재고로 설정
 async function setSafetyStockFromInbound() {
-  // 1단계: 미리보기 (기본 10%)
-  showLoading('입고량 데이터 분석 중...');
+  showLoading('입고 패턴 분석 중...');
   
   try {
     const previewRes = await axios.post(`${API_BASE}/barcode/set-safety-stock-from-inbound`, { 
       preview: true, 
-      percentage: 10 
+      days_stock: 7  // 기본 7일(1주일)
     });
     hideLoading();
     
@@ -42530,16 +42530,17 @@ async function setSafetyStockFromInbound() {
     const preview = previewRes.data;
     
     if (preview.to_update_count === 0) {
-      showToast('변경할 안전재고가 없습니다. (현재 값과 동일)', 'info');
+      showToast('변경할 안전재고가 없습니다. (현재 값과 동일하거나 입고 데이터 없음)', 'info');
       return;
     }
     
-    // 샘플 아이템
+    // 샘플 아이템 - 일평균, 입고주기 포함
     const sampleItems = (preview.to_update || []).slice(0, 8).map(item => `
       <tr>
         <td class="px-2 py-1 text-xs">${item.item_code}</td>
-        <td class="px-2 py-1 text-xs">${item.item_name || '-'}</td>
-        <td class="px-2 py-1 text-xs text-right">${formatNumber(item.total_inbound)}${item.unit}</td>
+        <td class="px-2 py-1 text-xs truncate max-w-[100px]" title="${item.item_name || '-'}">${item.item_name || '-'}</td>
+        <td class="px-2 py-1 text-xs text-right">${formatNumber(item.daily_avg)}</td>
+        <td class="px-2 py-1 text-xs text-right text-gray-500">${item.avg_cycle}일</td>
         <td class="px-2 py-1 text-xs text-right text-gray-400">${formatNumber(item.current_safety_stock)}</td>
         <td class="px-2 py-1 text-xs text-right text-purple-600 font-bold">${formatNumber(item.new_safety_stock)}</td>
       </tr>
@@ -42549,48 +42550,54 @@ async function setSafetyStockFromInbound() {
       <div class="space-y-4">
         <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
           <div class="flex items-center gap-3 mb-3">
-            <i class="fas fa-shield-alt text-purple-600 text-2xl"></i>
+            <i class="fas fa-chart-line text-purple-600 text-2xl"></i>
             <div>
-              <p class="font-bold text-purple-800">입고량 기준 안전재고 설정</p>
-              <p class="text-sm text-purple-600">총 입고량의 일정 비율을 안전재고로 설정합니다.</p>
+              <p class="font-bold text-purple-800">입고 패턴 기반 안전재고 설정</p>
+              <p class="text-sm text-purple-600">일평균 입고량(≈사용량) × 일수 = 안전재고</p>
             </div>
           </div>
         </div>
         
         <div class="bg-white border rounded-lg p-4">
           <label class="block text-sm font-medium text-gray-700 mb-2">
-            <i class="fas fa-percentage mr-1"></i> 안전재고 비율 설정
+            <i class="fas fa-calendar-day mr-1"></i> 안전재고 일수 설정
           </label>
           <div class="flex items-center gap-3">
-            <input type="range" id="safety-stock-percentage" min="5" max="50" value="10" step="5"
+            <input type="range" id="safety-stock-days" min="3" max="30" value="7" step="1"
                    class="flex-1" onchange="updateSafetyStockPreview()">
-            <span id="safety-stock-percent-label" class="text-lg font-bold text-purple-600 w-16 text-center">10%</span>
+            <span id="safety-stock-days-label" class="text-lg font-bold text-purple-600 w-20 text-center">7일</span>
           </div>
           <p class="text-xs text-gray-500 mt-2">
-            예: 총 입고량 100kg → 10% = 안전재고 10kg
+            예: 일평균 10kg 사용 × 7일 = 안전재고 70kg<br>
+            <span class="text-orange-600">→ 재고가 70kg 이하면 발주 필요 알림!</span>
           </p>
         </div>
         
-        <div class="grid grid-cols-2 gap-4 text-center">
+        <div class="grid grid-cols-3 gap-3 text-center">
           <div class="bg-blue-50 rounded-lg p-3">
-            <p class="text-2xl font-bold text-blue-600">${preview.total_items}</p>
-            <p class="text-xs text-blue-700">총 품목 수</p>
+            <p class="text-xl font-bold text-blue-600">${preview.total_items}</p>
+            <p class="text-xs text-blue-700">분석 품목</p>
+          </div>
+          <div class="bg-green-50 rounded-lg p-3">
+            <p class="text-xl font-bold text-green-600">${formatNumber(preview.summary?.avg_daily_total || 0)}</p>
+            <p class="text-xs text-green-700">일평균 사용량(kg)</p>
           </div>
           <div class="bg-purple-50 rounded-lg p-3">
-            <p class="text-2xl font-bold text-purple-600">${preview.to_update_count}</p>
+            <p class="text-xl font-bold text-purple-600">${preview.to_update_count}</p>
             <p class="text-xs text-purple-700">변경 예정</p>
           </div>
         </div>
         
         <div class="bg-gray-50 rounded-lg overflow-hidden">
-          <p class="text-sm font-medium text-gray-700 p-2 bg-gray-100">변경 예정 목록 (샘플):</p>
+          <p class="text-sm font-medium text-gray-700 p-2 bg-gray-100">변경 예정 목록:</p>
           <div class="overflow-x-auto" style="max-height: 200px;">
             <table class="w-full text-xs">
               <thead class="bg-gray-200 sticky top-0">
                 <tr>
                   <th class="px-2 py-1 text-left">품목코드</th>
                   <th class="px-2 py-1 text-left">품목명</th>
-                  <th class="px-2 py-1 text-right">총입고량</th>
+                  <th class="px-2 py-1 text-right">일평균</th>
+                  <th class="px-2 py-1 text-right">입고주기</th>
                   <th class="px-2 py-1 text-right">현재</th>
                   <th class="px-2 py-1 text-right">변경후</th>
                 </tr>
@@ -42603,17 +42610,16 @@ async function setSafetyStockFromInbound() {
           ${preview.to_update_count > 8 ? `<p class="text-xs text-gray-400 p-2 border-t">...외 ${preview.to_update_count - 8}건</p>` : ''}
         </div>
         
-        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
-          <i class="fas fa-exclamation-triangle mr-1"></i>
-          <strong>주의:</strong> 이 작업은 master 테이블의 <strong>safety_stock</strong> 값을 일괄 변경합니다.
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+          <i class="fas fa-info-circle mr-1"></i>
+          <strong>계산 방식:</strong> 총입고량 ÷ 입고기간(일) = 일평균 → 일평균 × 설정일수 = 안전재고
         </div>
       </div>
     `;
     
-    // 미리보기 데이터 저장 (비율 변경 시 사용)
     window._safetyStockPreviewData = preview;
     
-    showModal('<i class="fas fa-shield-alt mr-2"></i>안전재고 일괄 설정', confirmHtml, `
+    showModal('<i class="fas fa-shield-alt mr-2"></i>안전재고 자동 설정', confirmHtml, `
       <button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">취소</button>
       <button onclick="executeSafetyStockUpdate()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
         <i class="fas fa-check mr-1"></i> 안전재고 설정
@@ -42627,33 +42633,32 @@ async function setSafetyStockFromInbound() {
   }
 }
 
-// 안전재고 비율 변경 시 미리보기 업데이트
+// 안전재고 일수 변경 시 미리보기 업데이트
 async function updateSafetyStockPreview() {
-  const slider = document.getElementById('safety-stock-percentage');
-  const label = document.getElementById('safety-stock-percent-label');
+  const slider = document.getElementById('safety-stock-days');
+  const label = document.getElementById('safety-stock-days-label');
   if (!slider || !label) return;
   
-  const percentage = parseInt(slider.value);
-  label.textContent = percentage + '%';
+  const daysStock = parseInt(slider.value);
+  label.textContent = daysStock + '일';
   
-  // 새 비율로 미리보기 재요청
   try {
     const response = await axios.post(`${API_BASE}/barcode/set-safety-stock-from-inbound`, { 
       preview: true, 
-      percentage: percentage 
+      days_stock: daysStock 
     });
     
     if (response.data.success) {
       window._safetyStockPreviewData = response.data;
       
-      // 테이블 업데이트
       const tbody = document.getElementById('safety-stock-preview-tbody');
       if (tbody && response.data.to_update) {
         tbody.innerHTML = response.data.to_update.slice(0, 8).map(item => `
           <tr>
             <td class="px-2 py-1 text-xs">${item.item_code}</td>
-            <td class="px-2 py-1 text-xs">${item.item_name || '-'}</td>
-            <td class="px-2 py-1 text-xs text-right">${formatNumber(item.total_inbound)}${item.unit}</td>
+            <td class="px-2 py-1 text-xs truncate max-w-[100px]" title="${item.item_name || '-'}">${item.item_name || '-'}</td>
+            <td class="px-2 py-1 text-xs text-right">${formatNumber(item.daily_avg)}</td>
+            <td class="px-2 py-1 text-xs text-right text-gray-500">${item.avg_cycle}일</td>
             <td class="px-2 py-1 text-xs text-right text-gray-400">${formatNumber(item.current_safety_stock)}</td>
             <td class="px-2 py-1 text-xs text-right text-purple-600 font-bold">${formatNumber(item.new_safety_stock)}</td>
           </tr>
@@ -42667,23 +42672,21 @@ async function updateSafetyStockPreview() {
 
 // 안전재고 업데이트 실행
 async function executeSafetyStockUpdate() {
-  const slider = document.getElementById('safety-stock-percentage');
-  const percentage = slider ? parseInt(slider.value) : 10;
+  const slider = document.getElementById('safety-stock-days');
+  const daysStock = slider ? parseInt(slider.value) : 7;
   
   closeModal();
-  showLoading(`안전재고 설정 중... (입고량의 ${percentage}%)`);
+  showLoading(`안전재고 설정 중... (${daysStock}일치 기준)`);
   
   try {
     const response = await axios.post(`${API_BASE}/barcode/set-safety-stock-from-inbound`, { 
       preview: false,
-      percentage: percentage 
+      days_stock: daysStock 
     });
     hideLoading();
     
     if (response.data.success) {
-      showToast(`✅ ${response.data.updated}개 품목의 안전재고가 설정되었습니다! (${percentage}%)`, 'success');
-      
-      // 재고 목록 새로고침
+      showToast(`✅ ${response.data.updated}개 품목의 안전재고가 설정되었습니다! (${daysStock}일치)`, 'success');
       loadMaterialInventory();
     } else {
       showToast(response.data.error || '안전재고 설정 실패', 'error');

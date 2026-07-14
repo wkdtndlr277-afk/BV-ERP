@@ -1869,46 +1869,76 @@ barcodeRoutes.get('/sync-sheets-status', async (c) => {
   }
 });
 
-// ★★★ v3.6.66: 입고량 기준 안전재고 일괄 설정 ★★★
-// 각 품목의 총 입고량(origin_qty SUM)을 기준으로 안전재고 설정
+// ★★★ v3.6.67: 입고 패턴 기반 안전재고 자동 설정 ★★★
+// 평균 입고량(사용량)과 입고 주기를 분석하여 적정 안전재고 계산
 barcodeRoutes.post('/set-safety-stock-from-inbound', async (c) => {
   try {
     const body = await c.req.json<{ 
       preview?: boolean;
-      percentage?: number;  // 입고량의 몇 % 를 안전재고로? (기본 10%)
+      days_stock?: number;  // 며칠치 재고를 안전재고로? (기본 7일 = 1주일)
     }>().catch(() => ({}));
     
     const isPreview = body?.preview !== false;
-    const percentage = Math.max(1, Math.min(100, body?.percentage || 10)); // 1~100% 범위
+    const daysStock = Math.max(1, Math.min(90, body?.days_stock || 7)); // 1~90일 범위
     
-    // 품목별 총 입고량 조회 (origin_qty SUM)
-    const inboundTotals = await c.env.DB.prepare(`
+    // 품목별 입고 패턴 분석
+    // - 첫 입고일 ~ 마지막 입고일 기간
+    // - 총 입고량 / 기간(일) = 일평균 입고량(≈사용량)
+    // - 일평균 × 안전재고 일수 = 적정 안전재고
+    const inboundAnalysis = await c.env.DB.prepare(`
       SELECT 
         i.item_code,
         m.item_name,
         COALESCE(m.unit, 'kg') as unit,
         SUM(i.origin_qty) as total_inbound,
-        COALESCE(m.safety_stock, 0) as current_safety_stock,
-        ROUND(SUM(i.origin_qty) * ? / 100.0, 1) as new_safety_stock
+        COUNT(*) as inbound_count,
+        MIN(i.inbound_date) as first_inbound,
+        MAX(i.inbound_date) as last_inbound,
+        COALESCE(m.safety_stock, 0) as current_safety_stock
       FROM inbound i
       LEFT JOIN master m ON i.item_code = m.item_code
       WHERE i.item_code IS NOT NULL 
         AND i.item_code LIKE 'R%'
+        AND i.origin_qty > 0
       GROUP BY i.item_code
       HAVING SUM(i.origin_qty) > 0
-      ORDER BY i.item_code
-    `).bind(percentage).all<{
+      ORDER BY SUM(i.origin_qty) DESC
+    `).all<{
       item_code: string;
       item_name: string | null;
       unit: string;
       total_inbound: number;
+      inbound_count: number;
+      first_inbound: string;
+      last_inbound: string;
       current_safety_stock: number;
-      new_safety_stock: number;
     }>();
     
-    const results = inboundTotals.results || [];
+    const results = (inboundAnalysis.results || []).map(item => {
+      // 기간 계산 (일 단위)
+      const firstDate = new Date(item.first_inbound);
+      const lastDate = new Date(item.last_inbound);
+      const periodDays = Math.max(1, Math.ceil((lastDate.getTime() - firstDate.getTime()) / (1000 * 60 * 60 * 24)) + 1);
+      
+      // 일평균 입고량 (≈ 일평균 사용량)
+      const dailyAvg = item.total_inbound / periodDays;
+      
+      // 입고 주기 (평균 며칠에 한번 입고?)
+      const avgInboundCycle = periodDays / item.inbound_count;
+      
+      // 적정 안전재고 = 일평균 × 안전재고 일수
+      const newSafetyStock = Math.round(dailyAvg * daysStock * 10) / 10;
+      
+      return {
+        ...item,
+        period_days: periodDays,
+        daily_avg: Math.round(dailyAvg * 100) / 100,
+        avg_cycle: Math.round(avgInboundCycle * 10) / 10,
+        new_safety_stock: newSafetyStock
+      };
+    });
     
-    // 변경될 항목만 필터링 (현재 안전재고와 다른 경우)
+    // 변경될 항목만 필터링
     const toUpdate = results.filter(r => 
       Math.abs(r.new_safety_stock - r.current_safety_stock) >= 0.1
     );
@@ -1918,14 +1948,15 @@ barcodeRoutes.post('/set-safety-stock-from-inbound', async (c) => {
       return c.json({
         success: true,
         preview: true,
-        percentage: percentage,
-        message: `총 ${results.length}개 품목 중 ${toUpdate.length}개 품목의 안전재고가 변경됩니다.`,
+        days_stock: daysStock,
+        message: `총 ${results.length}개 품목 중 ${toUpdate.length}개 품목의 안전재고가 변경됩니다. (${daysStock}일치 기준)`,
         total_items: results.length,
         to_update_count: toUpdate.length,
-        to_update: toUpdate.slice(0, 50), // 최대 50개만 미리보기
+        to_update: toUpdate.slice(0, 50),
         summary: {
           total_inbound_sum: results.reduce((sum, r) => sum + r.total_inbound, 0),
-          new_safety_stock_sum: results.reduce((sum, r) => sum + r.new_safety_stock, 0)
+          avg_daily_total: Math.round(results.reduce((sum, r) => sum + r.daily_avg, 0) * 100) / 100,
+          new_safety_stock_sum: Math.round(results.reduce((sum, r) => sum + r.new_safety_stock, 0) * 10) / 10
         }
       });
     }
@@ -1937,18 +1968,15 @@ barcodeRoutes.post('/set-safety-stock-from-inbound', async (c) => {
     
     for (const item of toUpdate) {
       try {
-        // master 테이블에 품목이 있는지 확인
         const exists = await c.env.DB.prepare(`
           SELECT item_code FROM master WHERE item_code = ?
         `).bind(item.item_code).first();
         
         if (exists) {
-          // 기존 품목 업데이트
           await c.env.DB.prepare(`
             UPDATE master SET safety_stock = ?, updated_at = ? WHERE item_code = ?
           `).bind(item.new_safety_stock, timestamp, item.item_code).run();
         } else {
-          // 품목이 없으면 INSERT (inbound에만 있는 경우)
           await c.env.DB.prepare(`
             INSERT INTO master (item_code, item_name, item_type, unit, safety_stock, created_at, updated_at)
             VALUES (?, ?, '원료', ?, ?, ?, ?)
@@ -1970,9 +1998,9 @@ barcodeRoutes.post('/set-safety-stock-from-inbound', async (c) => {
     
     return c.json({
       success: true,
-      message: `${updatedCount}개 품목의 안전재고가 설정되었습니다. (입고량의 ${percentage}%)`,
+      message: `${updatedCount}개 품목의 안전재고가 설정되었습니다. (${daysStock}일치 기준)`,
       updated: updatedCount,
-      percentage: percentage,
+      days_stock: daysStock,
       errors: errors.length > 0 ? errors.slice(0, 10) : undefined
     });
     

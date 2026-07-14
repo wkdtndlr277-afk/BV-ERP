@@ -1869,6 +1869,119 @@ barcodeRoutes.get('/sync-sheets-status', async (c) => {
   }
 });
 
+// ★★★ v3.6.66: 입고량 기준 안전재고 일괄 설정 ★★★
+// 각 품목의 총 입고량(origin_qty SUM)을 기준으로 안전재고 설정
+barcodeRoutes.post('/set-safety-stock-from-inbound', async (c) => {
+  try {
+    const body = await c.req.json<{ 
+      preview?: boolean;
+      percentage?: number;  // 입고량의 몇 % 를 안전재고로? (기본 10%)
+    }>().catch(() => ({}));
+    
+    const isPreview = body?.preview !== false;
+    const percentage = Math.max(1, Math.min(100, body?.percentage || 10)); // 1~100% 범위
+    
+    // 품목별 총 입고량 조회 (origin_qty SUM)
+    const inboundTotals = await c.env.DB.prepare(`
+      SELECT 
+        i.item_code,
+        m.item_name,
+        COALESCE(m.unit, 'kg') as unit,
+        SUM(i.origin_qty) as total_inbound,
+        COALESCE(m.safety_stock, 0) as current_safety_stock,
+        ROUND(SUM(i.origin_qty) * ? / 100.0, 1) as new_safety_stock
+      FROM inbound i
+      LEFT JOIN master m ON i.item_code = m.item_code
+      WHERE i.item_code IS NOT NULL 
+        AND i.item_code LIKE 'R%'
+      GROUP BY i.item_code
+      HAVING SUM(i.origin_qty) > 0
+      ORDER BY i.item_code
+    `).bind(percentage).all<{
+      item_code: string;
+      item_name: string | null;
+      unit: string;
+      total_inbound: number;
+      current_safety_stock: number;
+      new_safety_stock: number;
+    }>();
+    
+    const results = inboundTotals.results || [];
+    
+    // 변경될 항목만 필터링 (현재 안전재고와 다른 경우)
+    const toUpdate = results.filter(r => 
+      Math.abs(r.new_safety_stock - r.current_safety_stock) >= 0.1
+    );
+    
+    // 미리보기 모드
+    if (isPreview) {
+      return c.json({
+        success: true,
+        preview: true,
+        percentage: percentage,
+        message: `총 ${results.length}개 품목 중 ${toUpdate.length}개 품목의 안전재고가 변경됩니다.`,
+        total_items: results.length,
+        to_update_count: toUpdate.length,
+        to_update: toUpdate.slice(0, 50), // 최대 50개만 미리보기
+        summary: {
+          total_inbound_sum: results.reduce((sum, r) => sum + r.total_inbound, 0),
+          new_safety_stock_sum: results.reduce((sum, r) => sum + r.new_safety_stock, 0)
+        }
+      });
+    }
+    
+    // 실제 업데이트 실행
+    let updatedCount = 0;
+    const errors: string[] = [];
+    const timestamp = getKSTDateTime();
+    
+    for (const item of toUpdate) {
+      try {
+        // master 테이블에 품목이 있는지 확인
+        const exists = await c.env.DB.prepare(`
+          SELECT item_code FROM master WHERE item_code = ?
+        `).bind(item.item_code).first();
+        
+        if (exists) {
+          // 기존 품목 업데이트
+          await c.env.DB.prepare(`
+            UPDATE master SET safety_stock = ?, updated_at = ? WHERE item_code = ?
+          `).bind(item.new_safety_stock, timestamp, item.item_code).run();
+        } else {
+          // 품목이 없으면 INSERT (inbound에만 있는 경우)
+          await c.env.DB.prepare(`
+            INSERT INTO master (item_code, item_name, item_type, unit, safety_stock, created_at, updated_at)
+            VALUES (?, ?, '원료', ?, ?, ?, ?)
+          `).bind(
+            item.item_code, 
+            item.item_name || item.item_code,
+            item.unit,
+            item.new_safety_stock, 
+            timestamp, 
+            timestamp
+          ).run();
+        }
+        
+        updatedCount++;
+      } catch (err: any) {
+        errors.push(`${item.item_code}: ${err.message}`);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${updatedCount}개 품목의 안전재고가 설정되었습니다. (입고량의 ${percentage}%)`,
+      updated: updatedCount,
+      percentage: percentage,
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined
+    });
+    
+  } catch (error: any) {
+    console.error('[barcode/set-safety-stock-from-inbound] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default barcodeRoutes;
 
 // ★★★ v3.4.14: 바코드 사용/출고 거래 삭제 (재고 복원) - rowid 사용 ★★★

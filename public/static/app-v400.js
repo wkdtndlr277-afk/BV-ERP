@@ -41502,6 +41502,9 @@ async function renderBarcodeInventory() {
               <button onclick="syncSheetsInbound()" class="px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 text-sm" title="구글시트 원료입고를 바코드 재고에 동기화">
                 <i class="fas fa-cloud-download-alt mr-1"></i> 시트동기화
               </button>
+              <button onclick="setSafetyStockFromInbound()" class="px-3 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 text-sm" title="입고량 기준 안전재고 일괄 설정">
+                <i class="fas fa-shield-alt mr-1"></i> 안전재고
+              </button>
               <button onclick="loadMaterialInventory()" class="px-3 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm">
                 <i class="fas fa-sync-alt mr-1"></i> 새로고침
               </button>
@@ -42507,6 +42510,191 @@ async function executeSyncSheetsInbound() {
   }
 }
 
+// ★★★ v3.6.66: 입고량 기준 안전재고 일괄 설정 ★★★
+async function setSafetyStockFromInbound() {
+  // 1단계: 미리보기 (기본 10%)
+  showLoading('입고량 데이터 분석 중...');
+  
+  try {
+    const previewRes = await axios.post(`${API_BASE}/barcode/set-safety-stock-from-inbound`, { 
+      preview: true, 
+      percentage: 10 
+    });
+    hideLoading();
+    
+    if (!previewRes.data.success) {
+      showToast(previewRes.data.error || '안전재고 분석 실패', 'error');
+      return;
+    }
+    
+    const preview = previewRes.data;
+    
+    if (preview.to_update_count === 0) {
+      showToast('변경할 안전재고가 없습니다. (현재 값과 동일)', 'info');
+      return;
+    }
+    
+    // 샘플 아이템
+    const sampleItems = (preview.to_update || []).slice(0, 8).map(item => `
+      <tr>
+        <td class="px-2 py-1 text-xs">${item.item_code}</td>
+        <td class="px-2 py-1 text-xs">${item.item_name || '-'}</td>
+        <td class="px-2 py-1 text-xs text-right">${formatNumber(item.total_inbound)}${item.unit}</td>
+        <td class="px-2 py-1 text-xs text-right text-gray-400">${formatNumber(item.current_safety_stock)}</td>
+        <td class="px-2 py-1 text-xs text-right text-purple-600 font-bold">${formatNumber(item.new_safety_stock)}</td>
+      </tr>
+    `).join('');
+    
+    const confirmHtml = `
+      <div class="space-y-4">
+        <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
+          <div class="flex items-center gap-3 mb-3">
+            <i class="fas fa-shield-alt text-purple-600 text-2xl"></i>
+            <div>
+              <p class="font-bold text-purple-800">입고량 기준 안전재고 설정</p>
+              <p class="text-sm text-purple-600">총 입고량의 일정 비율을 안전재고로 설정합니다.</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="bg-white border rounded-lg p-4">
+          <label class="block text-sm font-medium text-gray-700 mb-2">
+            <i class="fas fa-percentage mr-1"></i> 안전재고 비율 설정
+          </label>
+          <div class="flex items-center gap-3">
+            <input type="range" id="safety-stock-percentage" min="5" max="50" value="10" step="5"
+                   class="flex-1" onchange="updateSafetyStockPreview()">
+            <span id="safety-stock-percent-label" class="text-lg font-bold text-purple-600 w-16 text-center">10%</span>
+          </div>
+          <p class="text-xs text-gray-500 mt-2">
+            예: 총 입고량 100kg → 10% = 안전재고 10kg
+          </p>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4 text-center">
+          <div class="bg-blue-50 rounded-lg p-3">
+            <p class="text-2xl font-bold text-blue-600">${preview.total_items}</p>
+            <p class="text-xs text-blue-700">총 품목 수</p>
+          </div>
+          <div class="bg-purple-50 rounded-lg p-3">
+            <p class="text-2xl font-bold text-purple-600">${preview.to_update_count}</p>
+            <p class="text-xs text-purple-700">변경 예정</p>
+          </div>
+        </div>
+        
+        <div class="bg-gray-50 rounded-lg overflow-hidden">
+          <p class="text-sm font-medium text-gray-700 p-2 bg-gray-100">변경 예정 목록 (샘플):</p>
+          <div class="overflow-x-auto" style="max-height: 200px;">
+            <table class="w-full text-xs">
+              <thead class="bg-gray-200 sticky top-0">
+                <tr>
+                  <th class="px-2 py-1 text-left">품목코드</th>
+                  <th class="px-2 py-1 text-left">품목명</th>
+                  <th class="px-2 py-1 text-right">총입고량</th>
+                  <th class="px-2 py-1 text-right">현재</th>
+                  <th class="px-2 py-1 text-right">변경후</th>
+                </tr>
+              </thead>
+              <tbody id="safety-stock-preview-tbody">
+                ${sampleItems}
+              </tbody>
+            </table>
+          </div>
+          ${preview.to_update_count > 8 ? `<p class="text-xs text-gray-400 p-2 border-t">...외 ${preview.to_update_count - 8}건</p>` : ''}
+        </div>
+        
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
+          <i class="fas fa-exclamation-triangle mr-1"></i>
+          <strong>주의:</strong> 이 작업은 master 테이블의 <strong>safety_stock</strong> 값을 일괄 변경합니다.
+        </div>
+      </div>
+    `;
+    
+    // 미리보기 데이터 저장 (비율 변경 시 사용)
+    window._safetyStockPreviewData = preview;
+    
+    showModal('<i class="fas fa-shield-alt mr-2"></i>안전재고 일괄 설정', confirmHtml, `
+      <button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">취소</button>
+      <button onclick="executeSafetyStockUpdate()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+        <i class="fas fa-check mr-1"></i> 안전재고 설정
+      </button>
+    `);
+    
+  } catch (error) {
+    hideLoading();
+    console.error('[setSafetyStockFromInbound] Error:', error);
+    showToast('안전재고 분석 실패: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+// 안전재고 비율 변경 시 미리보기 업데이트
+async function updateSafetyStockPreview() {
+  const slider = document.getElementById('safety-stock-percentage');
+  const label = document.getElementById('safety-stock-percent-label');
+  if (!slider || !label) return;
+  
+  const percentage = parseInt(slider.value);
+  label.textContent = percentage + '%';
+  
+  // 새 비율로 미리보기 재요청
+  try {
+    const response = await axios.post(`${API_BASE}/barcode/set-safety-stock-from-inbound`, { 
+      preview: true, 
+      percentage: percentage 
+    });
+    
+    if (response.data.success) {
+      window._safetyStockPreviewData = response.data;
+      
+      // 테이블 업데이트
+      const tbody = document.getElementById('safety-stock-preview-tbody');
+      if (tbody && response.data.to_update) {
+        tbody.innerHTML = response.data.to_update.slice(0, 8).map(item => `
+          <tr>
+            <td class="px-2 py-1 text-xs">${item.item_code}</td>
+            <td class="px-2 py-1 text-xs">${item.item_name || '-'}</td>
+            <td class="px-2 py-1 text-xs text-right">${formatNumber(item.total_inbound)}${item.unit}</td>
+            <td class="px-2 py-1 text-xs text-right text-gray-400">${formatNumber(item.current_safety_stock)}</td>
+            <td class="px-2 py-1 text-xs text-right text-purple-600 font-bold">${formatNumber(item.new_safety_stock)}</td>
+          </tr>
+        `).join('');
+      }
+    }
+  } catch (error) {
+    console.error('[updateSafetyStockPreview] Error:', error);
+  }
+}
+
+// 안전재고 업데이트 실행
+async function executeSafetyStockUpdate() {
+  const slider = document.getElementById('safety-stock-percentage');
+  const percentage = slider ? parseInt(slider.value) : 10;
+  
+  closeModal();
+  showLoading(`안전재고 설정 중... (입고량의 ${percentage}%)`);
+  
+  try {
+    const response = await axios.post(`${API_BASE}/barcode/set-safety-stock-from-inbound`, { 
+      preview: false,
+      percentage: percentage 
+    });
+    hideLoading();
+    
+    if (response.data.success) {
+      showToast(`✅ ${response.data.updated}개 품목의 안전재고가 설정되었습니다! (${percentage}%)`, 'success');
+      
+      // 재고 목록 새로고침
+      loadMaterialInventory();
+    } else {
+      showToast(response.data.error || '안전재고 설정 실패', 'error');
+    }
+  } catch (error) {
+    hideLoading();
+    console.error('[executeSafetyStockUpdate] Error:', error);
+    showToast('안전재고 설정 실패: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
 // 전역 함수 노출
 window.loadMaterialInventory = loadMaterialInventory;
 window.selectMaterialForBarcode = selectMaterialForBarcode;
@@ -42516,6 +42704,9 @@ window.closeStockAdjustModal = closeStockAdjustModal;
 window.submitStockAdjust = submitStockAdjust;
 window.syncSheetsInbound = syncSheetsInbound;
 window.executeSyncSheetsInbound = executeSyncSheetsInbound;
+window.setSafetyStockFromInbound = setSafetyStockFromInbound;
+window.updateSafetyStockPreview = updateSafetyStockPreview;
+window.executeSafetyStockUpdate = executeSafetyStockUpdate;
 
 // ★★★ v3.4.15: 당일 사용/출고 내역 로드 (체크박스 추가) ★★★
 let todayTransactionsData = [];  // 거래 데이터 저장

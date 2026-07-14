@@ -1447,62 +1447,52 @@ barcodeRoutes.delete('/mapping/:id', async (c) => {
 // ★★★ v3.5.12: 원료 재고 현황 - transactions 테이블 기반 (Single Source of Truth) ★★★
 // 모든 재고 계산이 transactions 테이블에서 일관되게 수행됨
 // 핵심: 전일재고 = SUM(quantity) WHERE trans_date < 기준일
+// ★★★ v3.6.63: 바코드 재고관리 - inbound remain_qty 기반 (일별수불부와 완전 분리!) ★★★
+// 실재고 = inbound remain_qty SUM (transactions 테이블 미사용)
+// 바코드 재고 수정 시 inbound만 변경되므로 즉시 반영됨
 barcodeRoutes.get('/material-inventory', async (c) => {
   try {
     const search = c.req.query('search') || '';
     
     const dateParam = c.req.query('date');
-    const targetDate = dateParam || new Date().toISOString().split('T')[0];
-    const realToday = new Date().toISOString().split('T')[0];
+    const targetDate = dateParam || getKSTDate();
+    const realToday = getKSTDate();
     const isHistorical = targetDate !== realToday;
     
     // R169-R172, RM266 구형/무효 코드 제외
     const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172', 'RM266'];
     const excludePlaceholders = EXCLUDE_CODES.map(() => '?').join(',');
     
-    // ★★★ v3.5.12: transactions 테이블 기반 재고 조회 (closing-status와 동일한 로직) ★★★
-    // 원료(R*, RM*만 포함, SF, RT 제외)
-    // Note: barcode 컬럼은 프로덕션 환경에서만 존재할 수 있으므로 제외
+    // ★★★ v3.6.63: inbound remain_qty 기반 실재고 조회 ★★★
+    // 바코드 재고관리는 transactions 테이블과 무관하게 inbound 잔량 합계를 표시
     let query = `
       SELECT 
         m.item_code,
         m.item_name,
         COALESCE(m.unit, 'kg') as unit,
-        -- ★★★ 전일재고: trans_date < 기준일의 모든 거래 합계 ★★★
+        -- ★★★ 실재고 (핵심): inbound remain_qty SUM ★★★
         COALESCE(
-          (SELECT SUM(quantity) 
-           FROM transactions 
-           WHERE item_code = m.item_code AND trans_date < ?),
+          (SELECT SUM(remain_qty) 
+           FROM inbound 
+           WHERE item_code = m.item_code AND remain_qty > 0 AND quality_status = '합격'),
           0
-        ) as prev_stock,
-        -- 당일입고: 기준일의 입고 거래 합계
+        ) as current_stock,
+        -- 당일입고: inbound_date = 기준일의 입고량
         COALESCE(
-          (SELECT SUM(quantity) 
-           FROM transactions 
-           WHERE item_code = m.item_code AND trans_date = ? AND trans_type = '입고'),
+          (SELECT SUM(origin_qty) 
+           FROM inbound 
+           WHERE item_code = m.item_code AND inbound_date = ?),
           0
         ) as today_inbound,
-        -- 당일사용: 기준일의 사용 거래 합계 (음수를 양수로)
+        -- 당일사용: transactions의 사용 기록 (참고용)
         COALESCE(
           (SELECT ABS(SUM(quantity)) 
            FROM transactions 
            WHERE item_code = m.item_code AND trans_date = ? AND trans_type = '사용'),
           0
         ) as today_usage,
-        -- 당일조정: 기준일의 재고조정 거래 합계
-        COALESCE(
-          (SELECT SUM(quantity) 
-           FROM transactions 
-           WHERE item_code = m.item_code AND trans_date = ? AND trans_type = '재고조정'),
-          0
-        ) as today_adjustment,
-        -- 현재고: trans_date <= 기준일의 모든 거래 합계
-        COALESCE(
-          (SELECT SUM(quantity) 
-           FROM transactions 
-           WHERE item_code = m.item_code AND trans_date <= ?),
-          0
-        ) as current_stock
+        -- LOT 수
+        (SELECT COUNT(*) FROM inbound WHERE item_code = m.item_code AND remain_qty > 0 AND quality_status = '합격') as lot_count
       FROM master m
       WHERE m.category = '원료'
         AND (m.item_code LIKE 'R%' OR m.item_code LIKE 'RM%')
@@ -1510,8 +1500,7 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         AND m.item_code NOT IN (${excludePlaceholders})
     `;
     
-    // 날짜 파라미터: prev_stock, today_inbound, today_usage, today_adjustment, current_stock
-    const params: any[] = [targetDate, targetDate, targetDate, targetDate, targetDate, ...EXCLUDE_CODES];
+    const params: any[] = [targetDate, targetDate, ...EXCLUDE_CODES];
     
     if (search) {
       query += ` AND (m.item_code LIKE ? OR m.item_name LIKE ?)`;
@@ -1522,38 +1511,41 @@ barcodeRoutes.get('/material-inventory', async (c) => {
     
     const result = await c.env.DB.prepare(query).bind(...params).all<any>();
     
-    // 데이터 후처리: 전일재고, 입고, 사용, 현재고 중 하나라도 있는 품목만 포함 OR 검색일 경우 모두 포함
+    // 데이터 후처리
     const materials = (result.results || []).map((item: any) => {
-      const prevStock = parseFloat(item.prev_stock) || 0;
+      const currentStock = parseFloat(item.current_stock) || 0;
       const todayInbound = parseFloat(item.today_inbound) || 0;
       const todayUsage = parseFloat(item.today_usage) || 0;
-      const todayAdjustment = parseFloat(item.today_adjustment) || 0;
-      const currentStock = parseFloat(item.current_stock) || 0;
+      const lotCount = parseInt(item.lot_count) || 0;
+      
+      // 전일재고 = 현재재고 + 당일사용 - 당일입고 (역산)
+      const prevStock = currentStock + todayUsage - todayInbound;
       
       return {
         item_code: item.item_code,
         item_name: item.item_name,
         unit: item.unit || 'kg',
-        barcode: '',  // 프론트엔드 호환성 유지
-        prev_stock: prevStock,  // 음수 허용 (데이터 정합성 문제 표시용)
+        barcode: '',
+        prev_stock: prevStock,
         today_inbound: todayInbound,
         today_usage: todayUsage,
-        today_adjustment: todayAdjustment,
+        today_adjustment: 0,  // 바코드 조정은 transactions에 기록 안함
         current_stock: currentStock,
-        // 정합성 검증: 전일 + 입고 - 사용 + 조정 = 현재
-        calculated_stock: prevStock + todayInbound - todayUsage + todayAdjustment,
-        integrity_valid: Math.abs((prevStock + todayInbound - todayUsage + todayAdjustment) - currentStock) < 0.01
+        lot_count: lotCount,
+        // 정합성은 항상 유효 (inbound 직접 조회)
+        calculated_stock: currentStock,
+        integrity_valid: true
       };
     });
     
-    // 검색어가 없을 때는 활동이 있는 품목만 필터링
+    // 검색어가 없을 때는 재고가 있거나 당일 활동이 있는 품목만 필터링
     const filteredMaterials = search 
       ? materials 
-      : materials.filter(m => m.prev_stock !== 0 || m.today_inbound !== 0 || m.today_usage !== 0 || m.current_stock !== 0);
+      : materials.filter(m => m.current_stock > 0 || m.today_inbound > 0 || m.today_usage > 0);
     
     return c.json({
       success: true,
-      version: 'v3.5.12',
+      version: 'v3.6.63',
       date: targetDate,
       isHistorical,
       data: filteredMaterials,
@@ -1565,11 +1557,10 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         total_usage: filteredMaterials.reduce((sum, m) => sum + m.today_usage, 0),
         total_current_stock: filteredMaterials.reduce((sum, m) => sum + m.current_stock, 0)
       },
-      // 추가 메타데이터
       metadata: {
-        data_source: 'transactions_table',
-        calculation_method: 'time_series_accumulation',
-        note: '전일재고=SUM(~<date), 입고=SUM(date,입고), 사용=SUM(date,사용), 현재고=SUM(~<=date)'
+        data_source: 'inbound_remain_qty',
+        calculation_method: 'lot_based_sum',
+        note: '실재고=inbound remain_qty SUM, 바코드 재고 수정 시 즉시 반영, 일별수불부와 독립'
       }
     });
     

@@ -41499,6 +41499,9 @@ async function renderBarcodeInventory() {
                      class="px-3 py-2 rounded-lg text-sm w-40" 
                      placeholder="검색..."
                      onkeypress="if(event.key==='Enter') loadMaterialInventory()">
+              <button onclick="syncSheetsInbound()" class="px-3 py-2 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 text-sm" title="구글시트 원료입고를 바코드 재고에 동기화">
+                <i class="fas fa-cloud-download-alt mr-1"></i> 시트동기화
+              </button>
               <button onclick="loadMaterialInventory()" class="px-3 py-2 bg-white/20 text-white rounded-lg hover:bg-white/30 text-sm">
                 <i class="fas fa-sync-alt mr-1"></i> 새로고침
               </button>
@@ -42402,6 +42405,108 @@ async function submitStockAdjust(itemCode) {
   }
 }
 
+// ★★★ v3.6.65: 구글시트 원료입고 → 바코드 재고 동기화 ★★★
+async function syncSheetsInbound() {
+  // 1단계: 미리보기
+  showLoading('구글시트 입고 데이터 확인 중...');
+  
+  try {
+    const previewRes = await axios.post(`${API_BASE}/barcode/sync-sheets-inbound`, { preview: true });
+    hideLoading();
+    
+    if (!previewRes.data.success) {
+      showToast(previewRes.data.error || '동기화 미리보기 실패', 'error');
+      return;
+    }
+    
+    const preview = previewRes.data;
+    
+    if (preview.to_sync_count === 0) {
+      showToast('동기화할 새 입고 데이터가 없습니다. (이미 동기화됨)', 'info');
+      return;
+    }
+    
+    // 확인 모달 표시
+    const sampleItems = (preview.to_sync || []).slice(0, 5).map(item => 
+      `• ${item.item_name} (${item.lot_number}) - ${formatNumber(item.remain_qty)}${item.unit}`
+    ).join('<br>');
+    
+    const confirmHtml = `
+      <div class="space-y-4">
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div class="flex items-center gap-3 mb-3">
+            <i class="fas fa-cloud-download-alt text-blue-600 text-2xl"></i>
+            <div>
+              <p class="font-bold text-blue-800">구글시트 입고 → 바코드 재고 동기화</p>
+              <p class="text-sm text-blue-600">구글시트 원료입고 데이터를 D1 inbound에 추가합니다.</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4 text-center">
+          <div class="bg-green-50 rounded-lg p-3">
+            <p class="text-2xl font-bold text-green-600">${preview.to_sync_count}</p>
+            <p class="text-xs text-green-700">신규 LOT (동기화 대상)</p>
+          </div>
+          <div class="bg-gray-50 rounded-lg p-3">
+            <p class="text-2xl font-bold text-gray-500">${preview.skipped_count}</p>
+            <p class="text-xs text-gray-600">스킵 (이미 존재)</p>
+          </div>
+        </div>
+        
+        ${preview.to_sync_count > 0 ? `
+          <div class="bg-gray-50 rounded-lg p-3">
+            <p class="text-sm font-medium text-gray-700 mb-2">동기화 예정 (샘플):</p>
+            <div class="text-xs text-gray-600">${sampleItems}</div>
+            ${preview.to_sync_count > 5 ? `<p class="text-xs text-gray-400 mt-1">...외 ${preview.to_sync_count - 5}건</p>` : ''}
+          </div>
+        ` : ''}
+        
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
+          <i class="fas fa-info-circle mr-1"></i>
+          <strong>참고:</strong> 동기화는 <strong>신규 LOT만 추가</strong>합니다. 기존 데이터는 변경되지 않습니다.
+        </div>
+      </div>
+    `;
+    
+    showModal('<i class="fas fa-cloud-download-alt mr-2"></i>구글시트 동기화 확인', confirmHtml, `
+      <button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">취소</button>
+      <button onclick="executeSyncSheetsInbound()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+        <i class="fas fa-check mr-1"></i> 동기화 실행
+      </button>
+    `);
+    
+  } catch (error) {
+    hideLoading();
+    console.error('[syncSheetsInbound] Error:', error);
+    showToast('구글시트 동기화 실패: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
+// 실제 동기화 실행
+async function executeSyncSheetsInbound() {
+  closeModal();
+  showLoading('구글시트 입고 동기화 중...');
+  
+  try {
+    const response = await axios.post(`${API_BASE}/barcode/sync-sheets-inbound`, { preview: false });
+    hideLoading();
+    
+    if (response.data.success) {
+      showToast(`✅ ${response.data.synced}개 LOT 동기화 완료!`, 'success');
+      
+      // 재고 목록 새로고침
+      loadMaterialInventory();
+    } else {
+      showToast(response.data.error || '동기화 실패', 'error');
+    }
+  } catch (error) {
+    hideLoading();
+    console.error('[executeSyncSheetsInbound] Error:', error);
+    showToast('동기화 실행 실패: ' + (error.response?.data?.error || error.message), 'error');
+  }
+}
+
 // 전역 함수 노출
 window.loadMaterialInventory = loadMaterialInventory;
 window.selectMaterialForBarcode = selectMaterialForBarcode;
@@ -42409,6 +42514,8 @@ window.openStockAdjustModal = openStockAdjustModal;
 window.closeStockAdjustModal = closeStockAdjustModal;
 window.closeStockAdjustModal = closeStockAdjustModal;
 window.submitStockAdjust = submitStockAdjust;
+window.syncSheetsInbound = syncSheetsInbound;
+window.executeSyncSheetsInbound = executeSyncSheetsInbound;
 
 // ★★★ v3.4.15: 당일 사용/출고 내역 로드 (체크박스 추가) ★★★
 let todayTransactionsData = [];  // 거래 데이터 저장

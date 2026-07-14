@@ -1,6 +1,7 @@
 // 바코드 재고관리 API
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
+import { GoogleSheetsService } from '../services/GoogleSheetsService';
 
 const barcodeRoutes = new Hono<{ Bindings: Bindings }>();
 
@@ -1701,6 +1702,169 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
     
   } catch (error: any) {
     console.error('[barcode/adjust-stock] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.65: 구글시트 원료입고 → D1 inbound 동기화 ★★★
+// 구글시트에서 입고된 데이터를 바코드 재고관리(D1 inbound)에 반영
+barcodeRoutes.post('/sync-sheets-inbound', async (c) => {
+  try {
+    const body = await c.req.json<{ preview?: boolean }>().catch(() => ({}));
+    const isPreview = body?.preview !== false; // 기본값 preview 모드
+    
+    // 구글시트 서비스 초기화
+    const clientEmail = c.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = c.env.GOOGLE_PRIVATE_KEY;
+    
+    if (!clientEmail || !privateKey) {
+      return c.json({ success: false, error: '구글 API 인증 정보가 없습니다.' }, 400);
+    }
+    
+    const formattedKey = privateKey.replace(/\\n/g, '\n');
+    const sheetsService = new GoogleSheetsService(clientEmail, formattedKey);
+    
+    // 구글시트 원료입고 시트 조회
+    // 컬럼: A:입고일, B:원료코드, C:원료명, D:LOT번호, E:수량, F:단위, G:공급업체, H:소비기한, I:잔량
+    const sheetData = await sheetsService.readSheet('원료입고', 'A2:I10000');
+    
+    if (!sheetData || sheetData.length === 0) {
+      return c.json({ success: true, message: '구글시트에 입고 데이터가 없습니다.', synced: 0 });
+    }
+    
+    // 기존 D1 inbound LOT 목록 조회 (중복 방지)
+    const existingLots = await c.env.DB.prepare(`
+      SELECT lot_number FROM inbound WHERE lot_number IS NOT NULL
+    `).all<{ lot_number: string }>();
+    
+    const existingLotSet = new Set((existingLots.results || []).map(r => r.lot_number));
+    
+    // 동기화할 데이터 필터링
+    const toSync: any[] = [];
+    const skipped: any[] = [];
+    const today = getKSTDate();
+    const timestamp = getKSTDateTime();
+    
+    for (const row of sheetData) {
+      const inboundDate = String(row[0] || '').trim().replace(/^'/, '');
+      const itemCode = String(row[1] || '').trim();
+      const itemName = String(row[2] || '').trim();
+      const lotNumber = String(row[3] || '').trim();
+      const originQty = parseFloat(row[4]) || 0;
+      const unit = String(row[5] || 'kg').trim();
+      const supplier = String(row[6] || '').trim();
+      const expiryDate = String(row[7] || '').trim().replace(/^'/, '');
+      const remainQty = parseFloat(row[8]) || 0;
+      
+      // 필수 데이터 검증
+      if (!itemCode || !lotNumber || originQty <= 0) continue;
+      
+      // 잔량이 0 이하면 스킵 (이미 소진된 LOT)
+      if (remainQty <= 0) continue;
+      
+      // 원료 코드만 처리 (R*, RM* 시작)
+      if (!itemCode.startsWith('R')) continue;
+      
+      // 이미 존재하는 LOT는 스킵
+      if (existingLotSet.has(lotNumber)) {
+        skipped.push({ lot_number: lotNumber, item_code: itemCode, reason: '이미 존재' });
+        continue;
+      }
+      
+      toSync.push({
+        lot_number: lotNumber,
+        item_code: itemCode,
+        item_name: itemName,
+        inbound_date: inboundDate || today,
+        expiry_date: expiryDate || null,
+        origin_qty: originQty,
+        remain_qty: remainQty,
+        supplier: supplier,
+        unit: unit
+      });
+    }
+    
+    // 미리보기 모드
+    if (isPreview) {
+      return c.json({
+        success: true,
+        preview: true,
+        message: `${toSync.length}개 LOT를 동기화할 수 있습니다.`,
+        to_sync: toSync.slice(0, 50), // 최대 50개만 미리보기
+        to_sync_count: toSync.length,
+        skipped_count: skipped.length,
+        skipped_sample: skipped.slice(0, 10)
+      });
+    }
+    
+    // 실제 동기화 실행
+    let syncedCount = 0;
+    const errors: string[] = [];
+    
+    for (const item of toSync) {
+      try {
+        // inbound 테이블에 INSERT
+        await c.env.DB.prepare(`
+          INSERT INTO inbound (lot_number, item_code, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier, storage_location, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, '합격', ?, '구글시트동기화', ?)
+        `).bind(
+          item.lot_number,
+          item.item_code,
+          item.inbound_date,
+          item.expiry_date,
+          item.origin_qty,
+          item.remain_qty,
+          item.supplier,
+          timestamp
+        ).run();
+        
+        syncedCount++;
+      } catch (err: any) {
+        errors.push(`${item.lot_number}: ${err.message}`);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${syncedCount}개 LOT 동기화 완료`,
+      synced: syncedCount,
+      skipped: skipped.length,
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined
+    });
+    
+  } catch (error: any) {
+    console.error('[barcode/sync-sheets-inbound] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 구글시트 동기화 상태 조회
+barcodeRoutes.get('/sync-sheets-status', async (c) => {
+  try {
+    // D1 inbound에서 구글시트 동기화된 LOT 수 조회
+    const syncedCount = await c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM inbound WHERE storage_location = '구글시트동기화'
+    `).first<{ count: number }>();
+    
+    // 전체 LOT 수
+    const totalCount = await c.env.DB.prepare(`
+      SELECT COUNT(*) as count FROM inbound WHERE remain_qty > 0
+    `).first<{ count: number }>();
+    
+    // 최근 동기화 시간
+    const lastSync = await c.env.DB.prepare(`
+      SELECT created_at FROM inbound WHERE storage_location = '구글시트동기화' ORDER BY created_at DESC LIMIT 1
+    `).first<{ created_at: string }>();
+    
+    return c.json({
+      success: true,
+      data: {
+        synced_lots: syncedCount?.count || 0,
+        total_lots: totalCount?.count || 0,
+        last_sync: lastSync?.created_at || null
+      }
+    });
+  } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }
 });

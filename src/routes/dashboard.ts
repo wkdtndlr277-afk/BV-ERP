@@ -176,6 +176,9 @@ dashboardRoutes.get('/', async (c) => {
     recentProduction: [] as any[]  // 최근 생산 내역
   };
   
+  // ★★★ v3.6.63: service 변수 선언 추가 ★★★
+  const service = getSheetService(c);
+  
   if (service) {
     try {
       const spreadsheetId = c.env.GOOGLE_SHEET_ID;

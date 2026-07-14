@@ -3458,6 +3458,45 @@ productionRoutes.post('/preview', async (c) => {
       });
     }
     
+    // ★★★ v3.6.55: 3차 - 구글시트 원료입고 잔량 (transactions에 없는 원료 보완) ★★★
+    // 구글시트 '원료입고' 시트의 I열(잔량)을 품목별로 합산
+    try {
+      const sheetsService = GoogleSheetsService.getInstance(c.env);
+      const inboundData = await sheetsService.readSheet('원료입고', 'A2:I');
+      
+      // 원료입고 시트 구조: A:입고일, B:원료코드, C:원료명, D:LOT, E:수량, F:단위, G:공급업체, H:소비기한, I:잔량
+      const sheetStockMap = new Map<string, { available: number, item_name: string }>();
+      
+      for (const row of inboundData || []) {
+        const itemCode = row[1];  // B열: 원료코드
+        const itemName = row[2];  // C열: 원료명
+        const remainQty = parseFloat(row[8]) || 0;  // I열: 잔량
+        
+        if (itemCode && remainQty > 0) {
+          const current = sheetStockMap.get(itemCode) || { available: 0, item_name: itemName };
+          current.available += remainQty;
+          current.item_name = itemName || current.item_name;
+          sheetStockMap.set(itemCode, current);
+        }
+      }
+      
+      // stockMap에 없는 원료만 구글시트 데이터로 보완
+      for (const [itemCode, data] of sheetStockMap) {
+        if (!stockMap.has(itemCode)) {
+          stockMap.set(itemCode, {
+            available: data.available,
+            source: 'sheets_inbound',
+            item_name: data.item_name,
+            unit: 'kg'
+          });
+          console.log(`[preview] 구글시트 재고 보완: ${itemCode} (${data.item_name}) = ${data.available}kg`);
+        }
+      }
+    } catch (sheetError: any) {
+      console.warn('[preview] 구글시트 원료입고 조회 실패 (무시):', sheetError.message);
+      // 구글시트 조회 실패해도 기존 로직으로 계속 진행
+    }
+    
     // ===== 3단계: 각 항목 검증 (실제 DB 데이터만 사용) =====
     const validatedItems: any[] = [];
     const errors: any[] = [];

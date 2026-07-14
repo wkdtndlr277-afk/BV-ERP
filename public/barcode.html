@@ -547,6 +547,22 @@
                     }
                     document.getElementById('currentStock').textContent = formatNumber(currentItem.current_stock);
                     
+                    // ★★★ v3.6.58: 다른 탭에 실시간 알림 (BroadcastChannel) ★★★
+                    try {
+                        const channel = new BroadcastChannel('bv_barcode_sync');
+                        channel.postMessage({
+                            type: currentTab, // 'usage' or 'inbound'
+                            item_code: currentItem.item_code,
+                            item_name: currentItem.item_name,
+                            quantity: qty,
+                            new_stock: currentItem.current_stock,
+                            timestamp: new Date().toISOString()
+                        });
+                        channel.close();
+                    } catch (e) {
+                        console.log('BroadcastChannel not supported');
+                    }
+                    
                     // Add to history
                     addToHistory(currentItem.barcode || currentItem.item_code, currentItem, currentTab, qty);
                     

@@ -2850,14 +2850,7 @@ sheets.post('/sync/semi-finished/manual', async (c) => {
  * Body: { dates: ["2026-06-01", "2026-06-02"], sheets: ["생산실적", "일별수불부", "로트매칭"] }
  */
 sheets.post('/delete-by-date', async (c) => {
-  // ★★★ v3.6.42: 데이터 삭제 방지 - API 비활성화 ★★★
-  return c.json({ 
-    success: false, 
-    error: '🚫 데이터 보호: 이 API는 비활성화되었습니다. 시트 데이터를 삭제할 수 없습니다.',
-    message: '데이터 무결성 보호를 위해 delete-by-date API가 비활성화되었습니다.'
-  }, 403);
-
-  // 아래 코드는 실행되지 않음 (데이터 보호)
+  // ★★★ v3.6.57: 데이터 삭제 API 활성화 (confirm 필수) ★★★
   const service = getSheetService(c);
   if (!service) {
     return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
@@ -2865,10 +2858,21 @@ sheets.post('/delete-by-date', async (c) => {
 
   try {
     const body = await c.req.json();
-    const { dates, sheets: targetSheets } = body;
+    const { dates, sheets: targetSheets, confirm } = body;
 
     if (!dates || !Array.isArray(dates) || dates.length === 0) {
       return c.json({ success: false, error: 'dates 배열 필수' }, 400);
+    }
+    
+    // ★★★ v3.6.57: confirm 필수 체크 ★★★
+    if (!confirm) {
+      return c.json({ 
+        success: false, 
+        error: 'confirm: true를 전송해야 삭제가 실행됩니다.',
+        dates,
+        sheets: targetSheets || ['생산실적', '일별수불부', '로트매칭'],
+        warning: '이 작업은 되돌릴 수 없습니다!'
+      }, 400);
     }
 
     const sheetsToClean = targetSheets || ['생산실적', '일별수불부', '로트매칭'];

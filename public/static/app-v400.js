@@ -37344,9 +37344,10 @@ function showStockAdjustModal(itemCode, itemName, currentStock, unit) {
         <input type="text" id="adjust-memo" class="w-full border rounded-lg px-3 py-2" placeholder="예: 실사 결과 반영, 파손 폐기 등">
       </div>
       
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">조정일</label>
-        <input type="date" id="adjust-date" class="w-full border rounded-lg px-3 py-2" value="${today}">
+      <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-700">
+        <i class="fas fa-info-circle mr-1"></i>
+        <strong>참고:</strong> 바코드 재고 수정은 <strong>일별/월별 수불부에 영향을 주지 않습니다.</strong>
+        <br>실재고 관리 전용입니다.
       </div>
       
       <div id="adjust-preview" class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 hidden">
@@ -37409,12 +37410,12 @@ function showStockAdjustModal(itemCode, itemName, currentStock, unit) {
   };
 }
 
-// 재고 조정 제출
+// ★★★ v3.6.62: 바코드 재고 조정 - 일별수불부 영향 없음! ★★★
+// /barcode/adjust-stock API 사용 (transactions 테이블 미사용)
 async function submitStockAdjust(itemCode, itemName, currentStock) {
   const type = document.getElementById('adjust-type').value;
   const qty = parseFloat(document.getElementById('adjust-quantity').value) || 0;
   const memo = document.getElementById('adjust-memo').value.trim();
-  const adjustDate = document.getElementById('adjust-date').value;
   
   if (qty <= 0 && type !== 'set') {
     showToast('수량을 입력해주세요.', 'warning');
@@ -37426,39 +37427,53 @@ async function submitStockAdjust(itemCode, itemName, currentStock) {
     return;
   }
   
-  // 조정량 계산
-  let adjustQty;
+  // 최종 재고 계산
+  let newStock;
   if (type === 'set') {
-    adjustQty = qty - currentStock;
+    newStock = qty;
   } else if (type === 'add') {
-    adjustQty = qty;
+    newStock = currentStock + qty;
   } else {
-    adjustQty = -qty;
+    newStock = currentStock - qty;
   }
   
-  if (adjustQty === 0) {
-    showToast('재고 변동이 없습니다.', 'info');
-    return;
-  }
-  
-  const newStock = currentStock + adjustQty;
   if (newStock < 0) {
     showToast('재고가 음수가 됩니다. 확인해주세요.', 'warning');
     return;
   }
   
+  if (Math.abs(newStock - currentStock) < 0.001) {
+    showToast('재고 변동이 없습니다.', 'info');
+    return;
+  }
+  
   try {
-    const response = await axios.post(`${API_BASE}/transactions/stock-adjust`, {
+    // ★★★ 핵심: /barcode/adjust-stock API 사용 → 일별수불부 영향 없음 ★★★
+    const response = await axios.post(`${API_BASE}/barcode/adjust-stock`, {
       item_code: itemCode,
-      quantity: adjustQty,
-      memo: memo || `재고조정: ${itemName}`,
-      trans_date: adjustDate
+      new_stock: newStock,
+      reason: type === 'set' ? '재고 직접 설정' : (type === 'add' ? '재고 증가' : '재고 감소'),
+      memo: memo || ''
     });
     
     if (response.data.success) {
-      showToast(`재고가 조정되었습니다. (${currentStock} → ${newStock})`, 'success');
+      showToast(`재고가 조정되었습니다. (${formatNumber(currentStock)} → ${formatNumber(newStock)})`, 'success');
       closeModal();
       loadStockLedger(); // 재조회
+      
+      // ★★★ 다른 탭에 실시간 알림 ★★★
+      try {
+        const channel = new BroadcastChannel('bv_barcode_sync');
+        channel.postMessage({
+          type: 'adjust',
+          item_code: itemCode,
+          item_name: itemName,
+          previous_stock: currentStock,
+          new_stock: newStock,
+          timestamp: new Date().toISOString()
+        });
+        channel.close();
+      } catch (e) { console.log('BroadcastChannel not supported'); }
     } else {
       showToast(response.data.error || '재고 조정 실패', 'error');
     }
@@ -41878,6 +41893,43 @@ async function renderBarcodeInventory() {
   
   // ★★★ v3.4.10: 당일 사용/출고 내역 자동 로드 ★★★
   loadTodayTransactions();
+  
+  // ★★★ v3.6.58: 실시간 동기화 (BroadcastChannel) ★★★
+  // 다른 탭(바코드 모드)에서 스캔 시 즉시 반영
+  try {
+    if (window.barcodeChannel) {
+      window.barcodeChannel.close();
+    }
+    window.barcodeChannel = new BroadcastChannel('bv_barcode_sync');
+    window.barcodeChannel.onmessage = (event) => {
+      const data = event.data;
+      console.log('📡 바코드 동기화 수신:', data);
+      
+      // 토스트로 알림
+      const actionText = data.type === 'usage' ? '사용' : '입고';
+      const sign = data.type === 'usage' ? '-' : '+';
+      showToast(`📡 ${data.item_name} ${sign}${data.quantity} ${actionText} (다른 탭)`, 'info');
+      
+      // 데이터 즉시 새로고침
+      loadMaterialInventory();
+      loadTodayTransactions();
+    };
+  } catch (e) {
+    console.log('BroadcastChannel not supported, falling back to polling');
+    // BroadcastChannel 미지원 시 폴링으로 폴백
+    if (window.barcodeAutoRefreshInterval) {
+      clearInterval(window.barcodeAutoRefreshInterval);
+    }
+    window.barcodeAutoRefreshInterval = setInterval(() => {
+      if (window.location.hash === '#barcode-inventory') {
+        loadMaterialInventory();
+        loadTodayTransactions();
+      } else {
+        clearInterval(window.barcodeAutoRefreshInterval);
+        window.barcodeAutoRefreshInterval = null;
+      }
+    }, 5000);
+  }
 }
 
 // ★★★ v3.4.7: 원료 재고 현황 로드 (바코드 전용 - 수불부와 완전 분리) ★★★
@@ -42833,6 +42885,20 @@ async function autoDeductBarcode(item) {
       // 성공 토스트
       showToast(`✅ ${item.item_name} ${qty}${item.unit} (1${packUnitName}) 차감 완료`, 'success');
       
+      // ★★★ v3.6.58: 실시간 동기화 브로드캐스트 ★★★
+      try {
+        const channel = new BroadcastChannel('bv_barcode_sync');
+        channel.postMessage({
+          type: 'usage',
+          item_code: item.item_code,
+          item_name: item.item_name,
+          quantity: qty,
+          new_stock: barcodeCurrentItem.current_stock,
+          timestamp: new Date().toISOString()
+        });
+        channel.close();
+      } catch (e) { /* BroadcastChannel not supported */ }
+      
       // 성공 사운드 (선택)
       playBeepSound('success');
     } else {
@@ -43504,6 +43570,20 @@ async function submitBarcodeUsage() {
       barcodeCurrentItem.current_stock = (barcodeCurrentItem.current_stock || 0) - qty;
       document.getElementById('barcode-current-stock').textContent = formatNumber(barcodeCurrentItem.current_stock);
       
+      // ★★★ v3.6.58: 실시간 동기화 브로드캐스트 ★★★
+      try {
+        const channel = new BroadcastChannel('bv_barcode_sync');
+        channel.postMessage({
+          type: 'usage',
+          item_code: barcodeCurrentItem.item_code,
+          item_name: barcodeCurrentItem.item_name,
+          quantity: qty,
+          new_stock: barcodeCurrentItem.current_stock,
+          timestamp: new Date().toISOString()
+        });
+        channel.close();
+      } catch (e) { /* BroadcastChannel not supported */ }
+      
       // 입력 초기화
       document.getElementById('barcode-qty-input').value = '1';
       document.getElementById('barcode-memo-input').value = '';
@@ -43554,6 +43634,20 @@ async function submitBarcodeInbound() {
       // 재고 업데이트
       barcodeCurrentItem.current_stock = (barcodeCurrentItem.current_stock || 0) + qty;
       document.getElementById('barcode-current-stock').textContent = formatNumber(barcodeCurrentItem.current_stock);
+      
+      // ★★★ v3.6.58: 실시간 동기화 브로드캐스트 ★★★
+      try {
+        const channel = new BroadcastChannel('bv_barcode_sync');
+        channel.postMessage({
+          type: 'inbound',
+          item_code: barcodeCurrentItem.item_code,
+          item_name: barcodeCurrentItem.item_name,
+          quantity: qty,
+          new_stock: barcodeCurrentItem.current_stock,
+          timestamp: new Date().toISOString()
+        });
+        channel.close();
+      } catch (e) { /* BroadcastChannel not supported */ }
       
       // 입력 초기화
       document.getElementById('barcode-inbound-qty').value = '1';
@@ -50215,23 +50309,21 @@ async function renderOrderList() {
         </div>
       </div>
       
-      <!-- 제품별 합계 (생산실적용) -->
+      <!-- ★★★ v3.6.54: 채널별 총 합계 (제품별 → 채널별로 변경) ★★★ -->
       <div class="bg-white rounded-lg shadow">
         <div class="p-4 border-b">
-          <h3 class="font-bold text-gray-800"><i class="fas fa-calculator mr-2"></i>제품별 합계 (생산실적용)</h3>
+          <h3 class="font-bold text-gray-800"><i class="fas fa-store mr-2"></i>채널별 총 합계</h3>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="bg-green-50">
               <tr>
-                <th class="px-4 py-3 text-left">제품코드</th>
-                <th class="px-4 py-3 text-left">제품명</th>
-                <th class="px-4 py-3 text-right">합계 수량</th>
                 <th class="px-4 py-3 text-left">채널</th>
+                <th class="px-4 py-3 text-right">총 수량</th>
               </tr>
             </thead>
             <tbody id="order-total-body" class="divide-y">
-              <tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">-</td></tr>
+              <tr><td colspan="2" class="px-4 py-8 text-center text-gray-500">-</td></tr>
             </tbody>
           </table>
         </div>
@@ -50306,20 +50398,27 @@ async function loadOrderList() {
       `).join('');
     }
     
-    // 제품별 합계 표시
+    // ★★★ v3.6.54: 채널별 총 합계 표시 (제품별 → 채널별로 변경) ★★★
     const totalBody = document.getElementById('order-total-body');
-    const totals = summary.total_by_product || [];
-    if (totals.length === 0) {
-      totalBody.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-500">-</td></tr>';
+    const channels = summary.by_channel || [];
+    if (channels.length === 0) {
+      totalBody.innerHTML = '<tr><td colspan="2" class="px-4 py-8 text-center text-gray-500">-</td></tr>';
     } else {
-      totalBody.innerHTML = totals.map(item => `
+      // 총합계 계산
+      const grandTotal = channels.reduce((sum, ch) => sum + (ch.total_qty || 0), 0);
+      totalBody.innerHTML = channels.map(ch => `
         <tr class="hover:bg-green-50">
-          <td class="px-4 py-3 font-mono">${item.product_code}</td>
-          <td class="px-4 py-3">${item.product_name || ''}</td>
-          <td class="px-4 py-3 text-right font-bold text-green-600">${item.total_qty?.toLocaleString()}</td>
-          <td class="px-4 py-3 text-sm text-gray-500">${item.channels || ''}</td>
+          <td class="px-4 py-3">
+            <span class="px-2 py-1 rounded text-sm ${getChannelColor(ch.channel)}">${ch.channel}</span>
+          </td>
+          <td class="px-4 py-3 text-right font-bold text-green-600">${ch.total_qty?.toLocaleString()}</td>
         </tr>
-      `).join('');
+      `).join('') + `
+        <tr class="bg-gray-100 font-bold">
+          <td class="px-4 py-3">합계</td>
+          <td class="px-4 py-3 text-right text-blue-600">${grandTotal.toLocaleString()}</td>
+        </tr>
+      `;
     }
     
   } catch (error) {

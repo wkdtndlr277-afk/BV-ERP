@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { GoogleSheetsService } from '../services/GoogleSheetsService'
 
 type Bindings = {
   DB: D1Database
@@ -2766,13 +2767,15 @@ admin.post('/production-items', async (c) => {
   }
   
   try {
-    // 중복 체크
+    // ★★★ v3.6.56: 중복 체크 - 생산명 + 카테고리 조합으로 변경 ★★★
+    // 같은 생산명이라도 카테고리(제품군)가 다르면 등록 가능
     const existing = await env.DB.prepare(`
-      SELECT production_code FROM production_items WHERE production_name = ?
-    `).bind(production_name).first()
+      SELECT production_code, category FROM production_items 
+      WHERE production_name = ? AND category = ?
+    `).bind(production_name, category || '제품').first()
     
     if (existing) {
-      return c.json({ success: false, error: '이미 등록된 생산명입니다' }, 400)
+      return c.json({ success: false, error: `이미 등록된 생산명입니다 (카테고리: ${(existing as any).category})` }, 400)
     }
     
     // 새 코드 생성 (제공된 코드가 없는 경우)
@@ -8571,6 +8574,142 @@ admin.get('/migrate-product-catalog', async (c) => {
     })
   } catch (error: any) {
     return c.json({ success: false, error: error.message, results }, 500)
+  }
+})
+
+// ★★★ v3.6.55: 구글시트 원료입고 → D1 수동 동기화 API ★★★
+// 구글시트에서 관리하는 원료입고 데이터를 D1 master/transactions에 동기화
+admin.post('/sync/sheets-inbound-to-d1', async (c) => {
+  try {
+    const { env } = c
+    const body = await c.req.json<{ 
+      confirm?: boolean; 
+      item_codes?: string[];  // 특정 원료만 동기화
+    }>().catch(() => ({}))
+    
+    const confirm = body?.confirm
+    const targetCodes = body?.item_codes || []
+    
+    // 구글시트 원료입고 조회
+    const clientEmail = env.GOOGLE_CLIENT_EMAIL
+    const privateKey = env.GOOGLE_PRIVATE_KEY
+    if (!clientEmail || !privateKey) {
+      return c.json({ success: false, error: '구글 API 인증 정보가 없습니다.' }, 400)
+    }
+    const formattedKey = privateKey.replace(/\\n/g, '\n')
+    const sheetsService = new GoogleSheetsService(clientEmail, formattedKey)
+    const inboundData = await sheetsService.readSheet('원료입고', 'A2:I')
+    
+    // 원료입고 시트: A:입고일, B:원료코드, C:원료명, D:LOT, E:수량, F:단위, G:공급업체, H:소비기한, I:잔량
+    const itemMap = new Map<string, { 
+      item_name: string; 
+      total_remain: number; 
+      unit: string;
+      lots: { date: string; lot: string; qty: number; remain: number; expiry: string }[]
+    }>()
+    
+    for (const row of inboundData || []) {
+      const itemCode = row[1]
+      const itemName = row[2]
+      const lot = row[3]
+      const qty = parseFloat(row[4]) || 0
+      const unit = row[5] || 'kg'
+      const expiry = row[7]
+      const remain = parseFloat(row[8]) || 0
+      const inboundDate = row[0]
+      
+      if (!itemCode) continue
+      if (targetCodes.length > 0 && !targetCodes.includes(itemCode)) continue
+      if (remain <= 0) continue  // 잔량 0인 건 스킵
+      
+      if (!itemMap.has(itemCode)) {
+        itemMap.set(itemCode, { item_name: itemName, total_remain: 0, unit, lots: [] })
+      }
+      const item = itemMap.get(itemCode)!
+      item.total_remain += remain
+      item.lots.push({ date: inboundDate, lot, qty, remain, expiry })
+    }
+    
+    // 미리보기 모드
+    if (!confirm) {
+      const preview = Array.from(itemMap.entries()).map(([code, data]) => ({
+        item_code: code,
+        item_name: data.item_name,
+        total_remain: Math.round(data.total_remain * 1000) / 1000,
+        unit: data.unit,
+        lot_count: data.lots.length
+      }))
+      
+      return c.json({
+        success: true,
+        preview: true,
+        message: `${preview.length}개 원료의 재고를 D1에 동기화합니다. confirm: true로 실행하세요.`,
+        items: preview
+      })
+    }
+    
+    // 실행 모드
+    const results: string[] = []
+    const today = new Date().toISOString().split('T')[0]
+    
+    for (const [itemCode, data] of itemMap) {
+      try {
+        // 1. master 테이블 확인/생성
+        const existing = await env.DB.prepare(
+          'SELECT item_code, current_stock FROM master WHERE item_code = ?'
+        ).bind(itemCode).first<{ item_code: string; current_stock: number }>()
+        
+        if (!existing) {
+          // master에 없으면 생성
+          await env.DB.prepare(`
+            INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, created_at, updated_at)
+            VALUES (?, ?, '원료', ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+          `).bind(itemCode, data.item_name, data.unit, data.total_remain).run()
+          results.push(`${itemCode} (${data.item_name}): master 신규 등록 - ${data.total_remain}${data.unit}`)
+        } else {
+          // master에 있으면 재고 업데이트
+          await env.DB.prepare(`
+            UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+          `).bind(data.total_remain, itemCode).run()
+          results.push(`${itemCode} (${data.item_name}): master 재고 갱신 - ${existing.current_stock} → ${data.total_remain}${data.unit}`)
+        }
+        
+        // 2. transactions에 현재 재고 기록 확인
+        const transSum = await env.DB.prepare(`
+          SELECT COALESCE(SUM(quantity), 0) as total FROM transactions WHERE item_code = ?
+        `).bind(itemCode).first<{ total: number }>()
+        
+        const currentTransStock = Number(transSum?.total) || 0
+        const diff = data.total_remain - currentTransStock
+        
+        console.log(`[sync] ${itemCode}: transStock=${currentTransStock}, sheetRemain=${data.total_remain}, diff=${diff}`)
+        
+        // 항상 transactions에 재고조정 추가 (기존 데이터가 없거나 차이가 있으면)
+        if (currentTransStock === 0 || Math.abs(diff) > 0.001) {
+          // 차이가 있으면 재고조정 트랜잭션 추가
+          await env.DB.prepare(`
+            INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+            VALUES (?, ?, '재고조정', ?, ?)
+          `).bind(today, itemCode, diff, `[구글시트 동기화] 잔량 ${data.total_remain}${data.unit}로 조정`).run()
+          results.push(`${itemCode}: transactions 조정 - ${currentTransStock.toFixed(3)} + ${diff.toFixed(3)} = ${data.total_remain}${data.unit}`)
+        } else {
+          results.push(`${itemCode}: transactions 변경 없음 (현재=${currentTransStock.toFixed(3)}, 시트=${data.total_remain})`)
+        }
+        
+      } catch (itemError: any) {
+        results.push(`${itemCode}: 오류 - ${itemError.message}`)
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `${itemMap.size}개 원료 동기화 완료`,
+      results
+    })
+    
+  } catch (error: any) {
+    console.error('[sync/sheets-inbound-to-d1] Error:', error)
+    return c.json({ success: false, error: error.message }, 500)
   }
 })
 

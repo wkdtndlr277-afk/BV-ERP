@@ -114,19 +114,14 @@ app.post('/', async (c) => {
     return c.json({ success: false, error: 'ERP 제품마스터 코드를 선택해주세요.' }, 400)
   }
   
-  // ★★★ v3.5.60: production_code를 product_code로 사용 (코드 일치) ★★★
+  // ★★★ v3.6.56: production_code를 product_code로 사용 (코드 일치) ★★★
   const product_code = production_code
   
-  // 제품코드 중복 체크
-  const existingCode = await c.env.DB.prepare(`
-    SELECT id FROM Product_Catalog WHERE product_code = ?
-  `).bind(product_code).first()
+  // ★★★ v3.6.56: 제품코드(production_code) 중복 체크 제거 ★★★
+  // 같은 ERP 생산품목이 여러 바코드/채널로 판매될 수 있으므로 중복 허용
+  // 예: PR119 "72시간 저당 올리브 치아바타 슬랩" → 쿠팡용, 컬리용 각각 등록 가능
   
-  if (existingCode) {
-    return c.json({ success: false, error: `제품코드 '${product_code}'는 이미 등록되어 있습니다.` }, 400)
-  }
-  
-  // 바코드 중복 체크
+  // 바코드 중복 체크 (바코드는 고유해야 함)
   if (barcode) {
     const existing = await c.env.DB.prepare(`
       SELECT id FROM Product_Catalog WHERE barcode = ?
@@ -211,47 +206,51 @@ app.put('/:id', async (c) => {
     }
   }
   
-  // ★★★ v3.5.60: production_code 변경 시 product_code도 함께 변경 ★★★
+  // ★★★ v3.6.57: production_code만 업데이트 (product_code는 유지) ★★★
+  // product_code는 제품 카탈로그의 고유 식별자로 유지
+  // production_code는 ERP 생산품목 연결용으로만 사용 (중복 허용)
   const newProductionCode = production_code !== undefined ? production_code : existing.production_code
-  const newProductCode = newProductionCode || existing.product_code  // production_code가 있으면 동기화
   
-  await c.env.DB.prepare(`
-    UPDATE Product_Catalog SET
-      product_code = ?,
-      product_name = ?,
-      manufacture_report = ?,
-      product_image = ?,
-      process_number = ?,
-      barcode = ?,
-      expiry_info = ?,
-      storage_method = ?,
-      sales_channel = ?,
-      memo = ?,
-      is_active = ?,
-      production_code = ?,
-      production_name = ?,
-      oven_temperature = ?,
-      process_type = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `).bind(
-    newProductCode,
-    product_name || existing.product_name,
-    manufacture_report !== undefined ? manufacture_report : existing.manufacture_report,
-    product_image !== undefined ? product_image : existing.product_image,
-    process_number !== undefined ? process_number : existing.process_number,
-    barcode !== undefined ? barcode : existing.barcode,
-    expiry_info !== undefined ? expiry_info : existing.expiry_info,
-    storage_method !== undefined ? storage_method : existing.storage_method,
-    sales_channel !== undefined ? sales_channel : existing.sales_channel,
-    memo !== undefined ? memo : existing.memo,
-    is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
-    newProductionCode,
-    production_name !== undefined ? production_name : existing.production_name,
-    oven_temperature !== undefined ? oven_temperature : existing.oven_temperature,
-    process_type !== undefined ? process_type : existing.process_type,
-    id
-  ).run()
+  try {
+    await c.env.DB.prepare(`
+      UPDATE Product_Catalog SET
+        product_name = ?,
+        manufacture_report = ?,
+        product_image = ?,
+        process_number = ?,
+        barcode = ?,
+        expiry_info = ?,
+        storage_method = ?,
+        sales_channel = ?,
+        memo = ?,
+        is_active = ?,
+        production_code = ?,
+        production_name = ?,
+        oven_temperature = ?,
+        process_type = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(
+      product_name || existing.product_name,
+      manufacture_report !== undefined ? manufacture_report : existing.manufacture_report,
+      product_image !== undefined ? product_image : existing.product_image,
+      process_number !== undefined ? process_number : existing.process_number,
+      barcode !== undefined ? barcode : existing.barcode,
+      expiry_info !== undefined ? expiry_info : existing.expiry_info,
+      storage_method !== undefined ? storage_method : existing.storage_method,
+      sales_channel !== undefined ? sales_channel : existing.sales_channel,
+      memo !== undefined ? memo : existing.memo,
+      is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
+      newProductionCode,
+      production_name !== undefined ? production_name : existing.production_name,
+      oven_temperature !== undefined ? oven_temperature : existing.oven_temperature,
+      process_type !== undefined ? process_type : existing.process_type,
+      id
+    ).run()
+  } catch (error: any) {
+    console.error('Product update error:', error)
+    return c.json({ success: false, error: `수정 실패: ${error.message}` }, 500)
+  }
   
   return c.json({
     success: true,

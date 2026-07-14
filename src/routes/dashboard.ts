@@ -23,152 +23,89 @@ const dashboardRoutes = new Hono<{ Bindings: Bindings }>();
 dashboardRoutes.get('/', async (c) => {
   const today = new Date().toISOString().split('T')[0];
   
-  // ★★★ v3.6.46: 일별수불부 시트 기반 안전재고 미만 품목 조회 ★★★
+  // ★★★ v3.6.61: 바코드 재고관리(D1 inbound 잔량) 기반 안전재고 체크 ★★★
   let lowStockItems: any[] = [];
   let lowStockCount = 0;
   let expiringLots: any[] = [];
   let expiringCount = 0;
   
-  const service = getSheetService(c);
-  if (service) {
-    try {
-      // 1. ★★★ 일별수불부 시트에서 원료별 최신 현재고 조회 ★★★
-      // 일별수불부 컬럼: A:일자, B:원료코드, C:원료명, D:전일재고, E:입고량, F:사용량, G:현재고, H:단위
-      const dailyStockData = await service.readSheet('일별수불부', 'A2:H50000');
-      const currentStockMap = new Map<string, { name: string; unit: string; stock: number; date: string }>();
-      
-      for (const row of dailyStockData || []) {
-        const dateStr = String(row[0] || '').trim().replace(/^'/, '');
-        const itemCode = String(row[1] || '').trim();
-        const itemName = String(row[2] || '').trim();
-        const currentStock = parseFloat(row[6]) || 0;  // G컬럼: 현재고
-        const unit = String(row[7] || 'kg').trim();
-        
-        if (!itemCode || !dateStr) continue;
-        
-        // 각 원료별로 가장 최신 날짜의 현재고만 저장
-        const existing = currentStockMap.get(itemCode);
-        if (!existing || dateStr > existing.date) {
-          currentStockMap.set(itemCode, { 
-            name: itemName, 
-            unit, 
-            stock: currentStock,
-            date: dateStr
-          });
-        }
-      }
-      
-      // 2. D1에서 안전재고 설정 조회 (원료만, safety_stock > 0)
-      const safetyStockData = await c.env.DB.prepare(`
-        SELECT item_code, item_name, safety_stock, unit
-        FROM master
-        WHERE category = '원료' AND safety_stock > 0
-      `).all<{ item_code: string; item_name: string; safety_stock: number; unit: string }>();
-      
-      // 3. 안전재고 미만 품목 필터링 (일별수불부 현재고 기준)
-      for (const item of safetyStockData.results || []) {
-        const current = currentStockMap.get(item.item_code);
-        const currentStock = current?.stock ?? 0;  // 일별수불부에 없으면 0
-        
-        if (currentStock < item.safety_stock) {
-          lowStockItems.push({
-            item_code: item.item_code,
-            item_name: current?.name || item.item_name,
-            category: '원료',
-            unit: current?.unit || item.unit || 'kg',
-            current_stock: Math.round(currentStock * 100) / 100,
-            safety_stock: item.safety_stock,
-            shortage: Math.round((item.safety_stock - currentStock) * 100) / 100,
-            last_date: current?.date || '미등록'  // 최신 수불부 날짜
-          });
-        }
-      }
-      
-      // 부족량 순으로 정렬
-      lowStockItems.sort((a, b) => b.shortage - a.shortage);
-      lowStockCount = lowStockItems.length;
-      
-      // 4. ★★★ 구글시트 원료입고에서 유통기한 30일 이내 LOT 조회 ★★★
-      // 원료입고 컬럼: A:입고일, B:원료코드, C:원료명, D:LOT번호, E:입고량, F:단위, G:공급업체, H:소비기한, I:잔량
-      const inboundData = await service.readSheet('원료입고', 'A2:I5000');
-      const todayDate = new Date(today);
-      for (const row of inboundData || []) {
-        const itemCode = String(row[1] || '').trim();
-        const itemName = String(row[2] || '').trim();
-        const lotNumber = String(row[3] || '').trim();
-        const remainQty = parseFloat(row[8]) || 0;
-        const expiryDateStr = String(row[7] || '').trim();  // H컬럼: 소비기한
-        
-        if (!itemCode || remainQty <= 0 || !expiryDateStr) continue;
-        
-        // 날짜 파싱
-        let expiryDate: Date | null = null;
-        if (/^\d{4}-\d{2}-\d{2}$/.test(expiryDateStr)) {
-          expiryDate = new Date(expiryDateStr);
-        } else if (/^\d{4}\.\d{2}\.\d{2}$/.test(expiryDateStr)) {
-          expiryDate = new Date(expiryDateStr.replace(/\./g, '-'));
-        }
-        
-        if (!expiryDate || isNaN(expiryDate.getTime())) continue;
-        
-        const daysUntilExpiry = Math.floor((expiryDate.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
-        
-        if (daysUntilExpiry >= 0 && daysUntilExpiry <= 30) {
-          expiringLots.push({
-            item_code: itemCode,
-            item_name: itemName,
-            lot_number: lotNumber,
-            remain_qty: remainQty,
-            expiry_date: expiryDateStr,
-            days_until_expiry: daysUntilExpiry,
-            category: '원료'
-          });
-        }
-      }
-      
-      // 유통기한순 정렬
-      expiringLots.sort((a, b) => a.days_until_expiry - b.days_until_expiry);
-      expiringCount = expiringLots.length;
-      
-    } catch (sheetError: any) {
-      console.error('[dashboard] 구글시트 조회 오류:', sheetError.message);
-      // 구글시트 오류 시 D1 폴백
-    }
-  }
-  
-  // D1 폴백 (구글시트 데이터 없을 때)
-  if (lowStockItems.length === 0) {
-    const d1LowStock = await c.env.DB.prepare(`
-      SELECT m.item_code, m.item_name, m.category, m.unit, m.current_stock, m.safety_stock,
-             (m.safety_stock - m.current_stock) as shortage
+  try {
+    // 1. ★★★ D1 inbound 테이블에서 원료별 실재고(잔량 합계) 조회 ★★★
+    const realStockResult = await c.env.DB.prepare(`
+      SELECT 
+        m.item_code,
+        m.item_name,
+        m.unit,
+        m.safety_stock,
+        COALESCE(SUM(i.remain_qty), 0) as real_stock
       FROM master m
-      WHERE m.current_stock < m.safety_stock
-        AND m.safety_stock > 0
-        AND m.category = '원료'
-      ORDER BY shortage DESC
-    `).all();
-    lowStockItems = d1LowStock.results || [];
+      LEFT JOIN inbound i ON m.item_code = i.item_code 
+        AND i.remain_qty > 0 
+        AND i.quality_status = '합격'
+      WHERE m.category = '원료' AND m.safety_stock > 0
+      GROUP BY m.item_code, m.item_name, m.unit, m.safety_stock
+      HAVING real_stock < m.safety_stock
+      ORDER BY (m.safety_stock - real_stock) DESC
+    `).all<{ item_code: string; item_name: string; unit: string; safety_stock: number; real_stock: number }>();
+    
+    // 2. 안전재고 미만 품목 리스트 생성
+    for (const item of realStockResult.results || []) {
+      lowStockItems.push({
+        item_code: item.item_code,
+        item_name: item.item_name,
+        category: '원료',
+        unit: item.unit || 'kg',
+        current_stock: Math.round(item.real_stock * 100) / 100,
+        safety_stock: item.safety_stock,
+        shortage: Math.round((item.safety_stock - item.real_stock) * 100) / 100,
+        source: 'barcode'  // 바코드 재고 기준임을 표시
+      });
+    }
     lowStockCount = lowStockItems.length;
+  } catch (dbError) {
+    console.error('D1 stock check error:', dbError);
   }
   
-  if (expiringLots.length === 0) {
+  // ★★★ v3.6.61: D1 inbound 테이블에서 유통기한 30일 이내 LOT 조회 ★★★
+  try {
     const d1Expiring = await c.env.DB.prepare(`
-      SELECT i.*, m.item_name, m.category, m.unit,
-             CAST(julianday(i.expiry_date) - julianday(?) AS INTEGER) as days_until_expiry
+      SELECT 
+        i.item_code,
+        m.item_name,
+        i.lot_number,
+        i.remain_qty,
+        i.expiry_date,
+        m.unit,
+        CAST(julianday(i.expiry_date) - julianday(?) AS INTEGER) as days_until_expiry
       FROM inbound i
       JOIN master m ON i.item_code = m.item_code
       WHERE i.remain_qty > 0 
         AND i.quality_status = '합격'
-        AND m.category = '원료'
-        AND julianday(i.expiry_date) - julianday(?) <= 30
-        AND julianday(i.expiry_date) - julianday(?) >= 0
+        AND i.expiry_date IS NOT NULL
+        AND julianday(i.expiry_date) - julianday(?) BETWEEN 0 AND 30
       ORDER BY i.expiry_date ASC
-    `).bind(today, today, today).all();
-    expiringLots = d1Expiring.results || [];
+      LIMIT 50
+    `).bind(today, today).all();
+    
+    for (const lot of d1Expiring.results || []) {
+      expiringLots.push({
+        item_code: lot.item_code,
+        item_name: lot.item_name,
+        lot_number: lot.lot_number,
+        remain_qty: lot.remain_qty,
+        expiry_date: lot.expiry_date,
+        days_until_expiry: lot.days_until_expiry,
+        unit: lot.unit || 'kg',
+        category: '원료',
+        source: 'barcode'
+      });
+    }
     expiringCount = expiringLots.length;
+  } catch (expiryError) {
+    console.error('D1 expiry check error:', expiryError);
   }
   
-  // 오늘 원료 사용량
+  // 오늘 원료 사용량 (D1 transactions 기준)
   const todayUsage = await c.env.DB.prepare(`
     SELECT t.item_code, m.item_name, m.unit, SUM(ABS(t.quantity)) as total_qty
     FROM transactions t

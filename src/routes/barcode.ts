@@ -234,168 +234,136 @@ barcodeRoutes.get('/scan', async (c) => {
   }
 });
 
-// 사용 등록 (재고 차감) - FIFO 기반
+// ★★★ v3.6.62: 연속 스캔 중복 방지 + 고속 차감 ★★★
+// 메모리 기반 요청 중복 체크 (1초 이내 동일 요청 방지)
+const recentRequests = new Map<string, number>();
+
 barcodeRoutes.post('/usage', async (c) => {
   try {
     const body = await c.req.json();
-    const { item_code, quantity, lot_number, memo } = body;
+    const { item_code, quantity, lot_number, memo, request_id } = body;
     
     if (!item_code || !quantity || quantity <= 0) {
       return c.json({ success: false, error: '품목 코드와 수량을 입력해주세요.' }, 400);
     }
     
-    const today = new Date().toISOString().split('T')[0];
+    // ★★★ 연속 스캔 중복 방지 (동일 품목+수량 1초 이내 재요청 차단) ★★★
+    const requestKey = `${item_code}_${quantity}_${request_id || ''}`;
+    const now_ms = Date.now();
+    const lastRequest = recentRequests.get(requestKey);
     
-    // 품목 정보 조회 (원료/부자재 또는 제품 구분)
-    let itemInfo: any = await c.env.DB.prepare(
-      'SELECT item_code, item_name, category, unit FROM master WHERE item_code = ?'
-    ).bind(item_code).first();
+    if (lastRequest && (now_ms - lastRequest) < 1000) {
+      return c.json({ 
+        success: false, 
+        error: '연속 스캔 감지 - 잠시 후 다시 시도하세요',
+        duplicate: true 
+      }, 429);
+    }
+    recentRequests.set(requestKey, now_ms);
     
-    let isProduct = false;
-    
-    if (!itemInfo) {
-      itemInfo = await c.env.DB.prepare(
-        'SELECT item_code, item_name, category, unit FROM supplies WHERE item_code = ?'
-      ).bind(item_code).first();
+    // 오래된 요청 정리 (5초 이상)
+    for (const [key, time] of recentRequests.entries()) {
+      if (now_ms - time > 5000) recentRequests.delete(key);
     }
     
-    if (!itemInfo) {
-      itemInfo = await c.env.DB.prepare(`
-        SELECT production_code as item_code, 
-               COALESCE(alias1, production_name) as item_name,
-               '제품' as category, 
-               COALESCE(unit, 'EA') as unit
-        FROM production_items WHERE production_code = ?
-      `).bind(item_code).first();
-      isProduct = !!itemInfo;
-    }
+    const today = getKSTDate();
+    const now = getKSTDateTime();
+    
+    // ★ 1단계: 품목정보 + LOT정보 병렬 조회 ★
+    const [masterResult, suppliesResult, productResult, inboundLots, productionLots] = await Promise.all([
+      c.env.DB.prepare('SELECT item_code, item_name, category, unit FROM master WHERE item_code = ?').bind(item_code).first(),
+      c.env.DB.prepare('SELECT item_code, item_name, category, unit FROM supplies WHERE item_code = ?').bind(item_code).first(),
+      c.env.DB.prepare(`SELECT production_code as item_code, COALESCE(alias1, production_name) as item_name, '제품' as category, COALESCE(unit, 'EA') as unit FROM production_items WHERE production_code = ?`).bind(item_code).first(),
+      lot_number 
+        ? c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM inbound WHERE item_code = ? AND lot_number = ? AND remain_qty > 0 AND quality_status = '합격'`).bind(item_code, lot_number).all()
+        : c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM inbound WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격' ORDER BY expiry_date ASC, inbound_date ASC LIMIT 10`).bind(item_code).all(),
+      lot_number
+        ? c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM production_inbound WHERE production_code = ? AND lot_number = ? AND remain_qty > 0 AND quality_status = '합격'`).bind(item_code, lot_number).all()
+        : c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM production_inbound WHERE production_code = ? AND remain_qty > 0 AND quality_status = '합격' ORDER BY expiry_date ASC, inbound_date ASC LIMIT 10`).bind(item_code).all()
+    ]);
+    
+    // 품목 정보 결정
+    let itemInfo: any = masterResult || suppliesResult || productResult;
+    const isProduct = !masterResult && !suppliesResult && !!productResult;
     
     if (!itemInfo) {
       return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
     }
     
+    // ★ 2단계: LOT 차감 계산 (메모리에서) ★
+    const lotsToUse = isProduct ? (productionLots.results || []) : (inboundLots.results || []);
     let remainingQty = quantity;
     const usedLots: any[] = [];
+    const batchStatements: any[] = [];
+    
+    for (const lot of lotsToUse) {
+      if (remainingQty <= 0) break;
+      const useQty = Math.min(remainingQty, lot.remain_qty as number);
+      usedLots.push({ id: lot.id, lot_number: lot.lot_number, used_qty: useQty });
+      remainingQty -= useQty;
+    }
+    
+    const actualUsed = quantity - remainingQty;
+    if (actualUsed <= 0) {
+      return c.json({ success: false, error: '차감 가능한 재고가 없습니다.' }, 400);
+    }
+    
+    // ★ 3단계: 모든 UPDATE/INSERT를 Batch로 한 번에 실행 ★
+    const lotInfo = usedLots.map(l => `${l.lot_number}(${l.used_qty})`).join(', ');
     
     if (isProduct) {
-      // 제품 사용 - production_inbound에서 차감
-      let lotsToUse: any[];
-      
-      if (lot_number) {
-        // 특정 LOT 지정
-        const lot = await c.env.DB.prepare(`
-          SELECT * FROM production_inbound 
-          WHERE production_code = ? AND lot_number = ? AND remain_qty > 0 AND quality_status = '합격'
-        `).bind(item_code, lot_number).first();
-        lotsToUse = lot ? [lot] : [];
-      } else {
-        // FIFO 순서로 LOT 선택
-        const lotResult = await c.env.DB.prepare(`
-          SELECT * FROM production_inbound 
-          WHERE production_code = ? AND remain_qty > 0 AND quality_status = '합격'
-          ORDER BY expiry_date ASC, inbound_date ASC
-        `).bind(item_code).all();
-        lotsToUse = lotResult.results || [];
+      // 제품: LOT 차감 + 재고 차감 + 트랜잭션
+      for (const lot of usedLots) {
+        batchStatements.push(
+          c.env.DB.prepare(`UPDATE production_inbound SET remain_qty = remain_qty - ? WHERE id = ?`).bind(lot.used_qty, lot.id)
+        );
       }
-      
-      for (const lot of lotsToUse) {
-        if (remainingQty <= 0) break;
-        
-        const useQty = Math.min(remainingQty, lot.remain_qty);
-        
-        // LOT 잔량 차감
-        await c.env.DB.prepare(`
-          UPDATE production_inbound SET remain_qty = remain_qty - ? WHERE id = ?
-        `).bind(useQty, lot.id).run();
-        
-        // 트랜잭션 기록
-        await c.env.DB.prepare(`
-          INSERT INTO production_transactions 
-          (trans_date, production_code, trans_type, quantity, lot_number, memo, created_at)
-          VALUES (?, ?, '출고', ?, ?, ?, '${getKSTDateTime()}')
-        `).bind(today, item_code, -useQty, lot.lot_number, memo || '바코드 스캔 사용등록').run();
-        
-        usedLots.push({ lot_number: lot.lot_number, used_qty: useQty });
-        remainingQty -= useQty;
-      }
-      
-      // production_items current_stock 업데이트
-      await c.env.DB.prepare(`
-        UPDATE production_items SET current_stock = current_stock - ? WHERE production_code = ?
-      `).bind(quantity - remainingQty, item_code).run();
-      
+      batchStatements.push(
+        c.env.DB.prepare(`UPDATE production_items SET current_stock = current_stock - ? WHERE production_code = ?`).bind(actualUsed, item_code)
+      );
+      batchStatements.push(
+        c.env.DB.prepare(`INSERT INTO production_transactions (trans_date, production_code, trans_type, quantity, lot_number, memo, created_at) VALUES (?, ?, '출고', ?, ?, ?, ?)`).bind(today, item_code, -actualUsed, lotInfo, memo || '바코드 스캔', now)
+      );
     } else {
-      // 원료/부자재 사용 - inbound에서 차감
-      let lotsToUse: any[];
-      
-      if (lot_number) {
-        // 특정 LOT 지정
-        const lot = await c.env.DB.prepare(`
-          SELECT * FROM inbound 
-          WHERE item_code = ? AND lot_number = ? AND remain_qty > 0 AND quality_status = '합격'
-        `).bind(item_code, lot_number).first();
-        lotsToUse = lot ? [lot] : [];
-      } else {
-        // FIFO 순서로 LOT 선택
-        const lotResult = await c.env.DB.prepare(`
-          SELECT * FROM inbound 
-          WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
-          ORDER BY expiry_date ASC, inbound_date ASC
-        `).bind(item_code).all();
-        lotsToUse = lotResult.results || [];
+      // 원료/부자재: LOT 차감 + 재고 차감 + 트랜잭션
+      for (const lot of usedLots) {
+        batchStatements.push(
+          c.env.DB.prepare(`UPDATE inbound SET remain_qty = remain_qty - ? WHERE id = ?`).bind(lot.used_qty, lot.id)
+        );
       }
-      
-      for (const lot of lotsToUse) {
-        if (remainingQty <= 0) break;
-        
-        const useQty = Math.min(remainingQty, lot.remain_qty);
-        
-        // LOT 잔량 차감
-        await c.env.DB.prepare(`
-          UPDATE inbound SET remain_qty = remain_qty - ? WHERE id = ?
-        `).bind(useQty, lot.id).run();
-        
-        // 트랜잭션 기록
-        await c.env.DB.prepare(`
-          INSERT INTO transactions 
-          (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
-          VALUES (?, ?, '사용', ?, ?, ?, '${getKSTDateTime()}')
-        `).bind(today, item_code, -useQty, lot.lot_number, memo || '바코드 스캔 사용등록').run();
-        
-        usedLots.push({ lot_number: lot.lot_number, used_qty: useQty });
-        remainingQty -= useQty;
-      }
-      
-      // master/supplies current_stock 업데이트
-      const actualUsed = quantity - remainingQty;
-      await c.env.DB.prepare(`
-        UPDATE master SET current_stock = current_stock - ? WHERE item_code = ?
-      `).bind(actualUsed, item_code).run();
-      
-      await c.env.DB.prepare(`
-        UPDATE supplies SET current_stock = current_stock - ? WHERE item_code = ?
-      `).bind(actualUsed, item_code).run();
+      batchStatements.push(
+        c.env.DB.prepare(`UPDATE master SET current_stock = current_stock - ? WHERE item_code = ?`).bind(actualUsed, item_code)
+      );
+      batchStatements.push(
+        c.env.DB.prepare(`UPDATE supplies SET current_stock = current_stock - ? WHERE item_code = ?`).bind(actualUsed, item_code)
+      );
+      batchStatements.push(
+        c.env.DB.prepare(`INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at) VALUES (?, ?, '사용', ?, ?, ?, ?)`).bind(today, item_code, -actualUsed, lotInfo, memo || '바코드 스캔', now)
+      );
     }
+    
+    // ★ Batch 실행 (1회 DB 호출로 모든 쿼리 처리) ★
+    await c.env.DB.batch(batchStatements);
     
     if (remainingQty > 0) {
       return c.json({
         success: true,
-        message: `부분 차감 완료: ${quantity - remainingQty} 사용됨 (재고 부족으로 ${remainingQty} 미차감)`,
-        used_qty: quantity - remainingQty,
+        message: `부분 차감: ${actualUsed}${itemInfo.unit} (재고부족 ${remainingQty} 미차감)`,
+        used_qty: actualUsed,
         remaining_qty: remainingQty,
-        used_lots: usedLots
+        used_lots: usedLots.map(l => ({ lot_number: l.lot_number, used_qty: l.used_qty }))
       });
     }
     
     return c.json({
       success: true,
-      message: `${itemInfo.item_name} ${quantity}${itemInfo.unit} 사용 등록 완료`,
+      message: `${itemInfo.item_name} ${quantity}${itemInfo.unit} 차감 완료`,
       used_qty: quantity,
-      used_lots: usedLots
+      used_lots: usedLots.map(l => ({ lot_number: l.lot_number, used_qty: l.used_qty }))
     });
     
   } catch (error: any) {
-    console.error('Usage registration error:', error);
+    console.error('Usage error:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });
@@ -1611,12 +1579,12 @@ barcodeRoutes.get('/material-inventory', async (c) => {
   }
 });
 
-// ★★★ v3.4.7: 원료 재고 직접 수정 (바코드 재고관리 전용) ★★★
-// 일별/월별 수불부에 영향 없음 - inbound 테이블만 조정
+// ★★★ v3.6.62: 바코드 재고 직접 수정 (일별수불부 영향 없음!) ★★★
+// transactions 테이블에 기록하지 않고 inbound만 조정 → 일별수불부 계산에 포함 안됨
 barcodeRoutes.post('/adjust-stock', async (c) => {
   try {
     const body = await c.req.json();
-    const { item_code, new_stock, reason, memo, adjust_type } = body;
+    const { item_code, new_stock, reason, memo } = body;
     
     if (!item_code || new_stock === undefined || new_stock === null) {
       return c.json({ success: false, error: '품목코드와 수정할 재고량을 입력해주세요.' }, 400);
@@ -1626,30 +1594,22 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
       return c.json({ success: false, error: '재고량은 0 이상이어야 합니다.' }, 400);
     }
     
-    // ★★★ v3.4.17: 한국 시간 기준 오늘/어제 계산 ★★★
     const today = getKSTDate();
     const timestamp = getKSTDateTime();
     
-    // 전일재고 수정 시 어제 날짜 사용
-    const yesterday = new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().split('T')[0];
-    
-    // 조정 유형에 따라 적용 날짜 결정
-    const adjustDate = adjust_type === 'previous' ? yesterdayStr : today;
-    
-    // 품목 정보 확인 (원료만)
+    // 품목 정보 확인 (원료/부자재)
     const itemInfo = await c.env.DB.prepare(`
-      SELECT item_code, item_name, unit FROM master WHERE item_code = ? AND category = '원료'
+      SELECT item_code, item_name, unit, category FROM master WHERE item_code = ?
     `).bind(item_code).first<any>();
     
     if (!itemInfo) {
-      return c.json({ success: false, error: '원료 품목을 찾을 수 없습니다.' }, 404);
+      return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
     }
     
-    // 현재 재고 계산 (inbound remain_qty SUM)
+    // 현재 실재고 계산 (inbound remain_qty SUM)
     const stockResult = await c.env.DB.prepare(`
-      SELECT COALESCE(SUM(remain_qty), 0) as current_stock FROM inbound WHERE item_code = ? AND remain_qty > 0
+      SELECT COALESCE(SUM(remain_qty), 0) as current_stock FROM inbound 
+      WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
     `).bind(item_code).first<any>();
     
     const currentStock = parseFloat(stockResult?.current_stock) || 0;
@@ -1659,80 +1619,91 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
       return c.json({ success: true, message: '재고 변동이 없습니다.', adjusted: false });
     }
     
-    // 조정 사유 텍스트
-    const reasonText = reason || '바코드 재고관리 조정';
+    const reasonText = reason || '바코드 재고 수정';
     const fullMemo = memo ? `${reasonText}: ${memo}` : reasonText;
     
-    // ★★★ v3.4.17: 전일재고/현재재고에 따라 다른 trans_type 사용 ★★★
-    const transType = adjust_type === 'previous' 
-      ? (adjustQty > 0 ? '전일조정(+)' : '전일조정(-)') 
-      : (adjustQty > 0 ? '바코드조정(+)' : '바코드조정(-)');
+    // ★★★ 핵심: transactions 테이블에 기록하지 않음 → 일별수불부 영향 없음 ★★★
+    const batchStatements: any[] = [];
     
     if (adjustQty > 0) {
-      // 재고 증가: 새 LOT으로 입고 처리
-      const lotNumber = `ADJ-${adjustDate.replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
+      // 재고 증가: 조정용 LOT 생성 (inbound에만 추가)
+      const lotNumber = `BADJ-${today.replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
       
-      await c.env.DB.prepare(`
-        INSERT INTO inbound (lot_number, item_code, inbound_date, origin_qty, remain_qty, quality_status, storage_location, created_at)
-        VALUES (?, ?, ?, ?, ?, '합격', ?, '${getKSTDateTime()}')
-      `).bind(lotNumber, item_code, adjustDate, adjustQty, adjustQty, fullMemo).run();
-      
-      // 조정 거래 기록
-      await c.env.DB.prepare(`
-        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, '${getKSTDateTime()}')
-      `).bind(adjustDate, item_code, transType, adjustQty, lotNumber, fullMemo).run();
+      batchStatements.push(
+        c.env.DB.prepare(`
+          INSERT INTO inbound (lot_number, item_code, inbound_date, origin_qty, remain_qty, quality_status, storage_location, memo, created_at)
+          VALUES (?, ?, ?, ?, ?, '합격', '바코드조정', ?, ?)
+        `).bind(lotNumber, item_code, today, adjustQty, adjustQty, fullMemo, timestamp)
+      );
       
     } else {
-      // 재고 감소: 기존 LOT에서 FIFO 차감
-      let remainingDeduct = Math.abs(adjustQty);
-      
+      // 재고 감소: 기존 LOT에서 FIFO 차감 (inbound만 수정)
       const lots = await c.env.DB.prepare(`
         SELECT id, lot_number, remain_qty FROM inbound 
-        WHERE item_code = ? AND remain_qty > 0 
+        WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
         ORDER BY expiry_date ASC, inbound_date ASC
       `).bind(item_code).all<any>();
       
+      let remainingDeduct = Math.abs(adjustQty);
+      
       for (const lot of lots.results || []) {
         if (remainingDeduct <= 0) break;
-        
         const deductQty = Math.min(remainingDeduct, lot.remain_qty);
         
-        await c.env.DB.prepare(`
-          UPDATE inbound SET remain_qty = remain_qty - ?, updated_at = '${getKSTDateTime()}' WHERE id = ?
-        `).bind(deductQty, lot.id).run();
+        batchStatements.push(
+          c.env.DB.prepare(`UPDATE inbound SET remain_qty = remain_qty - ? WHERE id = ?`).bind(deductQty, lot.id)
+        );
         
         remainingDeduct -= deductQty;
       }
-      
-      // 조정 거래 기록
-      await c.env.DB.prepare(`
-        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo, created_at)
-        VALUES (?, ?, ?, ?, ?, '${getKSTDateTime()}')
-      `).bind(adjustDate, item_code, transType, adjustQty, fullMemo).run();
     }
     
-    // master 테이블 current_stock도 업데이트 (동기화)
-    await c.env.DB.prepare(`
-      UPDATE master SET current_stock = ?, updated_at = '${getKSTDateTime()}' WHERE item_code = ?
-    `).bind(new_stock, item_code).run();
+    // ★★★ 별도 테이블에 조정 이력 기록 (일별수불부 계산에 사용 안함) ★★★
+    // barcode_adjustments 테이블 생성 시도
+    try {
+      await c.env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS barcode_adjustments (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          adjust_date TEXT NOT NULL,
+          item_code TEXT NOT NULL,
+          item_name TEXT,
+          previous_stock REAL,
+          new_stock REAL,
+          adjust_qty REAL,
+          reason TEXT,
+          memo TEXT,
+          created_at TEXT
+        )
+      `).run();
+    } catch (e) { /* 테이블 이미 존재 */ }
     
-    // ★★★ v3.4.17: 조정 유형에 따른 메시지 ★★★
-    const adjustTypeText = adjust_type === 'previous' ? '전일재고' : '현재재고';
+    batchStatements.push(
+      c.env.DB.prepare(`
+        INSERT INTO barcode_adjustments (adjust_date, item_code, item_name, previous_stock, new_stock, adjust_qty, reason, memo, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(today, item_code, itemInfo.item_name, currentStock, new_stock, adjustQty, reasonText, memo || '', timestamp)
+    );
+    
+    // master current_stock 동기화
+    batchStatements.push(
+      c.env.DB.prepare(`UPDATE master SET current_stock = ? WHERE item_code = ?`).bind(new_stock, item_code)
+    );
+    
+    // Batch 실행
+    await c.env.DB.batch(batchStatements);
     
     return c.json({
       success: true,
-      message: `${itemInfo.item_name} ${adjustTypeText}가 ${currentStock.toFixed(2)} → ${new_stock.toFixed(2)} ${itemInfo.unit}로 조정되었습니다. (${adjustDate})`,
+      message: `${itemInfo.item_name} 재고가 ${currentStock.toFixed(2)} → ${new_stock.toFixed(2)} ${itemInfo.unit}로 조정되었습니다.`,
       data: {
         item_code,
         item_name: itemInfo.item_name,
         previous_stock: currentStock,
         new_stock: new_stock,
         adjusted_qty: adjustQty,
-        adjust_type: adjust_type || 'current',
-        adjust_date: adjustDate,
         reason: reasonText,
-        adjusted_at: timestamp
+        adjusted_at: timestamp,
+        affects_daily_report: false  // 일별수불부 영향 없음 표시
       }
     });
     

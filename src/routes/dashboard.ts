@@ -330,117 +330,67 @@ dashboardRoutes.get('/alerts/count', async (c) => {
   });
 });
 
-// ★★★ v3.6.75: 안전재고 현황 API (신호등 시스템 + A등급 우선 + 정제수 제외) ★★★
+// ★★★ v3.6.79: 안전재고 현황 API (master 테이블 통계값 활용) ★★★
 dashboardRoutes.get('/safety-stock-status', async (c) => {
   try {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
-    const lead_days = parseInt(c.req.query('lead_days') || '3');
-    const days = parseInt(c.req.query('days') || '30');
     
-    // 분석 기간 계산
-    const startDate = new Date(today);
-    startDate.setDate(today.getDate() - days);
-    const startDateStr = startDate.toISOString().split('T')[0];
-    
-    // 1. 원료별 실재고 조회 (inbound.remain_qty SUM 기반)
+    // 1. 원료별 실재고 + 저장된 통계값 조회
     const stockResult = await c.env.DB.prepare(`
       SELECT 
         m.item_code,
         m.item_name,
         m.unit,
-        m.safety_stock as master_safety_stock,
+        m.safety_stock,
+        m.daily_usage_avg,
+        m.monthly_usage_avg,
+        m.inbound_frequency,
+        m.lead_time,
+        m.usage_std_dev,
+        m.usage_cv,
+        m.item_grade,
+        m.calculated_reorder_point,
+        m.stats_updated_at,
         COALESCE(SUM(i.remain_qty), 0) as current_stock
       FROM master m
       LEFT JOIN inbound i ON m.item_code = i.item_code 
         AND i.remain_qty > 0 
         AND i.quality_status = '합격'
       WHERE m.category = '원료'
-      GROUP BY m.item_code, m.item_name, m.unit, m.safety_stock
-    `).all<{ item_code: string; item_name: string; unit: string; master_safety_stock: number; current_stock: number }>();
+      GROUP BY m.item_code, m.item_name, m.unit, m.safety_stock,
+               m.daily_usage_avg, m.monthly_usage_avg, m.inbound_frequency, m.lead_time,
+               m.usage_std_dev, m.usage_cv, m.item_grade, m.calculated_reorder_point, m.stats_updated_at
+    `).all<{ 
+      item_code: string; item_name: string; unit: string; safety_stock: number;
+      daily_usage_avg: number; monthly_usage_avg: number; inbound_frequency: number; lead_time: number;
+      usage_std_dev: number; usage_cv: number; item_grade: string; calculated_reorder_point: number;
+      stats_updated_at: string; current_stock: number;
+    }>();
     
-    // 2. 원료별 일별 사용량 조회
-    const usageResult = await c.env.DB.prepare(`
-      SELECT 
-        item_code,
-        trans_date,
-        SUM(ABS(quantity)) as daily_qty
-      FROM transactions
-      WHERE trans_type = '사용'
-        AND trans_date >= ?
-        AND trans_date <= ?
-      GROUP BY item_code, trans_date
-      ORDER BY item_code, trans_date
-    `).bind(startDateStr, todayStr).all<{ item_code: string; trans_date: string; daily_qty: number }>();
-    
-    // 3. 사용량 데이터를 품목별로 그룹화
-    const usageMap: Record<string, number[]> = {};
-    for (const row of usageResult.results || []) {
-      if (!usageMap[row.item_code]) {
-        usageMap[row.item_code] = [];
-      }
-      usageMap[row.item_code].push(row.daily_qty);
-    }
-    
-    // 4. 품목별 통계 계산
+    // 2. 품목별 신호등 상태 결정
     const results: any[] = [];
     
     for (const item of stockResult.results || []) {
-      // ★ 정제수(RM184) 등 제외
+      // 정제수(RM184) 등 제외
       if (EXCLUDED_ITEM_CODES.includes(item.item_code)) {
         continue;
       }
       
-      const dailyUsages = usageMap[item.item_code] || [];
-      
-      // 사용량이 없는 품목은 건너뜀
-      if (dailyUsages.length === 0) {
-        continue;
-      }
-      
-      // IQR 기반 이상치 제거
-      const sorted = [...dailyUsages].sort((a, b) => a - b);
-      const q1Idx = Math.floor(sorted.length * 0.25);
-      const q3Idx = Math.floor(sorted.length * 0.75);
-      const q1 = sorted[q1Idx];
-      const q3 = sorted[q3Idx];
-      const iqr = q3 - q1;
-      const lowerBound = q1 - 1.5 * iqr;
-      const upperBound = q3 + 1.5 * iqr;
-      
-      const filteredUsages = dailyUsages.filter(v => v >= lowerBound && v <= upperBound);
-      if (filteredUsages.length === 0) continue;
-      
-      // 평균, 표준편차 계산
-      const sum = filteredUsages.reduce((a, b) => a + b, 0);
-      const avg = sum / filteredUsages.length;
-      const variance = filteredUsages.reduce((acc, val) => acc + Math.pow(val - avg, 2), 0) / filteredUsages.length;
-      const stdDev = Math.sqrt(variance);
-      const cv = avg > 0 ? stdDev / avg : 0;
-      
-      // 등급 결정 (CV + 일평균 사용량 기준)
-      let grade: string;
-      let zValue: number;
-      
-      if (cv <= 0.3 && avg >= 50) {
-        grade = 'A';
-        zValue = 1.96; // 98% 서비스 수준
-      } else if (cv <= 0.5 && avg >= 10) {
-        grade = 'B';
-        zValue = 1.645; // 95%
-      } else {
-        grade = 'C';
-        zValue = 1.28; // 90%
-      }
-      
-      // 안전재고 계산: Z × σ × √(리드타임)
-      const safetyStock = Math.round(zValue * stdDev * Math.sqrt(lead_days) * 10) / 10;
-      
-      // 발주점 계산: 일평균 × 리드타임 + 안전재고
-      const reorderPoint = Math.round((avg * lead_days + safetyStock) * 10) / 10;
+      const dailyAvg = item.daily_usage_avg || 0;
+      const leadTime = item.lead_time || 3;
+      const grade = item.item_grade || 'C';
       
       // 잔여일 계산
-      const daysOfStock = avg > 0 ? Math.round((item.current_stock / avg) * 10) / 10 : 999;
+      const daysOfStock = dailyAvg > 0 
+        ? Math.round((item.current_stock / dailyAvg) * 10) / 10 
+        : (item.current_stock > 0 ? 999 : 0);
+      
+      // 발주점 (저장된 값 또는 간단 계산)
+      const reorderPoint = item.calculated_reorder_point || (dailyAvg * leadTime);
+      
+      // 안전재고 (저장된 값 사용)
+      const safetyStock = item.safety_stock || 0;
       
       // 신호등 상태 결정 (잔여일 기준)
       let status: string;
@@ -454,10 +404,19 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
       } else if (daysOfStock <= 7) {
         status = '🟡 주의';
         statusColor = 'yellow';
-        needOrder = daysOfStock <= lead_days + 1;
+        needOrder = item.current_stock <= reorderPoint;
       } else {
         status = '🟢 정상';
         statusColor = 'green';
+      }
+      
+      // 현재고가 안전재고 이하면 무조건 주의 이상
+      if (item.current_stock <= safetyStock && safetyStock > 0) {
+        if (statusColor === 'green') {
+          status = '🟡 주의';
+          statusColor = 'yellow';
+        }
+        needOrder = true;
       }
       
       results.push({
@@ -465,22 +424,24 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         item_name: item.item_name,
         unit: item.unit || 'kg',
         grade,
-        z_value: zValue,
         current_stock: Math.round(item.current_stock * 100) / 100,
-        daily_avg: Math.round(avg * 100) / 100,
-        std_dev: Math.round(stdDev * 100) / 100,
-        cv: Math.round(cv * 1000) / 1000,
+        daily_avg: dailyAvg,
+        monthly_avg: item.monthly_usage_avg || 0,
+        std_dev: item.usage_std_dev || 0,
+        cv: item.usage_cv || 0,
         safety_stock: safetyStock,
-        reorder_point: reorderPoint,
+        reorder_point: Math.round(reorderPoint * 10) / 10,
+        lead_time: leadTime,
+        inbound_frequency: item.inbound_frequency || 0,
         days_of_stock: daysOfStock,
         status,
         status_color: statusColor,
         need_order: needOrder,
-        data_points: filteredUsages.length
+        stats_updated_at: item.stats_updated_at
       });
     }
     
-    // 5. 정렬: need_order(true 먼저) → grade(A→B→C) → days_of_stock(오름차순)
+    // 3. 정렬: need_order(true 먼저) → grade(A→B→C) → days_of_stock(오름차순)
     results.sort((a, b) => {
       // 1차: 발주필요 우선
       if (a.need_order !== b.need_order) return a.need_order ? -1 : 1;
@@ -493,7 +454,7 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
       return a.days_of_stock - b.days_of_stock;
     });
     
-    // 6. 요약 통계
+    // 4. 요약 통계
     const urgentCount = results.filter(r => r.status_color === 'red').length;
     const warningCount = results.filter(r => r.status_color === 'yellow').length;
     const normalCount = results.filter(r => r.status_color === 'green').length;
@@ -501,11 +462,13 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
     const gradeBCount = results.filter(r => r.grade === 'B').length;
     const gradeCCount = results.filter(r => r.grade === 'C').length;
     
+    // 통계 미계산 품목 수
+    const noStatsCount = results.filter(r => !r.stats_updated_at).length;
+    
     return c.json({
       success: true,
       summary: {
-        analysis_period: `${startDateStr} ~ ${todayStr}`,
-        lead_days,
+        as_of: todayStr,
         total_items: results.length,
         urgent_count: urgentCount,       // 🔴 긴급 (0-2일)
         warning_count: warningCount,     // 🟡 주의 (3-7일)
@@ -513,6 +476,7 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         grade_a_count: gradeACount,
         grade_b_count: gradeBCount,
         grade_c_count: gradeCCount,
+        no_stats_count: noStatsCount,    // 통계 미계산 품목 수
         excluded_items: EXCLUDED_ITEM_CODES
       },
       items: results

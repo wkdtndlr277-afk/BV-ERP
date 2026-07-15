@@ -8713,4 +8713,257 @@ admin.post('/sync/sheets-inbound-to-d1', async (c) => {
   }
 })
 
+// ★★★ v3.6.79: 원료 사용 통계 재계산 API ★★★
+admin.post('/recalculate-stats', async (c) => {
+  try {
+    const { days = 90 } = await c.req.json().catch(() => ({}));
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    
+    // 분석 기간 계산
+    const startDate = new Date(today);
+    startDate.setDate(today.getDate() - days);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    
+    // 1. 모든 원료 조회
+    const masterItems = await c.env.DB.prepare(`
+      SELECT item_code, item_name FROM master WHERE category = '원료'
+    `).all<{ item_code: string; item_name: string }>();
+    
+    // 2. 원료별 일별 사용량 조회
+    const usageResult = await c.env.DB.prepare(`
+      SELECT 
+        item_code,
+        trans_date,
+        SUM(ABS(quantity)) as daily_qty
+      FROM transactions
+      WHERE trans_type = '사용'
+        AND trans_date >= ?
+        AND trans_date <= ?
+      GROUP BY item_code, trans_date
+      ORDER BY item_code, trans_date
+    `).bind(startDateStr, todayStr).all<{ item_code: string; trans_date: string; daily_qty: number }>();
+    
+    // 3. 원료별 입고 기록 조회 (리드타임 계산용)
+    const inboundResult = await c.env.DB.prepare(`
+      SELECT 
+        item_code,
+        inbound_date
+      FROM inbound
+      WHERE inbound_date >= ?
+        AND inbound_date <= ?
+      ORDER BY item_code, inbound_date
+    `).bind(startDateStr, todayStr).all<{ item_code: string; inbound_date: string }>();
+    
+    // 4. 사용량/입고 데이터를 품목별로 그룹화
+    const usageMap: Record<string, number[]> = {};
+    for (const row of usageResult.results || []) {
+      if (!usageMap[row.item_code]) usageMap[row.item_code] = [];
+      usageMap[row.item_code].push(row.daily_qty);
+    }
+    
+    const inboundMap: Record<string, string[]> = {};
+    for (const row of inboundResult.results || []) {
+      if (!inboundMap[row.item_code]) inboundMap[row.item_code] = [];
+      inboundMap[row.item_code].push(row.inbound_date);
+    }
+    
+    // 5. 품목별 통계 계산 및 업데이트
+    let updatedCount = 0;
+    const errors: string[] = [];
+    const statsTime = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    
+    for (const item of masterItems.results || []) {
+      try {
+        const dailyUsages = usageMap[item.item_code] || [];
+        const inboundDates = inboundMap[item.item_code] || [];
+        
+        // 일평균, 월평균 계산
+        let dailyAvg = 0;
+        let monthlyAvg = 0;
+        let stdDev = 0;
+        let cv = 0;
+        
+        if (dailyUsages.length > 0) {
+          // IQR 기반 이상치 제거
+          const sorted = [...dailyUsages].sort((a, b) => a - b);
+          const q1Idx = Math.floor(sorted.length * 0.25);
+          const q3Idx = Math.floor(sorted.length * 0.75);
+          const q1 = sorted[q1Idx] || 0;
+          const q3 = sorted[q3Idx] || sorted[sorted.length - 1];
+          const iqr = q3 - q1;
+          const lowerBound = q1 - 1.5 * iqr;
+          const upperBound = q3 + 1.5 * iqr;
+          
+          const filtered = dailyUsages.filter(v => v >= lowerBound && v <= upperBound);
+          
+          if (filtered.length > 0) {
+            const sum = filtered.reduce((a, b) => a + b, 0);
+            dailyAvg = sum / filtered.length;
+            monthlyAvg = dailyAvg * 30;
+            
+            // 표준편차 계산
+            const variance = filtered.reduce((acc, val) => acc + Math.pow(val - dailyAvg, 2), 0) / filtered.length;
+            stdDev = Math.sqrt(variance);
+            cv = dailyAvg > 0 ? stdDev / dailyAvg : 0;
+          }
+        }
+        
+        // 입고 빈도 및 리드타임 계산
+        let inboundFrequency = 0;
+        let leadTime = 3; // 기본값 3일
+        
+        if (inboundDates.length >= 2) {
+          // 월평균 입고 횟수
+          inboundFrequency = Math.round((inboundDates.length / (days / 30)) * 10) / 10;
+          
+          // 평균 입고 주기 = 리드타임 추정
+          const intervals: number[] = [];
+          for (let i = 1; i < inboundDates.length; i++) {
+            const d1 = new Date(inboundDates[i - 1]);
+            const d2 = new Date(inboundDates[i]);
+            const diffDays = Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
+            if (diffDays > 0 && diffDays < 60) { // 60일 이상은 이상치로 간주
+              intervals.push(diffDays);
+            }
+          }
+          if (intervals.length > 0) {
+            leadTime = Math.round((intervals.reduce((a, b) => a + b, 0) / intervals.length) * 10) / 10;
+          }
+        } else if (inboundDates.length === 1) {
+          inboundFrequency = Math.round((1 / (days / 30)) * 10) / 10;
+        }
+        
+        // 등급 결정
+        let grade = 'C';
+        let zValue = 1.28;
+        if (cv <= 0.3 && dailyAvg >= 50) {
+          grade = 'A';
+          zValue = 1.96;
+        } else if (cv <= 0.5 && dailyAvg >= 10) {
+          grade = 'B';
+          zValue = 1.645;
+        }
+        
+        // 발주점 계산: 일평균 × 리드타임 + 안전재고(Z × σ × √리드타임)
+        const safetyStock = zValue * stdDev * Math.sqrt(leadTime);
+        const reorderPoint = Math.round((dailyAvg * leadTime + safetyStock) * 10) / 10;
+        
+        // DB 업데이트
+        await c.env.DB.prepare(`
+          UPDATE master SET
+            daily_usage_avg = ?,
+            monthly_usage_avg = ?,
+            inbound_frequency = ?,
+            lead_time = ?,
+            usage_std_dev = ?,
+            usage_cv = ?,
+            item_grade = ?,
+            calculated_reorder_point = ?,
+            stats_updated_at = ?
+          WHERE item_code = ?
+        `).bind(
+          Math.round(dailyAvg * 100) / 100,
+          Math.round(monthlyAvg * 100) / 100,
+          inboundFrequency,
+          leadTime,
+          Math.round(stdDev * 100) / 100,
+          Math.round(cv * 1000) / 1000,
+          grade,
+          reorderPoint,
+          statsTime,
+          item.item_code
+        ).run();
+        
+        updatedCount++;
+      } catch (itemError: any) {
+        errors.push(`${item.item_code}: ${itemError.message}`);
+      }
+    }
+    
+    // 로그 기록
+    await c.env.DB.prepare(
+      'INSERT INTO admin_logs (action_type, target_table, reason) VALUES (?, ?, ?)'
+    ).bind('통계재계산', 'master', `${updatedCount}개 품목 통계 업데이트 (${days}일 기준)`).run();
+    
+    return c.json({
+      success: true,
+      message: `${updatedCount}개 원료 통계 재계산 완료`,
+      analysis_period: `${startDateStr} ~ ${todayStr}`,
+      updated_count: updatedCount,
+      errors: errors.length > 0 ? errors : undefined
+    });
+    
+  } catch (error: any) {
+    console.error('[recalculate-stats] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.79: master 테이블 통계 컬럼 추가 마이그레이션 ★★★
+admin.post('/migrate-stats-columns', async (c) => {
+  try {
+    const columns = [
+      { name: 'daily_usage_avg', type: 'REAL DEFAULT 0' },
+      { name: 'monthly_usage_avg', type: 'REAL DEFAULT 0' },
+      { name: 'inbound_frequency', type: 'REAL DEFAULT 0' },
+      { name: 'lead_time', type: 'REAL DEFAULT 3' },
+      { name: 'usage_std_dev', type: 'REAL DEFAULT 0' },
+      { name: 'usage_cv', type: 'REAL DEFAULT 0' },
+      { name: 'item_grade', type: "TEXT DEFAULT 'C'" },
+      { name: 'calculated_reorder_point', type: 'REAL DEFAULT 0' },
+      { name: 'stats_updated_at', type: 'TEXT' }
+    ];
+    
+    const results: string[] = [];
+    
+    for (const col of columns) {
+      try {
+        await c.env.DB.prepare(`ALTER TABLE master ADD COLUMN ${col.name} ${col.type}`).run();
+        results.push(`✅ master.${col.name} 추가됨`);
+      } catch (e: any) {
+        if (e.message.includes('duplicate column')) {
+          results.push(`⏭️ master.${col.name} 이미 존재`);
+        } else {
+          results.push(`❌ master.${col.name} 오류: ${e.message}`);
+        }
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: '마이그레이션 완료',
+      results
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.79: 통계 조회 API ★★★
+admin.get('/stats-summary', async (c) => {
+  try {
+    const result = await c.env.DB.prepare(`
+      SELECT 
+        item_code, item_name, unit,
+        daily_usage_avg, monthly_usage_avg, 
+        inbound_frequency, lead_time,
+        usage_std_dev, usage_cv, item_grade,
+        calculated_reorder_point, safety_stock,
+        stats_updated_at
+      FROM master 
+      WHERE category = '원료' AND daily_usage_avg > 0
+      ORDER BY item_grade ASC, daily_usage_avg DESC
+    `).all();
+    
+    return c.json({
+      success: true,
+      count: result.results?.length || 0,
+      data: result.results
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default admin

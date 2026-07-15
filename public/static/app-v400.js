@@ -1524,7 +1524,7 @@ async function renderDashboard() {
         <div class="bg-white rounded-xl shadow">
           <div class="p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50 flex justify-between items-center">
             <h3 class="font-bold text-indigo-800">
-              <i class="fas fa-traffic-light mr-2"></i>원료 재고 현황 (신호등 시스템)
+              <i class="fas fa-boxes mr-2"></i>원료 재고 현황
             </h3>
             <div class="flex items-center gap-3 text-xs">
               <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-500"></span> 긴급(0~2일)</span>

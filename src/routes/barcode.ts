@@ -797,44 +797,72 @@ barcodeRoutes.post('/migrate', async (c) => {
   }
 });
 
-// 바코드 재고 목록 조회
+// ★★★ v3.6.73: 바코드 재고 목록 조회 - inbound.remain_qty SUM 기반 실재고 ★★★
 barcodeRoutes.get('/inventory', async (c) => {
   const search = c.req.query('search');
   const category = c.req.query('category');
   const lowStock = c.req.query('low_stock'); // 안전재고 미달 필터
   
   try {
+    // barcode_inventory와 inbound를 JOIN하여 실재고(remain_qty SUM) 반환
     let query = `
-      SELECT * FROM barcode_inventory 
-      WHERE is_active = 1
+      SELECT 
+        bi.id,
+        bi.barcode,
+        bi.item_code,
+        bi.item_name,
+        bi.category,
+        bi.unit,
+        COALESCE(inb.real_stock, 0) as current_stock,
+        bi.safety_stock,
+        bi.location,
+        bi.table_type,
+        bi.is_active,
+        bi.created_at,
+        bi.updated_at
+      FROM barcode_inventory bi
+      LEFT JOIN (
+        SELECT item_code, SUM(remain_qty) as real_stock
+        FROM inbound
+        WHERE remain_qty > 0 AND quality_status = '합격'
+        GROUP BY item_code
+      ) inb ON bi.item_code = inb.item_code
+      WHERE bi.is_active = 1
     `;
     const params: any[] = [];
     
     if (search) {
-      query += ` AND (barcode LIKE ? OR item_code LIKE ? OR item_name LIKE ?)`;
+      query += ` AND (bi.barcode LIKE ? OR bi.item_code LIKE ? OR bi.item_name LIKE ?)`;
       params.push(`%${search}%`, `%${search}%`, `%${search}%`);
     }
     
     if (category) {
-      query += ` AND category = ?`;
+      query += ` AND bi.category = ?`;
       params.push(category);
     }
     
     if (lowStock === 'true') {
-      query += ` AND current_stock < safety_stock`;
+      query += ` AND COALESCE(inb.real_stock, 0) < bi.safety_stock`;
     }
     
-    query += ` ORDER BY item_name ASC`;
+    query += ` ORDER BY bi.item_name ASC`;
     
     const result = await c.env.DB.prepare(query).bind(...params).all();
     
-    // 통계
+    // 통계 - inbound.remain_qty SUM 기반
     const stats = await c.env.DB.prepare(`
       SELECT 
         COUNT(*) as total_items,
-        SUM(CASE WHEN current_stock < safety_stock THEN 1 ELSE 0 END) as low_stock_count,
-        SUM(CASE WHEN current_stock = 0 THEN 1 ELSE 0 END) as zero_stock_count
-      FROM barcode_inventory WHERE is_active = 1
+        SUM(CASE WHEN COALESCE(inb.real_stock, 0) < bi.safety_stock THEN 1 ELSE 0 END) as low_stock_count,
+        SUM(CASE WHEN COALESCE(inb.real_stock, 0) = 0 THEN 1 ELSE 0 END) as zero_stock_count
+      FROM barcode_inventory bi
+      LEFT JOIN (
+        SELECT item_code, SUM(remain_qty) as real_stock
+        FROM inbound
+        WHERE remain_qty > 0 AND quality_status = '합격'
+        GROUP BY item_code
+      ) inb ON bi.item_code = inb.item_code
+      WHERE bi.is_active = 1
     `).first();
     
     return c.json({

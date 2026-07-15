@@ -42510,15 +42510,14 @@ async function executeSyncSheetsInbound() {
   }
 }
 
-// ★★★ v3.6.67: 입고 패턴 기반 안전재고 자동 설정 ★★★
-// 평균 입고량(≈사용량)과 입고 주기를 분석하여 "며칠치 재고"를 안전재고로 설정
+// ★★★ v3.6.68: 입고 패턴 기반 안전재고 자동 설정 (UI 개선 + 검색) ★★★
 async function setSafetyStockFromInbound() {
   showLoading('입고 패턴 분석 중...');
   
   try {
     const previewRes = await axios.post(`${API_BASE}/barcode/set-safety-stock-from-inbound`, { 
       preview: true, 
-      days_stock: 7  // 기본 7일(1주일)
+      days_stock: 7
     });
     hideLoading();
     
@@ -42529,102 +42528,121 @@ async function setSafetyStockFromInbound() {
     
     const preview = previewRes.data;
     
-    if (preview.to_update_count === 0) {
-      showToast('변경할 안전재고가 없습니다. (현재 값과 동일하거나 입고 데이터 없음)', 'info');
+    if (preview.total_items === 0) {
+      showToast('입고 데이터가 없습니다.', 'info');
       return;
     }
     
-    // 샘플 아이템 - 일평균, 입고주기 포함
-    const sampleItems = (preview.to_update || []).slice(0, 8).map(item => `
-      <tr>
-        <td class="px-2 py-1 text-xs">${item.item_code}</td>
-        <td class="px-2 py-1 text-xs truncate max-w-[100px]" title="${item.item_name || '-'}">${item.item_name || '-'}</td>
-        <td class="px-2 py-1 text-xs text-right">${formatNumber(item.daily_avg)}</td>
-        <td class="px-2 py-1 text-xs text-right text-gray-500">${item.avg_cycle}일</td>
-        <td class="px-2 py-1 text-xs text-right text-gray-400">${formatNumber(item.current_safety_stock)}</td>
-        <td class="px-2 py-1 text-xs text-right text-purple-600 font-bold">${formatNumber(item.new_safety_stock)}</td>
-      </tr>
-    `).join('');
+    // 전체 데이터 저장 (검색용)
+    window._safetyStockAllData = preview.to_update || [];
+    window._safetyStockPreviewData = preview;
     
     const confirmHtml = `
-      <div class="space-y-4">
-        <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
-          <div class="flex items-center gap-3 mb-3">
-            <i class="fas fa-chart-line text-purple-600 text-2xl"></i>
+      <div class="space-y-3">
+        <!-- 헤더 -->
+        <div class="bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg p-4">
+          <div class="flex items-center gap-3">
+            <div class="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center">
+              <i class="fas fa-shield-alt text-2xl"></i>
+            </div>
             <div>
-              <p class="font-bold text-purple-800">입고 패턴 기반 안전재고 설정</p>
-              <p class="text-sm text-purple-600">일평균 입고량(≈사용량) × 일수 = 안전재고</p>
+              <h3 class="font-bold text-lg">안전재고 자동 설정</h3>
+              <p class="text-purple-100 text-sm">일평균 사용량 × 일수 = 안전재고</p>
             </div>
           </div>
         </div>
         
-        <div class="bg-white border rounded-lg p-4">
-          <label class="block text-sm font-medium text-gray-700 mb-2">
-            <i class="fas fa-calendar-day mr-1"></i> 안전재고 일수 설정
-          </label>
-          <div class="flex items-center gap-3">
-            <input type="range" id="safety-stock-days" min="3" max="30" value="7" step="1"
-                   class="flex-1" onchange="updateSafetyStockPreview()">
-            <span id="safety-stock-days-label" class="text-lg font-bold text-purple-600 w-20 text-center">7일</span>
+        <!-- 설정 영역 -->
+        <div class="bg-white border-2 border-purple-200 rounded-lg p-4">
+          <div class="flex items-center justify-between mb-3">
+            <label class="text-sm font-bold text-gray-700">
+              <i class="fas fa-calendar-week text-purple-500 mr-1"></i> 안전재고 일수
+            </label>
+            <div class="flex items-center gap-2">
+              <button onclick="adjustSafetyDays(-1)" class="w-8 h-8 bg-gray-200 rounded-full hover:bg-gray-300 font-bold">-</button>
+              <span id="safety-stock-days-label" class="text-2xl font-bold text-purple-600 w-16 text-center">7일</span>
+              <button onclick="adjustSafetyDays(1)" class="w-8 h-8 bg-gray-200 rounded-full hover:bg-gray-300 font-bold">+</button>
+            </div>
           </div>
-          <p class="text-xs text-gray-500 mt-2">
-            예: 일평균 10kg 사용 × 7일 = 안전재고 70kg<br>
-            <span class="text-orange-600">→ 재고가 70kg 이하면 발주 필요 알림!</span>
-          </p>
-        </div>
-        
-        <div class="grid grid-cols-3 gap-3 text-center">
-          <div class="bg-blue-50 rounded-lg p-3">
-            <p class="text-xl font-bold text-blue-600">${preview.total_items}</p>
-            <p class="text-xs text-blue-700">분석 품목</p>
-          </div>
-          <div class="bg-green-50 rounded-lg p-3">
-            <p class="text-xl font-bold text-green-600">${formatNumber(preview.summary?.avg_daily_total || 0)}</p>
-            <p class="text-xs text-green-700">일평균 사용량(kg)</p>
-          </div>
-          <div class="bg-purple-50 rounded-lg p-3">
-            <p class="text-xl font-bold text-purple-600">${preview.to_update_count}</p>
-            <p class="text-xs text-purple-700">변경 예정</p>
+          <input type="range" id="safety-stock-days" min="3" max="30" value="7" step="1"
+                 class="w-full h-2 bg-purple-200 rounded-lg appearance-none cursor-pointer accent-purple-600" 
+                 onchange="updateSafetyStockPreview()" oninput="updateDaysLabel()">
+          <div class="flex justify-between text-xs text-gray-400 mt-1">
+            <span>3일</span>
+            <span>1주</span>
+            <span>2주</span>
+            <span>1달</span>
           </div>
         </div>
         
-        <div class="bg-gray-50 rounded-lg overflow-hidden">
-          <p class="text-sm font-medium text-gray-700 p-2 bg-gray-100">변경 예정 목록:</p>
-          <div class="overflow-x-auto" style="max-height: 200px;">
-            <table class="w-full text-xs">
-              <thead class="bg-gray-200 sticky top-0">
-                <tr>
-                  <th class="px-2 py-1 text-left">품목코드</th>
-                  <th class="px-2 py-1 text-left">품목명</th>
-                  <th class="px-2 py-1 text-right">일평균</th>
-                  <th class="px-2 py-1 text-right">입고주기</th>
-                  <th class="px-2 py-1 text-right">현재</th>
-                  <th class="px-2 py-1 text-right">변경후</th>
+        <!-- 요약 카드 -->
+        <div class="grid grid-cols-4 gap-2">
+          <div class="bg-blue-50 rounded-lg p-2 text-center">
+            <p class="text-lg font-bold text-blue-600">${preview.total_items}</p>
+            <p class="text-xs text-blue-600">전체 품목</p>
+          </div>
+          <div class="bg-green-50 rounded-lg p-2 text-center">
+            <p class="text-lg font-bold text-green-600">${formatNumber(preview.summary?.avg_daily_total || 0)}</p>
+            <p class="text-xs text-green-600">일평균(kg)</p>
+          </div>
+          <div class="bg-purple-50 rounded-lg p-2 text-center">
+            <p class="text-lg font-bold text-purple-600" id="safety-update-count">${preview.to_update_count}</p>
+            <p class="text-xs text-purple-600">변경 예정</p>
+          </div>
+          <div class="bg-orange-50 rounded-lg p-2 text-center">
+            <p class="text-lg font-bold text-orange-600" id="safety-new-total">${formatNumber(preview.summary?.new_safety_stock_sum || 0)}</p>
+            <p class="text-xs text-orange-600">총 안전재고</p>
+          </div>
+        </div>
+        
+        <!-- 검색 -->
+        <div class="relative">
+          <input type="text" id="safety-stock-search" 
+                 class="w-full px-4 py-2 pl-10 border-2 border-gray-200 rounded-lg focus:border-purple-400 focus:outline-none"
+                 placeholder="품목 검색 (품목코드, 품목명)"
+                 oninput="filterSafetyStockList()">
+          <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
+        </div>
+        
+        <!-- 테이블 -->
+        <div class="bg-white border rounded-lg overflow-hidden">
+          <div class="overflow-auto" style="max-height: 280px;">
+            <table class="w-full">
+              <thead class="bg-gray-100 sticky top-0">
+                <tr class="text-xs text-gray-600">
+                  <th class="px-3 py-2 text-left font-semibold">품목</th>
+                  <th class="px-2 py-2 text-right font-semibold">일평균</th>
+                  <th class="px-2 py-2 text-right font-semibold">주기</th>
+                  <th class="px-2 py-2 text-right font-semibold">현재</th>
+                  <th class="px-2 py-2 text-right font-semibold">→ 변경</th>
                 </tr>
               </thead>
-              <tbody id="safety-stock-preview-tbody">
-                ${sampleItems}
+              <tbody id="safety-stock-preview-tbody" class="divide-y divide-gray-100">
               </tbody>
             </table>
           </div>
-          ${preview.to_update_count > 8 ? `<p class="text-xs text-gray-400 p-2 border-t">...외 ${preview.to_update_count - 8}건</p>` : ''}
+          <div id="safety-stock-footer" class="bg-gray-50 px-3 py-2 text-xs text-gray-500 border-t"></div>
         </div>
         
-        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
-          <i class="fas fa-info-circle mr-1"></i>
-          <strong>계산 방식:</strong> 총입고량 ÷ 입고기간(일) = 일평균 → 일평균 × 설정일수 = 안전재고
+        <!-- 안내 -->
+        <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700">
+          <i class="fas fa-lightbulb mr-1"></i>
+          <strong>TIP:</strong> 재고가 안전재고 이하가 되면 대시보드에서 <span class="text-red-600 font-bold">발주 필요</span> 알림이 표시됩니다.
         </div>
       </div>
     `;
     
-    window._safetyStockPreviewData = preview;
-    
-    showModal('<i class="fas fa-shield-alt mr-2"></i>안전재고 자동 설정', confirmHtml, `
-      <button onclick="closeModal()" class="px-4 py-2 bg-gray-200 rounded-lg hover:bg-gray-300">취소</button>
-      <button onclick="executeSafetyStockUpdate()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
-        <i class="fas fa-check mr-1"></i> 안전재고 설정
+    showModal('', confirmHtml, `
+      <button onclick="closeModal()" class="px-5 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium">
+        취소
+      </button>
+      <button onclick="executeSafetyStockUpdate()" class="px-5 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 font-medium">
+        <i class="fas fa-check mr-1"></i> 설정 적용
       </button>
     `);
+    
+    // 초기 테이블 렌더링
+    renderSafetyStockTable(preview.to_update || []);
     
   } catch (error) {
     hideLoading();
@@ -42633,14 +42651,105 @@ async function setSafetyStockFromInbound() {
   }
 }
 
+// 일수 라벨만 즉시 업데이트
+function updateDaysLabel() {
+  const slider = document.getElementById('safety-stock-days');
+  const label = document.getElementById('safety-stock-days-label');
+  if (slider && label) {
+    label.textContent = slider.value + '일';
+  }
+}
+
+// 일수 +/- 버튼
+function adjustSafetyDays(delta) {
+  const slider = document.getElementById('safety-stock-days');
+  if (!slider) return;
+  
+  const newVal = Math.max(3, Math.min(30, parseInt(slider.value) + delta));
+  slider.value = newVal;
+  updateDaysLabel();
+  updateSafetyStockPreview();
+}
+
+// 안전재고 테이블 렌더링
+function renderSafetyStockTable(items) {
+  const tbody = document.getElementById('safety-stock-preview-tbody');
+  const footer = document.getElementById('safety-stock-footer');
+  if (!tbody) return;
+  
+  if (items.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" class="px-3 py-8 text-center text-gray-400">
+          <i class="fas fa-search mr-2"></i>검색 결과가 없습니다
+        </td>
+      </tr>
+    `;
+    if (footer) footer.textContent = '';
+    return;
+  }
+  
+  tbody.innerHTML = items.map((item, idx) => {
+    const diff = item.new_safety_stock - item.current_safety_stock;
+    const diffClass = diff > 0 ? 'text-green-600' : diff < 0 ? 'text-red-600' : 'text-gray-400';
+    const diffIcon = diff > 0 ? '↑' : diff < 0 ? '↓' : '';
+    
+    return `
+      <tr class="hover:bg-purple-50 transition-colors ${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}">
+        <td class="px-3 py-2">
+          <div class="font-medium text-sm text-gray-800">${item.item_name || item.item_code}</div>
+          <div class="text-xs text-gray-400">${item.item_code}</div>
+        </td>
+        <td class="px-2 py-2 text-right">
+          <span class="text-sm font-medium text-gray-700">${formatNumber(item.daily_avg)}</span>
+          <span class="text-xs text-gray-400">${item.unit || 'kg'}/일</span>
+        </td>
+        <td class="px-2 py-2 text-right text-sm text-gray-500">${item.avg_cycle}일</td>
+        <td class="px-2 py-2 text-right text-sm text-gray-400">${formatNumber(item.current_safety_stock)}</td>
+        <td class="px-2 py-2 text-right">
+          <span class="text-sm font-bold text-purple-600">${formatNumber(item.new_safety_stock)}</span>
+          <span class="text-xs ${diffClass} ml-1">${diffIcon}${Math.abs(diff).toFixed(1)}</span>
+        </td>
+      </tr>
+    `;
+  }).join('');
+  
+  const totalCount = window._safetyStockAllData?.length || items.length;
+  if (footer) {
+    footer.innerHTML = `
+      <span class="text-purple-600 font-medium">${items.length}</span>개 표시 
+      ${items.length < totalCount ? `(전체 ${totalCount}개)` : ''}
+    `;
+  }
+}
+
+// 검색 필터
+function filterSafetyStockList() {
+  const searchInput = document.getElementById('safety-stock-search');
+  const keyword = (searchInput?.value || '').toLowerCase().trim();
+  
+  const allData = window._safetyStockAllData || [];
+  
+  if (!keyword) {
+    renderSafetyStockTable(allData);
+    return;
+  }
+  
+  const filtered = allData.filter(item => 
+    (item.item_code || '').toLowerCase().includes(keyword) ||
+    (item.item_name || '').toLowerCase().includes(keyword)
+  );
+  
+  renderSafetyStockTable(filtered);
+}
+
 // 안전재고 일수 변경 시 미리보기 업데이트
 async function updateSafetyStockPreview() {
   const slider = document.getElementById('safety-stock-days');
-  const label = document.getElementById('safety-stock-days-label');
-  if (!slider || !label) return;
+  if (!slider) return;
   
   const daysStock = parseInt(slider.value);
-  label.textContent = daysStock + '일';
+  updateDaysLabel();
   
   try {
     const response = await axios.post(`${API_BASE}/barcode/set-safety-stock-from-inbound`, { 
@@ -42650,20 +42759,16 @@ async function updateSafetyStockPreview() {
     
     if (response.data.success) {
       window._safetyStockPreviewData = response.data;
+      window._safetyStockAllData = response.data.to_update || [];
       
-      const tbody = document.getElementById('safety-stock-preview-tbody');
-      if (tbody && response.data.to_update) {
-        tbody.innerHTML = response.data.to_update.slice(0, 8).map(item => `
-          <tr>
-            <td class="px-2 py-1 text-xs">${item.item_code}</td>
-            <td class="px-2 py-1 text-xs truncate max-w-[100px]" title="${item.item_name || '-'}">${item.item_name || '-'}</td>
-            <td class="px-2 py-1 text-xs text-right">${formatNumber(item.daily_avg)}</td>
-            <td class="px-2 py-1 text-xs text-right text-gray-500">${item.avg_cycle}일</td>
-            <td class="px-2 py-1 text-xs text-right text-gray-400">${formatNumber(item.current_safety_stock)}</td>
-            <td class="px-2 py-1 text-xs text-right text-purple-600 font-bold">${formatNumber(item.new_safety_stock)}</td>
-          </tr>
-        `).join('');
-      }
+      // 요약 카드 업데이트
+      const updateCountEl = document.getElementById('safety-update-count');
+      const newTotalEl = document.getElementById('safety-new-total');
+      if (updateCountEl) updateCountEl.textContent = response.data.to_update_count;
+      if (newTotalEl) newTotalEl.textContent = formatNumber(response.data.summary?.new_safety_stock_sum || 0);
+      
+      // 검색어 유지하며 테이블 갱신
+      filterSafetyStockList();
     }
   } catch (error) {
     console.error('[updateSafetyStockPreview] Error:', error);
@@ -42710,6 +42815,10 @@ window.executeSyncSheetsInbound = executeSyncSheetsInbound;
 window.setSafetyStockFromInbound = setSafetyStockFromInbound;
 window.updateSafetyStockPreview = updateSafetyStockPreview;
 window.executeSafetyStockUpdate = executeSafetyStockUpdate;
+window.updateDaysLabel = updateDaysLabel;
+window.adjustSafetyDays = adjustSafetyDays;
+window.renderSafetyStockTable = renderSafetyStockTable;
+window.filterSafetyStockList = filterSafetyStockList;
 
 // ★★★ v3.4.15: 당일 사용/출고 내역 로드 (체크박스 추가) ★★★
 let todayTransactionsData = [];  // 거래 데이터 저장

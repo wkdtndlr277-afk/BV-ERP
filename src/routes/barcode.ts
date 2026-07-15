@@ -2038,6 +2038,197 @@ barcodeRoutes.post('/set-safety-stock-from-inbound', async (c) => {
   }
 });
 
+// ★★★ v3.6.74: 통계 기반 안전재고 분석 (표준편차 + 서비스 수준) ★★★
+// 공식: 안전재고 = Z × σ × √(리드타임)
+// Z값: A등급(1.96, 98%), B등급(1.645, 95%), C등급(1.28, 90%)
+barcodeRoutes.get('/safety-stock-analysis', async (c) => {
+  try {
+    const leadDays = parseInt(c.req.query('lead_days') || '3');
+    const months = parseInt(c.req.query('months') || '3');
+    
+    // 분석 기간 계산 (최근 N개월)
+    const today = getKSTDate();
+    const startDate = new Date(today);
+    startDate.setMonth(startDate.getMonth() - months);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    
+    // 1. 일별 사용량 데이터 조회 (transactions 테이블)
+    const dailyUsageData = await c.env.DB.prepare(`
+      SELECT 
+        item_code,
+        trans_date,
+        SUM(ABS(quantity)) as daily_usage
+      FROM transactions
+      WHERE trans_date >= ?
+        AND trans_type IN ('사용', '출고', '바코드사용', '생산사용')
+        AND item_code LIKE 'R%'
+        AND quantity < 0
+      GROUP BY item_code, trans_date
+      ORDER BY item_code, trans_date
+    `).bind(startDateStr).all<{
+      item_code: string;
+      trans_date: string;
+      daily_usage: number;
+    }>();
+    
+    // 2. 품목별 통계 계산
+    const itemStats = new Map<string, {
+      usages: number[];
+      dates: string[];
+    }>();
+    
+    for (const row of dailyUsageData.results || []) {
+      if (!itemStats.has(row.item_code)) {
+        itemStats.set(row.item_code, { usages: [], dates: [] });
+      }
+      const stat = itemStats.get(row.item_code)!;
+      stat.usages.push(row.daily_usage);
+      stat.dates.push(row.trans_date);
+    }
+    
+    // 3. 품목 정보 + 현재 재고 조회
+    const itemInfos = await c.env.DB.prepare(`
+      SELECT 
+        m.item_code,
+        m.item_name,
+        COALESCE(m.unit, 'kg') as unit,
+        COALESCE(m.safety_stock, 0) as current_safety_stock,
+        COALESCE(inb.total_remain, 0) as current_stock,
+        COALESCE(inb.inbound_count, 0) as inbound_count,
+        COALESCE(inb.avg_inbound_qty, 0) as avg_inbound_qty
+      FROM master m
+      LEFT JOIN (
+        SELECT 
+          item_code, 
+          SUM(remain_qty) as total_remain,
+          COUNT(*) as inbound_count,
+          AVG(origin_qty) as avg_inbound_qty
+        FROM inbound 
+        WHERE quality_status = '합격'
+        GROUP BY item_code
+      ) inb ON m.item_code = inb.item_code
+      WHERE m.item_code LIKE 'R%'
+    `).all<{
+      item_code: string;
+      item_name: string;
+      unit: string;
+      current_safety_stock: number;
+      current_stock: number;
+      inbound_count: number;
+      avg_inbound_qty: number;
+    }>();
+    
+    const itemMap = new Map<string, any>();
+    for (const item of itemInfos.results || []) {
+      itemMap.set(item.item_code, item);
+    }
+    
+    // 4. 통계 계산 (이상치 제거 + 표준편차)
+    const results: any[] = [];
+    
+    for (const [itemCode, stat] of itemStats.entries()) {
+      const itemInfo = itemMap.get(itemCode);
+      if (!itemInfo || stat.usages.length < 5) continue; // 최소 5일 데이터 필요
+      
+      // 이상치 제거 (IQR 방식)
+      const sorted = [...stat.usages].sort((a, b) => a - b);
+      const q1 = sorted[Math.floor(sorted.length * 0.25)];
+      const q3 = sorted[Math.floor(sorted.length * 0.75)];
+      const iqr = q3 - q1;
+      const lowerBound = q1 - 1.5 * iqr;
+      const upperBound = q3 + 1.5 * iqr;
+      
+      const cleanUsages = stat.usages.filter(u => u >= lowerBound && u <= upperBound);
+      if (cleanUsages.length < 3) continue;
+      
+      // 평균 계산
+      const mean = cleanUsages.reduce((a, b) => a + b, 0) / cleanUsages.length;
+      
+      // 표준편차 계산
+      const squaredDiffs = cleanUsages.map(u => Math.pow(u - mean, 2));
+      const avgSquaredDiff = squaredDiffs.reduce((a, b) => a + b, 0) / squaredDiffs.length;
+      const stdDev = Math.sqrt(avgSquaredDiff);
+      
+      // 변동계수(CV) 계산 - 등급 결정 기준
+      const cv = mean > 0 ? stdDev / mean : 0;
+      
+      // 등급 결정 (변동계수 + 사용빈도 기반)
+      // A등급: 고가/핵심 원료, B등급: 일반 원료, C등급: 저가/대체 가능
+      let grade: string;
+      let zValue: number;
+      
+      if (cv < 0.3 && mean > 50) {
+        grade = 'A';
+        zValue = 1.96; // 98% 서비스 수준
+      } else if (cv < 0.5 && mean > 10) {
+        grade = 'B';
+        zValue = 1.645; // 95% 서비스 수준
+      } else {
+        grade = 'C';
+        zValue = 1.28; // 90% 서비스 수준
+      }
+      
+      // 안전재고 계산: Z × σ × √(리드타임)
+      const safetyStock = zValue * stdDev * Math.sqrt(leadDays);
+      
+      // 발주점 = 평균 일사용량 × 리드타임 + 안전재고
+      const reorderPoint = mean * leadDays + safetyStock;
+      
+      // 재고일수 계산
+      const daysOfStock = mean > 0 ? Math.round(itemInfo.current_stock / mean) : 999;
+      
+      // 발주 필요 여부
+      const needOrder = itemInfo.current_stock < reorderPoint;
+      
+      results.push({
+        item_code: itemCode,
+        item_name: itemInfo.item_name,
+        unit: itemInfo.unit,
+        grade,
+        z_value: zValue,
+        current_stock: Math.round(itemInfo.current_stock * 10) / 10,
+        daily_avg: Math.round(mean * 100) / 100,
+        std_dev: Math.round(stdDev * 100) / 100,
+        cv: Math.round(cv * 1000) / 1000,
+        safety_stock: Math.round(safetyStock * 10) / 10,
+        reorder_point: Math.round(reorderPoint * 10) / 10,
+        days_of_stock: daysOfStock,
+        status: needOrder ? '🔴 발주필요' : '🟢 정상',
+        need_order: needOrder,
+        data_points: cleanUsages.length,
+        outliers_removed: stat.usages.length - cleanUsages.length
+      });
+    }
+    
+    // 발주 필요 순으로 정렬 (재고일수 오름차순)
+    results.sort((a, b) => {
+      if (a.need_order !== b.need_order) return a.need_order ? -1 : 1;
+      return a.days_of_stock - b.days_of_stock;
+    });
+    
+    // 통계 요약
+    const summary = {
+      analysis_period: `${startDateStr} ~ ${today}`,
+      lead_days: leadDays,
+      total_items: results.length,
+      need_order_count: results.filter(r => r.need_order).length,
+      grade_a_count: results.filter(r => r.grade === 'A').length,
+      grade_b_count: results.filter(r => r.grade === 'B').length,
+      grade_c_count: results.filter(r => r.grade === 'C').length
+    };
+    
+    return c.json({
+      success: true,
+      summary,
+      items: results
+    });
+    
+  } catch (error: any) {
+    console.error('[barcode/safety-stock-analysis] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default barcodeRoutes;
 
 // ★★★ v3.4.14: 바코드 사용/출고 거래 삭제 (재고 복원) - rowid 사용 ★★★

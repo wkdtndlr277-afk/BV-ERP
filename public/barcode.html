@@ -157,6 +157,11 @@
 
     <!-- Main Content -->
     <main class="p-4 pb-32">
+        <!-- ★★★ v3.6.76: 현재 모드 인디케이터 ★★★ -->
+        <div id="currentModeIndicator" class="mb-3 py-3 px-4 rounded-xl text-center font-bold text-white text-lg shadow-lg bg-red-500">
+            🔴 사용모드 (스캔 시 자동 1kg 차감)
+        </div>
+        
         <!-- Barcode Input Section -->
         <div class="bg-white rounded-2xl p-4 shadow-lg mb-4">
             <label class="block text-sm font-medium text-gray-600 mb-2">
@@ -169,7 +174,7 @@
                    autofocus>
             <p class="text-xs text-gray-400 mt-2 text-center">
                 <i class="fas fa-info-circle mr-1"></i>
-                Barcode Scanner 앱에서 스캔하면 자동 입력됩니다
+                <span id="scanModeHint">사용모드: 스캔 즉시 1kg 자동 차감됩니다</span>
             </p>
         </div>
 
@@ -340,11 +345,11 @@
             });
         });
 
-        // Handle barcode scan
+        // ★★★ v3.6.76: Handle barcode scan - AUTO DEDUCT in usage mode ★★★
         async function handleBarcodeScan(barcode) {
             if (!barcode) return;
             
-            console.log('Scanning barcode:', barcode);
+            console.log('Scanning barcode:', barcode, 'Mode:', currentTab);
             showLoading(true);
             
             try {
@@ -354,8 +359,15 @@
                 
                 if (result.success && result.data) {
                     currentItem = result.data;
-                    displayItem(result.data);
-                    showToast(`${result.data.item_name} 조회 완료`, 'success');
+                    
+                    // ★★★ 사용모드: 스캔 즉시 1kg 자동 차감 ★★★
+                    if (currentTab === 'usage') {
+                        await autoDeductUsage(result.data, 1);
+                    } else {
+                        // 입고/조회 모드: 품목 표시만
+                        displayItem(result.data);
+                        showToast(`${result.data.item_name} 조회 완료`, 'success');
+                    }
                     
                     // Add to history
                     addToHistory(barcode, result.data);
@@ -371,6 +383,62 @@
                 // Clear input and refocus
                 document.getElementById('barcodeInput').value = '';
                 document.getElementById('barcodeInput').focus();
+            }
+        }
+        
+        // ★★★ v3.6.76: 자동 사용 차감 함수 ★★★
+        async function autoDeductUsage(item, qty = 1) {
+            try {
+                const payload = {
+                    item_code: item.item_code,
+                    quantity: qty,
+                    lot_number: null,
+                    memo: '바코드 스캔 자동차감'
+                };
+                
+                const response = await fetch(`${API_BASE}/barcode/usage`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Update current stock
+                    item.current_stock = (item.current_stock || 0) - qty;
+                    currentItem = item;
+                    
+                    displayItem(item);
+                    
+                    // 성공 피드백 (진동)
+                    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+                    showToast(`✅ ${item.item_name} ${qty}kg 차감! (잔량: ${formatNumber(item.current_stock)}kg)`, 'success');
+                    
+                    // BroadcastChannel 알림
+                    try {
+                        const channel = new BroadcastChannel('bv_barcode_sync');
+                        channel.postMessage({
+                            type: 'usage',
+                            item_code: item.item_code,
+                            item_name: item.item_name,
+                            quantity: qty,
+                            new_stock: item.current_stock,
+                            timestamp: new Date().toISOString()
+                        });
+                        channel.close();
+                    } catch (e) {}
+                    
+                    addToHistory(item.barcode || item.item_code, item, 'usage', qty);
+                } else {
+                    displayItem(item);
+                    showToast(`⚠️ 차감실패: ${result.error || '재고부족'}`, 'error');
+                    if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                }
+            } catch (error) {
+                console.error('Auto deduct error:', error);
+                displayItem(item);
+                showToast(`⚠️ 오류: ${error.message}`, 'error');
             }
         }
 
@@ -429,12 +497,33 @@
             document.getElementById('notFoundBarcode').textContent = barcode;
         }
 
-        // Switch tab
+        // ★★★ v3.6.76: Switch tab with visual feedback and mode hint update ★★★
         function switchTab(tab) {
             currentTab = tab;
             document.querySelectorAll('.tab-btn').forEach(btn => {
                 btn.classList.toggle('active', btn.dataset.tab === tab);
             });
+            
+            // Update mode indicator
+            const indicator = document.getElementById('currentModeIndicator');
+            const hint = document.getElementById('scanModeHint');
+            
+            if (tab === 'usage') {
+                indicator.className = 'mb-3 py-3 px-4 rounded-xl text-center font-bold text-white text-lg shadow-lg bg-red-500';
+                indicator.innerHTML = '🔴 사용모드 (스캔 시 자동 1kg 차감)';
+                hint.textContent = '사용모드: 스캔 즉시 1kg 자동 차감됩니다';
+            } else if (tab === 'inbound') {
+                indicator.className = 'mb-3 py-3 px-4 rounded-xl text-center font-bold text-white text-lg shadow-lg bg-green-500';
+                indicator.innerHTML = '🟢 입고모드 (스캔 후 수량 입력 필요)';
+                hint.textContent = '입고모드: 스캔 후 수량을 입력하고 등록하세요';
+            } else if (tab === 'query') {
+                indicator.className = 'mb-3 py-3 px-4 rounded-xl text-center font-bold text-white text-lg shadow-lg bg-blue-500';
+                indicator.innerHTML = '🔵 조회모드 (재고 및 이력 확인)';
+                hint.textContent = '조회모드: 품목의 재고와 이력을 확인합니다';
+            }
+            
+            // Vibrate on mobile
+            if (navigator.vibrate) navigator.vibrate(50);
             
             // Update LOT section visibility
             if (currentItem) {

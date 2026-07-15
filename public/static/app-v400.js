@@ -1393,12 +1393,18 @@ function renderPage(page) {
 }
 
 // Dashboard
+// ★★★ v3.6.75: 대시보드 시각화 개선 - 신호등 시스템, A등급 우선 배치, 요약 카드, 라인 차트 ★★★
 async function renderDashboard() {
   const content = document.getElementById('page-content');
   
   try {
-    const result = await api('/dashboard');
+    // 대시보드 기본 데이터 + 안전재고 현황 동시 로드
+    const [result, safetyStockResult] = await Promise.all([
+      api('/dashboard'),
+      api('/dashboard/safety-stock-status?lead_days=3&days=30')
+    ]);
     const data = result.data;
+    const safetyData = safetyStockResult.success ? safetyStockResult : { summary: {}, items: [] };
     
     content.innerHTML = `
       <div class="space-y-6">
@@ -1415,7 +1421,54 @@ async function renderDashboard() {
           </div>
         </div>
         
-        <!-- Alert Cards -->
+        <!-- ★★★ v3.6.75: 긴급 발주 요약 카드 (최상단 강조) ★★★ -->
+        ${safetyData.summary && safetyData.summary.urgent_count > 0 ? `
+        <div class="bg-gradient-to-r from-red-500 to-red-600 rounded-2xl shadow-lg p-6 text-white">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-red-100 text-sm font-medium mb-1">⚠️ 긴급 발주 필요 (잔여일 0~2일)</p>
+              <p class="text-5xl font-bold">${safetyData.summary.urgent_count}<span class="text-2xl ml-2">품목</span></p>
+              <p class="text-red-100 text-xs mt-2">* 정제수(RM184) 제외</p>
+            </div>
+            <div class="text-right">
+              <div class="flex items-center gap-4 text-sm">
+                <div class="bg-white bg-opacity-20 rounded-lg px-4 py-2">
+                  <span class="block text-red-100">🟡 주의</span>
+                  <span class="text-2xl font-bold">${safetyData.summary.warning_count || 0}</span>
+                </div>
+                <div class="bg-white bg-opacity-20 rounded-lg px-4 py-2">
+                  <span class="block text-red-100">🟢 정상</span>
+                  <span class="text-2xl font-bold">${safetyData.summary.normal_count || 0}</span>
+                </div>
+              </div>
+              <p class="text-xs text-red-200 mt-2">분석기간: ${safetyData.summary.analysis_period || '-'}</p>
+            </div>
+          </div>
+        </div>
+        ` : `
+        <div class="bg-gradient-to-r from-green-500 to-green-600 rounded-2xl shadow-lg p-6 text-white">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-green-100 text-sm font-medium mb-1">✅ 긴급 발주 필요 품목 없음</p>
+              <p class="text-3xl font-bold">모든 원료 재고 정상</p>
+            </div>
+            <div class="text-right">
+              <div class="flex items-center gap-4 text-sm">
+                <div class="bg-white bg-opacity-20 rounded-lg px-4 py-2">
+                  <span class="block text-green-100">🟡 주의</span>
+                  <span class="text-2xl font-bold">${safetyData.summary?.warning_count || 0}</span>
+                </div>
+                <div class="bg-white bg-opacity-20 rounded-lg px-4 py-2">
+                  <span class="block text-green-100">🟢 정상</span>
+                  <span class="text-2xl font-bold">${safetyData.summary?.normal_count || 0}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        `}
+        
+        <!-- Alert Cards (기존) -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div class="bg-white rounded-xl shadow p-5 border-l-4 ${data.alerts.lowStockItems.length > 0 ? 'border-red-500' : 'border-green-500'}">
             <div class="flex items-center justify-between">
@@ -1465,6 +1518,87 @@ async function renderDashboard() {
             </div>
           </div>
         </div>
+        
+        <!-- ★★★ v3.6.75: 신호등 시스템 재고 현황 테이블 (A등급 우선 배치) ★★★ -->
+        ${safetyData.items && safetyData.items.length > 0 ? `
+        <div class="bg-white rounded-xl shadow">
+          <div class="p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50 flex justify-between items-center">
+            <h3 class="font-bold text-indigo-800">
+              <i class="fas fa-traffic-light mr-2"></i>원료 재고 현황 (신호등 시스템)
+            </h3>
+            <div class="flex items-center gap-3 text-xs">
+              <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-500"></span> 긴급(0~2일)</span>
+              <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-yellow-400"></span> 주의(3~7일)</span>
+              <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-green-500"></span> 정상(8일+)</span>
+              <span class="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded">A등급 우선</span>
+            </div>
+          </div>
+          <div class="overflow-x-auto max-h-96 overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-100 sticky top-0 z-10">
+                <tr class="text-xs text-gray-600">
+                  <th class="px-3 py-2 text-left font-semibold">상태</th>
+                  <th class="px-3 py-2 text-left font-semibold">등급</th>
+                  <th class="px-3 py-2 text-left font-semibold">품목코드</th>
+                  <th class="px-3 py-2 text-left font-semibold">품목명</th>
+                  <th class="px-3 py-2 text-right font-semibold">현재고</th>
+                  <th class="px-3 py-2 text-right font-semibold">일평균</th>
+                  <th class="px-3 py-2 text-right font-semibold text-purple-600">잔여일</th>
+                  <th class="px-3 py-2 text-right font-semibold text-blue-600">발주점</th>
+                  <th class="px-3 py-2 text-right font-semibold">안전재고</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${safetyData.items.slice(0, 30).map(item => {
+                  // 신호등 색상 결정
+                  let rowBg = '';
+                  let statusBadge = '';
+                  if (item.status_color === 'red') {
+                    rowBg = 'bg-red-50 hover:bg-red-100';
+                    statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-500 text-white">🔴 긴급</span>';
+                  } else if (item.status_color === 'yellow') {
+                    rowBg = 'bg-yellow-50 hover:bg-yellow-100';
+                    statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-400 text-yellow-900">🟡 주의</span>';
+                  } else {
+                    rowBg = 'hover:bg-gray-50';
+                    statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">🟢 정상</span>';
+                  }
+                  // 등급 배지
+                  let gradeBadge = '';
+                  if (item.grade === 'A') {
+                    gradeBadge = '<span class="px-2 py-0.5 rounded text-xs font-bold bg-purple-600 text-white">A</span>';
+                  } else if (item.grade === 'B') {
+                    gradeBadge = '<span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">B</span>';
+                  } else {
+                    gradeBadge = '<span class="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-600">C</span>';
+                  }
+                  return `
+                    <tr class="border-b ${rowBg}">
+                      <td class="px-3 py-2">${statusBadge}</td>
+                      <td class="px-3 py-2">${gradeBadge}</td>
+                      <td class="px-3 py-2 font-mono text-xs">${item.item_code}</td>
+                      <td class="px-3 py-2 font-medium">${item.item_name}</td>
+                      <td class="px-3 py-2 text-right ${item.status_color === 'red' ? 'text-red-600 font-bold' : ''}">${formatNumber(item.current_stock)} ${item.unit}</td>
+                      <td class="px-3 py-2 text-right text-gray-600">${formatNumber(item.daily_avg)}</td>
+                      <td class="px-3 py-2 text-right font-bold ${item.status_color === 'red' ? 'text-red-600' : item.status_color === 'yellow' ? 'text-yellow-600' : 'text-green-600'}">${item.days_of_stock === 999 ? '-' : item.days_of_stock + '일'}</td>
+                      <td class="px-3 py-2 text-right text-blue-600">${formatNumber(item.reorder_point)}</td>
+                      <td class="px-3 py-2 text-right text-gray-500">${formatNumber(item.safety_stock)}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+            ${safetyData.items.length > 30 ? `
+              <div class="text-center py-2 text-xs text-gray-500 bg-gray-50">
+                ... 외 ${safetyData.items.length - 30}개 품목 더 있음
+              </div>
+            ` : ''}
+          </div>
+        </div>
+        ` : ''}
+        
+        <!-- ★★★ v3.6.75: 긴급 품목 사용 추이 라인 차트 ★★★ -->
+        <div id="usage-trend-chart-container"></div>
         
         <!-- ★★★ v3.6.49: 생산 현황 카드 ★★★ -->
         ${data.production ? `
@@ -1670,8 +1804,104 @@ async function renderDashboard() {
     
     // 업무 현황 로드
     loadDashboardTaskSummary();
+    
+    // ★★★ v3.6.75: 긴급 품목 사용 추이 차트 로드 ★★★
+    if (safetyData.items && safetyData.items.length > 0) {
+      // 잔여일 3일 이하 품목 추출 (최대 5개)
+      const urgentItems = safetyData.items
+        .filter(item => item.days_of_stock <= 3 && item.days_of_stock !== 999)
+        .slice(0, 5);
+      if (urgentItems.length > 0) {
+        loadUsageTrendChart(urgentItems);
+      }
+    }
   } catch (e) {
+    console.error('Dashboard error:', e);
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
+  }
+}
+
+// ★★★ v3.6.75: 긴급 품목 사용 추이 라인 차트 ★★★
+async function loadUsageTrendChart(urgentItems) {
+  const container = document.getElementById('usage-trend-chart-container');
+  if (!container || urgentItems.length === 0) return;
+  
+  try {
+    const itemCodes = urgentItems.map(i => i.item_code).join(',');
+    const result = await api(`/dashboard/usage-trend?days=14&item_codes=${encodeURIComponent(itemCodes)}`);
+    
+    if (!result.success || !result.data || result.data.datasets.length === 0) {
+      container.innerHTML = '';
+      return;
+    }
+    
+    container.innerHTML = `
+      <div class="bg-white rounded-xl shadow">
+        <div class="p-4 border-b bg-gradient-to-r from-orange-50 to-red-50 flex justify-between items-center">
+          <h3 class="font-bold text-red-800">
+            <i class="fas fa-chart-line mr-2"></i>긴급 품목 최근 14일 사용 추이
+          </h3>
+          <span class="text-xs text-gray-500">잔여일 3일 이하 품목</span>
+        </div>
+        <div class="p-4">
+          <canvas id="usageTrendChart" height="200"></canvas>
+        </div>
+      </div>
+    `;
+    
+    // Chart.js 렌더링
+    const ctx = document.getElementById('usageTrendChart');
+    if (ctx && window.Chart) {
+      new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: result.data.labels,
+          datasets: result.data.datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'index',
+            intersect: false
+          },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: {
+                usePointStyle: true,
+                boxWidth: 8
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  return context.dataset.label + ': ' + formatNumber(context.raw) + ' kg';
+                }
+              }
+            }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: '사용량 (kg)'
+              }
+            },
+            x: {
+              title: {
+                display: true,
+                text: '날짜'
+              }
+            }
+          }
+        }
+      });
+    }
+  } catch (e) {
+    console.error('Usage trend chart error:', e);
+    container.innerHTML = '';
   }
 }
 

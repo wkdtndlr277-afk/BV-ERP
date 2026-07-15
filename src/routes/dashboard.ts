@@ -4,8 +4,12 @@ import { Hono } from 'hono';
 import type { Bindings } from '../types';
 import { GoogleSheetsService } from '../services/GoogleSheetsService';
 
-// ★ v3.6.75: 정제수(RM184) 등 제외할 품목 코드
-const EXCLUDED_ITEM_CODES = ['RM184'];
+// ★ v3.6.80: 제외할 품목 코드 (입고 원료가 아닌 것들)
+// - RM184: 정제수
+// - RM266, RM267: 입고 대상 아님
+// - SF로 시작하는 품목: 반제품(발효종 등), 입고 원료 아님
+const EXCLUDED_ITEM_CODES = ['RM184', 'RM266', 'RM267'];
+const EXCLUDED_ITEM_PREFIXES = ['SF'];  // SF로 시작하는 품목 제외
 
 // GoogleSheetsService 헬퍼 (올바른 방식)
 function getSheetService(c: any): GoogleSheetsService | null {
@@ -372,8 +376,13 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
     const results: any[] = [];
     
     for (const item of stockResult.results || []) {
-      // 정제수(RM184) 등 제외
+      // ★ v3.6.80: 제외 대상 체크
+      // 1. 특정 품목코드 제외 (RM184, RM266, RM267)
       if (EXCLUDED_ITEM_CODES.includes(item.item_code)) {
+        continue;
+      }
+      // 2. SF로 시작하는 품목 제외 (반제품/발효종)
+      if (EXCLUDED_ITEM_PREFIXES.some(prefix => item.item_code.startsWith(prefix))) {
         continue;
       }
       
@@ -392,16 +401,17 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
       // 안전재고 (저장된 값 사용)
       const safetyStock = item.safety_stock || 0;
       
-      // 신호등 상태 결정 (잔여일 기준)
+      // ★ v3.6.80: 신호등 상태 결정 (잔여일 10일 기준)
+      // 긴급: 0-3일, 주의: 4-10일, 정상: 11일+
       let status: string;
       let statusColor: string;
       let needOrder = false;
       
-      if (daysOfStock <= 2) {
+      if (daysOfStock <= 3) {
         status = '🔴 긴급';
         statusColor = 'red';
         needOrder = true;
-      } else if (daysOfStock <= 7) {
+      } else if (daysOfStock <= 10) {
         status = '🟡 주의';
         statusColor = 'yellow';
         needOrder = item.current_stock <= reorderPoint;

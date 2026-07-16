@@ -9143,4 +9143,451 @@ admin.post('/recalculate-stats-from-sheets', async (c) => {
   }
 });
 
+// ★★★ v3.6.90: 향상된 안전재고/발주점 계산 API ★★★
+// 입고빈도, 리드타임, 입고단위, 생산일보/BOM 기반 계산
+admin.post('/recalculate-enhanced-stats', async (c) => {
+  try {
+    const { days = 90, safety_factor = 1.5 } = await c.req.json().catch(() => ({}));
+    
+    // 구글시트 서비스 초기화
+    const clientEmail = c.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = c.env.GOOGLE_PRIVATE_KEY;
+    
+    if (!clientEmail || !privateKey) {
+      return c.json({ success: false, error: '구글 API 인증 정보가 없습니다.' }, 400);
+    }
+    
+    const { GoogleSheetsService } = await import('../services/GoogleSheetsService');
+    const formattedKey = privateKey.replace(/\\n/g, '\n');
+    const sheetsService = new GoogleSheetsService(clientEmail, formattedKey);
+    
+    // 분석 기간 계산
+    const today = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const kstNow = new Date(today.getTime() + kstOffset);
+    const todayStr = kstNow.toISOString().split('T')[0];
+    
+    const startDate = new Date(kstNow);
+    startDate.setDate(kstNow.getDate() - days);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    
+    // ========== 1. 입고 데이터 분석 (입고빈도, 입고단위, 리드타임) ==========
+    const inboundResult = await c.env.DB.prepare(`
+      SELECT 
+        item_code,
+        inbound_date,
+        origin_qty,
+        supplier
+      FROM inbound
+      WHERE inbound_date >= ?
+        AND inbound_date <= ?
+        AND lot_number NOT LIKE 'STADJ%'
+        AND lot_number NOT LIKE 'PADJ%'
+        AND lot_number NOT LIKE 'BADJ%'
+        AND quality_status = '합격'
+      ORDER BY item_code, inbound_date
+    `).bind(startDateStr, todayStr).all<{ 
+      item_code: string; 
+      inbound_date: string; 
+      origin_qty: number;
+      supplier: string | null;
+    }>();
+    
+    // 품목별 입고 데이터 그룹화
+    const inboundMap: Record<string, {
+      dates: string[];
+      quantities: number[];
+      suppliers: string[];
+    }> = {};
+    
+    for (const row of inboundResult.results || []) {
+      if (!inboundMap[row.item_code]) {
+        inboundMap[row.item_code] = { dates: [], quantities: [], suppliers: [] };
+      }
+      inboundMap[row.item_code].dates.push(row.inbound_date);
+      inboundMap[row.item_code].quantities.push(row.origin_qty);
+      if (row.supplier) inboundMap[row.item_code].suppliers.push(row.supplier);
+    }
+    
+    // ========== 2. BOM 데이터 분석 (생산일보 기반 예상 소모량) ==========
+    // production_bom에서 원료별 사용 제품 및 투입량 조회
+    const bomResult = await c.env.DB.prepare(`
+      SELECT 
+        pb.material_code as item_code,
+        pb.production_code,
+        pb.quantity as bom_qty,
+        pi.production_name
+      FROM production_bom pb
+      LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+      WHERE pi.is_active = 1
+    `).all<{
+      item_code: string;
+      production_code: string;
+      bom_qty: number;
+      production_name: string;
+    }>();
+    
+    // 원료별 BOM 정보 그룹화
+    const bomMap: Record<string, {
+      products: { code: string; name: string; qty: number }[];
+    }> = {};
+    
+    for (const row of bomResult.results || []) {
+      if (!row.item_code) continue;
+      if (!bomMap[row.item_code]) {
+        bomMap[row.item_code] = { products: [] };
+      }
+      bomMap[row.item_code].products.push({
+        code: row.production_code,
+        name: row.production_name || row.production_code,
+        qty: row.bom_qty
+      });
+    }
+    
+    // ========== 3. 최근 생산 실적 조회 (BOM 기반 예상 소모량 계산용) ==========
+    const productionResult = await c.env.DB.prepare(`
+      SELECT 
+        product_code,
+        SUM(quantity) as total_produced
+      FROM production
+      WHERE prod_date >= ?
+        AND prod_date <= ?
+        AND status = '완료'
+      GROUP BY product_code
+    `).bind(startDateStr, todayStr).all<{
+      product_code: string;
+      total_produced: number;
+    }>();
+    
+    // 생산 실적 맵
+    const productionMap: Record<string, number> = {};
+    for (const row of productionResult.results || []) {
+      productionMap[row.product_code] = row.total_produced;
+    }
+    
+    // ========== 4. 구글시트 일별수불부 사용량 데이터 ==========
+    const sheetData = await sheetsService.readSheet('일별수불부', 'A2:G');
+    
+    // 품목별 일별 사용량 집계
+    const usageMap: Record<string, { 
+      dates: string[]; 
+      usages: number[]; 
+      name: string 
+    }> = {};
+    
+    for (const row of sheetData || []) {
+      const dateStr = String(row[0] || '').trim();
+      const itemCode = String(row[1] || '').trim();
+      const itemName = String(row[2] || '').trim();
+      const usedQty = parseFloat(String(row[5] || '0').replace(/,/g, '')) || 0;
+      
+      if (!dateStr || dateStr < startDateStr || dateStr > todayStr) continue;
+      if (!itemCode.startsWith('R') && !itemCode.startsWith('RM')) continue;
+      if (itemCode.startsWith('RT')) continue;
+      
+      if (!usageMap[itemCode]) {
+        usageMap[itemCode] = { dates: [], usages: [], name: itemName };
+      }
+      
+      usageMap[itemCode].dates.push(dateStr);
+      usageMap[itemCode].usages.push(usedQty);
+    }
+    
+    // ========== 5. 품목별 향상된 통계 계산 ==========
+    let updatedCount = 0;
+    const errors: string[] = [];
+    const statsTime = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const details: any[] = [];
+    
+    // 모든 원료 조회
+    const masterItems = await c.env.DB.prepare(`
+      SELECT item_code, item_name, unit FROM master WHERE category = '원료' AND is_active = 1
+    `).all<{ item_code: string; item_name: string; unit: string }>();
+    
+    for (const item of masterItems.results || []) {
+      try {
+        const itemCode = item.item_code;
+        const usageData = usageMap[itemCode] || { dates: [], usages: [], name: item.item_name };
+        const inboundData = inboundMap[itemCode] || { dates: [], quantities: [], suppliers: [] };
+        const bomData = bomMap[itemCode];
+        
+        // ----- 일평균 사용량 계산 (구글시트 기반) -----
+        const usages = usageData.usages.filter(u => u > 0);
+        let dailyAvg = 0;
+        let monthlyAvg = 0;
+        let stdDev = 0;
+        let cv = 0;
+        
+        if (usages.length > 0) {
+          const sum = usages.reduce((a, b) => a + b, 0);
+          const totalDays = Math.min(days, usageData.dates.length || 1);
+          dailyAvg = sum / totalDays;
+          monthlyAvg = dailyAvg * 30;
+          
+          if (usages.length > 1) {
+            const variance = usages.reduce((acc, val) => acc + Math.pow(val - dailyAvg, 2), 0) / usages.length;
+            stdDev = Math.sqrt(variance);
+            cv = dailyAvg > 0 ? stdDev / dailyAvg : 0;
+          }
+        }
+        
+        // ----- 입고 빈도수 및 리드타임 계산 -----
+        let inboundFrequency = 0;  // 월평균 입고 횟수
+        let avgLeadTime = 7;        // 평균 입고 간격 (일) = 리드타임 proxy
+        let avgOrderQty = 0;        // 평균 입고 수량
+        let minOrderQty = 0;        // 최소 입고 수량 (입고단위 proxy)
+        
+        if (inboundData.dates.length > 0) {
+          // 월평균 입고 횟수
+          inboundFrequency = (inboundData.dates.length / days) * 30;
+          
+          // 평균/최소 입고 수량
+          const qtySum = inboundData.quantities.reduce((a, b) => a + b, 0);
+          avgOrderQty = qtySum / inboundData.quantities.length;
+          minOrderQty = Math.min(...inboundData.quantities);
+          
+          // 입고 간격 계산 (리드타임 proxy)
+          if (inboundData.dates.length >= 2) {
+            const sortedDates = [...inboundData.dates].sort();
+            const gaps: number[] = [];
+            for (let i = 1; i < sortedDates.length; i++) {
+              const d1 = new Date(sortedDates[i - 1]);
+              const d2 = new Date(sortedDates[i]);
+              const diffDays = Math.floor((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
+              if (diffDays > 0 && diffDays <= 90) {  // 이상치 제외
+                gaps.push(diffDays);
+              }
+            }
+            if (gaps.length > 0) {
+              // 중앙값 사용 (이상치에 덜 민감)
+              gaps.sort((a, b) => a - b);
+              const midIdx = Math.floor(gaps.length / 2);
+              avgLeadTime = gaps.length % 2 === 0 
+                ? (gaps[midIdx - 1] + gaps[midIdx]) / 2 
+                : gaps[midIdx];
+            }
+          }
+        }
+        
+        // ----- BOM 기반 예상 소모량 (옵션) -----
+        let bomBasedUsage = 0;
+        if (bomData && bomData.products.length > 0) {
+          for (const prod of bomData.products) {
+            const produced = productionMap[prod.code] || 0;
+            bomBasedUsage += (produced * prod.qty) / 1000;  // g → kg 변환
+          }
+          // 일평균으로 변환
+          bomBasedUsage = bomBasedUsage / days;
+        }
+        
+        // ----- 최종 일평균 결정 -----
+        // 구글시트 사용량과 BOM 기반 중 더 높은 값 사용 (보수적)
+        const finalDailyAvg = Math.max(dailyAvg, bomBasedUsage);
+        
+        // ----- 등급 결정 -----
+        let grade = 'C';
+        if (finalDailyAvg >= 100) {
+          grade = 'A';
+        } else if (finalDailyAvg >= 10) {
+          grade = 'B';
+        }
+        
+        // ----- 향상된 안전재고 계산 -----
+        // 안전재고 = 일평균사용량 × 리드타임 × 안전계수 × (1 + 변동계수)
+        // 변동계수(CV)가 높을수록 더 많은 안전재고 필요
+        const cvFactor = Math.min(cv, 1);  // CV 최대 1로 제한
+        const safetyStock = Math.round(
+          finalDailyAvg * avgLeadTime * safety_factor * (1 + cvFactor * 0.5) * 10
+        ) / 10;
+        
+        // ----- 향상된 발주점 계산 -----
+        // 발주점 = 안전재고 + (일평균사용량 × 리드타임)
+        // 또는 = 일평균사용량 × (리드타임 + 안전기간)
+        const reorderPoint = Math.round(
+          (safetyStock + (finalDailyAvg * avgLeadTime)) * 10
+        ) / 10;
+        
+        // ----- 권장 발주량 계산 -----
+        // 발주량 = 입고단위의 배수로 조정 (EOQ 간이 버전)
+        // 기본: 2~4주 사용량, 입고단위 배수로 반올림
+        let recommendedOrderQty = finalDailyAvg * 14;  // 2주 분량
+        if (minOrderQty > 0) {
+          recommendedOrderQty = Math.ceil(recommendedOrderQty / minOrderQty) * minOrderQty;
+        }
+        recommendedOrderQty = Math.round(recommendedOrderQty * 10) / 10;
+        
+        // ----- DB 업데이트 -----
+        await c.env.DB.prepare(`
+          UPDATE master SET
+            daily_usage_avg = ?,
+            monthly_usage_avg = ?,
+            usage_std_dev = ?,
+            usage_cv = ?,
+            item_grade = ?,
+            inbound_frequency = ?,
+            lead_time = ?,
+            safety_stock = ?,
+            calculated_reorder_point = ?,
+            stats_updated_at = ?
+          WHERE item_code = ?
+        `).bind(
+          Math.round(finalDailyAvg * 100) / 100,
+          Math.round(finalDailyAvg * 30 * 100) / 100,
+          Math.round(stdDev * 100) / 100,
+          Math.round(cv * 1000) / 1000,
+          grade,
+          Math.round(inboundFrequency * 100) / 100,
+          Math.round(avgLeadTime * 10) / 10,
+          safetyStock,
+          reorderPoint,
+          statsTime,
+          itemCode
+        ).run();
+        
+        updatedCount++;
+        
+        // 상세 로그 (상위 20개)
+        if (details.length < 20 || finalDailyAvg > 10) {
+          details.push({
+            item_code: itemCode,
+            item_name: item.item_name,
+            daily_avg: Math.round(finalDailyAvg * 100) / 100,
+            daily_avg_source: dailyAvg > bomBasedUsage ? 'sheet' : 'bom',
+            bom_based_avg: Math.round(bomBasedUsage * 100) / 100,
+            inbound_count: inboundData.dates.length,
+            inbound_freq: Math.round(inboundFrequency * 100) / 100,
+            lead_time: Math.round(avgLeadTime * 10) / 10,
+            avg_order_qty: Math.round(avgOrderQty * 10) / 10,
+            min_order_qty: Math.round(minOrderQty * 10) / 10,
+            cv: Math.round(cv * 1000) / 1000,
+            grade,
+            safety_stock: safetyStock,
+            reorder_point: reorderPoint,
+            recommended_order: recommendedOrderQty,
+            bom_products: bomData ? bomData.products.length : 0
+          });
+        }
+        
+      } catch (itemError: any) {
+        errors.push(`${item.item_code}: ${itemError.message}`);
+      }
+    }
+    
+    // 로그 기록
+    try {
+      await c.env.DB.prepare(
+        'INSERT INTO admin_logs (action_type, target_table, reason) VALUES (?, ?, ?)'
+      ).bind('향상된통계재계산', 'master', `${updatedCount}개 품목 (${days}일 기준, 안전계수=${safety_factor})`).run();
+    } catch (e) { /* ignore */ }
+    
+    return c.json({
+      success: true,
+      message: `향상된 안전재고/발주점 계산 완료`,
+      version: 'v3.6.90',
+      parameters: {
+        analysis_days: days,
+        safety_factor,
+        analysis_period: `${startDateStr} ~ ${todayStr}`
+      },
+      data_sources: {
+        sheet_rows: sheetData?.length || 0,
+        inbound_records: inboundResult.results?.length || 0,
+        bom_records: bomResult.results?.length || 0,
+        production_records: productionResult.results?.length || 0
+      },
+      updated_count: updatedCount,
+      formula_explanation: {
+        safety_stock: '일평균사용량 × 리드타임 × 안전계수 × (1 + CV×0.5)',
+        reorder_point: '안전재고 + (일평균사용량 × 리드타임)',
+        lead_time: '입고간격 중앙값 (이상치 제외)',
+        daily_avg: 'MAX(구글시트 사용량, BOM기반 예상사용량)'
+      },
+      sample_details: details.sort((a, b) => b.daily_avg - a.daily_avg).slice(0, 20),
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined
+    });
+    
+  } catch (error: any) {
+    console.error('[recalculate-enhanced-stats] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.90: 향상된 통계 조회 API ★★★
+admin.get('/enhanced-stats/:item_code', async (c) => {
+  try {
+    const itemCode = c.req.param('item_code');
+    
+    // 1. master 테이블에서 통계 조회
+    const item = await c.env.DB.prepare(`
+      SELECT 
+        item_code, item_name, unit, current_stock,
+        daily_usage_avg, monthly_usage_avg, usage_std_dev, usage_cv,
+        inbound_frequency, lead_time, safety_stock, calculated_reorder_point,
+        item_grade, stats_updated_at
+      FROM master
+      WHERE item_code = ?
+    `).bind(itemCode).first();
+    
+    if (!item) {
+      return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
+    }
+    
+    // 2. 최근 입고 기록 조회
+    const recentInbound = await c.env.DB.prepare(`
+      SELECT inbound_date, origin_qty, supplier, lot_number
+      FROM inbound
+      WHERE item_code = ?
+        AND lot_number NOT LIKE 'STADJ%'
+        AND lot_number NOT LIKE 'PADJ%'
+        AND lot_number NOT LIKE 'BADJ%'
+      ORDER BY inbound_date DESC
+      LIMIT 10
+    `).bind(itemCode).all();
+    
+    // 3. BOM 사용처 조회
+    const bomUsage = await c.env.DB.prepare(`
+      SELECT 
+        pb.production_code, pb.quantity, pb.unit,
+        pi.production_name
+      FROM production_bom pb
+      LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+      WHERE pb.material_code = ?
+    `).bind(itemCode).all();
+    
+    // 4. 재고 상태 계산
+    const currentStock = parseFloat(item.current_stock as string) || 0;
+    const safetyStock = parseFloat(item.safety_stock as string) || 0;
+    const reorderPoint = parseFloat(item.calculated_reorder_point as string) || 0;
+    const dailyAvg = parseFloat(item.daily_usage_avg as string) || 0;
+    
+    let stockStatus = '정상';
+    let stockDays = dailyAvg > 0 ? Math.floor(currentStock / dailyAvg) : 999;
+    
+    if (currentStock <= 0) {
+      stockStatus = '재고없음';
+    } else if (currentStock <= safetyStock) {
+      stockStatus = '긴급';
+    } else if (currentStock <= reorderPoint) {
+      stockStatus = '발주필요';
+    }
+    
+    return c.json({
+      success: true,
+      item: item,
+      stock_status: {
+        status: stockStatus,
+        days_remaining: stockDays,
+        current_stock: currentStock,
+        safety_stock: safetyStock,
+        reorder_point: reorderPoint
+      },
+      recent_inbound: recentInbound.results,
+      bom_usage: bomUsage.results
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default admin

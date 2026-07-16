@@ -1519,83 +1519,171 @@ async function renderDashboard() {
           </div>
         </div>
         
-        <!-- ★★★ v3.6.75: 신호등 시스템 재고 현황 테이블 (A등급 우선 배치) ★★★ -->
-        ${safetyData.items && safetyData.items.length > 0 ? `
-        <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50 flex justify-between items-center">
-            <h3 class="font-bold text-indigo-800">
-              <i class="fas fa-boxes mr-2"></i>원료 재고 현황
-            </h3>
-            <div class="flex items-center gap-3 text-xs">
-              <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-red-500"></span> 긴급(0~2일)</span>
-              <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-yellow-400"></span> 주의(3~7일)</span>
-              <span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-green-500"></span> 정상(8일+)</span>
-              <span class="ml-2 px-2 py-0.5 bg-purple-100 text-purple-700 rounded">A등급 우선</span>
+        <!-- ★★★ v3.6.91: 원료 재고 현황 - 긴급/주의 분리, 등급별 표시 ★★★ -->
+        ${safetyData.items_by_grade ? `
+        <div class="space-y-4">
+          <!-- 등급별 요약 카드 -->
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div class="bg-purple-50 border border-purple-200 rounded-lg p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-purple-700">A등급 (핵심원료)</span>
+                <span class="px-2 py-0.5 rounded text-xs font-bold bg-purple-600 text-white">일100kg+</span>
+              </div>
+              <p class="text-2xl font-bold text-purple-800 mt-1">${safetyData.summary?.grade_a?.total || 0}<span class="text-sm text-purple-500 ml-1">개</span></p>
+              <p class="text-xs text-purple-600">긴급/주의: ${safetyData.summary?.grade_a?.alert || 0}개</p>
             </div>
+            <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-blue-700">B등급 (중간사용)</span>
+                <span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-500 text-white">일10kg+</span>
+              </div>
+              <p class="text-2xl font-bold text-blue-800 mt-1">${safetyData.summary?.grade_b?.total || 0}<span class="text-sm text-blue-500 ml-1">개</span></p>
+              <p class="text-xs text-blue-600">긴급/주의: ${safetyData.summary?.grade_b?.alert || 0}개</p>
+            </div>
+            <div class="bg-orange-50 border border-orange-200 rounded-lg p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-orange-700">C등급 (유통기한短)</span>
+                <span class="px-2 py-0.5 rounded text-xs font-medium bg-orange-500 text-white">30일↓</span>
+              </div>
+              <p class="text-2xl font-bold text-orange-800 mt-1">${safetyData.summary?.grade_c?.total || 0}<span class="text-sm text-orange-500 ml-1">개</span></p>
+              <p class="text-xs text-orange-600">긴급/주의: ${safetyData.summary?.grade_c?.alert || 0}개</p>
+            </div>
+            <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-gray-700">기타 (저사용량)</span>
+              </div>
+              <p class="text-2xl font-bold text-gray-800 mt-1">${safetyData.summary?.grade_other?.total || 0}<span class="text-sm text-gray-500 ml-1">개</span></p>
+            </div>
+          </div>
+          
+          <!-- 🔴 긴급 품목 섹션 -->
+          ${(() => {
+            const urgentItems = safetyData.items?.filter(i => i.status_color === 'red') || [];
+            if (urgentItems.length === 0) return '';
+            return '<div class="bg-white rounded-xl shadow border-l-4 border-red-500">' +
+              '<div class="p-4 border-b bg-red-50 flex justify-between items-center">' +
+                '<h3 class="font-bold text-red-800"><i class="fas fa-exclamation-triangle mr-2"></i>🔴 긴급 발주 필요 (' + urgentItems.length + '개)</h3>' +
+                '<span class="text-xs text-red-600">잔여일 0~3일</span>' +
+              '</div>' +
+              '<div class="overflow-x-auto">' +
+                '<table class="w-full text-sm">' +
+                  '<thead class="bg-red-100">' +
+                    '<tr class="text-xs text-red-700">' +
+                      '<th class="px-3 py-2 text-left">등급</th>' +
+                      '<th class="px-3 py-2 text-left">품목코드</th>' +
+                      '<th class="px-3 py-2 text-left">품목명</th>' +
+                      '<th class="px-3 py-2 text-right">현재고</th>' +
+                      '<th class="px-3 py-2 text-right">일평균</th>' +
+                      '<th class="px-3 py-2 text-right font-bold">잔여일</th>' +
+                      '<th class="px-3 py-2 text-right">발주점</th>' +
+                      '<th class="px-3 py-2 text-left">등급사유</th>' +
+                    '</tr>' +
+                  '</thead>' +
+                  '<tbody>' +
+                    urgentItems.map(item => {
+                      let gradeBadge = item.grade === 'A' ? '<span class="px-2 py-0.5 rounded text-xs font-bold bg-purple-600 text-white">A</span>' :
+                                       item.grade === 'B' ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-500 text-white">B</span>' :
+                                       item.grade === 'C' ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-orange-500 text-white">C</span>' :
+                                       '<span class="px-2 py-0.5 rounded text-xs bg-gray-200 text-gray-600">-</span>';
+                      return '<tr class="border-b bg-red-50 hover:bg-red-100">' +
+                        '<td class="px-3 py-2">' + gradeBadge + '</td>' +
+                        '<td class="px-3 py-2 font-mono text-xs">' + item.item_code + '</td>' +
+                        '<td class="px-3 py-2 font-medium text-red-800">' + item.item_name + '</td>' +
+                        '<td class="px-3 py-2 text-right font-bold text-red-600">' + formatNumber(item.current_stock) + ' ' + item.unit + '</td>' +
+                        '<td class="px-3 py-2 text-right">' + formatNumber(item.daily_avg) + '</td>' +
+                        '<td class="px-3 py-2 text-right font-bold text-red-600">' + (item.days_of_stock === 999 ? '-' : item.days_of_stock + '일') + '</td>' +
+                        '<td class="px-3 py-2 text-right text-blue-600">' + formatNumber(item.reorder_point) + '</td>' +
+                        '<td class="px-3 py-2 text-xs text-gray-600">' + (item.grade_reason || '') + '</td>' +
+                      '</tr>';
+                    }).join('') +
+                  '</tbody>' +
+                '</table>' +
+              '</div>' +
+            '</div>';
+          })()}
+          
+          <!-- 🟡 주의 품목 섹션 -->
+          ${(() => {
+            const warningItems = safetyData.items?.filter(i => i.status_color === 'yellow') || [];
+            if (warningItems.length === 0) return '';
+            return '<div class="bg-white rounded-xl shadow border-l-4 border-yellow-400">' +
+              '<div class="p-4 border-b bg-yellow-50 flex justify-between items-center">' +
+                '<h3 class="font-bold text-yellow-800"><i class="fas fa-exclamation-circle mr-2"></i>🟡 주의 필요 (' + warningItems.length + '개)</h3>' +
+                '<span class="text-xs text-yellow-600">잔여일 4~10일</span>' +
+              '</div>' +
+              '<div class="overflow-x-auto max-h-64 overflow-y-auto">' +
+                '<table class="w-full text-sm">' +
+                  '<thead class="bg-yellow-100 sticky top-0">' +
+                    '<tr class="text-xs text-yellow-700">' +
+                      '<th class="px-3 py-2 text-left">등급</th>' +
+                      '<th class="px-3 py-2 text-left">품목코드</th>' +
+                      '<th class="px-3 py-2 text-left">품목명</th>' +
+                      '<th class="px-3 py-2 text-right">현재고</th>' +
+                      '<th class="px-3 py-2 text-right">일평균</th>' +
+                      '<th class="px-3 py-2 text-right font-bold">잔여일</th>' +
+                      '<th class="px-3 py-2 text-right">발주점</th>' +
+                      '<th class="px-3 py-2 text-left">등급사유</th>' +
+                    '</tr>' +
+                  '</thead>' +
+                  '<tbody>' +
+                    warningItems.map(item => {
+                      let gradeBadge = item.grade === 'A' ? '<span class="px-2 py-0.5 rounded text-xs font-bold bg-purple-600 text-white">A</span>' :
+                                       item.grade === 'B' ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-500 text-white">B</span>' :
+                                       item.grade === 'C' ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-orange-500 text-white">C</span>' :
+                                       '<span class="px-2 py-0.5 rounded text-xs bg-gray-200 text-gray-600">-</span>';
+                      return '<tr class="border-b bg-yellow-50 hover:bg-yellow-100">' +
+                        '<td class="px-3 py-2">' + gradeBadge + '</td>' +
+                        '<td class="px-3 py-2 font-mono text-xs">' + item.item_code + '</td>' +
+                        '<td class="px-3 py-2 font-medium text-yellow-800">' + item.item_name + '</td>' +
+                        '<td class="px-3 py-2 text-right font-bold text-yellow-700">' + formatNumber(item.current_stock) + ' ' + item.unit + '</td>' +
+                        '<td class="px-3 py-2 text-right">' + formatNumber(item.daily_avg) + '</td>' +
+                        '<td class="px-3 py-2 text-right font-bold text-yellow-600">' + (item.days_of_stock === 999 ? '-' : item.days_of_stock + '일') + '</td>' +
+                        '<td class="px-3 py-2 text-right text-blue-600">' + formatNumber(item.reorder_point) + '</td>' +
+                        '<td class="px-3 py-2 text-xs text-gray-600">' + (item.grade_reason || '') + '</td>' +
+                      '</tr>';
+                    }).join('') +
+                  '</tbody>' +
+                '</table>' +
+              '</div>' +
+            '</div>';
+          })()}
+        </div>
+        ` : (safetyData.items && safetyData.items.length > 0 ? `
+        <!-- 이전 버전 호환 (items_by_grade 없을 때) -->
+        <div class="bg-white rounded-xl shadow">
+          <div class="p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
+            <h3 class="font-bold text-indigo-800"><i class="fas fa-boxes mr-2"></i>원료 재고 현황</h3>
           </div>
           <div class="overflow-x-auto max-h-96 overflow-y-auto">
             <table class="w-full text-sm">
-              <thead class="bg-gray-100 sticky top-0 z-10">
+              <thead class="bg-gray-100 sticky top-0">
                 <tr class="text-xs text-gray-600">
-                  <th class="px-3 py-2 text-left font-semibold">상태</th>
-                  <th class="px-3 py-2 text-left font-semibold">등급</th>
-                  <th class="px-3 py-2 text-left font-semibold">품목코드</th>
-                  <th class="px-3 py-2 text-left font-semibold">품목명</th>
-                  <th class="px-3 py-2 text-right font-semibold">현재고</th>
-                  <th class="px-3 py-2 text-right font-semibold">일평균</th>
-                  <th class="px-3 py-2 text-right font-semibold text-purple-600">잔여일</th>
-                  <th class="px-3 py-2 text-right font-semibold text-blue-600">발주점</th>
-                  <th class="px-3 py-2 text-right font-semibold">안전재고</th>
+                  <th class="px-3 py-2 text-left">상태</th>
+                  <th class="px-3 py-2 text-left">품목코드</th>
+                  <th class="px-3 py-2 text-left">품목명</th>
+                  <th class="px-3 py-2 text-right">현재고</th>
+                  <th class="px-3 py-2 text-right">잔여일</th>
                 </tr>
               </thead>
               <tbody>
                 ${safetyData.items.slice(0, 30).map(item => {
-                  // 신호등 색상 결정
-                  let rowBg = '';
-                  let statusBadge = '';
-                  if (item.status_color === 'red') {
-                    rowBg = 'bg-red-50 hover:bg-red-100';
-                    statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-red-500 text-white">🔴 긴급</span>';
-                  } else if (item.status_color === 'yellow') {
-                    rowBg = 'bg-yellow-50 hover:bg-yellow-100';
-                    statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-yellow-400 text-yellow-900">🟡 주의</span>';
-                  } else {
-                    rowBg = 'hover:bg-gray-50';
-                    statusBadge = '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">🟢 정상</span>';
-                  }
-                  // 등급 배지
-                  let gradeBadge = '';
-                  if (item.grade === 'A') {
-                    gradeBadge = '<span class="px-2 py-0.5 rounded text-xs font-bold bg-purple-600 text-white">A</span>';
-                  } else if (item.grade === 'B') {
-                    gradeBadge = '<span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">B</span>';
-                  } else {
-                    gradeBadge = '<span class="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-600">C</span>';
-                  }
-                  return `
-                    <tr class="border-b ${rowBg}">
-                      <td class="px-3 py-2">${statusBadge}</td>
-                      <td class="px-3 py-2">${gradeBadge}</td>
-                      <td class="px-3 py-2 font-mono text-xs">${item.item_code}</td>
-                      <td class="px-3 py-2 font-medium">${item.item_name}</td>
-                      <td class="px-3 py-2 text-right ${item.status_color === 'red' ? 'text-red-600 font-bold' : ''}">${formatNumber(item.current_stock)} ${item.unit}</td>
-                      <td class="px-3 py-2 text-right text-gray-600">${formatNumber(item.daily_avg)}</td>
-                      <td class="px-3 py-2 text-right font-bold ${item.status_color === 'red' ? 'text-red-600' : item.status_color === 'yellow' ? 'text-yellow-600' : 'text-green-600'}">${item.days_of_stock === 999 ? '-' : item.days_of_stock + '일'}</td>
-                      <td class="px-3 py-2 text-right text-blue-600">${formatNumber(item.reorder_point)}</td>
-                      <td class="px-3 py-2 text-right text-gray-500">${formatNumber(item.safety_stock)}</td>
-                    </tr>
-                  `;
+                  let rowBg = item.status_color === 'red' ? 'bg-red-50' : item.status_color === 'yellow' ? 'bg-yellow-50' : '';
+                  let statusBadge = item.status_color === 'red' ? '<span class="text-red-600 font-bold">🔴 긴급</span>' :
+                                    item.status_color === 'yellow' ? '<span class="text-yellow-600 font-bold">🟡 주의</span>' :
+                                    '<span class="text-green-600">🟢 정상</span>';
+                  return '<tr class="border-b ' + rowBg + '">' +
+                    '<td class="px-3 py-2">' + statusBadge + '</td>' +
+                    '<td class="px-3 py-2 font-mono text-xs">' + item.item_code + '</td>' +
+                    '<td class="px-3 py-2">' + item.item_name + '</td>' +
+                    '<td class="px-3 py-2 text-right">' + formatNumber(item.current_stock) + '</td>' +
+                    '<td class="px-3 py-2 text-right font-bold">' + (item.days_of_stock === 999 ? '-' : item.days_of_stock + '일') + '</td>' +
+                  '</tr>';
                 }).join('')}
               </tbody>
             </table>
-            ${safetyData.items.length > 30 ? `
-              <div class="text-center py-2 text-xs text-gray-500 bg-gray-50">
-                ... 외 ${safetyData.items.length - 30}개 품목 더 있음
-              </div>
-            ` : ''}
           </div>
         </div>
-        ` : ''}
+        ` : '')}
         
         <!-- ★★★ v3.6.75: 긴급 품목 사용 추이 라인 차트 ★★★ -->
         <div id="usage-trend-chart-container"></div>

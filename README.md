@@ -386,3 +386,88 @@ curl -X POST "https://bv-erp.pages.dev/api/sheets/v2/shipment/auto-process" \
 - **일별수불부 = 원료** (BOM × 생산수량 = 원료 사용량)
 - **출고일지 = 제품** (생산일+1 = 출고일)
 - **모든 계산 = Google Sheets 자동** (LOOKUP, SUMIFS, SUMPRODUCT)
+
+---
+
+## v3.6.90 업데이트 (2026-07-16)
+
+### 📊 향상된 안전재고/발주점 계산 시스템
+
+**기존 단순 계산의 문제점:**
+- 안전재고 = 일평균 × 3일 (고정)
+- 입고빈도, 리드타임, 입고단위 미반영
+- 수요 변동성(CV) 미고려
+
+**v3.6.90 향상된 계산:**
+
+| 항목 | 계산 공식 |
+|------|----------|
+| 안전재고 | 일평균 × 리드타임 × 안전계수 × (1 + CV×0.5) |
+| 발주점 | 안전재고 + (일평균 × 리드타임) |
+| 리드타임 | 입고간격 중앙값 (이상치 90일 초과 제외) |
+| 일평균 | MAX(구글시트 사용량, BOM기반 예상사용량) |
+| 권장발주량 | 2주 분량, 입고단위 배수로 조정 |
+
+### 새 API 엔드포인트
+
+| API | 메서드 | 설명 |
+|-----|--------|------|
+| `/api/admin/recalculate-enhanced-stats` | POST | 향상된 안전재고/발주점 재계산 |
+| `/api/admin/enhanced-stats/:item_code` | GET | 품목별 상세 통계 조회 |
+
+### 사용 예시
+
+**1. 향상된 통계 재계산:**
+```bash
+curl -X POST "https://bv-erp.pages.dev/api/admin/recalculate-enhanced-stats" \
+  -H "Content-Type: application/json" \
+  -d '{"days": 60, "safety_factor": 1.5}'
+```
+
+**응답 예시:**
+```json
+{
+  "success": true,
+  "version": "v3.6.90",
+  "parameters": {
+    "analysis_days": 60,
+    "safety_factor": 1.5
+  },
+  "data_sources": {
+    "sheet_rows": 8719,
+    "inbound_records": 614,
+    "bom_records": 2514,
+    "production_records": 209
+  },
+  "updated_count": 193
+}
+```
+
+**2. 품목별 상세 조회:**
+```bash
+curl "https://bv-erp.pages.dev/api/admin/enhanced-stats/R102"
+```
+
+### 데이터 소스 통합
+
+| 소스 | 데이터 |
+|------|--------|
+| 구글시트 일별수불부 | 일별 실제 사용량 |
+| inbound 테이블 | 입고빈도, 평균/최소 입고단위, 입고간격(리드타임) |
+| production_bom 테이블 | 제품별 원료 투입량 (BOM) |
+| production 테이블 | 생산실적 (BOM 기반 예상 사용량 계산) |
+
+### 상세 결과 항목
+
+| 필드 | 설명 |
+|------|------|
+| daily_avg | 최종 일평균 사용량 (시트 vs BOM 중 MAX) |
+| inbound_freq | 월평균 입고 횟수 |
+| lead_time | 리드타임 (입고간격 중앙값) |
+| avg_order_qty | 평균 입고 수량 |
+| min_order_qty | 최소 입고 단위 |
+| cv | 변동계수 (표준편차/평균) |
+| safety_stock | 향상된 안전재고 |
+| reorder_point | 향상된 발주점 |
+| recommended_order | 권장 발주량 |
+| bom_products | BOM 사용처 제품 수 |

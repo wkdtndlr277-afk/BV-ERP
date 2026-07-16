@@ -43446,7 +43446,16 @@ let barcodeCurrentTab = 'usage';
 let barcodeAutoDeductMode = true; // 자동 차감 모드 (기본: ON)
 
 // 바코드 스캔 처리 - 자동 차감 모드
+// ★★★ v3.6.83: 중복 스캔 방지 플래그 ★★★
+let scanBarcodeProcessing = false;
+
 async function scanBarcode() {
+  // ★★★ v3.6.83: 중복 호출 방지 ★★★
+  if (scanBarcodeProcessing) {
+    console.log('[바코드] 이미 처리 중 - 중복 호출 무시');
+    return;
+  }
+  
   const input = document.getElementById('barcode-scan-input');
   const barcode = input?.value?.trim();
   
@@ -43455,6 +43464,7 @@ async function scanBarcode() {
     return;
   }
   
+  scanBarcodeProcessing = true;
   showLoading('처리 중...');
   
   try {
@@ -43499,6 +43509,8 @@ async function scanBarcode() {
     hideLoading();
     input.value = '';
     input.focus();
+    // ★★★ v3.6.83: 중복 방지 플래그 리셋 (500ms 후) ★★★
+    setTimeout(() => { scanBarcodeProcessing = false; }, 500);
   }
 }
 

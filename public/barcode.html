@@ -407,24 +407,40 @@
             // Auto-focus on barcode input
             barcodeInput.focus();
             
+            // ★★★ v3.6.83: 중복 스캔 방지 플래그 ★★★
+            let isProcessing = false;
+            let scanTimeout;
+            
             // Handle barcode input (from scanner app or manual)
             barcodeInput.addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    handleBarcodeScan(barcodeInput.value.trim());
+                    clearTimeout(scanTimeout); // input 이벤트의 타이머 취소
+                    
+                    if (!isProcessing) {
+                        isProcessing = true;
+                        handleBarcodeScan(barcodeInput.value.trim()).finally(() => {
+                            setTimeout(() => { isProcessing = false; }, 500);
+                        });
+                    }
                 }
             });
             
             // Also handle input event for scanners that don't send Enter
-            let scanTimeout;
             barcodeInput.addEventListener('input', (e) => {
                 clearTimeout(scanTimeout);
                 const value = e.target.value.trim();
                 
                 // If barcode length is typical (8-14 digits), auto-search after brief delay
-                if (value.length >= 8) {
+                // ★★★ v3.6.83: Enter로 처리된 경우 중복 방지 ★★★
+                if (value.length >= 8 && !isProcessing) {
                     scanTimeout = setTimeout(() => {
-                        handleBarcodeScan(value);
+                        if (!isProcessing) {
+                            isProcessing = true;
+                            handleBarcodeScan(value).finally(() => {
+                                setTimeout(() => { isProcessing = false; }, 500);
+                            });
+                        }
                     }, 300);
                 }
             });

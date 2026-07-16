@@ -16103,13 +16103,10 @@ async function initializeApp() {
   await loadMasterData();
   await loadAlertCount();
   
-  // Check for hash navigation
-  const hash = window.location.hash.slice(1);
-  if (hash) {
-    navigateTo(hash);
-  } else {
-    renderDashboard();
-  }
+  // ★★★ v3.6.97: 처음 접속 시 항상 대시보드 표시 ★★★
+  // 해시가 있어도 무시하고 대시보드로 시작
+  window.location.hash = 'dashboard';
+  renderDashboard();
 }
 
 // Initialize - 여러 방법으로 시도

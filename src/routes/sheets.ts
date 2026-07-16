@@ -85,6 +85,101 @@ sheets.post('/sync/inbound', async (c) => {
   }, 400);
 });
 
+// ★★★ v3.6.99: 구글시트 → D1 원료입고 동기화 (역방향, 특정 품목만) ★★★
+sheets.post('/sync/inbound-from-sheet', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const targetItemCode = body.item_code;  // 특정 품목만 동기화 (선택)
+    
+    const env = c.env as any;
+    
+    // 구글시트 원료입고 데이터 읽기
+    // 컬럼: A=입고일, B=품목코드, C=품목명, D=LOT번호, E=입고수량, F=단위, G=공급업체, H=소비기한, I=잔량
+    const inboundData = await service.readSheet('원료입고', 'A2:I10000');
+    
+    let synced = 0;
+    let updated = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+    
+    for (const row of inboundData) {
+      const inbound_date = String(row[0] || '').trim().replace(/^'/, '');
+      const item_code = String(row[1] || '').trim();
+      const item_name = String(row[2] || '').trim();
+      const lot_number = String(row[3] || '').trim();
+      const origin_qty = parseFloat(row[4]) || 0;
+      const unit = String(row[5] || 'kg').trim();
+      const supplier = String(row[6] || '').trim();
+      const expiry_date = String(row[7] || '').trim().replace(/^'/, '');
+      const remain_qty = parseFloat(row[8]) || 0;
+      
+      // 필수 필드 체크
+      if (!lot_number || !item_code) {
+        skipped++;
+        continue;
+      }
+      
+      // 특정 품목만 동기화하는 경우 필터링
+      if (targetItemCode && item_code !== targetItemCode) {
+        skipped++;
+        continue;
+      }
+      
+      try {
+        // 기존 LOT 확인
+        const existing = await env.DB.prepare(
+          'SELECT lot_number FROM inbound WHERE lot_number = ?'
+        ).bind(lot_number).first();
+        
+        if (existing) {
+          // 기존 LOT 업데이트 (소비기한, 잔량 등)
+          await env.DB.prepare(`
+            UPDATE inbound SET
+              item_code = ?,
+              item_name = ?,
+              inbound_date = ?,
+              expiry_date = ?,
+              origin_qty = ?,
+              remain_qty = ?,
+              unit = ?,
+              supplier = ?,
+              updated_at = datetime('now')
+            WHERE lot_number = ?
+          `).bind(item_code, item_name, inbound_date, expiry_date, origin_qty, remain_qty, unit, supplier, lot_number).run();
+          updated++;
+        } else {
+          // 신규 LOT 등록
+          await env.DB.prepare(`
+            INSERT INTO inbound (lot_number, item_code, item_name, inbound_date, expiry_date, origin_qty, remain_qty, unit, supplier, quality_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '합격')
+          `).bind(lot_number, item_code, item_name, inbound_date, expiry_date, origin_qty, remain_qty, unit, supplier).run();
+          synced++;
+        }
+      } catch (err: any) {
+        errors.push(`${lot_number}: ${err.message}`);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      message: `구글시트 → D1 동기화 완료`,
+      synced,      // 신규 등록
+      updated,     // 업데이트
+      skipped,     // 스킵
+      errors: errors.slice(0, 10),  // 최대 10개 에러만 표시
+      target: targetItemCode || '전체'
+    });
+    
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // BOM 데이터 동기화 (SM 부자재 제외)
 sheets.post('/sync/bom', async (c) => {
   const service = getSheetService(c);
@@ -5921,7 +6016,7 @@ sheets.post('/rebuild-daily-stock-date', async (c) => {
       newRows.push([
         `'${cleanDate}`,
         code,
-        name,
+        `=IFERROR(VLOOKUP(B${rowNum},BOM마스터!A:B,2,FALSE),"")`,  // C: 원료명 (VLOOKUP 수식으로 변경 - v3.6.100)
         current,  // 전일재고 = 전일 현재고
         `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
         `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,
@@ -6326,7 +6421,7 @@ sheets.post('/regenerate-daily-stock', async (c) => {
         fullRows.push([
           row[0],  // A: 일자
           row[1],  // B: 원료코드
-          row[2],  // C: 원료명
+          `=IFERROR(VLOOKUP(B${rowNum},BOM마스터!A:B,2,FALSE),"")`,  // C: 원료명 (VLOOKUP 수식으로 변경 - v3.6.100)
           row[3],  // D: 전일재고 (값)
           `=IFERROR(SUMIFS('원료입고'!E:E,'원료입고'!B:B,B${rowNum},'원료입고'!A:A,A${rowNum}),0)`,  // E: 입고량
           `=IFERROR(SUMIFS('로트매칭'!E:E,'로트매칭'!C:C,B${rowNum},'로트매칭'!A:A,A${rowNum}),0)`,  // F: 사용량

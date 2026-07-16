@@ -75,6 +75,43 @@ app.route('/api/shipment', shipmentRoutes);
 app.route('/api/validate', validateRoutes);
 app.route('/api/debug-master', debugMasterRoutes);
 
+// ★★★ v3.6.81: 품목 검색 API (바코드 수기등록용) ★★★
+app.get('/api/items/search', async (c) => {
+  try {
+    const query = c.req.query('q') || '';
+    const limit = parseInt(c.req.query('limit') || '20');
+    
+    if (!query || query.length < 1) {
+      return c.json({ success: true, data: [] });
+    }
+    
+    // 품목코드 또는 품목명으로 검색 (LIKE 검색)
+    const searchPattern = `%${query}%`;
+    const result = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, current_stock, barcode
+      FROM master
+      WHERE (item_code LIKE ? OR item_name LIKE ?)
+      ORDER BY 
+        CASE WHEN item_code = ? THEN 0
+             WHEN item_code LIKE ? THEN 1
+             WHEN item_name LIKE ? THEN 2
+             ELSE 3
+        END,
+        item_name
+      LIMIT ?
+    `).bind(searchPattern, searchPattern, query, query + '%', query + '%', limit).all();
+    
+    return c.json({ 
+      success: true, 
+      data: result.results || [],
+      count: result.results?.length || 0
+    });
+  } catch (error: any) {
+    console.error('Items search error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 시스템 버전
 const SYSTEM_VERSION = '3.5.26';
 const SYSTEM_BUILD_DATE = '2026-06-24';

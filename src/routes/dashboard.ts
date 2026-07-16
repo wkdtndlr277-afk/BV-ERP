@@ -334,13 +334,13 @@ dashboardRoutes.get('/alerts/count', async (c) => {
   });
 });
 
-// ★★★ v3.6.79: 안전재고 현황 API (master 테이블 통계값 활용) ★★★
+// ★★★ v3.6.91: 안전재고 현황 API - 등급별 분리 (A: 사용량多, B: 중간, C: 유통기한짧음) ★★★
 dashboardRoutes.get('/safety-stock-status', async (c) => {
   try {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
     
-    // 1. 원료별 실재고 + 저장된 통계값 조회
+    // 1. 원료별 실재고 + 저장된 통계값 + 유통기한기준일 조회
     const stockResult = await c.env.DB.prepare(`
       SELECT 
         m.item_code,
@@ -356,6 +356,7 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         m.item_grade,
         m.calculated_reorder_point,
         m.stats_updated_at,
+        COALESCE(m.expiry_days, 365) as expiry_days,
         COALESCE(SUM(i.remain_qty), 0) as current_stock
       FROM master m
       LEFT JOIN inbound i ON m.item_code = i.item_code 
@@ -365,12 +366,12 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         AND COALESCE(m.is_active, 1) = 1
       GROUP BY m.item_code, m.item_name, m.unit, m.safety_stock,
                m.daily_usage_avg, m.monthly_usage_avg, m.inbound_frequency, m.lead_time,
-               m.usage_std_dev, m.usage_cv, m.item_grade, m.calculated_reorder_point, m.stats_updated_at
+               m.usage_std_dev, m.usage_cv, m.item_grade, m.calculated_reorder_point, m.stats_updated_at, m.expiry_days
     `).all<{ 
       item_code: string; item_name: string; unit: string; safety_stock: number;
       daily_usage_avg: number; monthly_usage_avg: number; inbound_frequency: number; lead_time: number;
       usage_std_dev: number; usage_cv: number; item_grade: string; calculated_reorder_point: number;
-      stats_updated_at: string; current_stock: number;
+      stats_updated_at: string; current_stock: number; expiry_days: number;
     }>();
     
     // 2. 품목별 신호등 상태 결정
@@ -389,7 +390,29 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
       
       const dailyAvg = item.daily_usage_avg || 0;
       const leadTime = item.lead_time || 3;
-      const grade = item.item_grade || 'C';
+      const expiryDays = item.expiry_days || 365;
+      
+      // ★★★ v3.6.91: 등급 재정의 ★★★
+      // C등급: 유통기한이 짧은 원료 (30일 이하) - 사용량 관계없이 관리 필요
+      // A등급: 사용량 많은 핵심 원료 (일평균 100kg 이상)
+      // B등급: 중간 사용량 원료 (일평균 10kg 이상)
+      // 기타: 저사용량 원료
+      let grade: string;
+      let gradeReason: string;
+      
+      if (expiryDays <= 30) {
+        grade = 'C';
+        gradeReason = `유통기한 ${expiryDays}일`;
+      } else if (dailyAvg >= 100) {
+        grade = 'A';
+        gradeReason = `일사용량 ${Math.round(dailyAvg)}kg`;
+      } else if (dailyAvg >= 10) {
+        grade = 'B';
+        gradeReason = `일사용량 ${Math.round(dailyAvg)}kg`;
+      } else {
+        grade = '-';  // 관리 등급 외
+        gradeReason = dailyAvg > 0 ? `일사용량 ${Math.round(dailyAvg * 10) / 10}kg` : '사용량 없음';
+      }
       
       // 잔여일 계산
       const daysOfStock = dailyAvg > 0 
@@ -435,6 +458,8 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         item_name: item.item_name,
         unit: item.unit || 'kg',
         grade,
+        grade_reason: gradeReason,
+        expiry_days: expiryDays,
         current_stock: Math.round(item.current_stock * 100) / 100,
         daily_avg: dailyAvg,
         monthly_avg: item.monthly_usage_avg || 0,
@@ -452,32 +477,41 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
       });
     }
     
-    // 3. 정렬: need_order(true 먼저) → grade(A→B→C) → days_of_stock(오름차순)
+    // ★★★ v3.6.91: 등급별 분리 + 사용량 순 정렬 ★★★
+    // 각 등급 내에서: 신호등(긴급→주의→정상) → 사용량 많은 순
     results.sort((a, b) => {
-      // 1차: 발주필요 우선
-      if (a.need_order !== b.need_order) return a.need_order ? -1 : 1;
-      // 2차: 등급 우선 (A > B > C)
-      const gradeOrder: Record<string, number> = { 'A': 0, 'B': 1, 'C': 2 };
-      if (gradeOrder[a.grade] !== gradeOrder[b.grade]) {
-        return gradeOrder[a.grade] - gradeOrder[b.grade];
+      // 1차: 신호등 상태 (red > yellow > green)
+      const colorOrder: Record<string, number> = { 'red': 0, 'yellow': 1, 'green': 2 };
+      if (colorOrder[a.status_color] !== colorOrder[b.status_color]) {
+        return colorOrder[a.status_color] - colorOrder[b.status_color];
       }
-      // 3차: 잔여일 오름차순
-      return a.days_of_stock - b.days_of_stock;
+      // 2차: 사용량 많은 순 (내림차순)
+      return b.daily_avg - a.daily_avg;
     });
+    
+    // ★★★ v3.6.91: 등급별 분리 ★★★
+    const gradeA = results.filter(r => r.grade === 'A');  // 사용량 多 (일100kg+)
+    const gradeB = results.filter(r => r.grade === 'B');  // 중간 사용량 (일10kg+)
+    const gradeC = results.filter(r => r.grade === 'C');  // 유통기한 짧음 (30일 이하)
+    const gradeOther = results.filter(r => r.grade === '-');  // 관리 등급 외
     
     // 4. 요약 통계
     const urgentCount = results.filter(r => r.status_color === 'red').length;
     const warningCount = results.filter(r => r.status_color === 'yellow').length;
     const normalCount = results.filter(r => r.status_color === 'green').length;
-    const gradeACount = results.filter(r => r.grade === 'A').length;
-    const gradeBCount = results.filter(r => r.grade === 'B').length;
-    const gradeCCount = results.filter(r => r.grade === 'C').length;
+    
+    // 등급별 긴급/주의 품목 수
+    const gradeAAlertCount = gradeA.filter(r => r.status_color !== 'green').length;
+    const gradeBAlertCount = gradeB.filter(r => r.status_color !== 'green').length;
+    const gradeCAlertCount = gradeC.filter(r => r.status_color !== 'green').length;
     
     // 통계 미계산 품목 수
     const noStatsCount = results.filter(r => !r.stats_updated_at).length;
     
-    // ★★★ v3.6.89: 긴급/주의 품목만 반환 (정상 제외) ★★★
-    const alertItems = results.filter(r => r.status_color === 'red' || r.status_color === 'yellow');
+    // ★★★ v3.6.91: 긴급/주의 품목만 반환 (정상 제외) - 등급별 분리 ★★★
+    const alertGradeA = gradeA.filter(r => r.status_color === 'red' || r.status_color === 'yellow');
+    const alertGradeB = gradeB.filter(r => r.status_color === 'red' || r.status_color === 'yellow');
+    const alertGradeC = gradeC.filter(r => r.status_color === 'red' || r.status_color === 'yellow');
     
     return c.json({
       success: true,
@@ -487,14 +521,36 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         urgent_count: urgentCount,        // 🔴 긴급 (0-3일)
         warning_count: warningCount,      // 🟡 주의 (4-10일)
         normal_count: normalCount,        // 🟢 정상 (11일+)
-        displayed_count: alertItems.length, // 표시된 품목 수
-        grade_a_count: gradeACount,
-        grade_b_count: gradeBCount,
-        grade_c_count: gradeCCount,
+        grade_a: {
+          total: gradeA.length,
+          alert: gradeAAlertCount,
+          description: 'A등급: 핵심원료 (일사용량 100kg+)'
+        },
+        grade_b: {
+          total: gradeB.length,
+          alert: gradeBAlertCount,
+          description: 'B등급: 중간사용량 (일사용량 10kg+)'
+        },
+        grade_c: {
+          total: gradeC.length,
+          alert: gradeCAlertCount,
+          description: 'C등급: 유통기한 짧음 (30일 이하)'
+        },
+        grade_other: {
+          total: gradeOther.length,
+          description: '기타: 저사용량 원료'
+        },
         no_stats_count: noStatsCount,
         excluded_items: EXCLUDED_ITEM_CODES
       },
-      items: alertItems  // 긴급/주의 품목만 반환
+      // ★ 등급별 분리된 데이터 (긴급/주의만) ★
+      items_by_grade: {
+        A: alertGradeA,  // A등급 긴급/주의 품목 (사용량 많은 순)
+        B: alertGradeB,  // B등급 긴급/주의 품목 (사용량 많은 순)
+        C: alertGradeC   // C등급 긴급/주의 품목 (유통기한 짧은 원료)
+      },
+      // ★ 이전 호환성을 위한 전체 리스트 ★
+      items: [...alertGradeA, ...alertGradeB, ...alertGradeC]
     });
   } catch (error: any) {
     console.error('Safety stock status error:', error);

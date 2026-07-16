@@ -1748,177 +1748,130 @@ async function renderDashboard() {
         </div>
         ` : ''}
         
-        <!-- ★★★ v3.6.93: 생산등록 현황 (일별/주별/월별 탭) ★★★ -->
-        <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-gradient-to-r from-purple-50 to-indigo-50">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="font-bold text-purple-800"><i class="fas fa-clipboard-list mr-2"></i>생산등록 현황</h3>
+        <!-- ★★★ v3.6.95: 생산등록 현황 + 원료 사용내역 (2열 그리드, 컴팩트) ★★★ -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <!-- 생산등록 현황 -->
+          ${data.production ? `
+          <div class="bg-white rounded-xl shadow">
+            <div class="px-4 py-3 border-b bg-gradient-to-r from-purple-50 to-indigo-50 flex items-center justify-between">
+              <h3 class="font-bold text-purple-800 text-sm"><i class="fas fa-clipboard-list mr-2"></i>생산등록 현황</h3>
+              <div class="flex gap-1">
+                <button onclick="switchProductionTab('daily')" id="prod-tab-daily" class="px-3 py-1 rounded text-xs font-medium bg-purple-600 text-white">일별</button>
+                <button onclick="switchProductionTab('weekly')" id="prod-tab-weekly" class="px-3 py-1 rounded text-xs font-medium bg-gray-200 text-gray-600 hover:bg-gray-300">주별</button>
+                <button onclick="switchProductionTab('monthly')" id="prod-tab-monthly" class="px-3 py-1 rounded text-xs font-medium bg-gray-200 text-gray-600 hover:bg-gray-300">월별</button>
+              </div>
             </div>
-            <!-- 탭 버튼 -->
-            <div class="flex gap-2">
-              <button onclick="switchProductionTab('daily')" id="prod-tab-daily" class="px-4 py-2 rounded-lg text-sm font-medium bg-purple-600 text-white">
-                일별
-              </button>
-              <button onclick="switchProductionTab('weekly')" id="prod-tab-weekly" class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300">
-                주별
-              </button>
-              <button onclick="switchProductionTab('monthly')" id="prod-tab-monthly" class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300">
-                월별
-              </button>
-            </div>
-          </div>
-          
-          <!-- 일별 탭 -->
-          <div id="prod-content-daily" class="prod-tab-content">
-            <div class="overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead class="bg-purple-100">
-                  <tr class="text-xs text-purple-700">
-                    <th class="px-4 py-3 text-left">생산일</th>
-                    <th class="px-4 py-3 text-center">생산품목수</th>
-                    <th class="px-4 py-3 text-right">총생산량</th>
+            <!-- 일별 -->
+            <div id="prod-content-daily" class="prod-tab-content">
+              <table class="w-full text-xs">
+                <thead class="bg-purple-50">
+                  <tr class="text-purple-700">
+                    <th class="px-3 py-2 text-left">생산일</th>
+                    <th class="px-3 py-2 text-center">품목수</th>
+                    <th class="px-3 py-2 text-right">총생산량</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${(data.production?.dailySummary || []).length > 0 ? 
-                    data.production.dailySummary.slice(0, 5).map((item, idx) => `
-                      <tr class="border-b hover:bg-purple-50 ${idx === 0 ? 'bg-purple-50' : ''}">
-                        <td class="px-4 py-3 font-medium ${idx === 0 ? 'text-purple-700' : ''}">${item.date}${idx === 0 ? ' <span class="text-xs text-purple-500">(오늘)</span>' : ''}</td>
-                        <td class="px-4 py-3 text-center font-bold text-blue-600">${item.products}<span class="text-xs text-gray-400 ml-1">종</span></td>
-                        <td class="px-4 py-3 text-right font-bold text-purple-600">${formatNumber(item.total)}<span class="text-xs text-gray-400 ml-1">개</span></td>
-                      </tr>
-                    `).join('') : 
-                    '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-400">생산 데이터가 없습니다.</td></tr>'
+                    data.production.dailySummary.slice(0, 5).map((item, idx) => 
+                      '<tr class="border-b hover:bg-purple-50">' +
+                        '<td class="px-3 py-1.5 ' + (idx === 0 ? 'font-medium text-purple-700' : '') + '">' + item.date + (idx === 0 ? ' <span class="text-purple-500">(오늘)</span>' : '') + '</td>' +
+                        '<td class="px-3 py-1.5 text-center font-bold text-blue-600">' + item.products + '종</td>' +
+                        '<td class="px-3 py-1.5 text-right font-bold text-purple-600">' + formatNumber(item.total) + '개</td>' +
+                      '</tr>'
+                    ).join('') : 
+                    '<tr><td colspan="3" class="px-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
                   }
                 </tbody>
               </table>
             </div>
-          </div>
-          
-          <!-- 주별 탭 -->
-          <div id="prod-content-weekly" class="prod-tab-content hidden">
-            <div class="overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead class="bg-blue-100">
-                  <tr class="text-xs text-blue-700">
-                    <th class="px-4 py-3 text-left">기간</th>
-                    <th class="px-4 py-3 text-center">생산품목수</th>
-                    <th class="px-4 py-3 text-right">총생산량</th>
+            <!-- 주별 -->
+            <div id="prod-content-weekly" class="prod-tab-content hidden">
+              <table class="w-full text-xs">
+                <thead class="bg-blue-50">
+                  <tr class="text-blue-700">
+                    <th class="px-3 py-2 text-left">기간</th>
+                    <th class="px-3 py-2 text-center">품목수</th>
+                    <th class="px-3 py-2 text-right">총생산량</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${(data.production?.weeklySummary || []).length > 0 ? 
-                    data.production.weeklySummary.map((item, idx) => `
-                      <tr class="border-b hover:bg-blue-50 ${idx === 0 ? 'bg-blue-50' : ''}">
-                        <td class="px-4 py-3">
-                          <span class="font-medium ${idx === 0 ? 'text-blue-700' : ''}">${item.week}</span>
-                          <span class="text-xs text-gray-400 ml-2">(${item.startDate} ~ ${item.endDate})</span>
-                        </td>
-                        <td class="px-4 py-3 text-center font-bold text-blue-600">${item.products}<span class="text-xs text-gray-400 ml-1">종</span></td>
-                        <td class="px-4 py-3 text-right font-bold text-blue-600">${formatNumber(item.total)}<span class="text-xs text-gray-400 ml-1">개</span></td>
-                      </tr>
-                    `).join('') : 
-                    '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-400">생산 데이터가 없습니다.</td></tr>'
+                    data.production.weeklySummary.map((item, idx) => 
+                      '<tr class="border-b hover:bg-blue-50">' +
+                        '<td class="px-3 py-1.5"><span class="' + (idx === 0 ? 'font-medium text-blue-700' : '') + '">' + item.week + '</span> <span class="text-gray-400">(' + item.startDate + '~' + item.endDate + ')</span></td>' +
+                        '<td class="px-3 py-1.5 text-center font-bold text-blue-600">' + item.products + '종</td>' +
+                        '<td class="px-3 py-1.5 text-right font-bold text-blue-600">' + formatNumber(item.total) + '개</td>' +
+                      '</tr>'
+                    ).join('') : 
+                    '<tr><td colspan="3" class="px-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
                   }
                 </tbody>
               </table>
             </div>
-          </div>
-          
-          <!-- 월별 탭 -->
-          <div id="prod-content-monthly" class="prod-tab-content hidden">
-            <div class="overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead class="bg-green-100">
-                  <tr class="text-xs text-green-700">
-                    <th class="px-4 py-3 text-left">월</th>
-                    <th class="px-4 py-3 text-center">생산품목수</th>
-                    <th class="px-4 py-3 text-right">총생산량</th>
+            <!-- 월별 -->
+            <div id="prod-content-monthly" class="prod-tab-content hidden">
+              <table class="w-full text-xs">
+                <thead class="bg-green-50">
+                  <tr class="text-green-700">
+                    <th class="px-3 py-2 text-left">월</th>
+                    <th class="px-3 py-2 text-center">품목수</th>
+                    <th class="px-3 py-2 text-right">총생산량</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${(data.production?.monthlySummary || []).length > 0 ? 
-                    data.production.monthlySummary.map((item, idx) => `
-                      <tr class="border-b hover:bg-green-50 ${idx === 0 ? 'bg-green-50' : ''}">
-                        <td class="px-4 py-3 font-medium ${idx === 0 ? 'text-green-700' : ''}">${item.month}${idx === 0 ? ' <span class="text-xs text-green-500">(이번달)</span>' : ''}</td>
-                        <td class="px-4 py-3 text-center font-bold text-green-600">${item.products}<span class="text-xs text-gray-400 ml-1">종</span></td>
-                        <td class="px-4 py-3 text-right font-bold text-green-600">${formatNumber(item.total)}<span class="text-xs text-gray-400 ml-1">개</span></td>
-                      </tr>
-                    `).join('') : 
-                    '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-400">생산 데이터가 없습니다.</td></tr>'
+                    data.production.monthlySummary.map((item, idx) => 
+                      '<tr class="border-b hover:bg-green-50">' +
+                        '<td class="px-3 py-1.5 ' + (idx === 0 ? 'font-medium text-green-700' : '') + '">' + item.month + (idx === 0 ? ' <span class="text-green-500">(이번달)</span>' : '') + '</td>' +
+                        '<td class="px-3 py-1.5 text-center font-bold text-green-600">' + item.products + '종</td>' +
+                        '<td class="px-3 py-1.5 text-right font-bold text-green-600">' + formatNumber(item.total) + '개</td>' +
+                      '</tr>'
+                    ).join('') : 
+                    '<tr><td colspan="3" class="px-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
                   }
                 </tbody>
               </table>
             </div>
           </div>
-        </div>
-        ` : ''}
-        
-        <!-- ★★★ v3.6.94: 업무 현황 섹션 삭제 (요청에 의해 제거) ★★★
-        
-        <!-- ★★★ v3.6.92: 오늘 원료 사용내역 (시간/품목코드/원료명/수량 표시) ★★★ -->
-        <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-gradient-to-r from-red-50 to-rose-50 flex justify-between items-center">
-            <h3 class="font-bold text-red-800"><i class="fas fa-mortar-pestle mr-2"></i>오늘 원료 사용내역</h3>
-            <span class="bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold">${todayUsageData.length}건</span>
-          </div>
-          <div class="overflow-x-auto max-h-80 overflow-y-auto">
-            ${todayUsageData.length > 0 ? `
-              <table class="w-full text-sm">
-                <thead class="bg-red-100 sticky top-0">
-                  <tr class="text-xs text-red-700">
-                    <th class="px-3 py-2 text-left">시간</th>
-                    <th class="px-3 py-2 text-left">품목코드</th>
-                    <th class="px-3 py-2 text-left">원료명</th>
-                    <th class="px-3 py-2 text-right">수량</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${todayUsageData.map(item => {
-                    const time = item.created_at ? new Date(item.created_at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute:'2-digit'}) : '-';
-                    const qty = Math.abs(parseFloat(item.quantity) || 0);
-                    return '<tr class="border-b hover:bg-red-50">' +
-                      '<td class="px-3 py-2 text-gray-500 text-xs">' + time + '</td>' +
-                      '<td class="px-3 py-2 font-mono text-xs text-blue-600">' + item.item_code + '</td>' +
-                      '<td class="px-3 py-2 font-medium">' + (item.item_name || '-') + '</td>' +
-                      '<td class="px-3 py-2 text-right font-bold text-red-600">-' + formatNumber(qty) + ' ' + (item.unit || 'kg') + '</td>' +
-                    '</tr>';
-                  }).join('')}
-                </tbody>
-              </table>
-            ` : '<p class="text-gray-400 text-center py-8">오늘 사용 내역이 없습니다.</p>'}
-          </div>
-        </div>
-        
-        <!-- 오늘 제품 출고량 -->
-        <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-green-50 flex justify-between items-center">
-            <h3 class="font-bold text-green-800"><i class="fas fa-truck mr-2"></i>오늘 제품 출고량</h3>
-            <span class="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-bold">${data.today.outbound.length}건</span>
-          </div>
-          <div class="p-4">
-            ${data.today.outbound.length > 0 ? `
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="text-gray-500 border-b">
-                    <th class="text-left py-2">제품</th>
-                    <th class="text-right py-2">출고량</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${data.today.outbound.map(item => `
-                    <tr class="border-b last:border-0">
-                      <td class="py-2">${item.item_name}</td>
-                      <td class="text-right font-medium">${formatNumber(item.total_qty)} ${item.unit}</td>
+          ` : ''}
+          
+          <!-- 오늘 원료 사용내역 -->
+          <div class="bg-white rounded-xl shadow">
+            <div class="px-4 py-3 border-b bg-gradient-to-r from-red-50 to-rose-50 flex justify-between items-center">
+              <h3 class="font-bold text-red-800 text-sm"><i class="fas fa-mortar-pestle mr-2"></i>오늘 원료 사용내역</h3>
+              <span class="bg-red-600 text-white px-2 py-0.5 rounded-full text-xs font-bold">${todayUsageData.length}건</span>
+            </div>
+            <div class="max-h-52 overflow-y-auto">
+              ${todayUsageData.length > 0 ? `
+                <table class="w-full text-xs">
+                  <thead class="bg-red-50 sticky top-0">
+                    <tr class="text-red-700">
+                      <th class="px-3 py-2 text-left">시간</th>
+                      <th class="px-3 py-2 text-left">품목코드</th>
+                      <th class="px-3 py-2 text-left">원료명</th>
+                      <th class="px-3 py-2 text-right">수량</th>
                     </tr>
-                  `).join('')}
-                </tbody>
-              </table>
-            ` : '<p class="text-gray-400 text-center py-8">오늘 출고 내역이 없습니다.</p>'}
+                  </thead>
+                  <tbody>
+                    ${todayUsageData.map(item => {
+                      const time = item.created_at ? new Date(item.created_at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute:'2-digit'}) : '-';
+                      const qty = Math.abs(parseFloat(item.quantity) || 0);
+                      return '<tr class="border-b hover:bg-red-50">' +
+                        '<td class="px-3 py-1.5 text-gray-500">' + time + '</td>' +
+                        '<td class="px-3 py-1.5 font-mono text-blue-600">' + item.item_code + '</td>' +
+                        '<td class="px-3 py-1.5">' + (item.item_name || '-') + '</td>' +
+                        '<td class="px-3 py-1.5 text-right font-bold text-red-600">-' + formatNumber(qty) + ' ' + (item.unit || 'kg') + '</td>' +
+                      '</tr>';
+                    }).join('')}
+                  </tbody>
+                </table>
+              ` : '<p class="text-gray-400 text-center py-6 text-sm">오늘 사용 내역이 없습니다.</p>'}
+            </div>
           </div>
         </div>
         
-        <!-- ★★★ v3.6.92: 안전재고 미만 품목 상세 테이블 삭제 (긴급/주의 품목으로 대체됨) ★★★ -->
+        <!-- ★★★ v3.6.95: 오늘 제품 출고량 삭제 ★★★ -->
         
         ${data.alerts.expiringLots.length > 0 ? `
         <div class="bg-white rounded-xl shadow">

@@ -183,8 +183,8 @@ dashboardRoutes.get('/', async (c) => {
     monthTotal: 0,        // 이번달 총 생산 수량
     monthProducts: 0,     // 이번달 생산 품목 수
     byChannel: {} as Record<string, { count: number; quantity: number }>,  // 채널별 현황
-    // ★★★ v3.6.93: 일별 요약 (생산일, 품목수, 총생산량) ★★★
-    dailySummary: [] as { date: string; products: number; total: number; records: number }[],
+    // ★★★ v3.6.99: 일별 요약 (생산일, 품목수, 총생산량, 채널별) ★★★
+    dailySummary: [] as { date: string; products: number; total: number; records: number; byChannel: Record<string, number> }[],
     weeklySummary: [] as { week: string; startDate: string; endDate: string; products: number; total: number; records: number }[],
     monthlySummary: [] as { month: string; products: number; total: number; records: number }[]
   };
@@ -219,8 +219,8 @@ dashboardRoutes.get('/', async (c) => {
       const monthItems = new Set<string>();
       const channelStats: Record<string, { count: number; quantity: number }> = {};
       
-      // ★★★ v3.6.93: 일별/주별/월별 집계용 맵 ★★★
-      const dailyMap = new Map<string, { products: Set<string>; total: number; records: number }>();
+      // ★★★ v3.6.99: 일별/주별/월별 집계용 맵 (채널별 추가) ★★★
+      const dailyMap = new Map<string, { products: Set<string>; total: number; records: number; byChannel: Record<string, number> }>();
       const monthlyMap = new Map<string, { products: Set<string>; total: number; records: number }>();
       
       for (const row of productionData || []) {
@@ -231,17 +231,22 @@ dashboardRoutes.get('/', async (c) => {
         
         if (!prodDate || !productCode) continue;
         
-        // ★★★ 일별 집계 (최근 30일) ★★★
+        // ★★★ v3.6.99: 일별 집계 (최근 30일, 채널별 포함) ★★★
         const thirtyDaysAgo = new Date(todayDate);
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
         if (prodDate >= thirtyDaysAgo.toISOString().split('T')[0]) {
           if (!dailyMap.has(prodDate)) {
-            dailyMap.set(prodDate, { products: new Set(), total: 0, records: 0 });
+            dailyMap.set(prodDate, { products: new Set(), total: 0, records: 0, byChannel: {} });
           }
           const daily = dailyMap.get(prodDate)!;
           daily.products.add(productCode);
           daily.total += quantity;
           daily.records++;
+          // 채널별 집계
+          if (!daily.byChannel[channel]) {
+            daily.byChannel[channel] = 0;
+          }
+          daily.byChannel[channel] += quantity;
         }
         
         // ★★★ 월별 집계 (최근 3개월) ★★★
@@ -288,13 +293,14 @@ dashboardRoutes.get('/', async (c) => {
       productionStats.monthProducts = monthItems.size;
       productionStats.byChannel = channelStats;
       
-      // ★★★ v3.6.93: 일별 요약 배열 생성 (최근 14일) ★★★
+      // ★★★ v3.6.99: 일별 요약 배열 생성 (최근 14일, 채널별 포함) ★★★
       productionStats.dailySummary = Array.from(dailyMap.entries())
         .map(([date, data]) => ({
           date,
           products: data.products.size,
           total: data.total,
-          records: data.records
+          records: data.records,
+          byChannel: data.byChannel
         }))
         .sort((a, b) => b.date.localeCompare(a.date))
         .slice(0, 14);

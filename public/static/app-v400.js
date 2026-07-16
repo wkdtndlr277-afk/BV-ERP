@@ -1699,19 +1699,25 @@ async function renderDashboard() {
                     <th class="p-3 text-left">생산일</th>
                     <th class="p-3 text-center">품목수</th>
                     <th class="p-3 text-right">총생산량</th>
+                    <th class="p-3 text-left">채널별</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${(data.production?.dailySummary || []).length > 0 ? 
                     data.production.dailySummary.slice(0, 5).map((item, idx) => {
                       const dayOfWeek = new Date(item.date).toLocaleDateString('ko-KR', {weekday: 'short'});
+                      const channelInfo = item.byChannel ? Object.entries(item.byChannel)
+                        .sort((a, b) => b[1] - a[1])
+                        .map(([ch, qty]) => '<span class="inline-block bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded text-xs mr-1 mb-0.5">' + ch + ' ' + formatNumber(qty) + '</span>')
+                        .join('') : '-';
                       return '<tr class="border-b hover:bg-purple-50">' +
                         '<td class="p-3 ' + (idx === 0 ? 'font-medium text-purple-700' : '') + '">' + item.date + ' <span class="text-gray-500">(' + dayOfWeek + ')</span>' + (idx === 0 ? ' <span class="text-purple-500 font-medium">오늘</span>' : '') + '</td>' +
                         '<td class="p-3 text-center font-bold text-blue-600">' + item.products + '종</td>' +
                         '<td class="p-3 text-right font-bold text-purple-600">' + formatNumber(item.total) + '개</td>' +
+                        '<td class="p-3">' + channelInfo + '</td>' +
                       '</tr>';
                     }).join('') : 
-                    '<tr><td colspan="3" class="p-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
+                    '<tr><td colspan="4" class="p-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
                   }
                 </tbody>
               </table>

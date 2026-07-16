@@ -5471,6 +5471,133 @@ sheets.get('/debug/inbound-lots', async (c) => {
   }
 });
 
+// ★★★ v3.6.84: 구글시트 일별수불부에서 활성 원료 목록 추출 API ★★★
+// 바코드 재고관리에서 실제 사용 중인 원료만 표시하기 위함
+sheets.get('/active-materials', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    
+    // 일별수불부에서 최근 데이터 조회 (날짜, 품목코드, 품목명)
+    const data = await service.readSheet('일별수불부', 'A2:C');
+    
+    if (!data || data.length === 0) {
+      return c.json({ 
+        success: false, 
+        error: '일별수불부 데이터가 없습니다.' 
+      }, 404);
+    }
+    
+    // 고유 원료 코드 추출 (Set 사용)
+    const materialMap = new Map<string, string>();
+    
+    for (const row of data) {
+      const itemCode = String(row[1] || '').trim();
+      const itemName = String(row[2] || '').trim();
+      
+      if (itemCode && (itemCode.startsWith('R') || itemCode.startsWith('RM'))) {
+        // RT 제외
+        if (!itemCode.startsWith('RT')) {
+          materialMap.set(itemCode, itemName);
+        }
+      }
+    }
+    
+    const materials = Array.from(materialMap.entries()).map(([code, name]) => ({
+      item_code: code,
+      item_name: name
+    })).sort((a, b) => a.item_name.localeCompare(b.item_name, 'ko'));
+    
+    return c.json({
+      success: true,
+      count: materials.length,
+      data: materials,
+      note: '구글시트 일별수불부에서 추출한 활성 원료 목록'
+    });
+    
+  } catch (error: any) {
+    console.error('[sheets/active-materials] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.84: master 테이블 is_active 동기화 API ★★★
+// 구글시트 일별수불부에 있는 원료만 is_active = 1로 설정
+sheets.post('/sync-active-materials', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    
+    // 1. 구글시트 일별수불부에서 활성 원료 목록 가져오기
+    const data = await service.readSheet('일별수불부', 'A2:C');
+    
+    const activeCodes = new Set<string>();
+    for (const row of data) {
+      const itemCode = String(row[1] || '').trim();
+      if (itemCode && (itemCode.startsWith('R') || itemCode.startsWith('RM'))) {
+        if (!itemCode.startsWith('RT')) {
+          activeCodes.add(itemCode);
+        }
+      }
+    }
+    
+    if (activeCodes.size === 0) {
+      return c.json({ success: false, error: '활성 원료를 찾을 수 없습니다.' }, 400);
+    }
+    
+    // 2. master 테이블에 is_active 컬럼 추가 (없으면)
+    try {
+      await c.env.DB.prepare(`ALTER TABLE master ADD COLUMN is_active INTEGER DEFAULT 1`).run();
+    } catch (e) {
+      // 이미 존재하면 무시
+    }
+    
+    // 3. 모든 원료를 비활성화
+    await c.env.DB.prepare(`UPDATE master SET is_active = 0 WHERE category = '원료'`).run();
+    
+    // 4. 구글시트에 있는 원료만 활성화 (배치 처리 - SQLite 변수 제한 회피)
+    const activeCodeArray = Array.from(activeCodes);
+    const BATCH_SIZE = 100;  // SQLite 변수 제한 (999) 보다 작게
+    
+    for (let i = 0; i < activeCodeArray.length; i += BATCH_SIZE) {
+      const batch = activeCodeArray.slice(i, i + BATCH_SIZE);
+      const placeholders = batch.map(() => '?').join(',');
+      
+      await c.env.DB.prepare(`
+        UPDATE master SET is_active = 1 
+        WHERE item_code IN (${placeholders})
+      `).bind(...batch).run();
+    }
+    
+    // 5. 결과 확인
+    const result = await c.env.DB.prepare(`
+      SELECT 
+        COUNT(*) as total,
+        SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active_count
+      FROM master WHERE category = '원료'
+    `).first<any>();
+    
+    return c.json({
+      success: true,
+      message: `원료 활성화 동기화 완료`,
+      sheet_materials: activeCodes.size,
+      db_total: result?.total || 0,
+      db_active: result?.active_count || 0,
+      db_inactive: (result?.total || 0) - (result?.active_count || 0)
+    });
+    
+  } catch (error: any) {
+    console.error('[sheets/sync-active-materials] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;
 
 // ★★★ v3.6.45: 일별수불부 수식 날짜형식 통일 (SUMPRODUCT 방식) ★★★

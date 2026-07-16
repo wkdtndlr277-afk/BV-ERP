@@ -362,6 +362,7 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         AND i.remain_qty > 0 
         AND i.quality_status = '합격'
       WHERE m.category = '원료'
+        AND COALESCE(m.is_active, 1) = 1
       GROUP BY m.item_code, m.item_name, m.unit, m.safety_stock,
                m.daily_usage_avg, m.monthly_usage_avg, m.inbound_frequency, m.lead_time,
                m.usage_std_dev, m.usage_cv, m.item_grade, m.calculated_reorder_point, m.stats_updated_at

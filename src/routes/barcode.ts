@@ -1493,8 +1493,9 @@ barcodeRoutes.get('/material-inventory', async (c) => {
     const EXCLUDE_CODES = ['R169', 'R170', 'R171', 'R172', 'RM266'];
     const excludePlaceholders = EXCLUDE_CODES.map(() => '?').join(',');
     
-    // ★★★ v3.6.63: inbound remain_qty 기반 실재고 조회 ★★★
+    // ★★★ v3.6.84: inbound remain_qty 기반 실재고 조회 + is_active 필터 ★★★
     // 바코드 재고관리는 transactions 테이블과 무관하게 inbound 잔량 합계를 표시
+    // is_active = 1 인 원료만 표시 (구글시트 일별수불부와 동기화)
     let query = `
       SELECT 
         m.item_code,
@@ -1528,6 +1529,7 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         AND (m.item_code LIKE 'R%' OR m.item_code LIKE 'RM%')
         AND m.item_code NOT LIKE 'RT%'
         AND m.item_code NOT IN (${excludePlaceholders})
+        AND COALESCE(m.is_active, 1) = 1
     `;
     
     const params: any[] = [targetDate, targetDate, ...EXCLUDE_CODES];

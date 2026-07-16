@@ -332,7 +332,7 @@ async function handleLogin(e) {
       
       // 로그인 화면 숨기고 메인 앱 표시
       document.getElementById('login-screen').style.display = 'none';
-      document.getElementById('main-app').style.display = 'block';
+      document.getElementById('main-app').style.display = 'flex';
       
       // 사용자 정보 표시 업데이트
       updateUserDisplay();

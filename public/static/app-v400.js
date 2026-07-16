@@ -1676,78 +1676,7 @@ async function renderDashboard() {
         </div>
         ` : '')}
         
-        <!-- ★★★ v3.6.49: 생산 현황 카드 ★★★ -->
-        ${data.production ? `
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div class="bg-white rounded-xl shadow p-5 border-l-4 border-indigo-500">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm text-gray-500">오늘 생산 등록</p>
-                <p class="text-3xl font-bold text-indigo-600">${data.production.todayRecords || 0}<span class="text-lg text-gray-400">건</span></p>
-              </div>
-              <div class="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center">
-                <i class="fas fa-clipboard-check text-indigo-500"></i>
-              </div>
-            </div>
-          </div>
-          
-          <div class="bg-white rounded-xl shadow p-5 border-l-4 border-purple-500">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm text-gray-500">오늘 생산 품목</p>
-                <p class="text-3xl font-bold text-purple-600">${data.production.todayProducts || 0}<span class="text-lg text-gray-400">종</span></p>
-              </div>
-              <div class="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
-                <i class="fas fa-boxes text-purple-500"></i>
-              </div>
-            </div>
-          </div>
-          
-          <div class="bg-white rounded-xl shadow p-5 border-l-4 border-pink-500">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm text-gray-500">오늘 총 생산량</p>
-                <p class="text-3xl font-bold text-pink-600">${formatNumber(data.production.todayTotal || 0)}<span class="text-lg text-gray-400">개</span></p>
-              </div>
-              <div class="w-12 h-12 bg-pink-100 rounded-full flex items-center justify-center">
-                <i class="fas fa-industry text-pink-500"></i>
-              </div>
-            </div>
-          </div>
-          
-          <div class="bg-white rounded-xl shadow p-5 border-l-4 border-cyan-500">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm text-gray-500">이번주 총 생산량</p>
-                <p class="text-3xl font-bold text-cyan-600">${formatNumber(data.production.weekTotal || 0)}<span class="text-lg text-gray-400">개</span></p>
-              </div>
-              <div class="w-12 h-12 bg-cyan-100 rounded-full flex items-center justify-center">
-                <i class="fas fa-calendar-week text-cyan-500"></i>
-              </div>
-            </div>
-          </div>
-        </div>
-        
-        <!-- 채널별 생산 현황 -->
-        ${Object.keys(data.production.byChannel || {}).length > 0 ? `
-        <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-gradient-to-r from-indigo-50 to-purple-50 flex justify-between items-center">
-            <h3 class="font-bold text-indigo-800"><i class="fas fa-chart-pie mr-2"></i>오늘 채널별 생산 현황</h3>
-          </div>
-          <div class="p-4">
-            <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              ${Object.entries(data.production.byChannel).map(([channel, stats]) => 
-                '<div class="text-center p-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition">' +
-                  '<span class="inline-block px-3 py-1 rounded-full text-sm font-medium mb-2 ' + getChannelBadgeClass(channel) + '">' + (channel || '기타') + '</span>' +
-                  '<p class="text-2xl font-bold text-gray-800">' + stats.count + '<span class="text-sm text-gray-400">건</span></p>' +
-                  '<p class="text-sm text-gray-500">' + formatNumber(stats.quantity) + '개</p>' +
-                '</div>'
-              ).join('')}
-            </div>
-          </div>
-        </div>
-        ` : ''}
-        ` : ''}
+        <!-- ★★★ v3.6.98: 생산 현황 카드 4개 + 채널별 생산 현황 삭제 ★★★ -->
         
         <!-- ★★★ v3.6.95: 생산등록 현황 + 원료 사용내역 (2열 그리드, 컴팩트) ★★★ -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">

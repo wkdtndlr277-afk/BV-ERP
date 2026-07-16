@@ -8966,4 +8966,181 @@ admin.get('/stats-summary', async (c) => {
   }
 });
 
+// ★★★ v3.6.88: 구글시트 일별수불부 기반 사용량 통계 재계산 ★★★
+// transactions 대신 구글시트의 실제 used_qty 데이터 사용
+admin.post('/recalculate-stats-from-sheets', async (c) => {
+  try {
+    const { days = 30 } = await c.req.json().catch(() => ({}));
+    
+    // 구글시트 서비스 초기화
+    const clientEmail = c.env.GOOGLE_CLIENT_EMAIL;
+    const privateKey = c.env.GOOGLE_PRIVATE_KEY;
+    
+    if (!clientEmail || !privateKey) {
+      return c.json({ success: false, error: '구글 API 인증 정보가 없습니다.' }, 400);
+    }
+    
+    const { GoogleSheetsService } = await import('../services/GoogleSheetsService');
+    const formattedKey = privateKey.replace(/\\n/g, '\n');
+    const sheetsService = new GoogleSheetsService(clientEmail, formattedKey);
+    
+    // 분석 기간 계산
+    const today = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const kstNow = new Date(today.getTime() + kstOffset);
+    const todayStr = kstNow.toISOString().split('T')[0];
+    
+    const startDate = new Date(kstNow);
+    startDate.setDate(kstNow.getDate() - days);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    
+    // 구글시트에서 일별수불부 전체 데이터 조회
+    const sheetData = await sheetsService.readSheet('일별수불부', 'A2:G');
+    
+    if (!sheetData || sheetData.length === 0) {
+      return c.json({ success: false, error: '구글시트 데이터를 읽을 수 없습니다.' }, 500);
+    }
+    
+    // 품목별 일별 사용량 집계
+    // 시트 컬럼: 날짜(A), 품목코드(B), 품목명(C), 전일재고(D), 입고(E), 사용(F), 현재고(G)
+    const usageMap: Record<string, { dates: string[], usages: number[], name: string }> = {};
+    
+    for (const row of sheetData) {
+      const dateStr = String(row[0] || '').trim();
+      const itemCode = String(row[1] || '').trim();
+      const itemName = String(row[2] || '').trim();
+      const usedQty = parseFloat(String(row[5] || '0').replace(/,/g, '')) || 0;
+      
+      // 날짜 필터링 (분석 기간 내)
+      if (!dateStr || dateStr < startDateStr || dateStr > todayStr) continue;
+      
+      // 원료만 (R 또는 RM으로 시작, RT 제외)
+      if (!itemCode.startsWith('R') && !itemCode.startsWith('RM')) continue;
+      if (itemCode.startsWith('RT')) continue;
+      
+      if (!usageMap[itemCode]) {
+        usageMap[itemCode] = { dates: [], usages: [], name: itemName };
+      }
+      
+      usageMap[itemCode].dates.push(dateStr);
+      usageMap[itemCode].usages.push(usedQty);
+    }
+    
+    // 품목별 통계 계산 및 업데이트
+    let updatedCount = 0;
+    const errors: string[] = [];
+    const statsTime = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    const details: any[] = [];
+    
+    for (const [itemCode, data] of Object.entries(usageMap)) {
+      try {
+        const usages = data.usages.filter(u => u > 0); // 사용량 0인 날 제외
+        
+        let dailyAvg = 0;
+        let monthlyAvg = 0;
+        let stdDev = 0;
+        let cv = 0;
+        
+        if (usages.length > 0) {
+          // 단순 평균 (사용일 기준)
+          const sum = usages.reduce((a, b) => a + b, 0);
+          dailyAvg = sum / usages.length;
+          
+          // 전체 기간 기준 일평균 (사용 안한 날도 포함)
+          const totalDays = Math.min(days, data.dates.length || 1);
+          const periodAvg = sum / totalDays;
+          
+          // 더 보수적인 값 사용 (전체 기간 기준)
+          dailyAvg = periodAvg;
+          monthlyAvg = dailyAvg * 30;
+          
+          // 표준편차
+          if (usages.length > 1) {
+            const variance = usages.reduce((acc, val) => acc + Math.pow(val - dailyAvg, 2), 0) / usages.length;
+            stdDev = Math.sqrt(variance);
+            cv = dailyAvg > 0 ? stdDev / dailyAvg : 0;
+          }
+        }
+        
+        // 등급 결정 (일평균 기준 완화)
+        let grade = 'C';
+        if (dailyAvg >= 100) {
+          grade = 'A';
+        } else if (dailyAvg >= 10) {
+          grade = 'B';
+        }
+        
+        // 안전재고: 일평균 × 3일 (간단한 기준)
+        const safetyStock = Math.round(dailyAvg * 3 * 10) / 10;
+        
+        // 발주점: 일평균 × 7일 (리드타임 포함)
+        const reorderPoint = Math.round(dailyAvg * 7 * 10) / 10;
+        
+        // DB 업데이트
+        await c.env.DB.prepare(`
+          UPDATE master SET
+            daily_usage_avg = ?,
+            monthly_usage_avg = ?,
+            usage_std_dev = ?,
+            usage_cv = ?,
+            item_grade = ?,
+            safety_stock = ?,
+            calculated_reorder_point = ?,
+            stats_updated_at = ?
+          WHERE item_code = ?
+        `).bind(
+          Math.round(dailyAvg * 100) / 100,
+          Math.round(monthlyAvg * 100) / 100,
+          Math.round(stdDev * 100) / 100,
+          Math.round(cv * 1000) / 1000,
+          grade,
+          safetyStock,
+          reorderPoint,
+          statsTime,
+          itemCode
+        ).run();
+        
+        updatedCount++;
+        
+        // 상세 로그 (상위 10개)
+        if (details.length < 10 || dailyAvg > 10) {
+          details.push({
+            item_code: itemCode,
+            item_name: data.name,
+            usage_days: usages.length,
+            total_usage: Math.round(usages.reduce((a, b) => a + b, 0) * 100) / 100,
+            daily_avg: Math.round(dailyAvg * 100) / 100,
+            grade,
+            safety_stock: safetyStock
+          });
+        }
+        
+      } catch (itemError: any) {
+        errors.push(`${itemCode}: ${itemError.message}`);
+      }
+    }
+    
+    // 로그 기록
+    try {
+      await c.env.DB.prepare(
+        'INSERT INTO admin_logs (action_type, target_table, reason) VALUES (?, ?, ?)'
+      ).bind('시트기반통계재계산', 'master', `${updatedCount}개 품목 (${days}일 기준, 구글시트)`).run();
+    } catch (e) { /* ignore */ }
+    
+    return c.json({
+      success: true,
+      message: `구글시트 기반 ${updatedCount}개 원료 통계 재계산 완료`,
+      analysis_period: `${startDateStr} ~ ${todayStr}`,
+      sheet_rows_analyzed: sheetData.length,
+      updated_count: updatedCount,
+      sample_details: details.slice(0, 15),
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined
+    });
+    
+  } catch (error: any) {
+    console.error('[recalculate-stats-from-sheets] Error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default admin

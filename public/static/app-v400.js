@@ -1747,6 +1747,7 @@ async function renderDashboard() {
           </div>
         </div>
         ` : ''}
+        ` : ''}
         
         <!-- ★★★ v3.6.95: 생산등록 현황 + 원료 사용내역 (2열 그리드, 컴팩트) ★★★ -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -18013,10 +18014,10 @@ async function renderProduction() {
       <div class="bg-white rounded-xl shadow">
         <div class="border-b">
           <nav class="flex">
-            <button onclick="switchProductionTab('single')" id="tab-single" class="px-6 py-3 font-medium text-haccp-primary border-b-2 border-haccp-primary">
+            <button onclick="switchProductionPageTab('single')" id="tab-single" class="px-6 py-3 font-medium text-haccp-primary border-b-2 border-haccp-primary">
               <i class="fas fa-box mr-1"></i> 단일 등록
             </button>
-            <button onclick="switchProductionTab('order')" id="tab-order" class="px-6 py-3 font-medium text-gray-500 hover:text-gray-700">
+            <button onclick="switchProductionPageTab('order')" id="tab-order" class="px-6 py-3 font-medium text-gray-500 hover:text-gray-700">
               <i class="fas fa-file-excel mr-1"></i> 발주서 업로드
             </button>
           </nav>
@@ -18542,8 +18543,8 @@ function initOrderDropZone() {
   console.log('Order drop zone initialized');
 }
 
-// 생산 탭 전환
-function switchProductionTab(tab) {
+// 생산 페이지 탭 전환 (single/order)
+function switchProductionPageTab(tab) {
   const tabs = ['single', 'order'];
   tabs.forEach(t => {
     document.getElementById(`tab-${t}`).classList.toggle('text-haccp-primary', t === tab);
@@ -42605,7 +42606,7 @@ function openStockAdjustModal(itemCode, itemName, currentStock, unit) {
         <button onclick="closeStockAdjustModal()" class="flex-1 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium">
           취소
         </button>
-        <button onclick="submitStockAdjust('${itemCode}')" class="flex-1 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium">
+        <button onclick="submitPrevStockAdjust('${itemCode}')" class="flex-1 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium">
           <i class="fas fa-save mr-1"></i> 전일재고 수정
         </button>
       </div>
@@ -42629,7 +42630,8 @@ function closeStockAdjustModal() {
   if (modal) modal.remove();
 }
 
-async function submitStockAdjust(itemCode) {
+// ★★★ v3.6.95: 함수명 변경 (submitStockAdjust 중복 방지) ★★★
+async function submitPrevStockAdjust(itemCode) {
   const newStock = parseFloat(document.getElementById('adjust-new-stock')?.value);
   const reason = document.getElementById('adjust-reason')?.value || '전일재고 정정';
   const memo = document.getElementById('adjust-memo')?.value || '';
@@ -42660,7 +42662,7 @@ async function submitStockAdjust(itemCode) {
       throw new Error(response.data.error || '전일재고 수정 실패');
     }
   } catch (error) {
-    console.error('[submitStockAdjust] Error:', error);
+    console.error('[submitPrevStockAdjust] Error:', error);
     showToast('전일재고 수정 실패: ' + (error.response?.data?.error || error.message), 'error');
   } finally {
     hideLoading();
@@ -45458,31 +45460,7 @@ function toggleDateReport(date) {
 }
 window.toggleDateReport = toggleDateReport;
 
-// 기간 빠른 설정
-function setReportDateRange(range) {
-  const today = new Date();
-  let startDate, endDate;
-  
-  endDate = getLocalDateString();
-  
-  if (range === 'today') {
-    startDate = endDate;
-  } else if (range === 'week') {
-    const weekAgo = new Date(today);
-    weekAgo.setDate(weekAgo.getDate() - 6);
-    startDate = weekAgo.toISOString().split('T')[0];
-  } else if (range === 'month') {
-    const monthAgo = new Date(today);
-    monthAgo.setMonth(monthAgo.getMonth() - 1);
-    monthAgo.setDate(monthAgo.getDate() + 1);
-    startDate = monthAgo.toISOString().split('T')[0];
-  }
-  
-  document.getElementById('admin-report-start-date').value = startDate;
-  document.getElementById('admin-report-end-date').value = endDate;
-  loadAdminDailyReportsList();
-}
-window.setReportDateRange = setReportDateRange;
+// ★★★ v3.6.95: 중복 setReportDateRange 삭제 - 아래에 더 완전한 버전 있음 ★★★
 
 // 업무 항목 수정 모달 열기
 function openWorkItemEditModal(itemId, title, content, status, workType, deptName, reportDate) {

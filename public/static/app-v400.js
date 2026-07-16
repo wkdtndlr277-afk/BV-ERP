@@ -1678,7 +1678,7 @@ async function renderDashboard() {
         
         <!-- ★★★ v3.6.98: 생산 현황 카드 4개 + 채널별 생산 현황 삭제 ★★★ -->
         
-        <!-- ★★★ v3.6.95: 생산등록 현황 + 원료 사용내역 (2열 그리드, 컴팩트) ★★★ -->
+        <!-- ★★★ v3.6.99: 생산등록 현황 + 원료 사용내역 (2열 그리드, 폰트사이즈 업+요일추가) ★★★ -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <!-- 생산등록 현황 -->
           ${data.production ? `
@@ -1693,72 +1693,73 @@ async function renderDashboard() {
             </div>
             <!-- 일별 -->
             <div id="prod-content-daily" class="prod-tab-content">
-              <table class="w-full text-xs">
+              <table class="w-full text-sm">
                 <thead class="bg-purple-50">
                   <tr class="text-purple-700">
-                    <th class="px-3 py-2 text-left">생산일</th>
-                    <th class="px-3 py-2 text-center">품목수</th>
-                    <th class="px-3 py-2 text-right">총생산량</th>
+                    <th class="p-3 text-left">생산일</th>
+                    <th class="p-3 text-center">품목수</th>
+                    <th class="p-3 text-right">총생산량</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${(data.production?.dailySummary || []).length > 0 ? 
-                    data.production.dailySummary.slice(0, 5).map((item, idx) => 
-                      '<tr class="border-b hover:bg-purple-50">' +
-                        '<td class="px-3 py-1.5 ' + (idx === 0 ? 'font-medium text-purple-700' : '') + '">' + item.date + (idx === 0 ? ' <span class="text-purple-500">(오늘)</span>' : '') + '</td>' +
-                        '<td class="px-3 py-1.5 text-center font-bold text-blue-600">' + item.products + '종</td>' +
-                        '<td class="px-3 py-1.5 text-right font-bold text-purple-600">' + formatNumber(item.total) + '개</td>' +
-                      '</tr>'
-                    ).join('') : 
-                    '<tr><td colspan="3" class="px-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
+                    data.production.dailySummary.slice(0, 5).map((item, idx) => {
+                      const dayOfWeek = new Date(item.date).toLocaleDateString('ko-KR', {weekday: 'short'});
+                      return '<tr class="border-b hover:bg-purple-50">' +
+                        '<td class="p-3 ' + (idx === 0 ? 'font-medium text-purple-700' : '') + '">' + item.date + ' <span class="text-gray-500">(' + dayOfWeek + ')</span>' + (idx === 0 ? ' <span class="text-purple-500 font-medium">오늘</span>' : '') + '</td>' +
+                        '<td class="p-3 text-center font-bold text-blue-600">' + item.products + '종</td>' +
+                        '<td class="p-3 text-right font-bold text-purple-600">' + formatNumber(item.total) + '개</td>' +
+                      '</tr>';
+                    }).join('') : 
+                    '<tr><td colspan="3" class="p-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
                   }
                 </tbody>
               </table>
             </div>
             <!-- 주별 -->
             <div id="prod-content-weekly" class="prod-tab-content hidden">
-              <table class="w-full text-xs">
+              <table class="w-full text-sm">
                 <thead class="bg-blue-50">
                   <tr class="text-blue-700">
-                    <th class="px-3 py-2 text-left">기간</th>
-                    <th class="px-3 py-2 text-center">품목수</th>
-                    <th class="px-3 py-2 text-right">총생산량</th>
+                    <th class="p-3 text-left">기간</th>
+                    <th class="p-3 text-center">품목수</th>
+                    <th class="p-3 text-right">총생산량</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${(data.production?.weeklySummary || []).length > 0 ? 
                     data.production.weeklySummary.map((item, idx) => 
                       '<tr class="border-b hover:bg-blue-50">' +
-                        '<td class="px-3 py-1.5"><span class="' + (idx === 0 ? 'font-medium text-blue-700' : '') + '">' + item.week + '</span> <span class="text-gray-400">(' + item.startDate + '~' + item.endDate + ')</span></td>' +
-                        '<td class="px-3 py-1.5 text-center font-bold text-blue-600">' + item.products + '종</td>' +
-                        '<td class="px-3 py-1.5 text-right font-bold text-blue-600">' + formatNumber(item.total) + '개</td>' +
+                        '<td class="p-3"><span class="' + (idx === 0 ? 'font-medium text-blue-700' : '') + '">' + item.week + '</span> <span class="text-gray-400">(' + item.startDate + '~' + item.endDate + ')</span></td>' +
+                        '<td class="p-3 text-center font-bold text-blue-600">' + item.products + '종</td>' +
+                        '<td class="p-3 text-right font-bold text-blue-600">' + formatNumber(item.total) + '개</td>' +
                       '</tr>'
                     ).join('') : 
-                    '<tr><td colspan="3" class="px-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
+                    '<tr><td colspan="3" class="p-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
                   }
                 </tbody>
               </table>
             </div>
             <!-- 월별 -->
             <div id="prod-content-monthly" class="prod-tab-content hidden">
-              <table class="w-full text-xs">
+              <table class="w-full text-sm">
                 <thead class="bg-green-50">
                   <tr class="text-green-700">
-                    <th class="px-3 py-2 text-left">월</th>
-                    <th class="px-3 py-2 text-center">품목수</th>
-                    <th class="px-3 py-2 text-right">총생산량</th>
+                    <th class="p-3 text-left">월</th>
+                    <th class="p-3 text-center">품목수</th>
+                    <th class="p-3 text-right">총생산량</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${(data.production?.monthlySummary || []).length > 0 ? 
                     data.production.monthlySummary.map((item, idx) => 
                       '<tr class="border-b hover:bg-green-50">' +
-                        '<td class="px-3 py-1.5 ' + (idx === 0 ? 'font-medium text-green-700' : '') + '">' + item.month + (idx === 0 ? ' <span class="text-green-500">(이번달)</span>' : '') + '</td>' +
-                        '<td class="px-3 py-1.5 text-center font-bold text-green-600">' + item.products + '종</td>' +
-                        '<td class="px-3 py-1.5 text-right font-bold text-green-600">' + formatNumber(item.total) + '개</td>' +
+                        '<td class="p-3 ' + (idx === 0 ? 'font-medium text-green-700' : '') + '">' + item.month + (idx === 0 ? ' <span class="text-green-500">(이번달)</span>' : '') + '</td>' +
+                        '<td class="p-3 text-center font-bold text-green-600">' + item.products + '종</td>' +
+                        '<td class="p-3 text-right font-bold text-green-600">' + formatNumber(item.total) + '개</td>' +
                       '</tr>'
                     ).join('') : 
-                    '<tr><td colspan="3" class="px-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
+                    '<tr><td colspan="3" class="p-3 py-4 text-center text-gray-400">데이터 없음</td></tr>'
                   }
                 </tbody>
               </table>
@@ -1772,15 +1773,15 @@ async function renderDashboard() {
               <h3 class="font-bold text-red-800 text-sm"><i class="fas fa-mortar-pestle mr-2"></i>오늘 원료 사용내역</h3>
               <span class="bg-red-600 text-white px-2 py-0.5 rounded-full text-xs font-bold">${todayUsageData.length}건</span>
             </div>
-            <div class="max-h-52 overflow-y-auto">
+            <div class="max-h-64 overflow-y-auto">
               ${todayUsageData.length > 0 ? `
-                <table class="w-full text-xs">
+                <table class="w-full text-sm">
                   <thead class="bg-red-50 sticky top-0">
                     <tr class="text-red-700">
-                      <th class="px-3 py-2 text-left">시간</th>
-                      <th class="px-3 py-2 text-left">품목코드</th>
-                      <th class="px-3 py-2 text-left">원료명</th>
-                      <th class="px-3 py-2 text-right">수량</th>
+                      <th class="p-3 text-left">시간</th>
+                      <th class="p-3 text-left">품목코드</th>
+                      <th class="p-3 text-left">원료명</th>
+                      <th class="p-3 text-right">수량</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1788,10 +1789,10 @@ async function renderDashboard() {
                       const time = item.created_at ? new Date(item.created_at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute:'2-digit'}) : '-';
                       const qty = Math.abs(parseFloat(item.quantity) || 0);
                       return '<tr class="border-b hover:bg-red-50">' +
-                        '<td class="px-3 py-1.5 text-gray-500">' + time + '</td>' +
-                        '<td class="px-3 py-1.5 font-mono text-blue-600">' + item.item_code + '</td>' +
-                        '<td class="px-3 py-1.5">' + (item.item_name || '-') + '</td>' +
-                        '<td class="px-3 py-1.5 text-right font-bold text-red-600">-' + formatNumber(qty) + ' ' + (item.unit || 'kg') + '</td>' +
+                        '<td class="p-3 text-gray-500">' + time + '</td>' +
+                        '<td class="p-3 font-mono text-blue-600">' + item.item_code + '</td>' +
+                        '<td class="p-3">' + (item.item_name || '-') + '</td>' +
+                        '<td class="p-3 text-right font-bold text-red-600">-' + formatNumber(qty) + ' ' + (item.unit || 'kg') + '</td>' +
                       '</tr>';
                     }).join('')}
                   </tbody>

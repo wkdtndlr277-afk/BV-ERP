@@ -1398,13 +1398,16 @@ async function renderDashboard() {
   const content = document.getElementById('page-content');
   
   try {
-    // 대시보드 기본 데이터 + 안전재고 현황 동시 로드
-    const [result, safetyStockResult] = await Promise.all([
+    // ★★★ v3.6.92: 대시보드 데이터 + 안전재고 현황 + 오늘 원료 사용내역 동시 로드 ★★★
+    const today = new Date().toISOString().split('T')[0];
+    const [result, safetyStockResult, todayUsageResult] = await Promise.all([
       api('/dashboard'),
-      api('/dashboard/safety-stock-status?lead_days=3&days=30')
+      api('/dashboard/safety-stock-status?lead_days=3&days=30'),
+      api(`/barcode/today-transactions?date=${today}`)
     ]);
     const data = result.data;
     const safetyData = safetyStockResult.success ? safetyStockResult : { summary: {}, items: [] };
+    const todayUsageData = todayUsageResult.success ? (todayUsageResult.data || []) : [];
     
     content.innerHTML = `
       <div class="space-y-6">
@@ -1468,20 +1471,8 @@ async function renderDashboard() {
         </div>
         `}
         
-        <!-- Alert Cards (기존) -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div class="bg-white rounded-xl shadow p-5 border-l-4 ${data.alerts.lowStockItems.length > 0 ? 'border-red-500' : 'border-green-500'}">
-            <div class="flex items-center justify-between">
-              <div>
-                <p class="text-sm text-gray-500">안전재고 미만</p>
-                <p class="text-3xl font-bold ${data.alerts.lowStockItems.length > 0 ? 'text-red-600' : 'text-green-600'}">${data.alerts.lowStockItems.length}</p>
-              </div>
-              <div class="w-12 h-12 ${data.alerts.lowStockItems.length > 0 ? 'bg-red-100' : 'bg-green-100'} rounded-full flex items-center justify-center">
-                <i class="fas fa-exclamation-triangle ${data.alerts.lowStockItems.length > 0 ? 'text-red-500' : 'text-green-500'}"></i>
-              </div>
-            </div>
-          </div>
-          
+        <!-- ★★★ v3.6.92: Alert Cards (간소화 - 소비기한 임박만 표시) ★★★ -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div class="bg-white rounded-xl shadow p-5 border-l-4 ${data.alerts.expiringLots.length > 0 ? 'border-yellow-500' : 'border-green-500'}">
             <div class="flex items-center justify-between">
               <div>
@@ -1685,9 +1676,6 @@ async function renderDashboard() {
         </div>
         ` : '')}
         
-        <!-- ★★★ v3.6.75: 긴급 품목 사용 추이 라인 차트 ★★★ -->
-        <div id="usage-trend-chart-container"></div>
-        
         <!-- ★★★ v3.6.49: 생산 현황 카드 ★★★ -->
         ${data.production ? `
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1759,94 +1747,35 @@ async function renderDashboard() {
           </div>
         </div>
         ` : ''}
-        ` : ''}
         
-        <!-- Task Summary Section -->
-        <div id="dashboard-task-section"></div>
-        
-        <!-- Today Summary -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div class="bg-white rounded-xl shadow">
-            <div class="p-4 border-b bg-blue-50">
-              <h3 class="font-bold text-blue-800"><i class="fas fa-mortar-pestle mr-2"></i>오늘 원료 사용량</h3>
-            </div>
-            <div class="p-4">
-              ${data.today.usage.length > 0 ? `
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="text-gray-500 border-b">
-                      <th class="text-left py-2">품목</th>
-                      <th class="text-right py-2">사용량</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${data.today.usage.map(item => `
-                      <tr class="border-b last:border-0">
-                        <td class="py-2">${item.item_name}</td>
-                        <td class="text-right font-medium">${formatNumber(item.total_qty)} ${item.unit}</td>
-                      </tr>
-                    `).join('')}
-                  </tbody>
-                </table>
-              ` : '<p class="text-gray-400 text-center py-8">오늘 사용 내역이 없습니다.</p>'}
-            </div>
-          </div>
-          
-          <div class="bg-white rounded-xl shadow">
-            <div class="p-4 border-b bg-green-50">
-              <h3 class="font-bold text-green-800"><i class="fas fa-truck mr-2"></i>오늘 제품 출고량</h3>
-            </div>
-            <div class="p-4">
-              ${data.today.outbound.length > 0 ? `
-                <table class="w-full text-sm">
-                  <thead>
-                    <tr class="text-gray-500 border-b">
-                      <th class="text-left py-2">제품</th>
-                      <th class="text-right py-2">출고량</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${data.today.outbound.map(item => `
-                      <tr class="border-b last:border-0">
-                        <td class="py-2">${item.item_name}</td>
-                        <td class="text-right font-medium">${formatNumber(item.total_qty)} ${item.unit}</td>
-                      </tr>
-                    `).join('')}
-                  </tbody>
-                </table>
-              ` : '<p class="text-gray-400 text-center py-8">오늘 출고 내역이 없습니다.</p>'}
-            </div>
-          </div>
-        </div>
-        
-        <!-- Alerts Detail -->
-        ${data.alerts.lowStockItems.length > 0 ? `
+        <!-- ★★★ v3.6.92: 오늘 생산등록 일일현황 ★★★ -->
+        ${data.production.recentProduction && data.production.recentProduction.length > 0 ? `
         <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-red-50 flex justify-between items-center">
-            <h3 class="font-bold text-red-800"><i class="fas fa-exclamation-triangle mr-2"></i>안전재고 미만 품목</h3>
-            <span class="bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold">${data.alerts.lowStockCount || data.alerts.lowStockItems.length}개</span>
+          <div class="p-4 border-b bg-gradient-to-r from-purple-50 to-indigo-50 flex justify-between items-center">
+            <h3 class="font-bold text-purple-800"><i class="fas fa-clipboard-list mr-2"></i>오늘 생산등록 현황</h3>
+            <span class="bg-purple-600 text-white px-3 py-1 rounded-full text-sm font-bold">${data.production.recentProduction.filter(p => p.prod_date === data.date).length}건</span>
           </div>
-          <div class="overflow-x-auto max-h-80 overflow-y-auto">
-            <table class="w-full text-sm data-table">
-              <thead class="sticky top-0 bg-white">
-                <tr class="text-gray-500 border-b">
-                  <th class="text-left p-3">품목코드</th>
-                  <th class="text-left p-3">품목명</th>
-                  <th class="text-left p-3">구분</th>
-                  <th class="text-right p-3">현재고</th>
-                  <th class="text-right p-3">안전재고</th>
-                  <th class="text-right p-3">부족량</th>
+          <div class="overflow-x-auto max-h-64 overflow-y-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-purple-100 sticky top-0">
+                <tr class="text-xs text-purple-700">
+                  <th class="px-3 py-2 text-left">제품코드</th>
+                  <th class="px-3 py-2 text-left">제품명</th>
+                  <th class="px-3 py-2 text-center">채널</th>
+                  <th class="px-3 py-2 text-right">수량</th>
+                  <th class="px-3 py-2 text-left">LOT번호</th>
                 </tr>
               </thead>
               <tbody>
-                ${data.alerts.lowStockItems.map(item => `
-                  <tr class="border-b hover:bg-red-50">
-                    <td class="p-3 font-mono">${item.item_code}</td>
-                    <td class="p-3">${item.item_name}</td>
-                    <td class="p-3"><span class="px-2 py-1 rounded text-xs ${item.category === '원료' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'}">${item.category}</span></td>
-                    <td class="p-3 text-right text-red-600 font-bold">${formatNumber(item.current_stock)} ${item.unit || ''}</td>
-                    <td class="p-3 text-right">${formatNumber(item.safety_stock)} ${item.unit || ''}</td>
-                    <td class="p-3 text-right text-red-600 font-bold">${formatNumber(item.shortage)} ${item.unit || ''}</td>
+                ${data.production.recentProduction.filter(p => p.prod_date === data.date).map(item => `
+                  <tr class="border-b hover:bg-purple-50">
+                    <td class="px-3 py-2 font-mono text-xs text-blue-600">${item.product_code}</td>
+                    <td class="px-3 py-2 font-medium">${item.product_name}</td>
+                    <td class="px-3 py-2 text-center">
+                      <span class="px-2 py-0.5 rounded text-xs ${getChannelBadgeClass(item.channel)}">${item.channel || '기타'}</span>
+                    </td>
+                    <td class="px-3 py-2 text-right font-bold text-purple-600">${formatNumber(item.quantity)}</td>
+                    <td class="px-3 py-2 text-xs text-gray-500">${item.lot_number || '-'}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -1854,6 +1783,74 @@ async function renderDashboard() {
           </div>
         </div>
         ` : ''}
+        ` : ''}
+        
+        <!-- Task Summary Section -->
+        <div id="dashboard-task-section"></div>
+        
+        <!-- ★★★ v3.6.92: 오늘 원료 사용내역 (시간/품목코드/원료명/수량 표시) ★★★ -->
+        <div class="bg-white rounded-xl shadow">
+          <div class="p-4 border-b bg-gradient-to-r from-red-50 to-rose-50 flex justify-between items-center">
+            <h3 class="font-bold text-red-800"><i class="fas fa-mortar-pestle mr-2"></i>오늘 원료 사용내역</h3>
+            <span class="bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold">${todayUsageData.length}건</span>
+          </div>
+          <div class="overflow-x-auto max-h-80 overflow-y-auto">
+            ${todayUsageData.length > 0 ? `
+              <table class="w-full text-sm">
+                <thead class="bg-red-100 sticky top-0">
+                  <tr class="text-xs text-red-700">
+                    <th class="px-3 py-2 text-left">시간</th>
+                    <th class="px-3 py-2 text-left">품목코드</th>
+                    <th class="px-3 py-2 text-left">원료명</th>
+                    <th class="px-3 py-2 text-right">수량</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${todayUsageData.map(item => {
+                    const time = item.created_at ? new Date(item.created_at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute:'2-digit'}) : '-';
+                    const qty = Math.abs(parseFloat(item.quantity) || 0);
+                    return '<tr class="border-b hover:bg-red-50">' +
+                      '<td class="px-3 py-2 text-gray-500 text-xs">' + time + '</td>' +
+                      '<td class="px-3 py-2 font-mono text-xs text-blue-600">' + item.item_code + '</td>' +
+                      '<td class="px-3 py-2 font-medium">' + (item.item_name || '-') + '</td>' +
+                      '<td class="px-3 py-2 text-right font-bold text-red-600">-' + formatNumber(qty) + ' ' + (item.unit || 'kg') + '</td>' +
+                    '</tr>';
+                  }).join('')}
+                </tbody>
+              </table>
+            ` : '<p class="text-gray-400 text-center py-8">오늘 사용 내역이 없습니다.</p>'}
+          </div>
+        </div>
+        
+        <!-- 오늘 제품 출고량 -->
+        <div class="bg-white rounded-xl shadow">
+          <div class="p-4 border-b bg-green-50 flex justify-between items-center">
+            <h3 class="font-bold text-green-800"><i class="fas fa-truck mr-2"></i>오늘 제품 출고량</h3>
+            <span class="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-bold">${data.today.outbound.length}건</span>
+          </div>
+          <div class="p-4">
+            ${data.today.outbound.length > 0 ? `
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-gray-500 border-b">
+                    <th class="text-left py-2">제품</th>
+                    <th class="text-right py-2">출고량</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${data.today.outbound.map(item => `
+                    <tr class="border-b last:border-0">
+                      <td class="py-2">${item.item_name}</td>
+                      <td class="text-right font-medium">${formatNumber(item.total_qty)} ${item.unit}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            ` : '<p class="text-gray-400 text-center py-8">오늘 출고 내역이 없습니다.</p>'}
+          </div>
+        </div>
+        
+        <!-- ★★★ v3.6.92: 안전재고 미만 품목 상세 테이블 삭제 (긴급/주의 품목으로 대체됨) ★★★ -->
         
         ${data.alerts.expiringLots.length > 0 ? `
         <div class="bg-white rounded-xl shadow">
@@ -1892,104 +1889,9 @@ async function renderDashboard() {
     
     // 업무 현황 로드
     loadDashboardTaskSummary();
-    
-    // ★★★ v3.6.75: 긴급 품목 사용 추이 차트 로드 ★★★
-    if (safetyData.items && safetyData.items.length > 0) {
-      // 잔여일 3일 이하 품목 추출 (최대 5개)
-      const urgentItems = safetyData.items
-        .filter(item => item.days_of_stock <= 3 && item.days_of_stock !== 999)
-        .slice(0, 5);
-      if (urgentItems.length > 0) {
-        loadUsageTrendChart(urgentItems);
-      }
-    }
   } catch (e) {
     console.error('Dashboard error:', e);
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
-  }
-}
-
-// ★★★ v3.6.75: 긴급 품목 사용 추이 라인 차트 ★★★
-async function loadUsageTrendChart(urgentItems) {
-  const container = document.getElementById('usage-trend-chart-container');
-  if (!container || urgentItems.length === 0) return;
-  
-  try {
-    const itemCodes = urgentItems.map(i => i.item_code).join(',');
-    const result = await api(`/dashboard/usage-trend?days=14&item_codes=${encodeURIComponent(itemCodes)}`);
-    
-    if (!result.success || !result.data || result.data.datasets.length === 0) {
-      container.innerHTML = '';
-      return;
-    }
-    
-    container.innerHTML = `
-      <div class="bg-white rounded-xl shadow">
-        <div class="p-4 border-b bg-gradient-to-r from-orange-50 to-red-50 flex justify-between items-center">
-          <h3 class="font-bold text-red-800">
-            <i class="fas fa-chart-line mr-2"></i>긴급 품목 최근 14일 사용 추이
-          </h3>
-          <span class="text-xs text-gray-500">잔여일 3일 이하 품목</span>
-        </div>
-        <div class="p-4">
-          <canvas id="usageTrendChart" height="200"></canvas>
-        </div>
-      </div>
-    `;
-    
-    // Chart.js 렌더링
-    const ctx = document.getElementById('usageTrendChart');
-    if (ctx && window.Chart) {
-      new Chart(ctx, {
-        type: 'line',
-        data: {
-          labels: result.data.labels,
-          datasets: result.data.datasets
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          interaction: {
-            mode: 'index',
-            intersect: false
-          },
-          plugins: {
-            legend: {
-              position: 'top',
-              labels: {
-                usePointStyle: true,
-                boxWidth: 8
-              }
-            },
-            tooltip: {
-              callbacks: {
-                label: function(context) {
-                  return context.dataset.label + ': ' + formatNumber(context.raw) + ' kg';
-                }
-              }
-            }
-          },
-          scales: {
-            y: {
-              beginAtZero: true,
-              title: {
-                display: true,
-                text: '사용량 (kg)'
-              }
-            },
-            x: {
-              title: {
-                display: true,
-                text: '날짜'
-              }
-            }
-          }
-        }
-      });
-    }
-  } catch (e) {
-    console.error('Usage trend chart error:', e);
-    container.innerHTML = '';
   }
 }
 

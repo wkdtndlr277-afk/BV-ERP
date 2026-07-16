@@ -1647,10 +1647,15 @@ barcodeRoutes.get('/material-inventory', async (c) => {
 
 // ★★★ v3.6.62: 바코드 재고 직접 수정 (일별수불부 영향 없음!) ★★★
 // transactions 테이블에 기록하지 않고 inbound만 조정 → 일별수불부 계산에 포함 안됨
+// ★★★ v3.6.86: 전일재고 수정 API ★★★
+// 전일재고 수정 = 현재 실재고를 직접 조정 (inbound remain_qty)
+// - inbound에 조정 LOT 추가/기존 LOT 차감
+// - transactions에 기록하지 않음 → 당일입고/사용에 표시 안됨
+// - 결과적으로 현재재고가 변하면 역산 시 전일재고도 함께 변함
 barcodeRoutes.post('/adjust-stock', async (c) => {
   try {
     const body = await c.req.json();
-    const { item_code, new_stock, reason, memo } = body;
+    const { item_code, new_stock, reason, memo, adjust_type } = body;
     
     if (!item_code || new_stock === undefined || new_stock === null) {
       return c.json({ success: false, error: '품목코드와 수정할 재고량을 입력해주세요.' }, 400);
@@ -1685,26 +1690,32 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
       return c.json({ success: true, message: '재고 변동이 없습니다.', adjusted: false });
     }
     
-    const reasonText = reason || '바코드 재고 수정';
+    const reasonText = reason || '전일재고 정정';
     const fullMemo = memo ? `${reasonText}: ${memo}` : reasonText;
     
-    // ★★★ 핵심: transactions 테이블에 기록하지 않음 → 일별수불부 영향 없음 ★★★
     const batchStatements: any[] = [];
     
+    // ★★★ v3.6.86 핵심: inbound만 조정, transactions 기록 안함 ★★★
+    // 이렇게 하면:
+    // - 현재재고(inbound remain_qty SUM)가 변함
+    // - today_inbound 계산에서 제외됨 (inbound_date가 과거 또는 조정 LOT이므로)
+    // - 역산 시 전일재고도 함께 조정됨
+    
     if (adjustQty > 0) {
-      // 재고 증가: 조정용 LOT 생성 (inbound에만 추가)
-      const lotNumber = `BADJ-${today.replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
+      // 재고 증가: 조정용 LOT 생성 (과거 날짜로 - 당일입고에 포함되지 않도록)
+      // inbound_date를 1년 전으로 설정하여 어떤 날짜 조회에서도 당일입고에 포함 안됨
+      const adjustDate = '2020-01-01';  // 고정된 과거 날짜
+      const lotNumber = `STADJ-${today.replace(/-/g, '')}-${Date.now().toString().slice(-6)}`;
       
-      // ★★★ v3.6.64: inbound 테이블에 memo 컬럼이 없음 - storage_location에 저장 ★★★
       batchStatements.push(
         c.env.DB.prepare(`
           INSERT INTO inbound (lot_number, item_code, inbound_date, origin_qty, remain_qty, quality_status, storage_location, created_at)
           VALUES (?, ?, ?, ?, ?, '합격', ?, ?)
-        `).bind(lotNumber, item_code, today, adjustQty, adjustQty, fullMemo, timestamp)
+        `).bind(lotNumber, item_code, adjustDate, adjustQty, adjustQty, `[재고조정] ${fullMemo}`, timestamp)
       );
       
     } else {
-      // 재고 감소: 기존 LOT에서 FIFO 차감 (inbound만 수정)
+      // 재고 감소: 기존 LOT에서 FIFO 차감
       const lots = await c.env.DB.prepare(`
         SELECT id, lot_number, remain_qty FROM inbound 
         WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
@@ -1725,8 +1736,7 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
       }
     }
     
-    // ★★★ 별도 테이블에 조정 이력 기록 (일별수불부 계산에 사용 안함) ★★★
-    // barcode_adjustments 테이블 생성 시도
+    // 조정 이력 테이블에 기록 (추적용)
     try {
       await c.env.DB.prepare(`
         CREATE TABLE IF NOT EXISTS barcode_adjustments (
@@ -1761,16 +1771,17 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
     
     return c.json({
       success: true,
-      message: `${itemInfo.item_name} 재고가 ${currentStock.toFixed(2)} → ${new_stock.toFixed(2)} ${itemInfo.unit}로 조정되었습니다.`,
+      message: `${itemInfo.item_name} 재고가 ${currentStock.toFixed(2)} → ${new_stock.toFixed(2)} ${itemInfo.unit}로 조정되었습니다. (전일재고에 반영)`,
       data: {
         item_code,
         item_name: itemInfo.item_name,
+        adjust_date: today,
         previous_stock: currentStock,
         new_stock: new_stock,
         adjusted_qty: adjustQty,
         reason: reasonText,
         adjusted_at: timestamp,
-        affects_daily_report: false  // 일별수불부 영향 없음 표시
+        note: '재고 조정은 당일 입고/사용에 표시되지 않고 전일재고에 반영됩니다.'
       }
     });
     

@@ -242,7 +242,7 @@ const recentRequests = new Map<string, number>();
 barcodeRoutes.post('/usage', async (c) => {
   try {
     const body = await c.req.json();
-    const { item_code, quantity, lot_number, memo, request_id } = body;
+    const { item_code, quantity, lot_number, memo, request_id, trans_date } = body;
     
     if (!item_code || !quantity || quantity <= 0) {
       return c.json({ success: false, error: '품목 코드와 수량을 입력해주세요.' }, 400);
@@ -267,7 +267,8 @@ barcodeRoutes.post('/usage', async (c) => {
       if (now_ms - time > 5000) recentRequests.delete(key);
     }
     
-    const today = getKSTDate();
+    // ★★★ v3.6.82: trans_date 지원 (수기등록 날짜 선택) ★★★
+    const today = trans_date || getKSTDate();
     const now = getKSTDateTime();
     
     // ★ 1단계: 품목정보 + LOT정보 병렬 조회 ★

@@ -226,6 +226,18 @@
                         </div>
                     </div>
                     
+                    <!-- ★★★ v3.6.82: 날짜 선택 ★★★ -->
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-600 mb-2">
+                            <i class="fas fa-calendar-alt mr-1"></i> 사용일자
+                        </label>
+                        <div class="flex gap-2">
+                            <input type="date" id="manualDateInput" class="flex-1 p-3 border-2 border-gray-200 rounded-xl text-base">
+                            <button onclick="setManualDateToday()" class="px-4 py-2 bg-blue-100 text-blue-700 rounded-xl text-sm font-medium">오늘</button>
+                            <button onclick="setManualDateYesterday()" class="px-4 py-2 bg-orange-100 text-orange-700 rounded-xl text-sm font-medium">어제</button>
+                        </div>
+                    </div>
+                    
                     <!-- 수량 입력 -->
                     <div class="mb-4">
                         <label class="block text-sm font-medium text-gray-600 mb-2">
@@ -747,6 +759,9 @@
                 categoryEl.className = 'badge bg-blue-100 text-blue-700 mb-1';
             }
             
+            // ★★★ v3.6.82: 날짜 초기화 (오늘) ★★★
+            setManualDateToday();
+            
             // 수량 초기화
             document.getElementById('manualQtyInput').value = '1';
             document.getElementById('manualMemoInput').value = '';
@@ -754,7 +769,26 @@
             showToast(`${itemName} 선택됨`, 'success');
         }
         
-        // ★★★ v3.6.81: 수기 사용 등록 제출 ★★★
+        // ★★★ v3.6.82: 날짜 설정 함수들 ★★★
+        function setManualDateToday() {
+            const today = new Date();
+            document.getElementById('manualDateInput').value = formatDateForInput(today);
+        }
+        
+        function setManualDateYesterday() {
+            const yesterday = new Date();
+            yesterday.setDate(yesterday.getDate() - 1);
+            document.getElementById('manualDateInput').value = formatDateForInput(yesterday);
+        }
+        
+        function formatDateForInput(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+        
+        // ★★★ v3.6.82: 수기 사용 등록 제출 (날짜 포함) ★★★
         async function submitManualUsage() {
             if (!manualSelectedItem) {
                 showToast('품목을 먼저 선택하세요', 'warning');
@@ -767,6 +801,13 @@
                 return;
             }
             
+            // ★★★ v3.6.82: 날짜 가져오기 ★★★
+            const selectedDate = document.getElementById('manualDateInput').value;
+            if (!selectedDate) {
+                showToast('날짜를 선택하세요', 'warning');
+                return;
+            }
+            
             const memo = document.getElementById('manualMemoInput').value.trim() || '수기 사용등록';
             
             showLoading(true);
@@ -776,7 +817,8 @@
                     item_code: manualSelectedItem.item_code,
                     quantity: qty,
                     lot_number: null,
-                    memo: memo
+                    memo: memo,
+                    trans_date: selectedDate  // ★★★ v3.6.82: 날짜 전달 ★★★
                 };
                 
                 const response = await fetch(`${API_BASE}/barcode/usage`, {
@@ -794,8 +836,9 @@
                     
                     // 성공 피드백
                     const unit = manualSelectedItem.unit || 'kg';
+                    const dateDisplay = selectedDate === formatDateForInput(new Date()) ? '오늘' : selectedDate;
                     if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
-                    showToast(`✅ ${manualSelectedItem.item_name} ${qty}${unit} 차감! (잔량: ${formatNumber(manualSelectedItem.current_stock)}${unit})`, 'success');
+                    showToast(`✅ ${manualSelectedItem.item_name} ${qty}${unit} 차감! (${dateDisplay})`, 'success');
                     
                     // BroadcastChannel 알림
                     try {
@@ -806,6 +849,7 @@
                             item_name: manualSelectedItem.item_name,
                             quantity: qty,
                             new_stock: manualSelectedItem.current_stock,
+                            trans_date: selectedDate,
                             timestamp: new Date().toISOString()
                         });
                         channel.close();

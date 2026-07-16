@@ -476,21 +476,25 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
     // 통계 미계산 품목 수
     const noStatsCount = results.filter(r => !r.stats_updated_at).length;
     
+    // ★★★ v3.6.89: 긴급/주의 품목만 반환 (정상 제외) ★★★
+    const alertItems = results.filter(r => r.status_color === 'red' || r.status_color === 'yellow');
+    
     return c.json({
       success: true,
       summary: {
         as_of: todayStr,
-        total_items: results.length,
-        urgent_count: urgentCount,       // 🔴 긴급 (0-2일)
-        warning_count: warningCount,     // 🟡 주의 (3-7일)
-        normal_count: normalCount,       // 🟢 정상 (8일+)
+        total_items: results.length,      // 전체 품목 수 (참고용)
+        urgent_count: urgentCount,        // 🔴 긴급 (0-3일)
+        warning_count: warningCount,      // 🟡 주의 (4-10일)
+        normal_count: normalCount,        // 🟢 정상 (11일+)
+        displayed_count: alertItems.length, // 표시된 품목 수
         grade_a_count: gradeACount,
         grade_b_count: gradeBCount,
         grade_c_count: gradeCCount,
-        no_stats_count: noStatsCount,    // 통계 미계산 품목 수
+        no_stats_count: noStatsCount,
         excluded_items: EXCLUDED_ITEM_CODES
       },
-      items: results
+      items: alertItems  // 긴급/주의 품목만 반환
     });
   } catch (error: any) {
     console.error('Safety stock status error:', error);

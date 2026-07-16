@@ -1781,7 +1781,7 @@ async function renderDashboard() {
                 </thead>
                 <tbody>
                   ${(data.production?.dailySummary || []).length > 0 ? 
-                    data.production.dailySummary.map((item, idx) => `
+                    data.production.dailySummary.slice(0, 5).map((item, idx) => `
                       <tr class="border-b hover:bg-purple-50 ${idx === 0 ? 'bg-purple-50' : ''}">
                         <td class="px-4 py-3 font-medium ${idx === 0 ? 'text-purple-700' : ''}">${item.date}${idx === 0 ? ' <span class="text-xs text-purple-500">(오늘)</span>' : ''}</td>
                         <td class="px-4 py-3 text-center font-bold text-blue-600">${item.products}<span class="text-xs text-gray-400 ml-1">종</span></td>
@@ -1854,8 +1854,7 @@ async function renderDashboard() {
         </div>
         ` : ''}
         
-        <!-- Task Summary Section -->
-        <div id="dashboard-task-section"></div>
+        <!-- ★★★ v3.6.94: 업무 현황 섹션 삭제 (요청에 의해 제거) ★★★
         
         <!-- ★★★ v3.6.92: 오늘 원료 사용내역 (시간/품목코드/원료명/수량 표시) ★★★ -->
         <div class="bg-white rounded-xl shadow">
@@ -1956,8 +1955,7 @@ async function renderDashboard() {
       </div>
     `;
     
-    // 업무 현황 로드
-    loadDashboardTaskSummary();
+    // ★★★ v3.6.94: 업무 현황 로드 삭제 ★★★
   } catch (e) {
     console.error('Dashboard error:', e);
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';

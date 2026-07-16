@@ -266,12 +266,14 @@ inboundRoutes.get('/query', async (c) => {
 });
 
 // 입고 목록 조회
+// ★★★ v3.6.87: 재고조정 LOT 제외 (STADJ, PADJ, BADJ로 시작하는 LOT) ★★★
 inboundRoutes.get('/', async (c) => {
   const item_code = c.req.query('item_code');
   const start_date = c.req.query('start_date');
   const end_date = c.req.query('end_date');
   const has_remain = c.req.query('has_remain'); // 잔량 있는 것만
   const include_unlinked = c.req.query('include_unlinked'); // 마스터 없는 품목 포함
+  const include_adjustments = c.req.query('include_adjustments'); // 재고조정 LOT 포함
   
   let query = `
     SELECT i.*, 
@@ -288,6 +290,11 @@ inboundRoutes.get('/', async (c) => {
   // 마스터 없는 품목 제외 (기본값) - 이전 호환성 유지
   if (include_unlinked !== 'true') {
     query += ' AND (m.item_code IS NOT NULL OR s.item_code IS NOT NULL)';
+  }
+  
+  // ★★★ v3.6.87: 재고조정 LOT 제외 (기본값) ★★★
+  if (include_adjustments !== 'true') {
+    query += ` AND i.lot_number NOT LIKE 'STADJ%' AND i.lot_number NOT LIKE 'PADJ%' AND i.lot_number NOT LIKE 'BADJ%'`;
   }
   
   if (item_code) {

@@ -1510,11 +1510,12 @@ barcodeRoutes.get('/material-inventory', async (c) => {
            WHERE item_code = m.item_code AND remain_qty > 0 AND quality_status = '합격'),
           0
         ) as real_current_stock,
-        -- 기준일 이후 입고량 (기준일 다음날부터 오늘까지) - 역산용
+        -- 기준일 이후 입고량 (기준일 다음날부터 오늘까지) - 역산용 (재고조정 LOT 제외)
         COALESCE(
           (SELECT SUM(origin_qty) 
            FROM inbound 
-           WHERE item_code = m.item_code AND inbound_date > ? AND quality_status = '합격'),
+           WHERE item_code = m.item_code AND inbound_date > ? AND quality_status = '합격'
+             AND lot_number NOT LIKE 'STADJ%' AND lot_number NOT LIKE 'PADJ%' AND lot_number NOT LIKE 'BADJ%'),
           0
         ) as after_inbound,
         -- 기준일 이후 사용량 (기준일 다음날부터 오늘까지) - 역산용
@@ -1524,11 +1525,12 @@ barcodeRoutes.get('/material-inventory', async (c) => {
            WHERE item_code = m.item_code AND trans_date > ? AND trans_type = '사용'),
           0
         ) as after_usage,
-        -- 당일입고: inbound_date = 기준일의 입고량
+        -- 당일입고: inbound_date = 기준일의 입고량 (재고조정 LOT 제외)
         COALESCE(
           (SELECT SUM(origin_qty) 
            FROM inbound 
-           WHERE item_code = m.item_code AND inbound_date = ? AND quality_status = '합격'),
+           WHERE item_code = m.item_code AND inbound_date = ? AND quality_status = '합격'
+             AND lot_number NOT LIKE 'STADJ%' AND lot_number NOT LIKE 'PADJ%' AND lot_number NOT LIKE 'BADJ%'),
           0
         ) as today_inbound,
         -- 당일사용: transactions의 사용 기록

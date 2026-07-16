@@ -1748,41 +1748,110 @@ async function renderDashboard() {
         </div>
         ` : ''}
         
-        <!-- ★★★ v3.6.92: 오늘 생산등록 일일현황 ★★★ -->
-        ${data.production.recentProduction && data.production.recentProduction.length > 0 ? `
+        <!-- ★★★ v3.6.93: 생산등록 현황 (일별/주별/월별 탭) ★★★ -->
         <div class="bg-white rounded-xl shadow">
-          <div class="p-4 border-b bg-gradient-to-r from-purple-50 to-indigo-50 flex justify-between items-center">
-            <h3 class="font-bold text-purple-800"><i class="fas fa-clipboard-list mr-2"></i>오늘 생산등록 현황</h3>
-            <span class="bg-purple-600 text-white px-3 py-1 rounded-full text-sm font-bold">${data.production.recentProduction.filter(p => p.prod_date === data.date).length}건</span>
+          <div class="p-4 border-b bg-gradient-to-r from-purple-50 to-indigo-50">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-bold text-purple-800"><i class="fas fa-clipboard-list mr-2"></i>생산등록 현황</h3>
+            </div>
+            <!-- 탭 버튼 -->
+            <div class="flex gap-2">
+              <button onclick="switchProductionTab('daily')" id="prod-tab-daily" class="px-4 py-2 rounded-lg text-sm font-medium bg-purple-600 text-white">
+                일별
+              </button>
+              <button onclick="switchProductionTab('weekly')" id="prod-tab-weekly" class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300">
+                주별
+              </button>
+              <button onclick="switchProductionTab('monthly')" id="prod-tab-monthly" class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300">
+                월별
+              </button>
+            </div>
           </div>
-          <div class="overflow-x-auto max-h-64 overflow-y-auto">
-            <table class="w-full text-sm">
-              <thead class="bg-purple-100 sticky top-0">
-                <tr class="text-xs text-purple-700">
-                  <th class="px-3 py-2 text-left">제품코드</th>
-                  <th class="px-3 py-2 text-left">제품명</th>
-                  <th class="px-3 py-2 text-center">채널</th>
-                  <th class="px-3 py-2 text-right">수량</th>
-                  <th class="px-3 py-2 text-left">LOT번호</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${data.production.recentProduction.filter(p => p.prod_date === data.date).map(item => `
-                  <tr class="border-b hover:bg-purple-50">
-                    <td class="px-3 py-2 font-mono text-xs text-blue-600">${item.product_code}</td>
-                    <td class="px-3 py-2 font-medium">${item.product_name}</td>
-                    <td class="px-3 py-2 text-center">
-                      <span class="px-2 py-0.5 rounded text-xs ${getChannelBadgeClass(item.channel)}">${item.channel || '기타'}</span>
-                    </td>
-                    <td class="px-3 py-2 text-right font-bold text-purple-600">${formatNumber(item.quantity)}</td>
-                    <td class="px-3 py-2 text-xs text-gray-500">${item.lot_number || '-'}</td>
+          
+          <!-- 일별 탭 -->
+          <div id="prod-content-daily" class="prod-tab-content">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-purple-100">
+                  <tr class="text-xs text-purple-700">
+                    <th class="px-4 py-3 text-left">생산일</th>
+                    <th class="px-4 py-3 text-center">생산품목수</th>
+                    <th class="px-4 py-3 text-right">총생산량</th>
                   </tr>
-                `).join('')}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  ${(data.production?.dailySummary || []).length > 0 ? 
+                    data.production.dailySummary.map((item, idx) => `
+                      <tr class="border-b hover:bg-purple-50 ${idx === 0 ? 'bg-purple-50' : ''}">
+                        <td class="px-4 py-3 font-medium ${idx === 0 ? 'text-purple-700' : ''}">${item.date}${idx === 0 ? ' <span class="text-xs text-purple-500">(오늘)</span>' : ''}</td>
+                        <td class="px-4 py-3 text-center font-bold text-blue-600">${item.products}<span class="text-xs text-gray-400 ml-1">종</span></td>
+                        <td class="px-4 py-3 text-right font-bold text-purple-600">${formatNumber(item.total)}<span class="text-xs text-gray-400 ml-1">개</span></td>
+                      </tr>
+                    `).join('') : 
+                    '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-400">생산 데이터가 없습니다.</td></tr>'
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+          
+          <!-- 주별 탭 -->
+          <div id="prod-content-weekly" class="prod-tab-content hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-blue-100">
+                  <tr class="text-xs text-blue-700">
+                    <th class="px-4 py-3 text-left">기간</th>
+                    <th class="px-4 py-3 text-center">생산품목수</th>
+                    <th class="px-4 py-3 text-right">총생산량</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(data.production?.weeklySummary || []).length > 0 ? 
+                    data.production.weeklySummary.map((item, idx) => `
+                      <tr class="border-b hover:bg-blue-50 ${idx === 0 ? 'bg-blue-50' : ''}">
+                        <td class="px-4 py-3">
+                          <span class="font-medium ${idx === 0 ? 'text-blue-700' : ''}">${item.week}</span>
+                          <span class="text-xs text-gray-400 ml-2">(${item.startDate} ~ ${item.endDate})</span>
+                        </td>
+                        <td class="px-4 py-3 text-center font-bold text-blue-600">${item.products}<span class="text-xs text-gray-400 ml-1">종</span></td>
+                        <td class="px-4 py-3 text-right font-bold text-blue-600">${formatNumber(item.total)}<span class="text-xs text-gray-400 ml-1">개</span></td>
+                      </tr>
+                    `).join('') : 
+                    '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-400">생산 데이터가 없습니다.</td></tr>'
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+          
+          <!-- 월별 탭 -->
+          <div id="prod-content-monthly" class="prod-tab-content hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-green-100">
+                  <tr class="text-xs text-green-700">
+                    <th class="px-4 py-3 text-left">월</th>
+                    <th class="px-4 py-3 text-center">생산품목수</th>
+                    <th class="px-4 py-3 text-right">총생산량</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(data.production?.monthlySummary || []).length > 0 ? 
+                    data.production.monthlySummary.map((item, idx) => `
+                      <tr class="border-b hover:bg-green-50 ${idx === 0 ? 'bg-green-50' : ''}">
+                        <td class="px-4 py-3 font-medium ${idx === 0 ? 'text-green-700' : ''}">${item.month}${idx === 0 ? ' <span class="text-xs text-green-500">(이번달)</span>' : ''}</td>
+                        <td class="px-4 py-3 text-center font-bold text-green-600">${item.products}<span class="text-xs text-gray-400 ml-1">종</span></td>
+                        <td class="px-4 py-3 text-right font-bold text-green-600">${formatNumber(item.total)}<span class="text-xs text-gray-400 ml-1">개</span></td>
+                      </tr>
+                    `).join('') : 
+                    '<tr><td colspan="3" class="px-4 py-8 text-center text-gray-400">생산 데이터가 없습니다.</td></tr>'
+                  }
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
-        ` : ''}
         ` : ''}
         
         <!-- Task Summary Section -->
@@ -1894,6 +1963,25 @@ async function renderDashboard() {
     content.innerHTML = '<div class="text-center text-red-500 py-8">데이터를 불러오는데 실패했습니다.</div>';
   }
 }
+
+// ★★★ v3.6.93: 생산등록 현황 탭 전환 ★★★
+function switchProductionTab(tab) {
+  // 탭 버튼 스타일 변경
+  ['daily', 'weekly', 'monthly'].forEach(t => {
+    const btn = document.getElementById(`prod-tab-${t}`);
+    const content = document.getElementById(`prod-content-${t}`);
+    if (btn && content) {
+      if (t === tab) {
+        btn.className = 'px-4 py-2 rounded-lg text-sm font-medium bg-purple-600 text-white';
+        content.classList.remove('hidden');
+      } else {
+        btn.className = 'px-4 py-2 rounded-lg text-sm font-medium bg-gray-200 text-gray-700 hover:bg-gray-300';
+        content.classList.add('hidden');
+      }
+    }
+  });
+}
+window.switchProductionTab = switchProductionTab;
 
 // 대시보드 업무 현황 로드
 async function loadDashboardTaskSummary() {

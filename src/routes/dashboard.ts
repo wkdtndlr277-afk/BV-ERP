@@ -173,15 +173,20 @@ dashboardRoutes.get('/', async (c) => {
     LIMIT 10
   `).all();
   
-  // ★★★ v3.6.49: 생산 현황 추가 (구글시트 기준) ★★★
+  // ★★★ v3.6.93: 생산 현황 추가 - 일별/주별/월별 요약 ★★★
   let productionStats = {
     todayTotal: 0,        // 오늘 총 생산 수량
     todayProducts: 0,     // 오늘 생산 품목 수
     todayRecords: 0,      // 오늘 생산 등록 건수
     weekTotal: 0,         // 이번주 총 생산 수량
     weekProducts: 0,      // 이번주 생산 품목 수
+    monthTotal: 0,        // 이번달 총 생산 수량
+    monthProducts: 0,     // 이번달 생산 품목 수
     byChannel: {} as Record<string, { count: number; quantity: number }>,  // 채널별 현황
-    recentProduction: [] as any[]  // 최근 생산 내역
+    // ★★★ v3.6.93: 일별 요약 (생산일, 품목수, 총생산량) ★★★
+    dailySummary: [] as { date: string; products: number; total: number; records: number }[],
+    weeklySummary: [] as { week: string; startDate: string; endDate: string; products: number; total: number; records: number }[],
+    monthlySummary: [] as { month: string; products: number; total: number; records: number }[]
   };
   
   // ★★★ v3.6.63: service 변수 선언 추가 ★★★
@@ -200,24 +205,56 @@ dashboardRoutes.get('/', async (c) => {
       
       // 날짜 계산
       const todayStr = today;
-      const weekAgo = new Date();
+      const todayDate = new Date(today);
+      const weekAgo = new Date(todayDate);
       weekAgo.setDate(weekAgo.getDate() - 7);
       const weekAgoStr = weekAgo.toISOString().split('T')[0];
+      const monthStart = today.substring(0, 7) + '-01';  // 이번달 1일
+      const threeMonthsAgo = new Date(todayDate);
+      threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+      const threeMonthsAgoStr = threeMonthsAgo.toISOString().split('T')[0];
       
       const todayItems = new Set<string>();
       const weekItems = new Set<string>();
+      const monthItems = new Set<string>();
       const channelStats: Record<string, { count: number; quantity: number }> = {};
-      const recentItems: any[] = [];
+      
+      // ★★★ v3.6.93: 일별/주별/월별 집계용 맵 ★★★
+      const dailyMap = new Map<string, { products: Set<string>; total: number; records: number }>();
+      const monthlyMap = new Map<string, { products: Set<string>; total: number; records: number }>();
       
       for (const row of productionData || []) {
         const prodDate = String(row[0] || '').trim().replace(/^'/, '');
         const productCode = String(row[1] || '').trim();
-        const productName = String(row[2] || '').trim();
         const quantity = parseInt(row[3]) || 0;
-        const lotNumber = String(row[4] || '').trim();
         const channel = String(row[5] || '').trim() || '기타';
         
         if (!prodDate || !productCode) continue;
+        
+        // ★★★ 일별 집계 (최근 30일) ★★★
+        const thirtyDaysAgo = new Date(todayDate);
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        if (prodDate >= thirtyDaysAgo.toISOString().split('T')[0]) {
+          if (!dailyMap.has(prodDate)) {
+            dailyMap.set(prodDate, { products: new Set(), total: 0, records: 0 });
+          }
+          const daily = dailyMap.get(prodDate)!;
+          daily.products.add(productCode);
+          daily.total += quantity;
+          daily.records++;
+        }
+        
+        // ★★★ 월별 집계 (최근 3개월) ★★★
+        if (prodDate >= threeMonthsAgoStr) {
+          const monthKey = prodDate.substring(0, 7);  // YYYY-MM
+          if (!monthlyMap.has(monthKey)) {
+            monthlyMap.set(monthKey, { products: new Set(), total: 0, records: 0 });
+          }
+          const monthly = monthlyMap.get(monthKey)!;
+          monthly.products.add(productCode);
+          monthly.total += quantity;
+          monthly.records++;
+        }
         
         // 오늘 생산 현황
         if (prodDate === todayStr) {
@@ -239,25 +276,67 @@ dashboardRoutes.get('/', async (c) => {
           weekItems.add(productCode);
         }
         
-        // 최근 생산 내역 (최근 10건)
-        if (recentItems.length < 10 && prodDate >= weekAgoStr) {
-          recentItems.push({
-            prod_date: prodDate,
-            product_code: productCode,
-            product_name: productName,
-            quantity,
-            lot_number: lotNumber,
-            channel
-          });
+        // 이번달 생산 현황
+        if (prodDate >= monthStart && prodDate <= todayStr) {
+          productionStats.monthTotal += quantity;
+          monthItems.add(productCode);
         }
       }
       
       productionStats.todayProducts = todayItems.size;
       productionStats.weekProducts = weekItems.size;
+      productionStats.monthProducts = monthItems.size;
       productionStats.byChannel = channelStats;
-      productionStats.recentProduction = recentItems.sort((a, b) => 
-        b.prod_date.localeCompare(a.prod_date) || b.quantity - a.quantity
-      ).slice(0, 10);
+      
+      // ★★★ v3.6.93: 일별 요약 배열 생성 (최근 14일) ★★★
+      productionStats.dailySummary = Array.from(dailyMap.entries())
+        .map(([date, data]) => ({
+          date,
+          products: data.products.size,
+          total: data.total,
+          records: data.records
+        }))
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, 14);
+      
+      // ★★★ v3.6.93: 주별 요약 (최근 4주) ★★★
+      const weeklyData: { [key: string]: { products: Set<string>; total: number; records: number; startDate: string; endDate: string } } = {};
+      for (const [date, data] of dailyMap.entries()) {
+        const d = new Date(date);
+        const weekNum = Math.floor((todayDate.getTime() - d.getTime()) / (7 * 24 * 60 * 60 * 1000));
+        if (weekNum < 4) {
+          const weekKey = weekNum === 0 ? '이번주' : weekNum === 1 ? '지난주' : `${weekNum}주 전`;
+          if (!weeklyData[weekKey]) {
+            weeklyData[weekKey] = { products: new Set(), total: 0, records: 0, startDate: date, endDate: date };
+          }
+          data.products.forEach(p => weeklyData[weekKey].products.add(p));
+          weeklyData[weekKey].total += data.total;
+          weeklyData[weekKey].records += data.records;
+          if (date < weeklyData[weekKey].startDate) weeklyData[weekKey].startDate = date;
+          if (date > weeklyData[weekKey].endDate) weeklyData[weekKey].endDate = date;
+        }
+      }
+      productionStats.weeklySummary = ['이번주', '지난주', '2주 전', '3주 전']
+        .filter(week => weeklyData[week])
+        .map(week => ({
+          week,
+          startDate: weeklyData[week].startDate,
+          endDate: weeklyData[week].endDate,
+          products: weeklyData[week].products.size,
+          total: weeklyData[week].total,
+          records: weeklyData[week].records
+        }));
+      
+      // ★★★ v3.6.93: 월별 요약 배열 생성 ★★★
+      productionStats.monthlySummary = Array.from(monthlyMap.entries())
+        .map(([month, data]) => ({
+          month,
+          products: data.products.size,
+          total: data.total,
+          records: data.records
+        }))
+        .sort((a, b) => b.month.localeCompare(a.month))
+        .slice(0, 3);
       
     } catch (prodError: any) {
       console.error('[dashboard] 생산 현황 조회 오류:', prodError.message);

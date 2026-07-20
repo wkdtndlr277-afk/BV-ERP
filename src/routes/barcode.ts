@@ -2184,10 +2184,12 @@ barcodeRoutes.get('/safety-stock-analysis', async (c) => {
     
     // 4. 통계 계산 (이상치 제거 + 표준편차)
     const results: any[] = [];
+    const processedItems = new Set<string>();  // ★★★ v3.6.106: 처리된 품목 추적
     
     for (const [itemCode, stat] of itemStats.entries()) {
       const itemInfo = itemMap.get(itemCode);
       if (!itemInfo || stat.usages.length < 5) continue; // 최소 5일 데이터 필요
+      processedItems.add(itemCode);  // ★★★ v3.6.106: 처리 표시
       
       // 이상치 제거 (IQR 방식)
       const sorted = [...stat.usages].sort((a, b) => a - b);
@@ -2239,11 +2241,20 @@ barcodeRoutes.get('/safety-stock-analysis', async (c) => {
       // 발주 필요 여부
       const needOrder = itemInfo.current_stock < reorderPoint;
       
+      // ★★★ v3.6.106: status_color 결정 (잔여일 기준) ★★★
+      let statusColor = 'green';
+      if (daysOfStock <= 3) {
+        statusColor = 'red';    // 긴급: 0~3일
+      } else if (daysOfStock <= 10) {
+        statusColor = 'yellow'; // 주의: 4~10일
+      }
+      
       results.push({
         item_code: itemCode,
         item_name: itemInfo.item_name,
         unit: itemInfo.unit,
         grade,
+        grade_reason: `CV=${cv.toFixed(2)}, 일평균=${mean.toFixed(1)}`,  // ★★★ v3.6.106
         z_value: zValue,
         current_stock: Math.round(itemInfo.current_stock * 10) / 10,
         daily_avg: Math.round(mean * 100) / 100,
@@ -2253,10 +2264,41 @@ barcodeRoutes.get('/safety-stock-analysis', async (c) => {
         reorder_point: Math.round(reorderPoint * 10) / 10,
         days_of_stock: daysOfStock,
         status: needOrder ? '🔴 발주필요' : '🟢 정상',
+        status_color: statusColor,  // ★★★ v3.6.106
         need_order: needOrder,
         data_points: cleanUsages.length,
         outliers_removed: stat.usages.length - cleanUsages.length
       });
+    }
+    
+    // ★★★ v3.6.106: 사용 기록 없지만 안전재고 설정 + 재고 부족인 품목 추가 ★★★
+    for (const [itemCode, itemInfo] of itemMap.entries()) {
+      // 이미 처리된 품목은 건너뛰기
+      if (processedItems.has(itemCode)) continue;
+      
+      // 안전재고가 설정되어 있고, 현재고가 안전재고 미만인 품목
+      if (itemInfo.current_safety_stock > 0 && itemInfo.current_stock < itemInfo.current_safety_stock) {
+        results.push({
+          item_code: itemCode,
+          item_name: itemInfo.item_name,
+          unit: itemInfo.unit,
+          grade: '-',  // 등급 미산정
+          grade_reason: '사용기록 부족',
+          z_value: 0,
+          current_stock: Math.round(itemInfo.current_stock * 10) / 10,
+          daily_avg: 0,
+          std_dev: 0,
+          cv: 0,
+          safety_stock: itemInfo.current_safety_stock,
+          reorder_point: itemInfo.current_safety_stock,  // 안전재고를 발주점으로 사용
+          days_of_stock: 0,  // 일평균 사용량 없으므로 0
+          status: '🔴 발주필요',
+          status_color: 'red',  // ★★★ 긴급 표시
+          need_order: true,
+          data_points: 0,
+          outliers_removed: 0
+        });
+      }
     }
     
     // 발주 필요 순으로 정렬 (재고일수 오름차순)
@@ -2273,7 +2315,8 @@ barcodeRoutes.get('/safety-stock-analysis', async (c) => {
       need_order_count: results.filter(r => r.need_order).length,
       grade_a_count: results.filter(r => r.grade === 'A').length,
       grade_b_count: results.filter(r => r.grade === 'B').length,
-      grade_c_count: results.filter(r => r.grade === 'C').length
+      grade_c_count: results.filter(r => r.grade === 'C').length,
+      no_usage_data_count: results.filter(r => r.grade === '-').length  // ★★★ v3.6.106
     };
     
     return c.json({

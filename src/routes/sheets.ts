@@ -6203,6 +6203,82 @@ sheets.get('/search-material', async (c) => {
   }
 });
 
+// ★★★ v3.6.105: 로트매칭 특정 날짜 데이터 삭제 ★★★
+sheets.post('/delete-lot-matching-date', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const targetDates = body.dates;
+    
+    if (!targetDates || !Array.isArray(targetDates) || targetDates.length === 0) {
+      return c.json({ success: false, error: 'dates 배열 필수 (예: ["2026-07-17"])' }, 400);
+    }
+    
+    const cleanDates = targetDates.map(d => d.replace(/^'/, '').trim());
+    console.log(`[delete-lot-matching-date] 삭제 대상 날짜: ${cleanDates.join(', ')}`);
+    
+    // 1. 로트매칭 전체 읽기
+    const allData = await service.readSheet('로트매칭', 'A2:G');
+    console.log(`[delete-lot-matching-date] 기존 데이터: ${allData.length}행`);
+    
+    // 2. 삭제 대상 날짜 제외
+    const deletedCounts: Record<string, number> = {};
+    cleanDates.forEach(d => deletedCounts[d] = 0);
+    
+    const remainingData = allData.filter(row => {
+      let rowDate = row[0]?.toString().replace(/^'/, '').trim() || '';
+      // 엑셀 날짜 숫자 변환
+      if (/^\d{5}$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      }
+      
+      if (cleanDates.includes(rowDate)) {
+        deletedCounts[rowDate]++;
+        return false;
+      }
+      return true;
+    });
+    
+    const totalDeleted = allData.length - remainingData.length;
+    console.log(`[delete-lot-matching-date] 삭제: ${totalDeleted}행, 유지: ${remainingData.length}행`);
+    
+    if (totalDeleted === 0) {
+      return c.json({ 
+        success: true, 
+        message: '삭제할 데이터가 없습니다',
+        data: { dates: cleanDates, deleted_counts: deletedCounts, total_deleted: 0 }
+      });
+    }
+    
+    // 3. 시트 클리어 후 재작성
+    await service.clearRange('로트매칭', 'A2:G50000');
+    
+    if (remainingData.length > 0) {
+      await service.writeSheet('로트매칭', `A2:G${remainingData.length + 1}`, remainingData);
+    }
+    
+    return c.json({
+      success: true,
+      message: `로트매칭 ${cleanDates.join(', ')} 날짜 데이터 삭제 완료`,
+      data: {
+        dates: cleanDates,
+        deleted_counts: deletedCounts,
+        total_deleted: totalDeleted,
+        remaining_rows: remainingData.length
+      }
+    });
+  } catch (error: any) {
+    console.error('[delete-lot-matching-date] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.6.50: SF_BOM 시트 생성 (반제품 BOM 마스터) ★★★
 sheets.post('/create-sf-bom-sheet', async (c) => {
   const service = getSheetService(c);

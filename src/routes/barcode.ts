@@ -1540,6 +1540,13 @@ barcodeRoutes.get('/material-inventory', async (c) => {
            WHERE item_code = m.item_code AND trans_date = ? AND trans_type = '사용'),
           0
         ) as today_usage,
+        -- ★★★ v3.6.115: 당일 재고조정량 (전일재고 계산용) ★★★
+        COALESCE(
+          (SELECT SUM(adjust_qty) 
+           FROM barcode_adjustments 
+           WHERE item_code = m.item_code AND adjust_date = ?),
+          0
+        ) as today_adjustment,
         -- LOT 수 (현재 기준)
         (SELECT COUNT(*) FROM inbound WHERE item_code = m.item_code AND remain_qty > 0 AND quality_status = '합격') as lot_count
       FROM master m
@@ -1550,8 +1557,8 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         AND COALESCE(m.is_active, 1) = 1
     `;
     
-    // 파라미터: 기준일(4개), 제외코드
-    const params: any[] = [targetDate, targetDate, targetDate, targetDate, ...EXCLUDE_CODES];
+    // 파라미터: 기준일(5개), 제외코드  ★★★ v3.6.115: 조정량 쿼리 추가 ★★★
+    const params: any[] = [targetDate, targetDate, targetDate, targetDate, targetDate, ...EXCLUDE_CODES];
     
     if (search) {
       query += ` AND (m.item_code LIKE ? OR m.item_name LIKE ?)`;
@@ -1569,6 +1576,7 @@ barcodeRoutes.get('/material-inventory', async (c) => {
       const afterUsage = parseFloat(item.after_usage) || 0;      // 기준일 이후 사용량
       const todayInbound = parseFloat(item.today_inbound) || 0;
       const todayUsage = parseFloat(item.today_usage) || 0;
+      const todayAdjustment = parseFloat(item.today_adjustment) || 0;  // ★★★ v3.6.115: 당일 재고조정량
       const lotCount = parseInt(item.lot_count) || 0;
       
       // ★★★ v3.6.85: 역산 방식 핵심 로직 ★★★
@@ -1584,13 +1592,14 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         // ★ 과거 날짜: 역산 방식 ★
         // 해당 날짜 재고 = 현재잔량 + (기준일 이후 사용량) - (기준일 이후 입고량)
         currentStock = realCurrentStock + afterUsage - afterInbound;
-        // 전일재고 = 해당날짜 재고 + 당일사용 - 당일입고
-        prevStock = currentStock + todayUsage - todayInbound;
+        // 전일재고 = 해당날짜 재고 + 당일사용 - 당일입고 - 당일조정 (조정은 전일재고에서 빠짐)
+        prevStock = currentStock + todayUsage - todayInbound - todayAdjustment;
       } else {
         // ★ 오늘/미래: 현재 inbound remain_qty 직접 사용 ★
         currentStock = realCurrentStock;
-        // 전일재고 = 현재재고 + 당일사용 - 당일입고 (역산)
-        prevStock = currentStock + todayUsage - todayInbound;
+        // ★★★ v3.6.115: 전일재고 = 현재재고 + 당일사용 - 당일입고 - 당일조정 ★★★
+        // 조정량이 음수(차감)면 전일재고가 증가, 양수(증가)면 전일재고가 감소
+        prevStock = currentStock + todayUsage - todayInbound - todayAdjustment;
       }
       
       // 음수 방지
@@ -1605,7 +1614,7 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         prev_stock: Math.round(prevStock * 1000) / 1000,
         today_inbound: todayInbound,
         today_usage: todayUsage,
-        today_adjustment: 0,
+        today_adjustment: Math.round(todayAdjustment * 1000) / 1000,  // ★★★ v3.6.115: 실제 조정량 표시
         current_stock: Math.round(currentStock * 1000) / 1000,
         lot_count: lotCount,
         calculated_stock: Math.round(currentStock * 1000) / 1000,

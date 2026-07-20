@@ -109,9 +109,57 @@ function parseExcelData(data: string, channel: string): { product_name: string; 
 
 // ===== PDF/텍스트에서 제품/수량 추출 (개선된 버전) =====
 // 형식: "제품명 24개" 또는 "제품명 24" 또는 "제품명\t24"
-function parsePdfText(text: string, channel: string): { product_name: string; quantity: number }[] {
-  const results: { product_name: string; quantity: number }[] = [];
+// ★★★ v3.6.107: CJ 발주서 형식 추가 지원 ★★★
+function parsePdfText(text: string, channel: string): { product_name: string; quantity: number; sku_code?: string }[] {
+  const results: { product_name: string; quantity: number; sku_code?: string }[] = [];
   const lines = text.split('\n').filter(line => line.trim());
+  
+  // ★★★ v3.6.107: CJ 발주서 형식 감지 (탭 구분, 13개 컬럼) ★★★
+  // 발주번호 품목 자재코드 자재내역 사업장/센터 단위 수량 납기요청일 납품수량 영업오더 BOX EA KG
+  const firstLine = lines[0] || '';
+  const isCJFormat = firstLine.includes('발주번호') || firstLine.includes('자재코드') || firstLine.includes('납기요청일');
+  
+  if (isCJFormat || channel === 'CJ' || channel === '기타') {
+    console.log('[parsePdfText] CJ 발주서 형식 감지됨');
+    
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+      
+      // 헤더 행 건너뛰기
+      if (trimmedLine.includes('발주번호') || trimmedLine.includes('자재코드') || trimmedLine.includes('납기요청일')) {
+        console.log('[parsePdfText] 헤더 스킵:', trimmedLine.substring(0, 50));
+        continue;
+      }
+      
+      // 탭으로 분리
+      const parts = trimmedLine.split('\t');
+      
+      // CJ 형식: 최소 7개 컬럼 (발주번호, 품목, 자재코드, 자재내역, 사업장, 단위, 수량...)
+      if (parts.length >= 7) {
+        const skuCode = parts[2]?.trim() || '';      // C: 자재코드 (220751)
+        const productName = parts[3]?.trim() || '';  // D: 자재내역 (브카 저당통밀브레드...)
+        const qtyStr = parts[6]?.trim().replace('.', '') || '0';  // G: 수량 (34. → 34)
+        const quantity = parseInt(qtyStr) || 0;
+        
+        if (productName && quantity > 0) {
+          results.push({ 
+            product_name: productName, 
+            quantity,
+            sku_code: skuCode  // 자재코드를 SKU코드로 사용
+          });
+          console.log('[parsePdfText] CJ 파싱:', skuCode, productName, quantity);
+        }
+      }
+    }
+    
+    if (results.length > 0) {
+      console.log('[parsePdfText] CJ 형식 파싱 완료:', results.length, '건');
+      return results;
+    }
+    // CJ 형식 파싱 실패 시 기존 로직으로 폴백
+    console.log('[parsePdfText] CJ 형식 파싱 실패, 기존 로직 시도');
+  }
   
   console.log('[parsePdfText] 입력 라인 수:', lines.length);
   
@@ -252,12 +300,18 @@ async function matchProductCodesFromSheets(
     
     allProductNames.push(productName);
     
-    // ★ SKU코드/바코드 매핑 (C컬럼) - 배민 SKU코드 포함
+    // ★ SKU코드/바코드 매핑 (C컬럼) - 배민 SKU코드 + CJ 자재코드 포함
+    // ★★★ v3.6.107: CJ 자재코드(6자리 숫자) 추가 지원 ★★★
     if (barcode) {
-      // SKU코드 (S 또는 A로 시작)
+      // SKU코드 (S 또는 A로 시작) - 배민용
       if (/^[SA]\d+/.test(barcode)) {
         skuCodeToProduct.set(barcode, { code: finalProductCode, name: productName });
         console.log('[매핑] SKU코드 등록:', barcode, '→', finalProductCode, productName);
+      }
+      // CJ 자재코드 (6자리 숫자) - 220751, 220752 등
+      if (/^\d{6}$/.test(barcode)) {
+        skuCodeToProduct.set(barcode, { code: finalProductCode, name: productName });
+        console.log('[매핑] CJ자재코드 등록:', barcode, '→', finalProductCode, productName);
       }
       // 숫자 바코드 (8~14자리)
       if (/^\d{8,14}$/.test(barcode)) {
@@ -526,10 +580,11 @@ async function matchProductCodesFromD1(
   return { matched, unmatched };
 }
 
-// ★ 통합 매칭 함수 (Google Sheets 우선, D1 폴백) - 바코드 지원
+// ★ 통합 매칭 함수 (Google Sheets 우선, D1 폴백) - 바코드/SKU코드 지원
+// ★★★ v3.6.107: sku_code 파라미터 추가 (CJ 자재코드 매칭용) ★★★
 async function matchProductCodes(
   c: any,
-  items: { product_name: string; quantity: number; barcode?: string }[]
+  items: { product_name: string; quantity: number; barcode?: string; sku_code?: string }[]
 ): Promise<{
   matched: { product_code: string; product_name: string; quantity: number; matched_name: string }[];
   unmatched: { product_name: string; quantity: number; fail_reason?: string; similar_products?: string[] }[];

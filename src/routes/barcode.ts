@@ -1592,14 +1592,22 @@ barcodeRoutes.get('/material-inventory', async (c) => {
         // ★ 과거 날짜: 역산 방식 ★
         // 해당 날짜 재고 = 현재잔량 + (기준일 이후 사용량) - (기준일 이후 입고량)
         currentStock = realCurrentStock + afterUsage - afterInbound;
-        // 전일재고 = 해당날짜 재고 + 당일사용 - 당일입고 - 당일조정 (조정은 전일재고에서 빠짐)
-        prevStock = currentStock + todayUsage - todayInbound - todayAdjustment;
+        // 전일재고 = 해당날짜 재고 + 당일사용 - 당일입고
+        prevStock = currentStock + todayUsage - todayInbound;
       } else {
         // ★ 오늘/미래: 현재 inbound remain_qty 직접 사용 ★
         currentStock = realCurrentStock;
-        // ★★★ v3.6.115: 전일재고 = 현재재고 + 당일사용 - 당일입고 - 당일조정 ★★★
-        // 조정량이 음수(차감)면 전일재고가 증가, 양수(증가)면 전일재고가 감소
-        prevStock = currentStock + todayUsage - todayInbound - todayAdjustment;
+        // ★★★ v3.6.117: 전일재고 = 현재재고 + 당일사용 - 당일입고 (조정량 제외) ★★★
+        // 재고 조정은 "전일재고를 맞추기 위한 것"이므로, 전일재고 계산에서 제외
+        // 조정 전 현재재고(=전일재고+입고-사용)에서 조정으로 현재재고만 변경됨
+        prevStock = currentStock + todayUsage - todayInbound;
+        
+        // ★★★ v3.6.117: 당일 조정이 있으면, 조정 전 재고 기준으로 전일재고 계산 ★★★
+        // 조정 전 현재재고 = 현재재고 - 조정량 (조정량이 음수면 차감이므로 빼면 원래 값)
+        if (Math.abs(todayAdjustment) > 0.001) {
+          const stockBeforeAdjust = currentStock - todayAdjustment;
+          prevStock = stockBeforeAdjust + todayUsage - todayInbound;
+        }
       }
       
       // 음수 방지

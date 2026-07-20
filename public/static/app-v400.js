@@ -1788,17 +1788,21 @@ async function renderDashboard() {
                       <th class="p-3 text-left">품목코드</th>
                       <th class="p-3 text-left">원료명</th>
                       <th class="p-3 text-right">수량</th>
+                      <th class="p-3 text-left">메모</th>
                     </tr>
                   </thead>
                   <tbody>
                     ${todayUsageData.map(item => {
                       const time = item.created_at ? new Date(item.created_at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute:'2-digit'}) : '-';
                       const qty = Math.abs(parseFloat(item.quantity) || 0);
+                      const memo = item.memo || '-';
+                      const memoStyle = memo.includes('바코드') ? 'text-blue-600' : memo.includes('수기') ? 'text-orange-600' : 'text-gray-500';
                       return '<tr class="border-b hover:bg-red-50">' +
                         '<td class="p-3 text-gray-500">' + time + '</td>' +
                         '<td class="p-3 font-mono text-blue-600">' + item.item_code + '</td>' +
                         '<td class="p-3">' + (item.item_name || '-') + '</td>' +
                         '<td class="p-3 text-right font-bold text-red-600">-' + formatNumber(qty) + ' ' + (item.unit || 'kg') + '</td>' +
+                        '<td class="p-3 text-xs ' + memoStyle + '">' + memo + '</td>' +
                       '</tr>';
                     }).join('')}
                   </tbody>

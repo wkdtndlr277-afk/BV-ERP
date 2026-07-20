@@ -495,7 +495,7 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         grade = 'B';
         gradeReason = `일사용량 ${Math.round(dailyAvg)}kg`;
       } else {
-        grade = '-';  // 관리 등급 외
+        grade = '기타';  // 관리 등급 외
         gradeReason = dailyAvg > 0 ? `일사용량 ${Math.round(dailyAvg * 10) / 10}kg` : '사용량 없음';
       }
       
@@ -578,7 +578,7 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
     const gradeA = results.filter(r => r.grade === 'A');  // 사용량 多 (일100kg+)
     const gradeB = results.filter(r => r.grade === 'B');  // 중간 사용량 (일10kg+)
     const gradeC = results.filter(r => r.grade === 'C');  // 유통기한 짧음 (30일 이하)
-    const gradeOther = results.filter(r => r.grade === '-');  // 관리 등급 외
+    const gradeOther = results.filter(r => r.grade === '기타');  // 관리 등급 외
     
     // 4. 요약 통계
     const urgentCount = results.filter(r => r.status_color === 'red').length;

@@ -1575,7 +1575,7 @@ async function renderDashboard() {
                       let gradeBadge = item.grade === 'A' ? '<span class="px-2 py-0.5 rounded text-xs font-bold bg-purple-600 text-white">A</span>' :
                                        item.grade === 'B' ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-500 text-white">B</span>' :
                                        item.grade === 'C' ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-orange-500 text-white">C</span>' :
-                                       '<span class="px-2 py-0.5 rounded text-xs bg-gray-200 text-gray-600">-</span>';
+                                       '<span class="px-2 py-0.5 rounded text-xs bg-gray-200 text-gray-600">기타</span>';
                       return '<tr class="border-b bg-red-50 hover:bg-red-100">' +
                         '<td class="px-3 py-2">' + gradeBadge + '</td>' +
                         '<td class="px-3 py-2 font-mono text-xs">' + item.item_code + '</td>' +
@@ -1621,7 +1621,7 @@ async function renderDashboard() {
                       let gradeBadge = item.grade === 'A' ? '<span class="px-2 py-0.5 rounded text-xs font-bold bg-purple-600 text-white">A</span>' :
                                        item.grade === 'B' ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-500 text-white">B</span>' :
                                        item.grade === 'C' ? '<span class="px-2 py-0.5 rounded text-xs font-medium bg-orange-500 text-white">C</span>' :
-                                       '<span class="px-2 py-0.5 rounded text-xs bg-gray-200 text-gray-600">-</span>';
+                                       '<span class="px-2 py-0.5 rounded text-xs bg-gray-200 text-gray-600">기타</span>';
                       return '<tr class="border-b bg-yellow-50 hover:bg-yellow-100">' +
                         '<td class="px-3 py-2">' + gradeBadge + '</td>' +
                         '<td class="px-3 py-2 font-mono text-xs">' + item.item_code + '</td>' +

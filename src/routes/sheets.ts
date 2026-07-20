@@ -6068,6 +6068,141 @@ sheets.post('/rebuild-daily-stock-date', async (c) => {
   }
 });
 
+// ★★★ v3.6.103: 일별수불부 특정 날짜 데이터 삭제 ★★★
+sheets.post('/delete-daily-stock-date', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const targetDates = body.dates;  // 배열로 여러 날짜 받기
+    
+    if (!targetDates || !Array.isArray(targetDates) || targetDates.length === 0) {
+      return c.json({ success: false, error: 'dates 배열 필수 (예: ["2026-07-18", "2026-07-19"])' }, 400);
+    }
+    
+    // 날짜 정규화
+    const cleanDates = targetDates.map(d => d.replace(/^'/, '').trim());
+    console.log(`[delete-daily-stock-date] 삭제 대상 날짜: ${cleanDates.join(', ')}`);
+    
+    // 1. 일별수불부 전체 읽기
+    const allData = await service.readSheet('일별수불부', 'A2:H');
+    console.log(`[delete-daily-stock-date] 기존 데이터: ${allData.length}행`);
+    
+    // 2. 삭제 대상 날짜 제외
+    const deletedCounts: Record<string, number> = {};
+    cleanDates.forEach(d => deletedCounts[d] = 0);
+    
+    const remainingData = allData.filter(row => {
+      const rowDate = row[0]?.toString().replace(/^'/, '').trim() || '';
+      if (cleanDates.includes(rowDate)) {
+        deletedCounts[rowDate]++;
+        return false;  // 삭제
+      }
+      return true;  // 유지
+    });
+    
+    const totalDeleted = allData.length - remainingData.length;
+    console.log(`[delete-daily-stock-date] 삭제: ${totalDeleted}행, 유지: ${remainingData.length}행`);
+    
+    if (totalDeleted === 0) {
+      return c.json({ 
+        success: true, 
+        message: '삭제할 데이터가 없습니다',
+        data: { dates: cleanDates, deleted_counts: deletedCounts, total_deleted: 0 }
+      });
+    }
+    
+    // 3. 시트 클리어 후 재작성
+    await service.clearRange('일별수불부', 'A2:H50000');
+    
+    if (remainingData.length > 0) {
+      await service.writeSheet('일별수불부', `A2:H${remainingData.length + 1}`, remainingData);
+    }
+    
+    return c.json({
+      success: true,
+      message: `${cleanDates.join(', ')} 날짜 데이터 삭제 완료`,
+      data: {
+        dates: cleanDates,
+        deleted_counts: deletedCounts,
+        total_deleted: totalDeleted,
+        remaining_rows: remainingData.length
+      }
+    });
+  } catch (error: any) {
+    console.error('[delete-daily-stock-date] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.103: 원료코드/원료명 검색 API ★★★
+sheets.get('/search-material', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const keyword = c.req.query('keyword') || '';
+    if (!keyword) {
+      return c.json({ success: false, error: 'keyword 파라미터 필수' }, 400);
+    }
+    
+    const searchLower = keyword.toLowerCase();
+    console.log(`[search-material] 검색어: ${keyword}`);
+    
+    // BOM마스터에서 검색 (C:원료코드, D:원료명)
+    const bomData = await service.readSheet('BOM마스터', 'C2:D');
+    const bomResults: any[] = [];
+    const seenCodes = new Set<string>();
+    
+    for (const row of bomData) {
+      const code = row[0]?.toString().trim() || '';
+      const name = row[1]?.toString().trim() || '';
+      
+      if (!code || seenCodes.has(code)) continue;
+      
+      if (code.toLowerCase().includes(searchLower) || 
+          name.toLowerCase().includes(searchLower)) {
+        bomResults.push({ code, name, source: 'BOM마스터' });
+        seenCodes.add(code);
+      }
+    }
+    
+    // 원료입고에서 검색 (B:원료코드, C:원료명)
+    const inboundData = await service.readSheet('원료입고', 'B2:C');
+    const inboundResults: any[] = [];
+    
+    for (const row of inboundData) {
+      const code = row[0]?.toString().trim() || '';
+      const name = row[1]?.toString().trim() || '';
+      
+      if (!code || seenCodes.has(code)) continue;
+      
+      if (code.toLowerCase().includes(searchLower) || 
+          name.toLowerCase().includes(searchLower)) {
+        inboundResults.push({ code, name, source: '원료입고' });
+        seenCodes.add(code);
+      }
+    }
+    
+    const allResults = [...bomResults, ...inboundResults];
+    
+    return c.json({
+      success: true,
+      keyword,
+      count: allResults.length,
+      results: allResults
+    });
+  } catch (error: any) {
+    console.error('[search-material] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.6.50: SF_BOM 시트 생성 (반제품 BOM 마스터) ★★★
 sheets.post('/create-sf-bom-sheet', async (c) => {
   const service = getSheetService(c);

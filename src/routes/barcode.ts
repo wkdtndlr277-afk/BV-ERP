@@ -1778,11 +1778,21 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
     );
     
     // Batch 실행
-    await c.env.DB.batch(batchStatements);
+    console.log('[adjust-stock] Batch 실행 시작:', batchStatements.length, '개 쿼리');
+    const batchResult = await c.env.DB.batch(batchStatements);
+    console.log('[adjust-stock] Batch 실행 완료:', JSON.stringify(batchResult));
+    
+    // ★★★ v3.6.116: 실제 반영 확인 ★★★
+    const verifyStock = await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(remain_qty), 0) as verified_stock FROM inbound 
+      WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
+    `).bind(item_code).first<any>();
+    console.log('[adjust-stock] 반영 확인:', item_code, '→', verifyStock?.verified_stock);
     
     return c.json({
       success: true,
       message: `${itemInfo.item_name} 재고가 ${currentStock.toFixed(2)} → ${new_stock.toFixed(2)} ${itemInfo.unit}로 조정되었습니다. (전일재고에 반영)`,
+      verified_stock: verifyStock?.verified_stock,  // ★ 실제 반영된 재고
       data: {
         item_code,
         item_name: itemInfo.item_name,

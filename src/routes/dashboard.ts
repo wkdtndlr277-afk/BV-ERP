@@ -589,14 +589,18 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
     const gradeAAlertCount = gradeA.filter(r => r.status_color !== 'green').length;
     const gradeBAlertCount = gradeB.filter(r => r.status_color !== 'green').length;
     const gradeCAlertCount = gradeC.filter(r => r.status_color !== 'green').length;
+    // ★★★ v3.6.108: 기타 등급 중 긴급/주의 품목 수 추가 ★★★
+    const gradeOtherAlertCount = gradeOther.filter(r => r.status_color !== 'green').length;
     
     // 통계 미계산 품목 수
     const noStatsCount = results.filter(r => !r.stats_updated_at).length;
     
-    // ★★★ v3.6.91: 긴급/주의 품목만 반환 (정상 제외) - 등급별 분리 ★★★
+    // ★★★ v3.6.108: 긴급/주의 품목만 반환 (정상 제외) - 등급별 분리 + 기타 등급 포함 ★★★
     const alertGradeA = gradeA.filter(r => r.status_color === 'red' || r.status_color === 'yellow');
     const alertGradeB = gradeB.filter(r => r.status_color === 'red' || r.status_color === 'yellow');
     const alertGradeC = gradeC.filter(r => r.status_color === 'red' || r.status_color === 'yellow');
+    // ★★★ v3.6.108: 기타 등급(사용량 없음) 중 안전재고 미만 품목도 긴급/주의에 포함 ★★★
+    const alertGradeOther = gradeOther.filter(r => r.status_color === 'red' || r.status_color === 'yellow');
     
     return c.json({
       success: true,
@@ -623,19 +627,21 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         },
         grade_other: {
           total: gradeOther.length,
-          description: '기타: 저사용량 원료'
+          alert: gradeOtherAlertCount,  // ★★★ v3.6.108: 기타 등급 긴급/주의 수 추가 ★★★
+          description: '기타: 저사용량/미사용 원료'
         },
         no_stats_count: noStatsCount,
         excluded_items: EXCLUDED_ITEM_CODES
       },
-      // ★ 등급별 분리된 데이터 (긴급/주의만) ★
+      // ★★★ v3.6.108: 등급별 분리된 데이터 (긴급/주의만) - 기타 등급 포함 ★★★
       items_by_grade: {
         A: alertGradeA,  // A등급 긴급/주의 품목 (사용량 많은 순)
         B: alertGradeB,  // B등급 긴급/주의 품목 (사용량 많은 순)
-        C: alertGradeC   // C등급 긴급/주의 품목 (유통기한 짧은 원료)
+        C: alertGradeC,  // C등급 긴급/주의 품목 (유통기한 짧은 원료)
+        other: alertGradeOther  // ★★★ v3.6.108: 기타 등급 긴급/주의 품목 (사용기록 없지만 안전재고 미만) ★★★
       },
-      // ★ 이전 호환성을 위한 전체 리스트 ★
-      items: [...alertGradeA, ...alertGradeB, ...alertGradeC]
+      // ★★★ v3.6.108: 전체 긴급/주의 리스트 - 기타 등급 포함 ★★★
+      items: [...alertGradeA, ...alertGradeB, ...alertGradeC, ...alertGradeOther]
     });
   } catch (error: any) {
     console.error('Safety stock status error:', error);

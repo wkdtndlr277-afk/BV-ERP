@@ -50576,12 +50576,52 @@ async function handleOrderTextUpload() {
   }
 }
 
-// ★ v3.5.89: 텍스트 파싱 함수 (GS, 온도감, CJ 등 범용)
+// ★★★ v3.6.109: 텍스트 파싱 함수 - CJ 발주서 형식 개선 ★★★
 function parseOrderText(text) {
   const items = [];
   const lines = text.split(/\n/).map(l => l.trim()).filter(l => l);
   
   console.log('★ parseOrderText 시작, 라인 수:', lines.length);
+  
+  // ★★★ v3.6.109: CJ 발주서 형식 감지 (탭 구분, 헤더에 발주번호/자재코드/납기요청일 포함) ★★★
+  const firstLine = lines[0] || '';
+  const isCJFormat = firstLine.includes('발주번호') || firstLine.includes('자재코드') || firstLine.includes('납기요청일');
+  
+  if (isCJFormat) {
+    console.log('★ CJ 발주서 형식 감지됨');
+    for (const line of lines) {
+      // 헤더 행 스킵
+      if (line.includes('발주번호') || line.includes('자재코드') || line.includes('납기요청일')) continue;
+      
+      // 탭으로 분리
+      const parts = line.split('\t');
+      
+      // CJ 형식: 최소 7개 컬럼 (발주번호, 품목, 자재코드, 자재내역, 사업장, 단위, 수량...)
+      if (parts.length >= 7) {
+        const skuCode = parts[2]?.trim() || '';      // C: 자재코드 (220751)
+        const productName = parts[3]?.trim() || '';  // D: 자재내역
+        const qtyStr = parts[6]?.trim().replace('.', '') || '0';  // G: 수량 (34. → 34)
+        const quantity = parseInt(qtyStr) || 0;
+        
+        if (productName && quantity > 0) {
+          items.push({
+            barcode: skuCode || null,  // 자재코드를 barcode로
+            product_name: productName,
+            quantity: quantity,
+            sku_code: skuCode,
+            raw_line: line
+          });
+          console.log('★ CJ 파싱:', skuCode, productName, quantity);
+        }
+      }
+    }
+    
+    if (items.length > 0) {
+      console.log('★ CJ 형식 파싱 완료:', items.length, '건');
+      return items;
+    }
+    console.log('★ CJ 형식 파싱 실패, 기존 로직 시도');
+  }
   
   for (const line of lines) {
     // 빈 줄, 헤더 행 스킵
@@ -50599,8 +50639,8 @@ function parseOrderText(text) {
       if (/^(880\d{10}|\d{13})$/.test(part)) {
         barcode = part;
       }
-      // 수량 패턴: 숫자 또는 "50개", "100박스" 등
-      else if (/^(\d+)(개|박스|ea|EA|EA개|box)?$/.test(part)) {
+      // ★★★ v3.6.109: 수량 패턴 개선 - "34." 같은 소수점 끝 형식 지원 ★★★
+      else if (/^(\d+)\.?(개|박스|ea|EA|EA개|box)?$/.test(part)) {
         const match = part.match(/^(\d+)/);
         if (match) {
           const num = parseInt(match[1]);
@@ -50611,7 +50651,7 @@ function parseOrderText(text) {
         }
       }
       // 그 외 텍스트는 제품명
-      else if (part.length > 1 && !/^\d+$/.test(part)) {
+      else if (part.length > 1 && !/^\d+\.?$/.test(part)) {
         // 이미 제품명이 있으면 합치기
         productName = productName ? productName + ' ' + part : part;
       }

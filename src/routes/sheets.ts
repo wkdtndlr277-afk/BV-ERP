@@ -1787,6 +1787,18 @@ sheets.get('/v2/output/material-usage', async (c) => {
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
     
+    // ★★★ v3.6.101: BOM마스터에서 원료명 맵 먼저 조회 ★★★
+    // BOM마스터 구조: A:제품코드, B:제품명, C:원료코드, D:원료명, E:수량, F:단위
+    const bomMasterData = await service.readSheet('BOM마스터', 'C2:D');
+    const bomNameMap = new Map<string, string>();
+    bomMasterData.forEach(row => {
+      const code = row[0]?.toString().trim();  // C열: 원료코드
+      const name = row[1]?.toString().trim();  // D열: 원료명
+      if (code && name) {
+        bomNameMap.set(code, name);
+      }
+    });
+    
     // ★★★ 1. 일별수불부 시트에서 사용량 조회 (SSOT) ★★★
     const dailyStockData = await service.readSheet('일별수불부', 'A2:H');
     
@@ -1809,6 +1821,11 @@ sheets.get('/v2/output/material-usage', async (c) => {
       
       const itemCode = row[1] || '';
       let itemName = row[2] || '';
+      
+      // ★★★ v3.6.101: 원료명이 비었거나 수식이면 BOM마스터에서 조회 ★★★
+      if (!itemName || itemName.startsWith('=') || itemName.includes('VLOOKUP')) {
+        itemName = bomNameMap.get(itemCode) || '';
+      }
       
       // ★★★ 이원료(SF001~SF010): 고정된 원료명 사용 ★★★
       if (IWON_MATERIALS[itemCode]) {

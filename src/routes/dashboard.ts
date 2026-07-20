@@ -419,25 +419,74 @@ dashboardRoutes.get('/alerts/count', async (c) => {
   });
 });
 
-// ★★★ v3.6.113: 안전재고 현황 API - 구글시트에서 실시간 사용량 조회 추가 ★★★
+// ★★★ v3.6.121: 안전재고 현황 API - D1 transactions + 구글시트 일별수불부 통합 ★★★
 dashboardRoutes.get('/safety-stock-status', async (c) => {
   try {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
     
-    // ★★★ v3.6.113: 구글시트에서 일별수불부 사용량 데이터 조회 ★★★
-    let sheetUsageMap: Record<string, { dailyAvg: number; totalUsage: number; usageDays: number }> = {};
+    // 최근 30일 기준 날짜 계산
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const kstNow = new Date(today.getTime() + kstOffset);
+    const startDate = new Date(kstNow);
+    startDate.setDate(kstNow.getDate() - 30);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    
+    // ★★★ v3.6.121: 1. D1 transactions 테이블에서 실재고 기반 사용량 조회 ★★★
+    let d1UsageMap: Record<string, { dailyAvg: number; totalUsage: number; usageDays: number; source: string }> = {};
+    try {
+      const d1Result = await c.env.DB.prepare(`
+        SELECT 
+          item_code,
+          trans_date,
+          SUM(ABS(quantity)) as daily_usage
+        FROM transactions
+        WHERE trans_type = '사용'
+          AND trans_date >= ?
+          AND trans_date <= ?
+          AND item_code LIKE 'R%'
+        GROUP BY item_code, trans_date
+      `).bind(startDateStr, todayStr).all<{ item_code: string; trans_date: string; daily_usage: number }>();
+      
+      if (d1Result.results && d1Result.results.length > 0) {
+        // 품목별 집계
+        const tempD1Map: Record<string, { usages: number[], dates: Set<string> }> = {};
+        
+        for (const row of d1Result.results) {
+          if (!tempD1Map[row.item_code]) {
+            tempD1Map[row.item_code] = { usages: [], dates: new Set() };
+          }
+          if (row.daily_usage > 0) {
+            tempD1Map[row.item_code].usages.push(row.daily_usage);
+            tempD1Map[row.item_code].dates.add(row.trans_date);
+          }
+        }
+        
+        // 일평균 계산
+        for (const [itemCode, data] of Object.entries(tempD1Map)) {
+          if (data.usages.length > 0) {
+            const totalUsage = data.usages.reduce((a, b) => a + b, 0);
+            const usageDays = data.dates.size;
+            d1UsageMap[itemCode] = {
+              dailyAvg: Math.round((totalUsage / usageDays) * 100) / 100,
+              totalUsage,
+              usageDays,
+              source: 'D1'
+            };
+          }
+        }
+        console.log('[safety-stock-status] D1 transactions 사용량 조회 완료:', Object.keys(d1UsageMap).length, '품목');
+      }
+    } catch (d1Error) {
+      console.error('[safety-stock-status] D1 transactions 조회 실패:', d1Error);
+    }
+    
+    // ★★★ v3.6.121: 2. 구글시트 일별수불부에서 서류상 사용량 조회 ★★★
+    let sheetUsageMap: Record<string, { dailyAvg: number; totalUsage: number; usageDays: number; source: string }> = {};
     const service = getSheetService(c);
     
     if (service) {
       try {
-        // 최근 30일 기준
-        const kstOffset = 9 * 60 * 60 * 1000;
-        const kstNow = new Date(today.getTime() + kstOffset);
-        const startDate = new Date(kstNow);
-        startDate.setDate(kstNow.getDate() - 30);
-        const startDateStr = startDate.toISOString().split('T')[0];
-        
         // 구글시트에서 일별수불부 조회
         const sheetData = await service.readSheet('일별수불부', 'A2:G');
         
@@ -469,11 +518,11 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
             if (data.usages.length > 0) {
               const totalUsage = data.usages.reduce((a, b) => a + b, 0);
               const usageDays = data.dates.size;
-              // 사용일 기준 일평균
               sheetUsageMap[itemCode] = {
                 dailyAvg: Math.round((totalUsage / usageDays) * 100) / 100,
                 totalUsage,
-                usageDays
+                usageDays,
+                source: 'Sheet'
               };
             }
           }
@@ -483,6 +532,55 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         console.error('[safety-stock-status] 구글시트 조회 실패:', sheetError);
       }
     }
+    
+    // ★★★ v3.6.121: 3. 두 데이터 소스 병합 - 평균치 계산 ★★★
+    // D1(실재고 기반) + 구글시트(서류상 재고) 통합
+    let mergedUsageMap: Record<string, { 
+      dailyAvg: number; 
+      d1Avg: number; 
+      sheetAvg: number; 
+      source: string;
+      usageDays: number;
+    }> = {};
+    
+    // 모든 품목코드 수집
+    const allItemCodes = new Set([...Object.keys(d1UsageMap), ...Object.keys(sheetUsageMap)]);
+    
+    for (const itemCode of allItemCodes) {
+      const d1Data = d1UsageMap[itemCode];
+      const sheetData = sheetUsageMap[itemCode];
+      
+      let finalDailyAvg = 0;
+      let source = '';
+      let usageDays = 0;
+      
+      if (d1Data && sheetData) {
+        // 둘 다 있으면 평균 계산
+        finalDailyAvg = Math.round(((d1Data.dailyAvg + sheetData.dailyAvg) / 2) * 100) / 100;
+        source = `D1(${d1Data.dailyAvg})+Sheet(${sheetData.dailyAvg})`;
+        usageDays = Math.max(d1Data.usageDays, sheetData.usageDays);
+      } else if (d1Data) {
+        // D1만 있으면 D1 값 사용
+        finalDailyAvg = d1Data.dailyAvg;
+        source = `D1(${d1Data.dailyAvg})`;
+        usageDays = d1Data.usageDays;
+      } else if (sheetData) {
+        // 구글시트만 있으면 구글시트 값 사용
+        finalDailyAvg = sheetData.dailyAvg;
+        source = `Sheet(${sheetData.dailyAvg})`;
+        usageDays = sheetData.usageDays;
+      }
+      
+      mergedUsageMap[itemCode] = {
+        dailyAvg: finalDailyAvg,
+        d1Avg: d1Data?.dailyAvg || 0,
+        sheetAvg: sheetData?.dailyAvg || 0,
+        source,
+        usageDays
+      };
+    }
+    
+    console.log('[safety-stock-status] 통합 사용량 계산 완료:', Object.keys(mergedUsageMap).length, '품목');
     
     // 1. 원료별 실재고 + 저장된 통계값 + 유통기한기준일 조회
     const stockResult = await c.env.DB.prepare(`
@@ -532,9 +630,13 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         continue;
       }
       
-      // ★★★ v3.6.113: D1 저장값 없으면 구글시트 실시간 값 사용 ★★★
-      const sheetUsage = sheetUsageMap[item.item_code];
-      const dailyAvg = item.daily_usage_avg || sheetUsage?.dailyAvg || 0;
+      // ★★★ v3.6.121: D1 + 구글시트 통합 사용량 사용 (실시간 우선) ★★★
+      const mergedUsage = mergedUsageMap[item.item_code];
+      // 실시간 데이터(D1+시트)가 있으면 항상 그것을 사용, 없을 때만 master 저장값 사용
+      const dailyAvg = mergedUsage?.dailyAvg ?? item.daily_usage_avg ?? 0;
+      const usageSource = mergedUsage?.source || (item.daily_usage_avg ? 'master(저장값)' : '없음');
+      const d1Avg = mergedUsage?.d1Avg ?? 0;
+      const sheetAvg = mergedUsage?.sheetAvg ?? 0;
       const leadTime = item.lead_time || 3;
       const expiryDays = item.expiry_days || 365;
       
@@ -599,6 +701,7 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         needOrder = true;
       }
       
+      // ★★★ v3.6.121: 데이터 소스별 상세 정보 추가 ★★★
       results.push({
         item_code: item.item_code,
         item_name: item.item_name,
@@ -608,6 +711,9 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         expiry_days: expiryDays,
         current_stock: Math.round(item.current_stock * 100) / 100,
         daily_avg: dailyAvg,
+        daily_avg_d1: d1Avg,         // D1 트랜잭션 기반 일평균 (실재고)
+        daily_avg_sheet: sheetAvg,   // 구글시트 기반 일평균 (서류상)
+        usage_source: usageSource,   // 데이터 소스 정보
         monthly_avg: item.monthly_usage_avg || 0,
         std_dev: item.usage_std_dev || 0,
         cv: item.usage_cv || 0,

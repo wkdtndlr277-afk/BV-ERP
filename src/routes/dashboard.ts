@@ -419,11 +419,70 @@ dashboardRoutes.get('/alerts/count', async (c) => {
   });
 });
 
-// ★★★ v3.6.91: 안전재고 현황 API - 등급별 분리 (A: 사용량多, B: 중간, C: 유통기한짧음) ★★★
+// ★★★ v3.6.113: 안전재고 현황 API - 구글시트에서 실시간 사용량 조회 추가 ★★★
 dashboardRoutes.get('/safety-stock-status', async (c) => {
   try {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
+    
+    // ★★★ v3.6.113: 구글시트에서 일별수불부 사용량 데이터 조회 ★★★
+    let sheetUsageMap: Record<string, { dailyAvg: number; totalUsage: number; usageDays: number }> = {};
+    const service = getSheetService(c);
+    
+    if (service) {
+      try {
+        // 최근 30일 기준
+        const kstOffset = 9 * 60 * 60 * 1000;
+        const kstNow = new Date(today.getTime() + kstOffset);
+        const startDate = new Date(kstNow);
+        startDate.setDate(kstNow.getDate() - 30);
+        const startDateStr = startDate.toISOString().split('T')[0];
+        
+        // 구글시트에서 일별수불부 조회
+        const sheetData = await service.readSheet('일별수불부', 'A2:G');
+        
+        if (sheetData && sheetData.length > 0) {
+          // 품목별 사용량 집계
+          const tempMap: Record<string, { usages: number[], dates: Set<string> }> = {};
+          
+          for (const row of sheetData) {
+            const dateStr = String(row[0] || '').trim();
+            const itemCode = String(row[1] || '').trim();
+            const usedQty = parseFloat(String(row[5] || '0').replace(/,/g, '')) || 0;
+            
+            // 날짜 필터링 (최근 30일)
+            if (!dateStr || dateStr < startDateStr || dateStr > todayStr) continue;
+            if (!itemCode.startsWith('R')) continue;
+            
+            if (!tempMap[itemCode]) {
+              tempMap[itemCode] = { usages: [], dates: new Set() };
+            }
+            
+            if (usedQty > 0) {
+              tempMap[itemCode].usages.push(usedQty);
+              tempMap[itemCode].dates.add(dateStr);
+            }
+          }
+          
+          // 일평균 계산
+          for (const [itemCode, data] of Object.entries(tempMap)) {
+            if (data.usages.length > 0) {
+              const totalUsage = data.usages.reduce((a, b) => a + b, 0);
+              const usageDays = data.dates.size;
+              // 사용일 기준 일평균
+              sheetUsageMap[itemCode] = {
+                dailyAvg: Math.round((totalUsage / usageDays) * 100) / 100,
+                totalUsage,
+                usageDays
+              };
+            }
+          }
+          console.log('[safety-stock-status] 구글시트 사용량 조회 완료:', Object.keys(sheetUsageMap).length, '품목');
+        }
+      } catch (sheetError) {
+        console.error('[safety-stock-status] 구글시트 조회 실패:', sheetError);
+      }
+    }
     
     // 1. 원료별 실재고 + 저장된 통계값 + 유통기한기준일 조회
     const stockResult = await c.env.DB.prepare(`
@@ -473,7 +532,9 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
         continue;
       }
       
-      const dailyAvg = item.daily_usage_avg || 0;
+      // ★★★ v3.6.113: D1 저장값 없으면 구글시트 실시간 값 사용 ★★★
+      const sheetUsage = sheetUsageMap[item.item_code];
+      const dailyAvg = item.daily_usage_avg || sheetUsage?.dailyAvg || 0;
       const leadTime = item.lead_time || 3;
       const expiryDays = item.expiry_days || 365;
       

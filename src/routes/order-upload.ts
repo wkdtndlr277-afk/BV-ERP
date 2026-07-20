@@ -373,6 +373,14 @@ async function matchProductCodesFromSheets(
         matchType = '바코드매칭(' + item.barcode + ')';
         console.log('[매칭] 바코드 매칭 성공:', item.barcode, '→', found?.code);
       }
+      // ★★★ v3.6.110: 바코드가 6자리 숫자면 SKU코드(CJ자재코드)로도 검색 ★★★
+      if (!found && /^\d{6}$/.test(item.barcode)) {
+        if (skuCodeToProduct.has(item.barcode)) {
+          found = skuCodeToProduct.get(item.barcode);
+          matchType = 'CJ자재코드매칭(' + item.barcode + ')';
+          console.log('[매칭] CJ자재코드 매칭 성공:', item.barcode, '→', found?.code, found?.name);
+        }
+      }
     }
     
     // ★ 2. 발주상품명 정확 매칭

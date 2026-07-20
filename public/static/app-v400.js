@@ -50576,7 +50576,7 @@ async function handleOrderTextUpload() {
   }
 }
 
-// ★★★ v3.6.109: 텍스트 파싱 함수 - CJ 발주서 형식 개선 ★★★
+// ★★★ v3.6.110: 텍스트 파싱 함수 - CJ 자재코드+수량 간단 형식 추가 ★★★
 function parseOrderText(text) {
   const items = [];
   const lines = text.split(/\n/).map(l => l.trim()).filter(l => l);
@@ -50621,6 +50621,41 @@ function parseOrderText(text) {
       return items;
     }
     console.log('★ CJ 형식 파싱 실패, 기존 로직 시도');
+  }
+  
+  // ★★★ v3.6.110: 간단 형식 감지 - "자재코드  수량" (6자리숫자 + 공백/탭 + 숫자) ★★★
+  // 예: 220721  530 또는 220721\t530
+  const simpleFormatRegex = /^(\d{6})\s+(\d+)\.?$/;
+  let simpleFormatCount = 0;
+  for (const line of lines.slice(0, 5)) {  // 처음 5줄만 검사
+    if (simpleFormatRegex.test(line)) simpleFormatCount++;
+  }
+  
+  if (simpleFormatCount >= 2 || (lines.length <= 3 && simpleFormatCount >= 1)) {
+    console.log('★ CJ 간단 형식 감지됨 (자재코드 + 수량)');
+    for (const line of lines) {
+      const match = line.match(/^(\d{6})\s+(\d+)\.?$/);
+      if (match) {
+        const skuCode = match[1];  // 자재코드 (220721)
+        const quantity = parseInt(match[2]) || 0;
+        
+        if (quantity > 0) {
+          items.push({
+            barcode: skuCode,
+            product_name: null,  // 제품명 없음 - 서버에서 매핑
+            quantity: quantity,
+            sku_code: skuCode,
+            raw_line: line
+          });
+          console.log('★ 간단형식 파싱:', skuCode, quantity);
+        }
+      }
+    }
+    
+    if (items.length > 0) {
+      console.log('★ 간단 형식 파싱 완료:', items.length, '건');
+      return items;
+    }
   }
   
   for (const line of lines) {

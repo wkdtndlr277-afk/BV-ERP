@@ -380,7 +380,8 @@ barcodeRoutes.post('/inbound', async (c) => {
       return c.json({ success: false, error: '품목 코드와 수량을 입력해주세요.' }, 400);
     }
     
-    const today = new Date().toISOString().split('T')[0];
+    // ★★★ v3.6.122: UTC → KST 날짜로 변경 ★★★
+    const today = getKSTDate();
     
     // 품목 정보 조회
     let itemInfo: any = await c.env.DB.prepare(
@@ -413,14 +414,15 @@ barcodeRoutes.post('/inbound', async (c) => {
       return c.json({ success: false, error: '품목을 찾을 수 없습니다.' }, 404);
     }
     
-    // LOT 번호 생성 (BCSCAN-YYYYMMDD-HHMMSS)
+    // LOT 번호 생성 (BCSCAN-YYYYMMDD-HHMMSS) - KST 기준
     const now = new Date();
-    const lotNumber = `BCSCAN-${now.toISOString().slice(0,10).replace(/-/g, '')}-${now.toTimeString().slice(0,8).replace(/:/g, '')}`;
+    const kstNow = new Date(now.getTime() + (9 * 60 * 60 * 1000));
+    const lotNumber = `BCSCAN-${kstNow.toISOString().slice(0,10).replace(/-/g, '')}-${kstNow.toTimeString().slice(0,8).replace(/:/g, '')}`;
     
-    // 유통기한 계산
+    // 유통기한 계산 - KST 기준
     let calculatedExpiry = expiry_date;
     if (!calculatedExpiry && itemInfo.expiry_days) {
-      const expiryDate = new Date();
+      const expiryDate = new Date(kstNow.getTime());
       expiryDate.setDate(expiryDate.getDate() + (itemInfo.expiry_days || 365));
       calculatedExpiry = expiryDate.toISOString().split('T')[0];
     }
@@ -2155,9 +2157,10 @@ barcodeRoutes.get('/safety-stock-analysis', async (c) => {
     const leadDays = parseInt(c.req.query('lead_days') || '3');
     const months = parseInt(c.req.query('months') || '3');
     
-    // 분석 기간 계산 (최근 N개월)
+    // 분석 기간 계산 (최근 N개월) - KST 기준
     const today = getKSTDate();
-    const startDate = new Date(today);
+    const kstNow = new Date(new Date().getTime() + (9 * 60 * 60 * 1000));
+    const startDate = new Date(kstNow);
     startDate.setMonth(startDate.getMonth() - months);
     const startDateStr = startDate.toISOString().split('T')[0];
     
@@ -2524,11 +2527,12 @@ barcodeRoutes.delete('/product-transaction/:id', async (c) => {
   }
 });
 
-// ★★★ v3.4.10: 오늘 날짜의 사용/출고 내역 조회 (삭제용) ★★★
+// ★★★ v3.6.122: 오늘 날짜의 사용/출고 내역 조회 (삭제용) - KST 날짜 적용 ★★★
 barcodeRoutes.get('/today-transactions', async (c) => {
   try {
     const dateParam = c.req.query('date');
-    const targetDate = dateParam || new Date().toISOString().split('T')[0];
+    // ★★★ v3.6.122: UTC → KST 날짜로 변경 ★★★
+    const targetDate = dateParam || getKSTDate();
     const item_code = c.req.query('item_code');
     
     // ★★★ v3.4.14: rowid를 명시적으로 가져옴 (D1 호환성) ★★★
@@ -2574,11 +2578,12 @@ barcodeRoutes.get('/today-transactions', async (c) => {
   }
 });
 
-// ★★★ v3.4.10: 디버깅용 - 특정 품목의 당일 transactions 확인 ★★★
+// ★★★ v3.6.122: 디버깅용 - 특정 품목의 당일 transactions 확인 - KST 날짜 적용 ★★★
 barcodeRoutes.get('/debug-transactions', async (c) => {
   try {
     const item_code = c.req.query('item_code') || 'R001';
-    const date = c.req.query('date') || new Date().toISOString().split('T')[0];
+    // ★★★ v3.6.122: UTC → KST 날짜로 변경 ★★★
+    const date = c.req.query('date') || getKSTDate();
     
     // 1. transactions 테이블에서 해당 품목/날짜 전체 조회
     const allTrans = await c.env.DB.prepare(`

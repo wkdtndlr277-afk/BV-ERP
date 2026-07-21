@@ -11,6 +11,18 @@ import { GoogleSheetsService } from '../services/GoogleSheetsService';
 const EXCLUDED_ITEM_CODES = ['RM184', 'RM266', 'RM267'];
 const EXCLUDED_ITEM_PREFIXES = ['SF'];  // SF로 시작하는 품목 제외
 
+// ★★★ v3.6.122: KST(한국시간) 날짜 헬퍼 함수 추가 ★★★
+function getKSTDate(): string {
+  const now = new Date();
+  const kst = new Date(now.getTime() + (9 * 60 * 60 * 1000));
+  return kst.toISOString().split('T')[0];
+}
+
+function getKSTDateObject(): Date {
+  const now = new Date();
+  return new Date(now.getTime() + (9 * 60 * 60 * 1000));
+}
+
 // GoogleSheetsService 헬퍼 (올바른 방식)
 function getSheetService(c: any): GoogleSheetsService | null {
   const clientEmail = c.env.GOOGLE_CLIENT_EMAIL;
@@ -29,7 +41,8 @@ const dashboardRoutes = new Hono<{ Bindings: Bindings }>();
 
 // 대시보드 전체 데이터
 dashboardRoutes.get('/', async (c) => {
-  const today = new Date().toISOString().split('T')[0];
+  // ★★★ v3.6.122: UTC → KST 날짜로 변경 ★★★
+  const today = getKSTDate();
   
   // ★★★ v3.6.61: 바코드 재고관리(D1 inbound 잔량) 기반 안전재고 체크 ★★★
   let lowStockItems: any[] = [];
@@ -380,7 +393,8 @@ dashboardRoutes.get('/', async (c) => {
 
 // 알림 카운트 (헤더 배지용)
 dashboardRoutes.get('/alerts/count', async (c) => {
-  const today = new Date().toISOString().split('T')[0];
+  // ★★★ v3.6.122: UTC → KST 날짜로 변경 ★★★
+  const today = getKSTDate();
   
   // 원료만 안전재고 미만 카운트 (safety_stock > 0인 것만)
   const lowStock = await c.env.DB.prepare(`
@@ -419,15 +433,14 @@ dashboardRoutes.get('/alerts/count', async (c) => {
   });
 });
 
-// ★★★ v3.6.121: 안전재고 현황 API - D1 transactions + 구글시트 일별수불부 통합 ★★★
+// ★★★ v3.6.122: 안전재고 현황 API - D1 transactions + 구글시트 일별수불부 통합 (KST 날짜 적용) ★★★
 dashboardRoutes.get('/safety-stock-status', async (c) => {
   try {
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    // ★★★ v3.6.122: KST 기준 날짜 계산 ★★★
+    const todayStr = getKSTDate();
+    const kstNow = getKSTDateObject();
     
     // 최근 30일 기준 날짜 계산
-    const kstOffset = 9 * 60 * 60 * 1000;
-    const kstNow = new Date(today.getTime() + kstOffset);
     const startDate = new Date(kstNow);
     startDate.setDate(kstNow.getDate() - 30);
     const startDateStr = startDate.toISOString().split('T')[0];
@@ -819,11 +832,12 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
   }
 });
 
-// ★★★ v3.6.75: 발주점 3일 이하 품목의 최근 사용 추이 (라인 차트용) ★★★
+// ★★★ v3.6.122: 발주점 3일 이하 품목의 최근 사용 추이 (라인 차트용) - KST 날짜 적용 ★★★
 dashboardRoutes.get('/usage-trend', async (c) => {
   try {
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    // ★★★ v3.6.122: KST 기준 날짜 계산 ★★★
+    const today = getKSTDateObject();
+    const todayStr = getKSTDate();
     const days = parseInt(c.req.query('days') || '14');
     
     // 기간 계산

@@ -114,16 +114,89 @@ transactionRoutes.get('/search', async (c) => {
 });
 
 // LOT 이력 조회
-// ★★★ v3.6.123: 생산일보 LOT 형식(YYMMDD 6자리) 지원 추가 ★★★
+// ★★★ v3.6.124: 제품 생산 LOT(YYYYMMDD-PR###-###) 형식 지원 추가 ★★★
 transactionRoutes.get('/lot/:lot_number', async (c) => {
   const lot_number = c.req.param('lot_number');
   
-  // ★★★ v3.6.123: PRD로 시작하거나 6자리 숫자(YYMMDD)면 제품 LOT으로 인식 ★★★
-  const isProductLot = lot_number.startsWith('PRD') || /^\d{6}$/.test(lot_number);
+  // ★★★ v3.6.124: 다양한 제품 LOT 형식 인식 ★★★
+  // 1. PRD로 시작: PRD-YYYYMMDD-CODE-XXXX
+  // 2. 6자리 숫자: YYMMDD (생산일보 LOT)
+  // 3. 제품 생산 LOT: YYYYMMDD-PR###-### (예: 20260721-PR154-001)
+  const isProductLot = lot_number.startsWith('PRD') || /^\d{6}$/.test(lot_number) || /^\d{8}-PR\d+-\d+$/.test(lot_number);
   const isDailyReportLot = /^\d{6}$/.test(lot_number);  // 생산일보 LOT 형식 (260721 등)
+  const isProductionLot = /^\d{8}-PR\d+-\d+$/.test(lot_number);  // 제품 생산 LOT (20260721-PR154-001)
   
   let lot: any = null;
   let usedMaterials: any[] = [];
+  
+  // ★★★ v3.6.124: 제품 생산 LOT(YYYYMMDD-PR###-###) → 구글시트 로트매칭 API로 원료 조회 ★★★
+  if (isProductionLot) {
+    // YYYYMMDD-PR###-### → YYYY-MM-DD 및 YYMMDD 변환
+    const dateStr = lot_number.substring(0, 8);  // 20260721
+    const year = dateStr.substring(0, 4);
+    const month = dateStr.substring(4, 6);
+    const day = dateStr.substring(6, 8);
+    const prodDate = `${year}-${month}-${day}`;  // 2026-07-21
+    const productLot = dateStr.substring(2);  // 260721 (YYMMDD)
+    
+    try {
+      // 구글시트 로트매칭 API 호출
+      const baseUrl = new URL(c.req.url).origin;
+      const lotMatchingUrl = `${baseUrl}/api/sheets/lot-matching?prod_date=${prodDate}&product_lot=${productLot}`;
+      const response = await fetch(lotMatchingUrl);
+      const data = await response.json() as any;
+      
+      if (data.success && data.data && data.data.length > 0) {
+        // 제품 코드 추출 (PR154 등)
+        const productCode = lot_number.split('-')[1] || '-';
+        
+        // 제품 생산 LOT 정보 설정
+        lot = {
+          lot_number: lot_number,
+          item_code: productCode,
+          item_name: `제품 ${productCode} (${prodDate})`,
+          category: '제품',
+          unit: 'EA',
+          inbound_date: prodDate,
+          expiry_date: '-',
+          origin_qty: '-',
+          remain_qty: '-',
+          quality_status: '-',
+          supplier: '-',
+          channel: '생산'
+        };
+        
+        // 구글시트에서 받은 원료 정보를 usedMaterials에 매핑
+        for (const item of data.data) {
+          const usedQtyKg = parseFloat(item.used_qty) || 0;
+          const usedQtyG = Math.round(usedQtyKg * 1000);
+          
+          usedMaterials.push({
+            item_code: item.item_code || '-',
+            item_name: item.item_name || '-',
+            lot_number: item.material_lot || '-',
+            actual_qty: usedQtyG,
+            unit: 'g',
+            supplier: '-',
+            inbound_date: '-',
+            expiry_date: item.expiry_date || '-'
+          });
+        }
+        
+        return c.json({ 
+          success: true, 
+          data: { 
+            lot, 
+            history: [],
+            usedMaterials,
+            source: 'google_sheets'
+          } 
+        });
+      }
+    } catch (e) {
+      console.error('제품 생산 LOT 조회 오류:', e);
+    }
+  }
   
   // ★★★ v3.6.123: 생산일보 LOT(YYMMDD) → 구글시트 로트매칭 API로 사용 원료 조회 ★★★
   if (isDailyReportLot) {

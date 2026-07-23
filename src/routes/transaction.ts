@@ -168,31 +168,32 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
       const productName = productItem?.production_name || productionInfo?.production_name || `제품 ${productCode}`;
       const quantity = totalQuantity?.total_qty || productionInfo?.quantity || '-';
       
-      // 2. ★ BOM에서 product_name이 같은 product_code 찾기 (PR176 → PD177 매핑)
-      // production_items.production_name = bom.product_name
+      // 2. ★ BOM에서 같은 제품명의 product_code 찾기 (PR176 → PD177 매핑)
+      // master 테이블의 item_name과 production_items의 production_name 비교
       let bomProductCode = null;
       let bomItems: any[] = [];
       
-      if (productName) {
-        // bom 테이블에서 product_name으로 product_code 찾기
+      if (productName && productName !== `제품 ${productCode}`) {
+        // master 테이블에서 같은 item_name을 가진 item_code(PD 형식) 찾기
+        // BOM의 product_code는 master 테이블의 item_code와 매칭됨
         const bomProduct = await c.env.DB.prepare(`
-          SELECT DISTINCT product_code, product_name
-          FROM bom
-          WHERE product_name = ?
+          SELECT DISTINCT b.product_code, m.item_name
+          FROM bom b
+          JOIN master m ON b.product_code = m.item_code
+          WHERE m.item_name = ?
           LIMIT 1
         `).bind(productName).first<any>();
         
         if (bomProduct) {
           bomProductCode = bomProduct.product_code;
           
-          // 해당 BOM의 원료 목록 조회
+          // 해당 BOM의 원료 목록 조회 (bom 테이블 직접 사용)
           const bomResult = await c.env.DB.prepare(`
-            SELECT bd.item_code, m.item_name, bd.quantity, m.unit
-            FROM bom_details bd
-            JOIN bom b ON bd.bom_id = b.id
-            LEFT JOIN master m ON bd.item_code = m.item_code
+            SELECT b.item_code, COALESCE(m.item_name, b.item_code) as item_name, b.quantity, COALESCE(m.unit, b.unit) as unit
+            FROM bom b
+            LEFT JOIN master m ON b.item_code = m.item_code
             WHERE b.product_code = ?
-            ORDER BY bd.id
+            ORDER BY b.sort_order, b.id
           `).bind(bomProductCode).all<any>();
           
           bomItems = bomResult.results || [];
@@ -206,6 +207,69 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
       const lotMatchingUrl = `${baseUrl}/api/sheets/lot-matching?prod_date=${prodDate}&product_lot=${dailyLot}`;
       const response = await fetch(lotMatchingUrl);
       const sheetData = await response.json() as any;
+      
+      // ★ 구글시트 데이터가 없어도 BOM 기반으로 응답 반환
+      // (구글시트 연동이 없는 경우에도 제품 LOT 정보 표시)
+      if (!sheetData.success || !sheetData.data) {
+        // 구글시트 실패해도 제품 정보는 표시
+        lot = {
+          lot_number: lot_number,
+          item_code: productCode,
+          item_name: productName,
+          category: '제품',
+          unit: productItem?.unit || productionInfo?.unit || 'EA',
+          inbound_date: prodDate,
+          expiry_date: productionInfo?.expiry_date || '-',
+          origin_qty: quantity,
+          remain_qty: '-',
+          quality_status: productionInfo?.status || '-',
+          supplier: '-',
+          channel: productionInfo?.channel || '-'
+        };
+        
+        const hasBom = bomItemCodes.length > 0;
+        
+        // BOM이 있으면 BOM 기준 원료 표시
+        if (hasBom) {
+          for (const bomItem of bomItems) {
+            const inboundInfo = await c.env.DB.prepare(`
+              SELECT lot_number, supplier, inbound_date, expiry_date
+              FROM inbound 
+              WHERE item_code = ? 
+                AND inbound_date <= ?
+                AND (expiry_date >= ? OR expiry_date IS NULL)
+              ORDER BY expiry_date ASC, inbound_date ASC
+              LIMIT 1
+            `).bind(bomItem.item_code, prodDate, prodDate).first<any>();
+            
+            usedMaterials.push({
+              item_code: bomItem.item_code,
+              item_name: bomItem.item_name || bomItem.item_code,
+              lot_number: inboundInfo?.lot_number || '-',
+              actual_qty: Math.round((bomItem.quantity || 0) * (typeof quantity === 'number' ? quantity : 1)),
+              unit: bomItem.unit || 'g',
+              supplier: inboundInfo?.supplier || '-',
+              inbound_date: inboundInfo?.inbound_date || '-',
+              expiry_date: inboundInfo?.expiry_date || '-'
+            });
+          }
+        }
+        
+        return c.json({ 
+          success: true, 
+          data: { 
+            lot, 
+            history: [],
+            usedMaterials,
+            source: hasBom ? 'bom_only' : 'no_bom',
+            has_bom: hasBom,
+            bom_product_code: bomProductCode,
+            bom_count: bomItemCodes.length,
+            sheet_error: sheetData.error || 'no_data',
+            message: !hasBom ? `${productCode} 제품(${productName})의 BOM(배합표)이 등록되지 않아 원료를 특정할 수 없습니다.` : null
+          } 
+        });
+      }
       
       if (sheetData.success && sheetData.data) {
         // 4. BOM에 있는 원료만 필터링 (또는 BOM이 없으면 제품코드로 추정)
@@ -299,9 +363,19 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
           } 
         });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error('제품 생산 LOT 조회 오류:', e);
-      // 오류 시 기존 isProductLot 로직으로 fallback
+      // 오류 발생 시 디버깅 정보 반환
+      return c.json({
+        success: false,
+        error: `제품 생산 LOT 조회 중 오류: ${e.message || e}`,
+        debug: {
+          lot_number,
+          productCode: lot_number.split('-')[1],
+          dateStr: lot_number.substring(0, 8),
+          isProductionLot: true
+        }
+      }, 500);
     }
   }
   

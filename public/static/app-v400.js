@@ -6382,8 +6382,11 @@ async function renderLotHistory() {
       return;
     }
     
-    // PRD로 시작하면 제품 LOT, 아니면 원료 LOT
-    const isProductLot = lotNumber.startsWith('PRD');
+    // ★★★ v3.6.124: 제품 LOT 판별 로직 확장 ★★★
+    // 1. PRD로 시작: PRD-YYYYMMDD-CODE-XXXX
+    // 2. 6자리 숫자: YYMMDD (생산일보 LOT)
+    // 3. 제품 생산 LOT: YYYYMMDD-PR###-### (예: 20260721-PR154-001)
+    const isProductLot = lotNumber.startsWith('PRD') || /^\d{6}$/.test(lotNumber) || /^\d{8}-PR\d+-\d+$/.test(lotNumber);
     
     try {
       const result = await api(`/transactions/lot/${encodeURIComponent(lotNumber)}`);

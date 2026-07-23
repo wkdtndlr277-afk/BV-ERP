@@ -13,7 +13,8 @@ function getKSTDate(): string {
 
 // 반제품검사일지 테이블 생성
 async function ensureLevainTable(db: D1Database) {
-  await db.exec(`
+  // D1은 prepare().run()을 사용해야 함 (exec()는 제한적)
+  await db.prepare(`
     CREATE TABLE IF NOT EXISTS levain_inspection (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       inspection_date TEXT NOT NULL,
@@ -30,13 +31,16 @@ async function ensureLevainTable(db: D1Database) {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
-  `);
+  `).run();
   
-  // 인덱스 생성
-  await db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_levain_inspection_date ON levain_inspection(inspection_date);
-    CREATE INDEX IF NOT EXISTS idx_levain_product ON levain_inspection(product_name);
-  `);
+  // 인덱스 생성 (각각 별도 실행)
+  try {
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_levain_inspection_date ON levain_inspection(inspection_date)`).run();
+  } catch (e) { /* 이미 존재하면 무시 */ }
+  
+  try {
+    await db.prepare(`CREATE INDEX IF NOT EXISTS idx_levain_product ON levain_inspection(product_name)`).run();
+  } catch (e) { /* 이미 존재하면 무시 */ }
 }
 
 // 반제품검사일지 목록 조회

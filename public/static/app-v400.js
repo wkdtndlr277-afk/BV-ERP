@@ -53125,9 +53125,9 @@ async function renderLevainMonitor() {
         <div>
           <h2 class="text-2xl font-bold text-gray-800">
             <i class="fas fa-flask text-amber-600 mr-2"></i>
-            르방 숙성 모니터링
+            반제품 검사일지
           </h2>
-          <p class="text-gray-500 mt-1">반제품검사일지 (HACCP)</p>
+          <p class="text-gray-500 mt-1">르방/발효종 숙성 모니터링 (HACCP)</p>
         </div>
         <div class="flex gap-2">
           <button onclick="seedLevainSample()" class="btn btn-secondary">

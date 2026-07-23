@@ -766,7 +766,7 @@ app.get('/*', (c) => {
                 
                 <a href="#levain-monitor" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="levain-monitor">
                     <i class="fas fa-flask w-5"></i>
-                    <span>르방 숙성 모니터링</span>
+                    <span>반제품 검사일지</span>
                 </a>
                 
                 <!-- ========== 기준정보 ========== -->

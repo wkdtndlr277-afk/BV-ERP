@@ -129,59 +129,160 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
   let lot: any = null;
   let usedMaterials: any[] = [];
   
-  // ★★★ v3.6.124: 제품 생산 LOT(YYYYMMDD-PR###-###) → 구글시트 로트매칭 API로 원료 조회 ★★★
+  // ★★★ v3.6.127: 제품 생산 LOT(YYYYMMDD-PR###-###) → BOM 기반 원료 필터링 (제품명 매핑) ★★★
   if (isProductionLot) {
-    // YYYYMMDD-PR###-### → YYYY-MM-DD 및 YYMMDD 변환
-    const dateStr = lot_number.substring(0, 8);  // 20260721
+    // LOT에서 정보 추출: 20260722-PR176-001 → 날짜: 2026-07-22, 제품: PR176
+    const dateStr = lot_number.substring(0, 8);  // 20260722
+    const productCode = lot_number.split('-')[1];  // PR176
     const year = dateStr.substring(0, 4);
     const month = dateStr.substring(4, 6);
     const day = dateStr.substring(6, 8);
-    const prodDate = `${year}-${month}-${day}`;  // 2026-07-21
-    const productLot = dateStr.substring(2);  // 260721 (YYMMDD)
+    const prodDate = `${year}-${month}-${day}`;  // 2026-07-22
+    const dailyLot = dateStr.substring(2);  // 260722
     
     try {
-      // 구글시트 로트매칭 API 호출
-      const baseUrl = new URL(c.req.url).origin;
-      const lotMatchingUrl = `${baseUrl}/api/sheets/lot-matching?prod_date=${prodDate}&product_lot=${productLot}`;
-      const response = await fetch(lotMatchingUrl);
-      const data = await response.json() as any;
+      // 1. production_items에서 해당 제품의 production_name 조회
+      const productItem = await c.env.DB.prepare(`
+        SELECT production_code, production_name, unit
+        FROM production_items
+        WHERE production_code = ?
+      `).bind(productCode).first<any>();
       
-      if (data.success && data.data && data.data.length > 0) {
-        // 제품 코드 추출 (PR154 등)
-        const productCode = lot_number.split('-')[1] || '-';
+      // 1-2. production 테이블에서 해당 날짜+제품 생산 정보 조회
+      const productionInfo = await c.env.DB.prepare(`
+        SELECT p.*, pi.production_name, pi.unit
+        FROM production p
+        LEFT JOIN production_items pi ON p.product_code = pi.production_code
+        WHERE p.prod_date = ? AND p.product_code = ?
+        ORDER BY p.id DESC
+        LIMIT 1
+      `).bind(prodDate, productCode).first<any>();
+      
+      // 생산량은 해당 날짜 전체 수량 합계
+      const totalQuantity = await c.env.DB.prepare(`
+        SELECT SUM(quantity) as total_qty
+        FROM production
+        WHERE prod_date = ? AND product_code = ?
+      `).bind(prodDate, productCode).first<any>();
+      
+      const productName = productItem?.production_name || productionInfo?.production_name || `제품 ${productCode}`;
+      const quantity = totalQuantity?.total_qty || productionInfo?.quantity || '-';
+      
+      // 2. ★ BOM에서 product_name이 같은 product_code 찾기 (PR176 → PD177 매핑)
+      // production_items.production_name = bom.product_name
+      let bomProductCode = null;
+      let bomItems: any[] = [];
+      
+      if (productName) {
+        // bom 테이블에서 product_name으로 product_code 찾기
+        const bomProduct = await c.env.DB.prepare(`
+          SELECT DISTINCT product_code, product_name
+          FROM bom
+          WHERE product_name = ?
+          LIMIT 1
+        `).bind(productName).first<any>();
         
-        // 제품 생산 LOT 정보 설정
+        if (bomProduct) {
+          bomProductCode = bomProduct.product_code;
+          
+          // 해당 BOM의 원료 목록 조회
+          const bomResult = await c.env.DB.prepare(`
+            SELECT bd.item_code, m.item_name, bd.quantity, m.unit
+            FROM bom_details bd
+            JOIN bom b ON bd.bom_id = b.id
+            LEFT JOIN master m ON bd.item_code = m.item_code
+            WHERE b.product_code = ?
+            ORDER BY bd.id
+          `).bind(bomProductCode).all<any>();
+          
+          bomItems = bomResult.results || [];
+        }
+      }
+      
+      const bomItemCodes = bomItems.map((b: any) => b.item_code);
+      
+      // 3. 구글시트 lot-matching에서 해당 날짜 전체 데이터 조회
+      const baseUrl = new URL(c.req.url).origin;
+      const lotMatchingUrl = `${baseUrl}/api/sheets/lot-matching?prod_date=${prodDate}&product_lot=${dailyLot}`;
+      const response = await fetch(lotMatchingUrl);
+      const sheetData = await response.json() as any;
+      
+      if (sheetData.success && sheetData.data) {
+        // 4. BOM에 있는 원료만 필터링 (또는 BOM이 없으면 제품코드로 추정)
+        let filteredMaterials = sheetData.data;
+        
+        if (bomItemCodes.length > 0) {
+          // BOM이 있으면 BOM 원료만 필터링
+          filteredMaterials = sheetData.data.filter((item: any) => 
+            bomItemCodes.includes(item.item_code)
+          );
+        }
+        
+        // 5. 생산량 정보 설정 (위에서 이미 계산됨)
         lot = {
           lot_number: lot_number,
           item_code: productCode,
-          item_name: `제품 ${productCode} (${prodDate})`,
+          item_name: productName,
           category: '제품',
-          unit: 'EA',
+          unit: productionInfo?.unit || 'EA',
           inbound_date: prodDate,
-          expiry_date: '-',
-          origin_qty: '-',
+          expiry_date: productionInfo?.expiry_date || '-',
+          origin_qty: quantity,
           remain_qty: '-',
-          quality_status: '-',
+          quality_status: productionInfo?.status || '-',
           supplier: '-',
-          channel: '생산'
+          channel: productionInfo?.channel || '-'
         };
         
-        // 구글시트에서 받은 원료 정보를 usedMaterials에 매핑
-        for (const item of data.data) {
-          const usedQtyKg = parseFloat(item.used_qty) || 0;
-          const usedQtyG = Math.round(usedQtyKg * 1000);
-          
-          usedMaterials.push({
-            item_code: item.item_code || '-',
-            item_name: item.item_name || '-',
-            lot_number: item.material_lot || '-',
-            actual_qty: usedQtyG,
-            unit: 'g',
-            supplier: '-',
-            inbound_date: '-',
-            expiry_date: item.expiry_date || '-'
-          });
+        // 6. 원료 정보 매핑 (BOM 기준 or 필터링된 데이터)
+        // BOM이 없으면 해당 제품 원료를 특정할 수 없음
+        const hasBom = bomItemCodes.length > 0;
+        
+        if (hasBom) {
+          // BOM이 있으면 BOM 원료만 필터링
+          if (filteredMaterials.length > 0) {
+            for (const item of filteredMaterials) {
+              const usedQtyKg = parseFloat(item.used_qty) || 0;
+              const usedQtyG = Math.round(usedQtyKg * 1000);
+              
+              usedMaterials.push({
+                item_code: item.item_code || '-',
+                item_name: item.item_name || '-',
+                lot_number: item.material_lot || '-',
+                actual_qty: usedQtyG,
+                unit: 'g',
+                supplier: '-',
+                inbound_date: '-',
+                expiry_date: item.expiry_date || '-'
+              });
+            }
+          } else {
+            // 구글시트에 매칭 없으면 BOM 기반으로 표시
+            for (const bomItem of bomItems) {
+              const inboundInfo = await c.env.DB.prepare(`
+                SELECT lot_number, supplier, inbound_date, expiry_date
+                FROM inbound 
+                WHERE item_code = ? 
+                  AND inbound_date <= ?
+                  AND (expiry_date >= ? OR expiry_date IS NULL)
+                ORDER BY expiry_date ASC, inbound_date ASC
+                LIMIT 1
+              `).bind(bomItem.item_code, prodDate, prodDate).first<any>();
+              
+              usedMaterials.push({
+                item_code: bomItem.item_code,
+                item_name: bomItem.item_name || bomItem.item_code,
+                lot_number: inboundInfo?.lot_number || '-',
+                actual_qty: Math.round((bomItem.quantity || 0) * (typeof quantity === 'number' ? quantity : 1)),
+                unit: bomItem.unit || 'g',
+                supplier: inboundInfo?.supplier || '-',
+                inbound_date: inboundInfo?.inbound_date || '-',
+                expiry_date: inboundInfo?.expiry_date || '-'
+              });
+            }
+          }
         }
+        // BOM이 없으면 usedMaterials는 빈 배열로 유지 (전체 원료 표시 안 함)
         
         return c.json({ 
           success: true, 
@@ -189,16 +290,23 @@ transactionRoutes.get('/lot/:lot_number', async (c) => {
             lot, 
             history: [],
             usedMaterials,
-            source: 'google_sheets'
+            source: hasBom ? 'bom_filtered' : 'no_bom',
+            has_bom: hasBom,
+            bom_product_code: bomProductCode,
+            bom_count: bomItemCodes.length,
+            filtered_count: usedMaterials.length,
+            message: !hasBom ? `${productCode} 제품(${productName})의 BOM(배합표)이 등록되지 않아 원료를 특정할 수 없습니다.` : null
           } 
         });
       }
     } catch (e) {
       console.error('제품 생산 LOT 조회 오류:', e);
+      // 오류 시 기존 isProductLot 로직으로 fallback
     }
   }
   
   // ★★★ v3.6.123: 생산일보 LOT(YYMMDD) → 구글시트 로트매칭 API로 사용 원료 조회 ★★★
+  // 이건 날짜별 전체 원료 조회가 맞으므로 구글시트 API 사용
   if (isDailyReportLot) {
     // YYMMDD → YYYY-MM-DD 변환 (예: 260721 → 2026-07-21)
     const yy = lot_number.substring(0, 2);

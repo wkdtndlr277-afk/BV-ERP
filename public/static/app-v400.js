@@ -53323,17 +53323,7 @@ async function renderLevainMonitor() {
             <label class="block text-sm font-medium text-gray-700 mb-1">제품명 <span class="text-red-500">*</span></label>
             <select id="levain-product-name" required class="w-full px-3 py-2 border rounded-lg">
               <option value="">선택하세요</option>
-              <option value="호밀 르방">호밀 르방</option>
-              <option value="독일 풀리쉬">독일 풀리쉬</option>
-              <option value="호밀 통밀">호밀 통밀</option>
-              <option value="통밀 르방">통밀 르방</option>
-              <option value="독일 통밀">독일 통밀</option>
-              <option value="통밀 또띠아">통밀 또띠아</option>
-              <option value="RT호밀 M/S87">RT호밀 M/S87</option>
-              <option value="소금 호밀">소금 호밀</option>
-              <option value="얇고등 통밀">얇고등 통밀</option>
-              <option value="사고농 호밀">사고농 호밀</option>
-              <option value="통밀 호밀">통밀 호밀</option>
+              <!-- SF 코드 목록은 API에서 동적으로 로드됨 -->
             </select>
           </div>
           <div class="grid grid-cols-3 gap-4">
@@ -53404,18 +53394,38 @@ async function renderLevainMonitor() {
   initLevainChart();
 }
 
-// 제품 목록 로드
+// 제품 목록 로드 (SF 코드 기반 - semi_finished_items 테이블에서)
 async function loadLevainProducts() {
   try {
-    const result = await api('/levain/products');
-    if (result.success) {
+    // SF 코드 기반 반제품 목록 API 호출
+    const result = await api('/semi-finished/items');
+    if (result.success && result.data) {
       const filterSelect = document.getElementById('levain-product-filter');
       const chartSelect = document.getElementById('levain-chart-product');
+      const formSelect = document.getElementById('levain-product-name');
       
-      const options = result.data.map(p => `<option value="${p}">${p}</option>`).join('');
+      // SF001~SF010 형식으로 "코드 - 이름" 표시
+      const options = result.data.map(item => 
+        `<option value="${item.item_code}" data-name="${item.item_name}">${item.item_code} - ${item.item_name}</option>`
+      ).join('');
       
-      filterSelect.innerHTML = '<option value="">전체</option>' + options;
-      chartSelect.innerHTML = '<option value="">선택하세요</option>' + options;
+      if (filterSelect) filterSelect.innerHTML = '<option value="">전체 (SF)</option>' + options;
+      if (chartSelect) chartSelect.innerHTML = '<option value="">선택하세요</option>' + options;
+      if (formSelect) formSelect.innerHTML = '<option value="">선택하세요</option>' + options;
+    } else {
+      // fallback: 기존 API 사용
+      const fallbackResult = await api('/levain/products');
+      if (fallbackResult.success) {
+        const filterSelect = document.getElementById('levain-product-filter');
+        const chartSelect = document.getElementById('levain-chart-product');
+        const formSelect = document.getElementById('levain-product-name');
+        
+        const options = fallbackResult.data.map(p => `<option value="${p}">${p}</option>`).join('');
+        
+        if (filterSelect) filterSelect.innerHTML = '<option value="">전체</option>' + options;
+        if (chartSelect) chartSelect.innerHTML = '<option value="">선택하세요</option>' + options;
+        if (formSelect) formSelect.innerHTML = '<option value="">선택하세요</option>' + options;
+      }
     }
   } catch (error) {
     console.error('제품 목록 로드 실패:', error);
@@ -53438,6 +53448,8 @@ async function loadLevainData() {
       levainData = result.data;
       renderLevainTable(levainData);
       updateLevainSummary(levainData);
+      // 차트 드롭다운에 실제 데이터의 제품명도 추가
+      updateChartProductDropdown();
       updateChartProductDates();
     }
   } catch (error) {
@@ -53509,6 +53521,27 @@ function updateLevainSummary(data) {
   const phValues = data.filter(d => d.ph_value !== null).map(d => d.ph_value);
   const avgPh = phValues.length > 0 ? (phValues.reduce((a, b) => a + b, 0) / phValues.length).toFixed(2) : '-';
   document.getElementById('levain-avg-ph').textContent = avgPh;
+}
+
+// 차트 제품 드롭다운 업데이트 (실제 데이터에서 추출)
+function updateChartProductDropdown() {
+  const chartSelect = document.getElementById('levain-chart-product');
+  if (!chartSelect || !levainData || levainData.length === 0) return;
+  
+  // 실제 데이터에서 고유한 제품명 추출
+  const existingProducts = [...new Set(levainData.map(d => d.product_name).filter(Boolean))].sort();
+  
+  // 기존 옵션 유지하면서 데이터의 제품명 추가
+  const currentOptions = Array.from(chartSelect.options).map(o => o.value);
+  
+  existingProducts.forEach(p => {
+    if (!currentOptions.includes(p)) {
+      const option = document.createElement('option');
+      option.value = p;
+      option.textContent = p;
+      chartSelect.appendChild(option);
+    }
+  });
 }
 
 // 차트 제품/제조일 업데이트

@@ -35,6 +35,7 @@ import orderUploadRoutes from './routes/order-upload';
 import shipmentRoutes from './routes/shipment';
 import validateRoutes from './routes/validate';
 import debugMasterRoutes from './routes/debug-master';
+import levainRoutes from './routes/levain';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -74,6 +75,7 @@ app.route('/api/order', orderUploadRoutes);
 app.route('/api/shipment', shipmentRoutes);
 app.route('/api/validate', validateRoutes);
 app.route('/api/debug-master', debugMasterRoutes);
+app.route('/api/levain', levainRoutes);
 
 // ★★★ v3.6.81: 품목 검색 API (바코드 수기등록용) ★★★
 app.get('/api/items/search', async (c) => {
@@ -760,6 +762,11 @@ app.get('/*', (c) => {
                 <a href="#microbial-test" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="microbial-test">
                     <i class="fas fa-microscope w-5"></i>
                     <span>미생물 검사</span>
+                </a>
+                
+                <a href="#levain-monitor" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="levain-monitor">
+                    <i class="fas fa-flask w-5"></i>
+                    <span>르방 숙성 모니터링</span>
                 </a>
                 
                 <!-- ========== 기준정보 ========== -->

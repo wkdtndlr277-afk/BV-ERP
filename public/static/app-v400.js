@@ -1383,6 +1383,7 @@ function renderPage(page) {
     case 'process-quality': renderProcessQuality(); break;
     case 'product-catalog': renderProductCatalog(); break;
     case 'microbial-test': renderMicrobialTest(); break;
+    case 'levain-monitor': renderLevainMonitor(); break;
     case 'system-management': renderSystemManagement(); break;
     case 'barcode-inventory': renderBarcodeInventory(); break;
     case 'task-calendar': renderTaskCalendar(); break;
@@ -53107,3 +53108,818 @@ window.printMonthlyStockAudit = printMonthlyStockAudit;
 window.calculateDifference = calculateDifference;
 window.recalculateTheoryStock = recalculateTheoryStock;
 window.recalculateDifferenceFromTheory = recalculateDifferenceFromTheory;
+
+// ★★★ v3.6.125: 르방 숙성 모니터링 (반제품검사일지) ★★★
+let levainChartInstance = null;
+let levainData = [];
+
+async function renderLevainMonitor() {
+  const content = document.getElementById('page-content');
+  const today = new Date().toISOString().split('T')[0];
+  const monthStart = today.substring(0, 7) + '-01';
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <!-- 헤더 -->
+      <div class="flex justify-between items-center">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800">
+            <i class="fas fa-flask text-amber-600 mr-2"></i>
+            르방 숙성 모니터링
+          </h2>
+          <p class="text-gray-500 mt-1">반제품검사일지 (HACCP)</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="seedLevainSample()" class="btn btn-secondary">
+            <i class="fas fa-database mr-1"></i> 예시 데이터
+          </button>
+          <button onclick="showLevainForm()" class="btn btn-primary">
+            <i class="fas fa-plus mr-1"></i> 검사 등록
+          </button>
+          <button onclick="printLevainHACCP()" class="btn btn-success">
+            <i class="fas fa-print mr-1"></i> HACCP 출력
+          </button>
+        </div>
+      </div>
+      
+      <!-- 필터 영역 -->
+      <div class="bg-white rounded-xl shadow p-4">
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">시작일</label>
+            <input type="date" id="levain-start-date" value="${monthStart}" 
+                   class="w-full px-3 py-2 border rounded-lg" onchange="loadLevainData()">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">종료일</label>
+            <input type="date" id="levain-end-date" value="${today}" 
+                   class="w-full px-3 py-2 border rounded-lg" onchange="loadLevainData()">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">제품명</label>
+            <select id="levain-product-filter" class="w-full px-3 py-2 border rounded-lg" onchange="loadLevainData()">
+              <option value="">전체</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">차트 제품</label>
+            <select id="levain-chart-product" class="w-full px-3 py-2 border rounded-lg" onchange="updateLevainChart()">
+              <option value="">선택하세요</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">차트 제조일</label>
+            <select id="levain-chart-proddate" class="w-full px-3 py-2 border rounded-lg" onchange="updateLevainChart()">
+              <option value="">선택하세요</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 요약 카드 -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4" id="levain-summary-cards">
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm text-gray-500">총 검사 건수</p>
+              <p class="text-2xl font-bold text-gray-800" id="levain-total-count">0</p>
+            </div>
+            <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+              <i class="fas fa-clipboard-list text-blue-600 text-xl"></i>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm text-gray-500">적합</p>
+              <p class="text-2xl font-bold text-green-600" id="levain-passed-count">0</p>
+            </div>
+            <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+              <i class="fas fa-check-circle text-green-600 text-xl"></i>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm text-gray-500">부적합</p>
+              <p class="text-2xl font-bold text-red-600" id="levain-failed-count">0</p>
+            </div>
+            <div class="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+              <i class="fas fa-times-circle text-red-600 text-xl"></i>
+            </div>
+          </div>
+        </div>
+        <div class="bg-white rounded-xl shadow p-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <p class="text-sm text-gray-500">평균 pH</p>
+              <p class="text-2xl font-bold text-amber-600" id="levain-avg-ph">-</p>
+            </div>
+            <div class="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center">
+              <i class="fas fa-vial text-amber-600 text-xl"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 메인 컨텐츠: 테이블 + 차트 -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- 데이터 테이블 (엑셀 형태) -->
+        <div class="bg-white rounded-xl shadow overflow-hidden">
+          <div class="p-4 border-b bg-gray-50 flex justify-between items-center">
+            <h3 class="font-bold text-gray-800">
+              <i class="fas fa-table mr-2"></i>검사 기록
+            </h3>
+            <span class="text-sm text-gray-500" id="levain-table-count">0건</span>
+          </div>
+          <div class="overflow-auto" style="max-height: 500px;">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-100 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-left">검사일</th>
+                  <th class="px-3 py-2 text-left">제품명</th>
+                  <th class="px-3 py-2 text-center">제조일</th>
+                  <th class="px-3 py-2 text-center">냉장실온도</th>
+                  <th class="px-3 py-2 text-center">품온</th>
+                  <th class="px-3 py-2 text-center">pH</th>
+                  <th class="px-3 py-2 text-center">경과일</th>
+                  <th class="px-3 py-2 text-center">판정</th>
+                  <th class="px-3 py-2 text-center">작업</th>
+                </tr>
+              </thead>
+              <tbody id="levain-table-body">
+                <tr>
+                  <td colspan="9" class="px-4 py-8 text-center text-gray-500">
+                    <i class="fas fa-spinner fa-spin mr-2"></i>데이터 로딩 중...
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <!-- 이중축 차트 -->
+        <div class="bg-white rounded-xl shadow overflow-hidden">
+          <div class="p-4 border-b bg-gray-50">
+            <h3 class="font-bold text-gray-800">
+              <i class="fas fa-chart-line mr-2"></i>경과일별 pH/온도 변화
+            </h3>
+            <p class="text-xs text-gray-500 mt-1">좌축: pH값 (3.0~6.0 적합) | 우축: 온도(°C)</p>
+          </div>
+          <div class="p-4" style="height: 400px;">
+            <canvas id="levain-dual-chart"></canvas>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 기준치 안내 -->
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-4">
+        <h4 class="font-bold text-amber-800 mb-2">
+          <i class="fas fa-exclamation-triangle mr-2"></i>HACCP 기준치 안내
+        </h4>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 bg-green-500 rounded-full"></span>
+            <span><strong>pH:</strong> 3.0 ~ 6.0 (적합)</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 bg-blue-500 rounded-full"></span>
+            <span><strong>냉장실 온도:</strong> -5°C ~ 10°C (적합)</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 bg-red-500 rounded-full"></span>
+            <span><strong>기준 초과 시:</strong> 자동 부적합 판정</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 검사 등록 모달 -->
+    <div id="levain-form-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden items-center justify-center">
+      <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-auto">
+        <div class="p-4 border-b flex justify-between items-center sticky top-0 bg-white">
+          <h3 class="text-lg font-bold" id="levain-form-title">검사 등록</h3>
+          <button onclick="closeLevainForm()" class="text-gray-500 hover:text-gray-700">
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+        <form id="levain-form" class="p-4 space-y-4" onsubmit="saveLevainInspection(event)">
+          <input type="hidden" id="levain-id">
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">검사일 <span class="text-red-500">*</span></label>
+              <input type="date" id="levain-inspection-date" required 
+                     class="w-full px-3 py-2 border rounded-lg" value="${today}">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">제조일 <span class="text-red-500">*</span></label>
+              <input type="date" id="levain-prod-date" required 
+                     class="w-full px-3 py-2 border rounded-lg">
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">제품명 <span class="text-red-500">*</span></label>
+            <select id="levain-product-name" required class="w-full px-3 py-2 border rounded-lg">
+              <option value="">선택하세요</option>
+              <option value="호밀 르방">호밀 르방</option>
+              <option value="독일 풀리쉬">독일 풀리쉬</option>
+              <option value="호밀 통밀">호밀 통밀</option>
+              <option value="통밀 르방">통밀 르방</option>
+              <option value="독일 통밀">독일 통밀</option>
+              <option value="통밀 또띠아">통밀 또띠아</option>
+              <option value="RT호밀 M/S87">RT호밀 M/S87</option>
+              <option value="소금 호밀">소금 호밀</option>
+              <option value="얇고등 통밀">얇고등 통밀</option>
+              <option value="사고농 호밀">사고농 호밀</option>
+              <option value="통밀 호밀">통밀 호밀</option>
+            </select>
+          </div>
+          <div class="grid grid-cols-3 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">냉장실 온도 (°C)</label>
+              <input type="number" step="0.1" id="levain-fridge-temp" 
+                     class="w-full px-3 py-2 border rounded-lg" placeholder="예: 5.5">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">발효종 품온 (°C)</label>
+              <input type="number" step="0.1" id="levain-levain-temp" 
+                     class="w-full px-3 py-2 border rounded-lg" placeholder="예: 0">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">pH</label>
+              <input type="number" step="0.01" id="levain-ph-value" 
+                     class="w-full px-3 py-2 border rounded-lg" placeholder="예: 4.5">
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">경과일</label>
+              <input type="number" id="levain-elapsed-days" 
+                     class="w-full px-3 py-2 border rounded-lg" placeholder="예: 3">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">관능검사</label>
+              <select id="levain-sensory-test" class="w-full px-3 py-2 border rounded-lg">
+                <option value="적합/부적합">적합/부적합</option>
+                <option value="적합">적합</option>
+                <option value="부적합">부적합</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">검사자</label>
+              <input type="text" id="levain-inspector" 
+                     class="w-full px-3 py-2 border rounded-lg" placeholder="예: 박가영">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">판정</label>
+              <select id="levain-judgment" class="w-full px-3 py-2 border rounded-lg">
+                <option value="적합">적합</option>
+                <option value="부적합">부적합</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">비고</label>
+            <textarea id="levain-remarks" rows="2" 
+                      class="w-full px-3 py-2 border rounded-lg" placeholder="특이사항"></textarea>
+          </div>
+          <div class="flex justify-end gap-2 pt-4 border-t">
+            <button type="button" onclick="closeLevainForm()" class="btn btn-secondary">취소</button>
+            <button type="submit" class="btn btn-primary">저장</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  
+  // 제품 목록 로드
+  await loadLevainProducts();
+  // 데이터 로드
+  await loadLevainData();
+  // 차트 초기화
+  initLevainChart();
+}
+
+// 제품 목록 로드
+async function loadLevainProducts() {
+  try {
+    const result = await api('/levain/products');
+    if (result.success) {
+      const filterSelect = document.getElementById('levain-product-filter');
+      const chartSelect = document.getElementById('levain-chart-product');
+      
+      const options = result.data.map(p => `<option value="${p}">${p}</option>`).join('');
+      
+      filterSelect.innerHTML = '<option value="">전체</option>' + options;
+      chartSelect.innerHTML = '<option value="">선택하세요</option>' + options;
+    }
+  } catch (error) {
+    console.error('제품 목록 로드 실패:', error);
+  }
+}
+
+// 데이터 로드
+async function loadLevainData() {
+  try {
+    const startDate = document.getElementById('levain-start-date').value;
+    const endDate = document.getElementById('levain-end-date').value;
+    const productName = document.getElementById('levain-product-filter').value;
+    
+    let url = `/levain/inspections?start_date=${startDate}&end_date=${endDate}`;
+    if (productName) url += `&product_name=${encodeURIComponent(productName)}`;
+    
+    const result = await api(url);
+    
+    if (result.success) {
+      levainData = result.data;
+      renderLevainTable(levainData);
+      updateLevainSummary(levainData);
+      updateChartProductDates();
+    }
+  } catch (error) {
+    showToast('데이터 로드 실패: ' + error.message, 'error');
+  }
+}
+
+// 테이블 렌더링
+function renderLevainTable(data) {
+  const tbody = document.getElementById('levain-table-body');
+  const countEl = document.getElementById('levain-table-count');
+  
+  countEl.textContent = `${data.length}건`;
+  
+  if (data.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="9" class="px-4 py-8 text-center text-gray-500">
+          <i class="fas fa-inbox mr-2"></i>검사 기록이 없습니다.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+  
+  tbody.innerHTML = data.map(row => {
+    // pH 경고 (기준: 3.0 ~ 6.0)
+    const phValue = parseFloat(row.ph_value);
+    const phClass = !isNaN(phValue) && (phValue < 3.0 || phValue > 6.0) ? 'text-red-600 font-bold' : '';
+    
+    // 온도 경고 (기준: -5 ~ 10)
+    const fridgeTemp = parseFloat(row.fridge_temp);
+    const tempClass = !isNaN(fridgeTemp) && (fridgeTemp < -5 || fridgeTemp > 10) ? 'text-red-600 font-bold' : '';
+    
+    // 판정 뱃지
+    const judgmentBadge = row.judgment === '부적합' 
+      ? '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-700 font-bold">부적합</span>'
+      : '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-700">적합</span>';
+    
+    return `
+      <tr class="border-b hover:bg-gray-50 ${row.judgment === '부적합' ? 'bg-red-50' : ''}">
+        <td class="px-3 py-2">${row.inspection_date || '-'}</td>
+        <td class="px-3 py-2">${row.product_name || '-'}</td>
+        <td class="px-3 py-2 text-center">${row.prod_date || '-'}</td>
+        <td class="px-3 py-2 text-center ${tempClass}">${row.fridge_temp !== null ? row.fridge_temp + '°C' : '-'}</td>
+        <td class="px-3 py-2 text-center">${row.levain_temp !== null ? row.levain_temp + '°C' : '-'}</td>
+        <td class="px-3 py-2 text-center ${phClass}">${row.ph_value !== null ? row.ph_value : '-'}</td>
+        <td class="px-3 py-2 text-center">${row.elapsed_days || '-'}</td>
+        <td class="px-3 py-2 text-center">${judgmentBadge}</td>
+        <td class="px-3 py-2 text-center">
+          <button onclick="editLevainInspection(${row.id})" class="text-blue-600 hover:text-blue-800 mr-2">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button onclick="deleteLevainInspection(${row.id})" class="text-red-600 hover:text-red-800">
+            <i class="fas fa-trash"></i>
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// 요약 카드 업데이트
+function updateLevainSummary(data) {
+  document.getElementById('levain-total-count').textContent = data.length;
+  document.getElementById('levain-passed-count').textContent = data.filter(d => d.judgment === '적합').length;
+  document.getElementById('levain-failed-count').textContent = data.filter(d => d.judgment === '부적합').length;
+  
+  const phValues = data.filter(d => d.ph_value !== null).map(d => d.ph_value);
+  const avgPh = phValues.length > 0 ? (phValues.reduce((a, b) => a + b, 0) / phValues.length).toFixed(2) : '-';
+  document.getElementById('levain-avg-ph').textContent = avgPh;
+}
+
+// 차트 제품/제조일 업데이트
+function updateChartProductDates() {
+  const productSelect = document.getElementById('levain-chart-product');
+  const prodDateSelect = document.getElementById('levain-chart-proddate');
+  const selectedProduct = productSelect.value;
+  
+  if (!selectedProduct) {
+    prodDateSelect.innerHTML = '<option value="">제품을 먼저 선택하세요</option>';
+    return;
+  }
+  
+  // 선택된 제품의 제조일 목록 추출
+  const prodDates = [...new Set(levainData
+    .filter(d => d.product_name === selectedProduct && d.prod_date)
+    .map(d => d.prod_date)
+  )].sort().reverse();
+  
+  prodDateSelect.innerHTML = '<option value="">선택하세요</option>' + 
+    prodDates.map(d => `<option value="${d}">${d}</option>`).join('');
+}
+
+// 차트 초기화
+function initLevainChart() {
+  const ctx = document.getElementById('levain-dual-chart');
+  if (!ctx) return;
+  
+  if (levainChartInstance) {
+    levainChartInstance.destroy();
+  }
+  
+  levainChartInstance = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        {
+          label: 'pH',
+          data: [],
+          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(245, 158, 11, 0.1)',
+          yAxisID: 'y',
+          tension: 0.3,
+          fill: true
+        },
+        {
+          label: '발효종 품온',
+          data: [],
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          yAxisID: 'y1',
+          tension: 0.3
+        },
+        {
+          label: '냉장실 온도',
+          data: [],
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16, 185, 129, 0.1)',
+          yAxisID: 'y1',
+          tension: 0.3
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false
+      },
+      plugins: {
+        legend: {
+          position: 'top'
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const label = context.dataset.label || '';
+              const value = context.raw;
+              if (label === 'pH') return `${label}: ${value}`;
+              return `${label}: ${value}°C`;
+            }
+          }
+        },
+        annotation: {
+          annotations: {
+            phMin: {
+              type: 'line',
+              yMin: 3.0,
+              yMax: 3.0,
+              borderColor: 'rgba(239, 68, 68, 0.5)',
+              borderWidth: 1,
+              borderDash: [5, 5],
+              label: {
+                display: true,
+                content: 'pH 하한 (3.0)',
+                position: 'start'
+              }
+            },
+            phMax: {
+              type: 'line',
+              yMin: 6.0,
+              yMax: 6.0,
+              borderColor: 'rgba(239, 68, 68, 0.5)',
+              borderWidth: 1,
+              borderDash: [5, 5],
+              label: {
+                display: true,
+                content: 'pH 상한 (6.0)',
+                position: 'start'
+              }
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          title: {
+            display: true,
+            text: '경과일'
+          }
+        },
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'left',
+          title: {
+            display: true,
+            text: 'pH'
+          },
+          min: 0,
+          max: 14
+        },
+        y1: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          title: {
+            display: true,
+            text: '온도 (°C)'
+          },
+          grid: {
+            drawOnChartArea: false
+          },
+          min: -10,
+          max: 30
+        }
+      }
+    }
+  });
+}
+
+// 차트 데이터 업데이트
+async function updateLevainChart() {
+  const productName = document.getElementById('levain-chart-product').value;
+  const prodDate = document.getElementById('levain-chart-proddate').value;
+  
+  if (!productName) {
+    updateChartProductDates();
+    return;
+  }
+  
+  if (!prodDate) return;
+  
+  try {
+    const result = await api(`/levain/chart-data?product_name=${encodeURIComponent(productName)}&prod_date=${prodDate}`);
+    
+    if (result.success && result.data.length > 0) {
+      const data = result.data.sort((a, b) => (a.elapsed_days || 0) - (b.elapsed_days || 0));
+      
+      levainChartInstance.data.labels = data.map(d => d.elapsed_days ? `${d.elapsed_days}일차` : d.inspection_date);
+      levainChartInstance.data.datasets[0].data = data.map(d => d.ph_value);
+      levainChartInstance.data.datasets[1].data = data.map(d => d.levain_temp);
+      levainChartInstance.data.datasets[2].data = data.map(d => d.fridge_temp);
+      levainChartInstance.update();
+    } else {
+      showToast('해당 조건의 데이터가 없습니다.', 'warning');
+    }
+  } catch (error) {
+    showToast('차트 데이터 로드 실패: ' + error.message, 'error');
+  }
+}
+
+// 검사 등록 폼 표시
+function showLevainForm(id = null) {
+  const modal = document.getElementById('levain-form-modal');
+  const title = document.getElementById('levain-form-title');
+  const form = document.getElementById('levain-form');
+  
+  form.reset();
+  document.getElementById('levain-id').value = '';
+  document.getElementById('levain-inspection-date').value = new Date().toISOString().split('T')[0];
+  
+  if (id) {
+    title.textContent = '검사 수정';
+    const row = levainData.find(d => d.id === id);
+    if (row) {
+      document.getElementById('levain-id').value = row.id;
+      document.getElementById('levain-inspection-date').value = row.inspection_date || '';
+      document.getElementById('levain-prod-date').value = row.prod_date || '';
+      document.getElementById('levain-product-name').value = row.product_name || '';
+      document.getElementById('levain-fridge-temp').value = row.fridge_temp || '';
+      document.getElementById('levain-levain-temp').value = row.levain_temp || '';
+      document.getElementById('levain-ph-value').value = row.ph_value || '';
+      document.getElementById('levain-elapsed-days').value = row.elapsed_days || '';
+      document.getElementById('levain-sensory-test').value = row.sensory_test || '적합/부적합';
+      document.getElementById('levain-judgment').value = row.judgment || '적합';
+      document.getElementById('levain-inspector').value = row.inspector || '';
+      document.getElementById('levain-remarks').value = row.remarks || '';
+    }
+  } else {
+    title.textContent = '검사 등록';
+  }
+  
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+}
+
+function closeLevainForm() {
+  const modal = document.getElementById('levain-form-modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+// 검사 저장
+async function saveLevainInspection(event) {
+  event.preventDefault();
+  
+  const id = document.getElementById('levain-id').value;
+  const data = {
+    inspection_date: document.getElementById('levain-inspection-date').value,
+    prod_date: document.getElementById('levain-prod-date').value,
+    product_name: document.getElementById('levain-product-name').value,
+    fridge_temp: parseFloat(document.getElementById('levain-fridge-temp').value) || null,
+    levain_temp: parseFloat(document.getElementById('levain-levain-temp').value) || null,
+    ph_value: parseFloat(document.getElementById('levain-ph-value').value) || null,
+    elapsed_days: parseInt(document.getElementById('levain-elapsed-days').value) || null,
+    sensory_test: document.getElementById('levain-sensory-test').value,
+    judgment: document.getElementById('levain-judgment').value,
+    inspector: document.getElementById('levain-inspector').value,
+    remarks: document.getElementById('levain-remarks').value
+  };
+  
+  try {
+    let result;
+    if (id) {
+      result = await api(`/levain/inspections/${id}`, 'PUT', data);
+    } else {
+      result = await api('/levain/inspections', 'POST', data);
+    }
+    
+    if (result.success) {
+      showToast(id ? '수정되었습니다.' : '등록되었습니다.', 'success');
+      closeLevainForm();
+      await loadLevainData();
+    } else {
+      showToast(result.error || '저장 실패', 'error');
+    }
+  } catch (error) {
+    showToast('저장 실패: ' + error.message, 'error');
+  }
+}
+
+// 검사 수정
+function editLevainInspection(id) {
+  showLevainForm(id);
+}
+
+// 검사 삭제
+async function deleteLevainInspection(id) {
+  if (!confirm('정말 삭제하시겠습니까?')) return;
+  
+  try {
+    const result = await api(`/levain/inspections/${id}`, 'DELETE');
+    if (result.success) {
+      showToast('삭제되었습니다.', 'success');
+      await loadLevainData();
+    }
+  } catch (error) {
+    showToast('삭제 실패: ' + error.message, 'error');
+  }
+}
+
+// 예시 데이터 생성
+async function seedLevainSample() {
+  if (!confirm('이미지 기반 예시 데이터를 생성하시겠습니까?')) return;
+  
+  try {
+    const result = await api('/levain/seed-sample', 'POST');
+    if (result.success) {
+      showToast(`예시 데이터 ${result.inserted}건이 생성되었습니다.`, 'success');
+      await loadLevainData();
+    }
+  } catch (error) {
+    showToast('예시 데이터 생성 실패: ' + error.message, 'error');
+  }
+}
+
+// HACCP 출력
+async function printLevainHACCP() {
+  const startDate = document.getElementById('levain-start-date').value;
+  const year = startDate.substring(0, 4);
+  const month = startDate.substring(5, 7);
+  
+  try {
+    const result = await api(`/levain/haccp-report?year=${year}&month=${month}`);
+    
+    if (result.success) {
+      const data = result.data;
+      const summary = result.summary;
+      
+      // HACCP 양식에 맞는 HTML 생성
+      const html = `
+        <style>
+          @page { size: A4 landscape; margin: 10mm; }
+          body { font-family: 'Malgun Gothic', sans-serif; font-size: 10pt; }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+          th, td { border: 1px solid #000; padding: 4px 6px; text-align: center; }
+          th { background-color: #f0f0f0; font-weight: bold; }
+          .title { font-size: 16pt; font-weight: bold; text-align: center; margin-bottom: 10px; }
+          .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; }
+          .fail { color: red; font-weight: bold; }
+          .pass { color: green; }
+        </style>
+        <div class="title">( ${month} )월 반제품검사일지</div>
+        <div class="info-row">
+          <span>담당: 박가영</span>
+          <span>과장: </span>
+          <span>승인: 김경숙</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th rowspan="2">검사일</th>
+              <th rowspan="2">제품명</th>
+              <th rowspan="2">제조일</th>
+              <th colspan="2">냉장실 온도</th>
+              <th>관능검사</th>
+              <th colspan="2">pH</th>
+              <th rowspan="2">경과일<br>(1-8)</th>
+              <th rowspan="2">적부<br>판정</th>
+              <th rowspan="2">검사자</th>
+            </tr>
+            <tr>
+              <th>기준<br>(0~10℃)</th>
+              <th>측정값</th>
+              <th>이미, 이취 없어야함(1)</th>
+              <th>기준<br>(3~6)</th>
+              <th>측정값</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map(row => {
+              const phFail = row.ph_value && (row.ph_value < 3 || row.ph_value > 6);
+              const tempFail = row.fridge_temp && (row.fridge_temp < -5 || row.fridge_temp > 10);
+              return `
+                <tr>
+                  <td>${row.inspection_date || ''}</td>
+                  <td style="text-align:left;">${row.product_name || ''}</td>
+                  <td>${row.prod_date || ''}</td>
+                  <td>0~10℃</td>
+                  <td class="${tempFail ? 'fail' : ''}">${row.fridge_temp !== null ? row.fridge_temp + '℃' : ''}</td>
+                  <td>${row.sensory_test || '적합/부적합'}</td>
+                  <td>3~6</td>
+                  <td class="${phFail ? 'fail' : ''}">${row.ph_value !== null ? row.ph_value : ''}</td>
+                  <td>${row.elapsed_days || ''}</td>
+                  <td class="${row.judgment === '부적합' ? 'fail' : 'pass'}">${row.judgment === '적합' ? '⊙' : '✗'} ${row.judgment || ''}</td>
+                  <td>${row.inspector || ''}</td>
+                </tr>
+              `;
+            }).join('')}
+            ${Array(Math.max(0, 20 - data.length)).fill(0).map(() => `
+              <tr>
+                <td>&nbsp;</td>
+                <td></td>
+                <td></td>
+                <td>0~10℃</td>
+                <td></td>
+                <td>적합/부적합</td>
+                <td>3~6</td>
+                <td></td>
+                <td></td>
+                <td>⊙ 적합/부적합</td>
+                <td></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+        <div style="margin-top: 20px; font-size: 9pt;">
+          <p>※ 적합: ⊙, 부적합: ✗</p>
+          <p>※ 총 검사: ${summary.total_inspections}건 | 적합: ${summary.passed}건 | 부적합: ${summary.failed}건</p>
+        </div>
+      `;
+      
+      printData(`${month}월 반제품검사일지 (HACCP)`, html, { landscape: true, fontSize: '9pt' });
+    }
+  } catch (error) {
+    showToast('HACCP 출력 실패: ' + error.message, 'error');
+  }
+}
+
+// 전역 함수 등록
+window.renderLevainMonitor = renderLevainMonitor;
+window.loadLevainProducts = loadLevainProducts;
+window.loadLevainData = loadLevainData;
+window.updateLevainChart = updateLevainChart;
+window.showLevainForm = showLevainForm;
+window.closeLevainForm = closeLevainForm;
+window.saveLevainInspection = saveLevainInspection;
+window.editLevainInspection = editLevainInspection;
+window.deleteLevainInspection = deleteLevainInspection;
+window.seedLevainSample = seedLevainSample;
+window.printLevainHACCP = printLevainHACCP;

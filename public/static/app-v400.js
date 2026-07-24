@@ -53163,15 +53163,17 @@ async function renderLevainMonitor() {
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">차트 제품</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">차트 발효종</label>
             <select id="levain-chart-product" class="w-full px-3 py-2 border rounded-lg" onchange="updateLevainChart()">
-              <option value="">선택하세요</option>
+              <option value="">전체 발효종</option>
             </select>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">차트 제조일</label>
-            <select id="levain-chart-proddate" class="w-full px-3 py-2 border rounded-lg" onchange="updateLevainChart()">
-              <option value="">선택하세요</option>
+            <label class="block text-sm font-medium text-gray-700 mb-1">차트 항목</label>
+            <select id="levain-chart-type" class="w-full px-3 py-2 border rounded-lg" onchange="updateLevainChart()">
+              <option value="all">pH + 온도</option>
+              <option value="ph">pH만</option>
+              <option value="temp">온도만</option>
             </select>
           </div>
         </div>
@@ -53265,9 +53267,9 @@ async function renderLevainMonitor() {
         <div class="bg-white rounded-xl shadow overflow-hidden">
           <div class="p-4 border-b bg-gray-50">
             <h3 class="font-bold text-gray-800">
-              <i class="fas fa-chart-line mr-2"></i>경과일별 pH/온도 변화
+              <i class="fas fa-chart-line mr-2"></i>검사일별 pH/온도 변화 추이
             </h3>
-            <p class="text-xs text-gray-500 mt-1">좌축: pH값 (3.0~6.0 적합) | 우축: 온도(°C)</p>
+            <p class="text-xs text-gray-500 mt-1">좌축: pH값 (3.0~6.0 적합) | 우축: 온도(°C) | X축: 검사일</p>
           </div>
           <div class="p-4" style="height: 400px;">
             <canvas id="levain-dual-chart"></canvas>
@@ -53455,9 +53457,8 @@ async function loadLevainData() {
       levainData = result.data;
       renderLevainTable(levainData);
       updateLevainSummary(levainData);
-      // 차트 드롭다운에 실제 데이터의 제품명도 추가
+      // 차트 드롭다운 업데이트 및 차트 표시
       updateChartProductDropdown();
-      updateChartProductDates();
     }
   } catch (error) {
     showToast('데이터 로드 실패: ' + error.message, 'error');
@@ -53539,62 +53540,33 @@ function updateLevainSummary(data) {
 // 차트 제품 드롭다운 업데이트 (실제 데이터에서 추출)
 function updateChartProductDropdown() {
   const chartSelect = document.getElementById('levain-chart-product');
-  if (!chartSelect || !levainData || levainData.length === 0) return;
+  if (!chartSelect) return;
+  
+  // 기존 옵션 초기화 (전체 옵션 유지)
+  chartSelect.innerHTML = '<option value="">전체 발효종</option>';
+  
+  if (!levainData || levainData.length === 0) {
+    updateLevainChart();
+    return;
+  }
   
   // 실제 데이터에서 고유한 제품명 추출
   const existingProducts = [...new Set(levainData.map(d => d.product_name).filter(Boolean))].sort();
   
-  // 기존 옵션 유지하면서 데이터의 제품명 추가
-  const currentOptions = Array.from(chartSelect.options).map(o => o.value);
-  
   existingProducts.forEach(p => {
-    if (!currentOptions.includes(p)) {
-      const option = document.createElement('option');
-      option.value = p;
-      // SF 코드면 이름 매핑 추가
-      if (p.startsWith('SF') && sfItemsMap[p]) {
-        option.textContent = `${p} - ${sfItemsMap[p]}`;
-      } else {
-        option.textContent = p;
-      }
-      chartSelect.appendChild(option);
+    const option = document.createElement('option');
+    option.value = p;
+    // SF 코드면 이름 매핑 추가
+    if (p.startsWith('SF') && sfItemsMap[p]) {
+      option.textContent = `${p} - ${sfItemsMap[p]}`;
+    } else {
+      option.textContent = p;
     }
+    chartSelect.appendChild(option);
   });
   
-  // 데이터가 있고 아직 선택 안 했으면 첫 번째 제품 자동 선택 후 차트 표시
-  if (existingProducts.length > 0 && !chartSelect.value) {
-    chartSelect.value = existingProducts[0];
-    updateChartProductDates();
-    // 첫 번째 제조일 자동 선택 후 차트 업데이트
-    setTimeout(() => {
-      const prodDateSelect = document.getElementById('levain-chart-proddate');
-      if (prodDateSelect && prodDateSelect.options.length > 1) {
-        prodDateSelect.selectedIndex = 1;
-        updateLevainChart();
-      }
-    }, 100);
-  }
-}
-
-// 차트 제품/제조일 업데이트
-function updateChartProductDates() {
-  const productSelect = document.getElementById('levain-chart-product');
-  const prodDateSelect = document.getElementById('levain-chart-proddate');
-  const selectedProduct = productSelect.value;
-  
-  if (!selectedProduct) {
-    prodDateSelect.innerHTML = '<option value="">제품을 먼저 선택하세요</option>';
-    return;
-  }
-  
-  // 선택된 제품의 제조일 목록 추출
-  const prodDates = [...new Set(levainData
-    .filter(d => d.product_name === selectedProduct && d.prod_date)
-    .map(d => d.prod_date)
-  )].sort().reverse();
-  
-  prodDateSelect.innerHTML = '<option value="">선택하세요</option>' + 
-    prodDates.map(d => `<option value="${d}">${d}</option>`).join('');
+  // 전체 발효종 차트 바로 표시
+  updateLevainChart();
 }
 
 // 차트 초기화
@@ -53727,35 +53699,69 @@ function initLevainChart() {
   });
 }
 
-// 차트 데이터 업데이트
-async function updateLevainChart() {
-  const productName = document.getElementById('levain-chart-product').value;
-  const prodDate = document.getElementById('levain-chart-proddate').value;
-  
-  if (!productName) {
-    updateChartProductDates();
+// 차트 데이터 업데이트 (검사일 기준 추이)
+function updateLevainChart() {
+  if (!levainChartInstance || !levainData || levainData.length === 0) {
+    console.log('차트 업데이트 불가: 데이터 없음');
     return;
   }
   
-  if (!prodDate) return;
+  const selectedProduct = document.getElementById('levain-chart-product').value;
+  const chartType = document.getElementById('levain-chart-type')?.value || 'all';
   
-  try {
-    const result = await api(`/levain/chart-data?product_name=${encodeURIComponent(productName)}&prod_date=${prodDate}`);
-    
-    if (result.success && result.data.length > 0) {
-      const data = result.data.sort((a, b) => (a.elapsed_days || 0) - (b.elapsed_days || 0));
-      
-      levainChartInstance.data.labels = data.map(d => d.elapsed_days ? `${d.elapsed_days}일차` : d.inspection_date);
-      levainChartInstance.data.datasets[0].data = data.map(d => d.ph_value);
-      levainChartInstance.data.datasets[1].data = data.map(d => d.levain_temp);
-      levainChartInstance.data.datasets[2].data = data.map(d => d.fridge_temp);
-      levainChartInstance.update();
-    } else {
-      showToast('해당 조건의 데이터가 없습니다.', 'warning');
-    }
-  } catch (error) {
-    showToast('차트 데이터 로드 실패: ' + error.message, 'error');
+  // 필터링: 전체 또는 특정 제품
+  let filteredData = selectedProduct 
+    ? levainData.filter(d => d.product_name === selectedProduct)
+    : levainData;
+  
+  // 검사일 기준 정렬
+  filteredData = filteredData
+    .filter(d => d.inspection_date)
+    .sort((a, b) => a.inspection_date.localeCompare(b.inspection_date));
+  
+  if (filteredData.length === 0) {
+    // 빈 차트 표시
+    levainChartInstance.data.labels = [];
+    levainChartInstance.data.datasets.forEach(ds => ds.data = []);
+    levainChartInstance.update();
+    return;
   }
+  
+  // X축: 검사일 (중복 제거하지 않고 각 데이터 포인트마다)
+  // 각 데이터에 제품명 라벨 추가
+  const labels = filteredData.map(d => {
+    const date = d.inspection_date.substring(5); // MM-DD
+    const product = d.product_name?.startsWith('SF') && sfItemsMap[d.product_name] 
+      ? sfItemsMap[d.product_name].substring(0, 4) 
+      : (d.product_name?.substring(0, 4) || '');
+    return selectedProduct ? date : `${date}`;
+  });
+  
+  // 데이터셋 설정
+  const phData = filteredData.map(d => d.ph_value);
+  const levainTempData = filteredData.map(d => d.levain_temp);
+  const fridgeTempData = filteredData.map(d => d.fridge_temp);
+  
+  // 차트 타입에 따라 데이터셋 표시/숨김
+  levainChartInstance.data.labels = labels;
+  levainChartInstance.data.datasets[0].data = (chartType === 'all' || chartType === 'ph') ? phData : [];
+  levainChartInstance.data.datasets[0].hidden = chartType === 'temp';
+  levainChartInstance.data.datasets[1].data = (chartType === 'all' || chartType === 'temp') ? levainTempData : [];
+  levainChartInstance.data.datasets[1].hidden = chartType === 'ph';
+  levainChartInstance.data.datasets[2].data = (chartType === 'all' || chartType === 'temp') ? fridgeTempData : [];
+  levainChartInstance.data.datasets[2].hidden = chartType === 'ph';
+  
+  // 툴팁에 제품명 표시
+  levainChartInstance.options.plugins.tooltip.callbacks.title = function(context) {
+    const idx = context[0].dataIndex;
+    const row = filteredData[idx];
+    const productDisplay = row.product_name?.startsWith('SF') && sfItemsMap[row.product_name]
+      ? `${row.product_name} - ${sfItemsMap[row.product_name]}`
+      : row.product_name;
+    return `${row.inspection_date} | ${productDisplay}`;
+  };
+  
+  levainChartInstance.update();
 }
 
 // 검사 등록 폼 표시

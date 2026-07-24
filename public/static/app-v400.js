@@ -53269,7 +53269,7 @@ async function renderLevainMonitor() {
             <h3 class="font-bold text-gray-800">
               <i class="fas fa-chart-line mr-2"></i>검사일별 pH/온도 변화 추이
             </h3>
-            <p class="text-xs text-gray-500 mt-1">좌축: pH (3.0~6.0 적합) | 우축: 온도(°C) | 일별 평균값</p>
+            <p class="text-xs text-gray-500 mt-1">좌축: pH (3.0~6.0 적합) | 우축: 온도(°C) | 각 검사 데이터</p>
           </div>
           <div class="p-4" style="height: 400px;">
             <canvas id="levain-dual-chart"></canvas>
@@ -53699,11 +53699,14 @@ function initLevainChart() {
   });
 }
 
-// 차트 데이터 업데이트 (검사일 기준 추이 - 일별 평균)
+// 차트 데이터 업데이트 (각 검사 데이터 포인트별 표시)
 function updateLevainChart() {
-  if (!levainChartInstance || !levainData || levainData.length === 0) {
-    console.log('차트 업데이트 불가: 데이터 없음');
-    // 빈 차트 표시
+  if (!levainChartInstance) {
+    console.log('차트 인스턴스 없음');
+    return;
+  }
+  
+  if (!levainData || levainData.length === 0) {
     levainChartInstance.data.labels = [];
     levainChartInstance.data.datasets.forEach(ds => ds.data = []);
     levainChartInstance.update();
@@ -53718,7 +53721,10 @@ function updateLevainChart() {
     ? levainData.filter(d => d.product_name === selectedProduct)
     : levainData;
   
-  filteredData = filteredData.filter(d => d.inspection_date);
+  // 검사일 + pH값 있는 데이터만, 검사일순 정렬
+  filteredData = filteredData
+    .filter(d => d.inspection_date)
+    .sort((a, b) => a.inspection_date.localeCompare(b.inspection_date));
   
   if (filteredData.length === 0) {
     levainChartInstance.data.labels = [];
@@ -53727,35 +53733,25 @@ function updateLevainChart() {
     return;
   }
   
-  // 검사일별로 그룹화하여 평균 계산
-  const dateGroups = {};
-  filteredData.forEach(d => {
-    const date = d.inspection_date;
-    if (!dateGroups[date]) {
-      dateGroups[date] = { ph: [], levainTemp: [], fridgeTemp: [], count: 0, products: [] };
-    }
-    if (d.ph_value !== null && d.ph_value !== undefined) dateGroups[date].ph.push(d.ph_value);
-    if (d.levain_temp !== null && d.levain_temp !== undefined) dateGroups[date].levainTemp.push(d.levain_temp);
-    if (d.fridge_temp !== null && d.fridge_temp !== undefined) dateGroups[date].fridgeTemp.push(d.fridge_temp);
-    dateGroups[date].count++;
-    if (d.product_name && !dateGroups[date].products.includes(d.product_name)) {
-      dateGroups[date].products.push(d.product_name);
-    }
-  });
+  // 각 데이터 포인트별 라벨 (날짜 MM-DD)
+  const labels = filteredData.map(d => d.inspection_date.substring(5));
   
-  // 날짜순 정렬
-  const sortedDates = Object.keys(dateGroups).sort();
+  // 실제 값 (평균 아님)
+  const phData = filteredData.map(d => d.ph_value);
+  const levainTempData = filteredData.map(d => d.levain_temp);
+  const fridgeTempData = filteredData.map(d => d.fridge_temp);
   
-  // 평균 계산 함수
-  const avg = arr => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  // pH 범위 동적 계산 (실제 데이터 기반, ±1 여유)
+  const validPh = phData.filter(v => v !== null && v !== undefined);
+  const phMin = validPh.length > 0 ? Math.floor(Math.min(...validPh)) - 1 : 2;
+  const phMax = validPh.length > 0 ? Math.ceil(Math.max(...validPh)) + 1 : 8;
   
-  // 라벨 및 데이터
-  const labels = sortedDates.map(d => d.substring(5)); // MM-DD
-  const phData = sortedDates.map(d => avg(dateGroups[d].ph));
-  const levainTempData = sortedDates.map(d => avg(dateGroups[d].levainTemp));
-  const fridgeTempData = sortedDates.map(d => avg(dateGroups[d].fridgeTemp));
+  // 온도 범위 동적 계산
+  const allTemps = [...levainTempData, ...fridgeTempData].filter(v => v !== null && v !== undefined);
+  const tempMin = allTemps.length > 0 ? Math.floor(Math.min(...allTemps)) - 2 : -5;
+  const tempMax = allTemps.length > 0 ? Math.ceil(Math.max(...allTemps)) + 2 : 20;
   
-  // 차트 업데이트
+  // 차트 데이터 업데이트
   levainChartInstance.data.labels = labels;
   levainChartInstance.data.datasets[0].data = (chartType === 'all' || chartType === 'ph') ? phData : [];
   levainChartInstance.data.datasets[0].hidden = chartType === 'temp';
@@ -53764,13 +53760,20 @@ function updateLevainChart() {
   levainChartInstance.data.datasets[2].data = (chartType === 'all' || chartType === 'temp') ? fridgeTempData : [];
   levainChartInstance.data.datasets[2].hidden = chartType === 'ph';
   
-  // 툴팁에 상세 정보 표시
+  // Y축 범위 동적 조정
+  levainChartInstance.options.scales.y.min = Math.max(0, phMin);
+  levainChartInstance.options.scales.y.max = Math.min(14, phMax);
+  levainChartInstance.options.scales.y1.min = tempMin;
+  levainChartInstance.options.scales.y1.max = tempMax;
+  
+  // 툴팁에 제품명 표시
   levainChartInstance.options.plugins.tooltip.callbacks.title = function(context) {
     const idx = context[0].dataIndex;
-    const date = sortedDates[idx];
-    const group = dateGroups[date];
-    const productCount = group.products.length;
-    return `${date} (${group.count}건, ${productCount}종)`;
+    const row = filteredData[idx];
+    const productDisplay = row.product_name?.startsWith('SF') && sfItemsMap[row.product_name]
+      ? `${row.product_name} - ${sfItemsMap[row.product_name]}`
+      : row.product_name;
+    return `${row.inspection_date} | ${productDisplay || '-'}`;
   };
   
   levainChartInstance.update();

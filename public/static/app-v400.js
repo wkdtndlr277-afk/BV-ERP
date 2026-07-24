@@ -53112,6 +53112,7 @@ window.recalculateDifferenceFromTheory = recalculateDifferenceFromTheory;
 // ★★★ v3.6.125: 르방 숙성 모니터링 (반제품검사일지) ★★★
 let levainChartInstance = null;
 let levainData = [];
+let sfItemsMap = {}; // SF 코드 → 이름 매핑
 
 async function renderLevainMonitor() {
   const content = document.getElementById('page-content');
@@ -53404,6 +53405,12 @@ async function loadLevainProducts() {
       const chartSelect = document.getElementById('levain-chart-product');
       const formSelect = document.getElementById('levain-product-name');
       
+      // SF 코드 → 이름 매핑 저장 (테이블 표시용)
+      sfItemsMap = {};
+      result.data.forEach(item => {
+        sfItemsMap[item.item_code] = item.item_name;
+      });
+      
       // SF001~SF010 형식으로 "코드 - 이름" 표시
       const options = result.data.map(item => 
         `<option value="${item.item_code}" data-name="${item.item_name}">${item.item_code} - ${item.item_name}</option>`
@@ -53489,10 +53496,16 @@ function renderLevainTable(data) {
       ? '<span class="px-2 py-1 text-xs rounded-full bg-red-100 text-red-700 font-bold">부적합</span>'
       : '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-700">적합</span>';
     
+    // SF 코드 → 이름 변환 (SF001 → SF001 - 발효종르방)
+    let displayProductName = row.product_name || '-';
+    if (row.product_name && row.product_name.startsWith('SF') && sfItemsMap[row.product_name]) {
+      displayProductName = `${row.product_name} - ${sfItemsMap[row.product_name]}`;
+    }
+    
     return `
       <tr class="border-b hover:bg-gray-50 ${row.judgment === '부적합' ? 'bg-red-50' : ''}">
         <td class="px-3 py-2">${row.inspection_date || '-'}</td>
-        <td class="px-3 py-2">${row.product_name || '-'}</td>
+        <td class="px-3 py-2">${displayProductName}</td>
         <td class="px-3 py-2 text-center">${row.prod_date || '-'}</td>
         <td class="px-3 py-2 text-center ${tempClass}">${row.fridge_temp !== null ? row.fridge_temp + '°C' : '-'}</td>
         <td class="px-3 py-2 text-center">${row.levain_temp !== null ? row.levain_temp + '°C' : '-'}</td>
@@ -53538,10 +53551,29 @@ function updateChartProductDropdown() {
     if (!currentOptions.includes(p)) {
       const option = document.createElement('option');
       option.value = p;
-      option.textContent = p;
+      // SF 코드면 이름 매핑 추가
+      if (p.startsWith('SF') && sfItemsMap[p]) {
+        option.textContent = `${p} - ${sfItemsMap[p]}`;
+      } else {
+        option.textContent = p;
+      }
       chartSelect.appendChild(option);
     }
   });
+  
+  // 데이터가 있고 아직 선택 안 했으면 첫 번째 제품 자동 선택 후 차트 표시
+  if (existingProducts.length > 0 && !chartSelect.value) {
+    chartSelect.value = existingProducts[0];
+    updateChartProductDates();
+    // 첫 번째 제조일 자동 선택 후 차트 업데이트
+    setTimeout(() => {
+      const prodDateSelect = document.getElementById('levain-chart-proddate');
+      if (prodDateSelect && prodDateSelect.options.length > 1) {
+        prodDateSelect.selectedIndex = 1;
+        updateLevainChart();
+      }
+    }, 100);
+  }
 }
 
 // 차트 제품/제조일 업데이트

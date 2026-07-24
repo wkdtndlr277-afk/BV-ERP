@@ -53391,10 +53391,10 @@ async function renderLevainMonitor() {
   
   // 제품 목록 로드
   await loadLevainProducts();
-  // 데이터 로드
-  await loadLevainData();
-  // 차트 초기화
+  // 차트 초기화 (데이터 로드 전에 먼저!)
   initLevainChart();
+  // 데이터 로드 (차트 업데이트 포함)
+  await loadLevainData();
 }
 
 // 제품 목록 로드 (SF 코드 기반 - semi_finished_items 테이블에서)
@@ -53666,7 +53666,7 @@ function initLevainChart() {
         x: {
           title: {
             display: true,
-            text: '경과일'
+            text: '검사일'
           }
         },
         y: {

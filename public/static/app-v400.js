@@ -53269,7 +53269,7 @@ async function renderLevainMonitor() {
             <h3 class="font-bold text-gray-800">
               <i class="fas fa-chart-line mr-2"></i>검사일별 pH/온도 변화 추이
             </h3>
-            <p class="text-xs text-gray-500 mt-1">좌축: pH값 (3.0~6.0 적합) | 우축: 온도(°C) | X축: 검사일</p>
+            <p class="text-xs text-gray-500 mt-1">좌축: pH (3.0~6.0 적합) | 우축: 온도(°C) | 일별 평균값</p>
           </div>
           <div class="p-4" style="height: 400px;">
             <canvas id="levain-dual-chart"></canvas>
@@ -53699,10 +53699,14 @@ function initLevainChart() {
   });
 }
 
-// 차트 데이터 업데이트 (검사일 기준 추이)
+// 차트 데이터 업데이트 (검사일 기준 추이 - 일별 평균)
 function updateLevainChart() {
   if (!levainChartInstance || !levainData || levainData.length === 0) {
     console.log('차트 업데이트 불가: 데이터 없음');
+    // 빈 차트 표시
+    levainChartInstance.data.labels = [];
+    levainChartInstance.data.datasets.forEach(ds => ds.data = []);
+    levainChartInstance.update();
     return;
   }
   
@@ -53714,35 +53718,44 @@ function updateLevainChart() {
     ? levainData.filter(d => d.product_name === selectedProduct)
     : levainData;
   
-  // 검사일 기준 정렬
-  filteredData = filteredData
-    .filter(d => d.inspection_date)
-    .sort((a, b) => a.inspection_date.localeCompare(b.inspection_date));
+  filteredData = filteredData.filter(d => d.inspection_date);
   
   if (filteredData.length === 0) {
-    // 빈 차트 표시
     levainChartInstance.data.labels = [];
     levainChartInstance.data.datasets.forEach(ds => ds.data = []);
     levainChartInstance.update();
     return;
   }
   
-  // X축: 검사일 (중복 제거하지 않고 각 데이터 포인트마다)
-  // 각 데이터에 제품명 라벨 추가
-  const labels = filteredData.map(d => {
-    const date = d.inspection_date.substring(5); // MM-DD
-    const product = d.product_name?.startsWith('SF') && sfItemsMap[d.product_name] 
-      ? sfItemsMap[d.product_name].substring(0, 4) 
-      : (d.product_name?.substring(0, 4) || '');
-    return selectedProduct ? date : `${date}`;
+  // 검사일별로 그룹화하여 평균 계산
+  const dateGroups = {};
+  filteredData.forEach(d => {
+    const date = d.inspection_date;
+    if (!dateGroups[date]) {
+      dateGroups[date] = { ph: [], levainTemp: [], fridgeTemp: [], count: 0, products: [] };
+    }
+    if (d.ph_value !== null && d.ph_value !== undefined) dateGroups[date].ph.push(d.ph_value);
+    if (d.levain_temp !== null && d.levain_temp !== undefined) dateGroups[date].levainTemp.push(d.levain_temp);
+    if (d.fridge_temp !== null && d.fridge_temp !== undefined) dateGroups[date].fridgeTemp.push(d.fridge_temp);
+    dateGroups[date].count++;
+    if (d.product_name && !dateGroups[date].products.includes(d.product_name)) {
+      dateGroups[date].products.push(d.product_name);
+    }
   });
   
-  // 데이터셋 설정
-  const phData = filteredData.map(d => d.ph_value);
-  const levainTempData = filteredData.map(d => d.levain_temp);
-  const fridgeTempData = filteredData.map(d => d.fridge_temp);
+  // 날짜순 정렬
+  const sortedDates = Object.keys(dateGroups).sort();
   
-  // 차트 타입에 따라 데이터셋 표시/숨김
+  // 평균 계산 함수
+  const avg = arr => arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+  
+  // 라벨 및 데이터
+  const labels = sortedDates.map(d => d.substring(5)); // MM-DD
+  const phData = sortedDates.map(d => avg(dateGroups[d].ph));
+  const levainTempData = sortedDates.map(d => avg(dateGroups[d].levainTemp));
+  const fridgeTempData = sortedDates.map(d => avg(dateGroups[d].fridgeTemp));
+  
+  // 차트 업데이트
   levainChartInstance.data.labels = labels;
   levainChartInstance.data.datasets[0].data = (chartType === 'all' || chartType === 'ph') ? phData : [];
   levainChartInstance.data.datasets[0].hidden = chartType === 'temp';
@@ -53751,14 +53764,13 @@ function updateLevainChart() {
   levainChartInstance.data.datasets[2].data = (chartType === 'all' || chartType === 'temp') ? fridgeTempData : [];
   levainChartInstance.data.datasets[2].hidden = chartType === 'ph';
   
-  // 툴팁에 제품명 표시
+  // 툴팁에 상세 정보 표시
   levainChartInstance.options.plugins.tooltip.callbacks.title = function(context) {
     const idx = context[0].dataIndex;
-    const row = filteredData[idx];
-    const productDisplay = row.product_name?.startsWith('SF') && sfItemsMap[row.product_name]
-      ? `${row.product_name} - ${sfItemsMap[row.product_name]}`
-      : row.product_name;
-    return `${row.inspection_date} | ${productDisplay}`;
+    const date = sortedDates[idx];
+    const group = dateGroups[date];
+    const productCount = group.products.length;
+    return `${date} (${group.count}건, ${productCount}종)`;
   };
   
   levainChartInstance.update();

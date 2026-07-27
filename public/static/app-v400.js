@@ -51538,6 +51538,7 @@ async function generateDailyReportPdf() {
                 <tr>
                   <th class="px-3 py-2 text-left">제품코드</th>
                   <th class="px-3 py-2 text-left">제품명</th>
+                  <th class="px-3 py-2 text-left">발주상품명</th>
                   <th class="px-3 py-2 text-right">생산(EA)</th>
                   <th class="px-3 py-2 text-left">제품LOT</th>
                   <th class="px-3 py-2 text-left">판매처</th>
@@ -51564,16 +51565,14 @@ async function generateDailyReportPdf() {
                       lotNo = date.replace(/-/g, '') + '-' + pcode + '-' + String(lotCounters[pcode]).padStart(3, '0');
                     }
                     
-                    // ★★★ v3.6.136: 제품명 / 발주상품명 형식으로 표시 ★★★
+                    // ★★★ v3.6.139: 제품명과 발주상품명 별도 칸으로 분리 ★★★
                     const productName = item.product_name || item.item_name || '-';
-                    const orderName = item.order_product_name || '';
-                    const displayName = orderName && orderName !== productName 
-                      ? productName + ' / ' + orderName 
-                      : productName;
+                    const orderName = item.order_product_name || '-';
                     
                     return '<tr class="hover:bg-gray-50">' +
                       '<td class="px-3 py-2 font-mono text-xs">' + pcode + '</td>' +
-                      '<td class="px-3 py-2">' + displayName + '</td>' +
+                      '<td class="px-3 py-2">' + productName + '</td>' +
+                      '<td class="px-3 py-2 text-gray-600 text-xs">' + orderName + '</td>' +
                       '<td class="px-3 py-2 text-right text-green-600 font-bold">' + (item.quantity || item.production_qty || 0).toLocaleString() + '</td>' +
                       '<td class="px-3 py-2 font-mono text-xs text-blue-600">' + lotNo + '</td>' +
                       '<td class="px-3 py-2">' + (item.channel || '-') + '</td>' +
@@ -51581,7 +51580,7 @@ async function generateDailyReportPdf() {
                     '</tr>';
                   }).join('');
                 })()}
-                ${items.length > 50 ? '<tr><td colspan="6" class="px-3 py-2 text-center text-gray-500">... 외 ' + (items.length - 50) + '건</td></tr>' : ''}
+                ${items.length > 50 ? '<tr><td colspan="7" class="px-3 py-2 text-center text-gray-500">... 외 ' + (items.length - 50) + '건</td></tr>' : ''}
               </tbody>
             </table>
           </div>
@@ -51739,12 +51738,14 @@ async function printDailyReportPdf(date) {
     // ★ 제품코드별 순번 카운터 (LOT 형식: 20260601-PR253-001)
     const lotCounters = {};
     
+    // ★★★ v3.6.139: 제품명/발주상품명 별도 칸으로 분리 ★★★
     let productionTableHtml = `
       <table>
         <thead>
           <tr style="background:#e0e0e0;">
             <th>제품코드</th>
             <th>제품명</th>
+            <th>발주상품명</th>
             <th style="text-align:right;">생산(EA)</th>
             <th style="text-align:center;">소비기한</th>
             <th style="text-align:center;">제품LOT</th>
@@ -51770,17 +51771,15 @@ async function printDailyReportPdf(date) {
       prodDate.setDate(prodDate.getDate() + expiryDays);
       const expiryDate = prodDate.toISOString().split('T')[0];
       
-      // ★★★ v3.6.136: 제품명 / 발주상품명 형식으로 표시 ★★★
+      // ★★★ v3.6.139: 제품명/발주상품명 별도 칸으로 분리 ★★★
       const productName = item.product_name || '-';
-      const orderName = item.order_product_name || '';
-      const displayName = orderName && orderName !== productName 
-        ? productName + ' / ' + orderName 
-        : productName;
+      const orderName = item.order_product_name || '-';
       
       productionTableHtml += `
         <tr>
           <td>${pcode}</td>
-          <td>${displayName}</td>
+          <td>${productName}</td>
+          <td style="font-size:10px; color:#666;">${orderName}</td>
           <td style="text-align:right;">${formatNumber(item.quantity || item.production_qty || 0)}</td>
           <td style="text-align:center;">${expiryDate}</td>
           <td style="text-align:center;">${lotNo}</td>
@@ -52367,14 +52366,15 @@ async function loadShipmentLog() {
       return;
     }
     
-    // ★★★ v3.5.93: 제품명 → 생산명 수정 ★★★
+    // ★★★ v3.6.139: 제품명/발주상품명 별도 칸으로 분리 (생산일보와 동일) ★★★
     contentEl.innerHTML = `
       <table class="w-full text-sm">
         <thead class="bg-gray-100">
           <tr>
             <th class="p-2 text-left">출고일</th>
             <th class="p-2 text-left">제품코드</th>
-            <th class="p-2 text-left">생산명</th>
+            <th class="p-2 text-left">제품명</th>
+            <th class="p-2 text-left">발주상품명</th>
             <th class="p-2 text-right">수량</th>
             <th class="p-2 text-left">채널</th>
             <th class="p-2 text-left">LOT</th>
@@ -52388,6 +52388,7 @@ async function loadShipmentLog() {
               <td class="p-2">${r.shipment_date || ''}</td>
               <td class="p-2 font-mono">${r.product_code || ''}</td>
               <td class="p-2">${r.product_name || ''}</td>
+              <td class="p-2 text-gray-600 text-xs">${r.order_product_name || '-'}</td>
               <td class="p-2 text-right font-bold">${r.quantity || 0}</td>
               <td class="p-2">${r.channel || ''}</td>
               <td class="p-2 font-mono text-xs">${r.lot_number || ''}</td>
@@ -52577,18 +52578,18 @@ function printShipmentLog() {
         </tr>
       </table>
       
-      <!-- 출고 데이터 테이블 -->
+      <!-- 출고 데이터 테이블 (v3.6.139: 발주상품명 칸 추가) -->
       <table class="data-table">
         <thead>
           <tr>
             <th class="col-date">출고일</th>
             <th class="col-code">제품코드</th>
             <th class="col-name">제품명</th>
+            <th class="col-name">발주상품명</th>
             <th class="col-qty">수량</th>
             <th class="col-channel">채널</th>
             <th class="col-lot">LOT</th>
             <th class="col-status">상태</th>
-            <th class="col-remark">비고</th>
           </tr>
         </thead>
         <tbody id="print-body"></tbody>
@@ -52609,17 +52610,18 @@ function printShipmentLog() {
         
         rows.forEach(row => {
           const cells = row.querySelectorAll('td');
-          if (cells.length >= 7) {
+          if (cells.length >= 8) {
             const newRow = document.createElement('tr');
+            // v3.6.139: 발주상품명 칸 추가 (cells[3])
             newRow.innerHTML = 
               '<td class="col-date">' + (cells[0]?.textContent || '') + '</td>' +
               '<td class="col-code">' + (cells[1]?.textContent || '') + '</td>' +
               '<td class="col-name">' + (cells[2]?.textContent || '') + '</td>' +
-              '<td class="col-qty">' + (cells[3]?.textContent || '') + '</td>' +
-              '<td class="col-channel">' + (cells[4]?.textContent || '') + '</td>' +
-              '<td class="col-lot">' + (cells[5]?.textContent || '') + '</td>' +
-              '<td class="col-status">' + (cells[6]?.textContent || '') + '</td>' +
-              '<td class="col-remark"></td>';
+              '<td class="col-name" style="font-size:9px;">' + (cells[3]?.textContent || '-') + '</td>' +
+              '<td class="col-qty">' + (cells[4]?.textContent || '') + '</td>' +
+              '<td class="col-channel">' + (cells[5]?.textContent || '') + '</td>' +
+              '<td class="col-lot">' + (cells[6]?.textContent || '') + '</td>' +
+              '<td class="col-status">' + (cells[7]?.textContent || '') + '</td>';
             printBody.appendChild(newRow);
           }
         });

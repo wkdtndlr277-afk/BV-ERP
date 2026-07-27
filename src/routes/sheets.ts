@@ -2357,6 +2357,19 @@ sheets.get('/v2/shipment/list', async (c) => {
     shipDateObj.setDate(shipDateObj.getDate() - 1);
     const productionDate = shipDateObj.toISOString().split('T')[0];
 
+    // ★★★ v3.6.139: 제품마스터에서 발주상품명 조회 (생산일보와 동일한 방식) ★★★
+    const productMaster = await service.getProductMaster();
+    const orderNameMap = new Map<string, string>();
+    for (const pm of productMaster) {
+      const key = `${pm.product_code}|${pm.channel || ''}`;
+      if (pm.order_product_name) {
+        orderNameMap.set(key, pm.order_product_name);
+        if (!orderNameMap.has(pm.product_code)) {
+          orderNameMap.set(pm.product_code, pm.order_product_name);
+        }
+      }
+    }
+
     // ★ 생산실적 시트에서 직접 조회 (SSOT - Single Source of Truth)
     // 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
     const productionData = await service.readSheet('생산실적', 'A2:H');
@@ -2388,15 +2401,23 @@ sheets.get('/v2/shipment/list', async (c) => {
         }
         
         // ★ 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
+        const channel = row[5]?.toString() || '';
+        
+        // ★★★ v3.6.139: 발주상품명 조회 (채널별 우선) ★★★
+        const orderProductName = orderNameMap.get(`${productCode}|${channel}`) 
+                              || orderNameMap.get(productCode) 
+                              || '';
+        
         return {
           shipment_date: shipmentDate,  // 출고일 (조회 기준일)
           production_date: prodDate,     // 생산일
           product_code: productCode,
           product_name: row[2]?.toString() || '',
+          order_product_name: orderProductName,  // ★★★ v3.6.139: 발주상품명 추가 ★★★
           quantity: parseFloat(row[3]) || 0,
           unit: 'EA',
           lot_number: lotNumber,
-          channel: row[5]?.toString() || '',
+          channel: channel,
           status: '출고완료',  // ★★★ 출고완료로 표기 ★★★
           remark: row[6]?.toString() || `${prodDate} 생산분`
         };

@@ -1787,18 +1787,18 @@ sheets.get('/v2/output/material-usage', async (c) => {
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
     
-    // ★★★ v3.6.137: 품목마스터에서 원료명 맵 조회 (SSOT - 가장 정확한 원료명 소스) ★★★
-    // 품목마스터 구조: A=품목코드, B=품목명, C=카테고리, D=단위, E=안전재고, F=유통기한일수
-    const itemMasterData = await service.readSheet('품목마스터', 'A2:B');
+    // ★★★ v3.6.137: 원료마스터에서 원료명 맵 조회 (SSOT - 원료는 원료마스터에 있음) ★★★
+    // 원료마스터 구조: A=품목코드, B=품목명, C=카테고리, D=단위, E=안전재고
+    const rawMasterData = await service.readSheet('원료마스터', 'A2:B1000');
     const itemNameMap = new Map<string, string>();
-    itemMasterData.forEach(row => {
+    rawMasterData.forEach(row => {
       const code = row[0]?.toString().trim();
       const name = row[1]?.toString().trim();
       if (code && name) {
         itemNameMap.set(code, name);
       }
     });
-    console.log(`[material-usage] 품목마스터에서 ${itemNameMap.size}개 품목명 로드`);
+    console.log(`[material-usage] 원료마스터에서 ${itemNameMap.size}개 품목명 로드`);
     
     // ★★★ BOM마스터에서도 원료명 조회 (품목마스터에 없는 경우 백업용) ★★★
     // BOM마스터 구조: A:제품코드, B:제품명, C:원료코드, D:원료명, E:수량, F:단위

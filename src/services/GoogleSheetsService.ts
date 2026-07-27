@@ -468,16 +468,30 @@ export class GoogleSheetsService {
   // 일별수불부 조회 (시트에서 계산된 결과)
   // ★★★ v3.6.137: 품목마스터에서 품목명 조회하여 수식/빈값 문제 해결 ★★★
   async getDailyStockReport(date: string): Promise<any[]> {
-    // 1. 품목마스터에서 품목명 맵 먼저 조회 (SSOT)
-    const itemMasterData = await this.readSheet('품목마스터', 'A2:B');
+    // 1. 원료마스터에서 품목명 맵 먼저 조회 (SSOT - 원료는 원료마스터에 있음)
+    // 원료마스터 구조: A=품목코드, B=품목명, C=카테고리, D=단위, E=안전재고
+    const rawMasterData = await this.readSheet('원료마스터', 'A2:B1000');
     const itemNameMap = new Map<string, string>();
-    itemMasterData.forEach(row => {
+    rawMasterData.forEach(row => {
       const code = row[0]?.toString().trim();
       const name = row[1]?.toString().trim();
       if (code && name) {
         itemNameMap.set(code, name);
       }
     });
+    console.log(`[getDailyStockReport] 원료마스터에서 ${itemNameMap.size}개 품목명 로드`);
+    
+    // ★★★ v3.6.138: BOM마스터에서도 원료명 조회 (원료마스터에 없는 경우 백업용) ★★★
+    // BOM마스터 구조: A=제품코드, B=제품명, C=원료코드, D=원료명, E=수량, F=단위
+    const bomMasterData = await this.readSheet('BOM마스터', 'C2:D');
+    bomMasterData.forEach(row => {
+      const code = row[0]?.toString().trim();
+      const name = row[1]?.toString().trim();
+      if (code && name && !itemNameMap.has(code)) {
+        itemNameMap.set(code, name);
+      }
+    });
+    console.log(`[getDailyStockReport] BOM마스터 백업 후 총 ${itemNameMap.size}개 품목명 로드`);
     
     // 2. 일별수불부 데이터 조회
     const data = await this.readSheet('일별수불부', 'A2:H');

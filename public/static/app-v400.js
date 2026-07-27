@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.00';
-const APP_BUILD = '20260629-4';
+const APP_VERSION = '3.6.136';
+const APP_BUILD = '20260727-1';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -51486,9 +51486,11 @@ async function generateDailyReportPdf() {
     
     const res = prodRes;
     // ★ 로트매칭 시트 기반 원료 사용량 데이터 (LOT + 소비기한 포함)
+    console.log('[생산일보 미리보기] material-usage API 응답:', matRes.data);
     const materialUsageData = matRes.data.success ? (matRes.data.data || []) : [];
     // ★★★ v3.6.51: 반제품(SF) 사용현황 데이터 ★★★
     const sfUsageData = matRes.data.success && matRes.data.sf_usage ? (matRes.data.sf_usage.data || []) : [];
+    console.log('[생산일보 미리보기] materialUsageData:', materialUsageData.length, '건, sfUsageData:', sfUsageData.length, '건');
     
     if (res.data.success && res.data.report) {
       const report = res.data.report;
@@ -51562,9 +51564,16 @@ async function generateDailyReportPdf() {
                       lotNo = date.replace(/-/g, '') + '-' + pcode + '-' + String(lotCounters[pcode]).padStart(3, '0');
                     }
                     
+                    // ★★★ v3.6.136: 제품명 / 발주상품명 형식으로 표시 ★★★
+                    const productName = item.product_name || item.item_name || '-';
+                    const orderName = item.order_product_name || '';
+                    const displayName = orderName && orderName !== productName 
+                      ? productName + ' / ' + orderName 
+                      : productName;
+                    
                     return '<tr class="hover:bg-gray-50">' +
                       '<td class="px-3 py-2 font-mono text-xs">' + pcode + '</td>' +
-                      '<td class="px-3 py-2">' + (item.product_name || item.item_name || '-') + '</td>' +
+                      '<td class="px-3 py-2">' + displayName + '</td>' +
                       '<td class="px-3 py-2 text-right text-green-600 font-bold">' + (item.quantity || item.production_qty || 0).toLocaleString() + '</td>' +
                       '<td class="px-3 py-2 font-mono text-xs text-blue-600">' + lotNo + '</td>' +
                       '<td class="px-3 py-2">' + (item.channel || '-') + '</td>' +
@@ -51761,10 +51770,17 @@ async function printDailyReportPdf(date) {
       prodDate.setDate(prodDate.getDate() + expiryDays);
       const expiryDate = prodDate.toISOString().split('T')[0];
       
+      // ★★★ v3.6.136: 제품명 / 발주상품명 형식으로 표시 ★★★
+      const productName = item.product_name || '-';
+      const orderName = item.order_product_name || '';
+      const displayName = orderName && orderName !== productName 
+        ? productName + ' / ' + orderName 
+        : productName;
+      
       productionTableHtml += `
         <tr>
           <td>${pcode}</td>
-          <td>${item.product_name || '-'}</td>
+          <td>${displayName}</td>
           <td style="text-align:right;">${formatNumber(item.quantity || item.production_qty || 0)}</td>
           <td style="text-align:center;">${expiryDate}</td>
           <td style="text-align:center;">${lotNo}</td>

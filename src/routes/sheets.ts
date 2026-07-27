@@ -2705,13 +2705,22 @@ sheets.get('/v2/output/production-report', async (c) => {
       }
     }
     
-    // 3. 제품마스터에서 소비기한 정보 조회 (SSOT)
+    // 3. 제품마스터에서 소비기한 + 발주상품명 정보 조회 (SSOT)
     const productMaster = await service.getProductMaster();
     const expiryMap = new Map<string, number>();
+    // ★★★ v3.6.136: 발주상품명 맵 추가 (생산일보 PDF 표시용) ★★★
+    const orderNameMap = new Map<string, string>();
     
     for (const pm of productMaster) {
       const key = `${pm.product_code}|${pm.channel || ''}`;
       expiryMap.set(key, pm.expiry_days || 24);
+      // ★ 발주상품명 저장 (채널별 + 기본)
+      if (pm.order_product_name) {
+        orderNameMap.set(key, pm.order_product_name);
+        if (!orderNameMap.has(pm.product_code)) {
+          orderNameMap.set(pm.product_code, pm.order_product_name);
+        }
+      }
       if (!expiryMap.has(pm.product_code)) {
         expiryMap.set(pm.product_code, pm.expiry_days || 24);
       }
@@ -2734,10 +2743,17 @@ sheets.get('/v2/output/production-report', async (c) => {
                         || expiryMap.get(prod.product_code) 
                         || 24;
 
+        // ★★★ v3.6.136: 발주상품명 조회 (채널별 우선) ★★★
+        const orderProductName = orderNameMap.get(`${prod.product_code}|${channel}`) 
+                              || orderNameMap.get(prod.product_code) 
+                              || '';
+        
         const item: any = {
           prod_date: prod.prod_date,
           product_code: prod.product_code,
           product_name: prod.product_name,
+          // ★★★ v3.6.136: 발주상품명 추가 (생산일보 PDF에서 '제품명 / 발주상품명' 형식 표시용) ★★★
+          order_product_name: orderProductName,
           quantity: prod.quantity,  // ★ 현재는 동일 수량 (추후 채널별 수량 분리 필요)
           lot_number: prod.lot_number,
           channel: channel,

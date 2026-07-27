@@ -1787,15 +1787,28 @@ sheets.get('/v2/output/material-usage', async (c) => {
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
     
-    // ★★★ v3.6.101: BOM마스터에서 원료명 맵 먼저 조회 ★★★
+    // ★★★ v3.6.137: 품목마스터에서 원료명 맵 조회 (SSOT - 가장 정확한 원료명 소스) ★★★
+    // 품목마스터 구조: A=품목코드, B=품목명, C=카테고리, D=단위, E=안전재고, F=유통기한일수
+    const itemMasterData = await service.readSheet('품목마스터', 'A2:B');
+    const itemNameMap = new Map<string, string>();
+    itemMasterData.forEach(row => {
+      const code = row[0]?.toString().trim();
+      const name = row[1]?.toString().trim();
+      if (code && name) {
+        itemNameMap.set(code, name);
+      }
+    });
+    console.log(`[material-usage] 품목마스터에서 ${itemNameMap.size}개 품목명 로드`);
+    
+    // ★★★ BOM마스터에서도 원료명 조회 (품목마스터에 없는 경우 백업용) ★★★
     // BOM마스터 구조: A:제품코드, B:제품명, C:원료코드, D:원료명, E:수량, F:단위
     const bomMasterData = await service.readSheet('BOM마스터', 'C2:D');
-    const bomNameMap = new Map<string, string>();
     bomMasterData.forEach(row => {
       const code = row[0]?.toString().trim();  // C열: 원료코드
       const name = row[1]?.toString().trim();  // D열: 원료명
-      if (code && name) {
-        bomNameMap.set(code, name);
+      // 품목마스터에 없는 경우에만 BOM마스터에서 추가
+      if (code && name && !itemNameMap.has(code)) {
+        itemNameMap.set(code, name);
       }
     });
     
@@ -1822,9 +1835,9 @@ sheets.get('/v2/output/material-usage', async (c) => {
       const itemCode = row[1] || '';
       let itemName = row[2] || '';
       
-      // ★★★ v3.6.101: 원료명이 비었거나 수식이면 BOM마스터에서 조회 ★★★
-      if (!itemName || itemName.startsWith('=') || itemName.includes('VLOOKUP')) {
-        itemName = bomNameMap.get(itemCode) || '';
+      // ★★★ v3.6.137: 원료명이 비었거나 수식이면 품목마스터에서 조회 (SSOT) ★★★
+      if (!itemName || itemName.startsWith('=') || itemName.includes('VLOOKUP') || itemName.includes('#REF')) {
+        itemName = itemNameMap.get(itemCode) || '';
       }
       
       // ★★★ 이원료(SF001~SF010): 고정된 원료명 사용 ★★★

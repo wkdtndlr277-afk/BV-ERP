@@ -466,7 +466,20 @@ export class GoogleSheetsService {
   }
 
   // 일별수불부 조회 (시트에서 계산된 결과)
+  // ★★★ v3.6.137: 품목마스터에서 품목명 조회하여 수식/빈값 문제 해결 ★★★
   async getDailyStockReport(date: string): Promise<any[]> {
+    // 1. 품목마스터에서 품목명 맵 먼저 조회 (SSOT)
+    const itemMasterData = await this.readSheet('품목마스터', 'A2:B');
+    const itemNameMap = new Map<string, string>();
+    itemMasterData.forEach(row => {
+      const code = row[0]?.toString().trim();
+      const name = row[1]?.toString().trim();
+      if (code && name) {
+        itemNameMap.set(code, name);
+      }
+    });
+    
+    // 2. 일별수불부 데이터 조회
     const data = await this.readSheet('일별수불부', 'A2:H');
     
     // ★ v3.5.68: 품목코드순 정렬 헬퍼 (R002 < R012 < R102 자연스러운 정렬)
@@ -490,16 +503,26 @@ export class GoogleSheetsService {
         const rowDate = row[0]?.toString().replace(/^'/, '') || '';
         return rowDate === cleanDate;
       })
-      .map(row => ({
-        date: row[0]?.toString().replace(/^'/, '') || '',
-        item_code: row[1],
-        item_name: row[2],
-        prev_stock: parseFloat(row[3]) || 0,
-        inbound_qty: parseFloat(row[4]) || 0,
-        used_qty: parseFloat(row[5]) || 0,
-        current_stock: parseFloat(row[6]) || 0,
-        unit: row[7]
-      }))
+      .map(row => {
+        const itemCode = row[1]?.toString().trim() || '';
+        let itemName = row[2]?.toString().trim() || '';
+        
+        // ★★★ v3.6.137: 품목명이 비었거나 수식이면 품목마스터에서 조회 ★★★
+        if (!itemName || itemName.startsWith('=') || itemName.includes('VLOOKUP') || itemName.includes('#REF')) {
+          itemName = itemNameMap.get(itemCode) || itemCode;  // 없으면 품목코드 표시
+        }
+        
+        return {
+          date: row[0]?.toString().replace(/^'/, '') || '',
+          item_code: itemCode,
+          item_name: itemName,
+          prev_stock: parseFloat(row[3]) || 0,
+          inbound_qty: parseFloat(row[4]) || 0,
+          used_qty: parseFloat(row[5]) || 0,
+          current_stock: parseFloat(row[6]) || 0,
+          unit: row[7]
+        };
+      })
       .sort(sortByItemCode);  // 품목코드순 정렬
   }
 

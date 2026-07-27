@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.143';
-const APP_BUILD = '20260728-2';
+const APP_VERSION = '3.6.144';
+const APP_BUILD = '20260728-3';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -54277,11 +54277,18 @@ async function loadProcessDashboard() {
 }
 
 // 공정명 변환
+// ★★★ v3.6.144: 공정명 변환 - 폴딩, 1차발효실전온도 추가 ★★★
 function getProcessName(code) {
   const names = {
     'RF_IN': '저온숙성 IN',
     'RF_OUT': '저온숙성 OUT',
     'PROOF_1ST': '1차 발효',
+    'FOLDING_1': '①폴딩',
+    'FOLDING_2': '②폴딩',
+    'FOLDING_3': '③폴딩',
+    'FOLDING_4': '④폴딩',
+    'FOLDING_5': '⑤폴딩',
+    'PRE_PROOF_TEMP': '1차발효실전온도',
     'DIVIDING': '분할',
     'REST': '휴지',
     'SHAPING': '성형',
@@ -54664,6 +54671,17 @@ async function showAddRoutingModal() {
   } catch (e) {
     console.error('Products load error:', e);
   }
+  
+  // ★★★ v3.6.144: 중복 제품 제거 (product_code 기준) ★★★
+  const uniqueProducts = [];
+  const seenCodes = new Set();
+  for (const p of products) {
+    if (!seenCodes.has(p.product_code)) {
+      seenCodes.add(p.product_code);
+      uniqueProducts.push(p);
+    }
+  }
+  products = uniqueProducts;
   
   const productOptions = products.map(p => 
     `<option value="${p.product_code}" data-name="${p.product_name}">${p.product_name} (${p.product_code})</option>`

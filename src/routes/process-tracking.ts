@@ -115,17 +115,24 @@ app.post('/init-db', async (c) => {
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_routing_product ON product_process_routing(product_code)`).run();
 
     // 기본 공정 데이터 삽입
+    // ★★★ v3.6.144: 공정 마스터 확장 - 폴딩, 1차발효실전온도 등 추가 ★★★
     const defaultProcesses = [
       { code: 'RF_IN', name: '저온숙성 IN', name_en: 'RF PUT IN', order: 1, minutes: 480 },
       { code: 'RF_OUT', name: '저온숙성 OUT', name_en: 'RF TAKE OUT', order: 2, minutes: 0 },
       { code: 'PROOF_1ST', name: '1차 발효', name_en: '1st Proof', order: 3, minutes: 60, optional: 1 },
-      { code: 'DIVIDING', name: '분할', name_en: 'Dividing', order: 4, minutes: 30 },
-      { code: 'REST', name: '휴지', name_en: 'Rest', order: 5, minutes: 20 },
-      { code: 'SHAPING', name: '성형', name_en: 'Shaping', order: 6, minutes: 30 },
-      { code: 'PROOF_2ND', name: '2차 발효', name_en: '2nd Proof', order: 7, minutes: 60 },
-      { code: 'BAKING', name: '굽기', name_en: 'Baking', order: 8, minutes: 25 },
-      { code: 'COOLING', name: '냉각', name_en: 'Cooling', order: 9, minutes: 30 },
-      { code: 'PACKING', name: '포장', name_en: 'Packing', order: 10, minutes: 20 }
+      { code: 'FOLDING_1', name: '①폴딩', name_en: 'Folding 1', order: 4, minutes: 5, optional: 1 },
+      { code: 'FOLDING_2', name: '②폴딩', name_en: 'Folding 2', order: 5, minutes: 5, optional: 1 },
+      { code: 'FOLDING_3', name: '③폴딩', name_en: 'Folding 3', order: 6, minutes: 5, optional: 1 },
+      { code: 'FOLDING_4', name: '④폴딩', name_en: 'Folding 4', order: 7, minutes: 5, optional: 1 },
+      { code: 'FOLDING_5', name: '⑤폴딩', name_en: 'Folding 5', order: 8, minutes: 5, optional: 1 },
+      { code: 'PRE_PROOF_TEMP', name: '1차발효실전온도', name_en: 'Pre-Proof Temp Check', order: 9, minutes: 2, optional: 1 },
+      { code: 'DIVIDING', name: '분할', name_en: 'Dividing', order: 10, minutes: 30 },
+      { code: 'REST', name: '휴지', name_en: 'Rest', order: 11, minutes: 20 },
+      { code: 'SHAPING', name: '성형', name_en: 'Molding/Shaping', order: 12, minutes: 30 },
+      { code: 'PROOF_2ND', name: '2차 발효', name_en: '2nd Proof', order: 13, minutes: 60 },
+      { code: 'BAKING', name: '굽기', name_en: 'Baking', order: 14, minutes: 25 },
+      { code: 'COOLING', name: '냉각', name_en: 'Cooling', order: 15, minutes: 30 },
+      { code: 'PACKING', name: '포장', name_en: 'Packing', order: 16, minutes: 20 }
     ];
 
     for (const p of defaultProcesses) {

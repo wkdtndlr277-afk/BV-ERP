@@ -353,11 +353,18 @@
         }
 
         // 공정명 한글 변환
+        // ★★★ v3.6.144: 공정명 변환 - 폴딩, 1차발효실전온도 추가 ★★★
         function getProcessDisplayName(code) {
             const names = {
                 'RF_IN': '저온숙성 IN',
                 'RF_OUT': '저온숙성 OUT',
                 'PROOF_1ST': '1차 발효',
+                'FOLDING_1': '①폴딩',
+                'FOLDING_2': '②폴딩',
+                'FOLDING_3': '③폴딩',
+                'FOLDING_4': '④폴딩',
+                'FOLDING_5': '⑤폴딩',
+                'PRE_PROOF_TEMP': '1차발효실전온도',
                 'DIVIDING': '분할',
                 'REST': '휴지',
                 'SHAPING': '성형',

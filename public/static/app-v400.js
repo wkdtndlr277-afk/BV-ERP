@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.136';
-const APP_BUILD = '20260727-1';
+const APP_VERSION = '3.6.142';
+const APP_BUILD = '20260728-1';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -1400,7 +1400,7 @@ async function renderDashboard() {
   
   try {
     // ★★★ v3.6.92: 대시보드 데이터 + 안전재고 현황 + 오늘 원료 사용내역 동시 로드 ★★★
-    const today = new Date().toISOString().split('T')[0];
+    const today = getLocalDateString();
     const [result, safetyStockResult, todayUsageResult] = await Promise.all([
       api('/dashboard'),
       api('/dashboard/safety-stock-status?lead_days=3&days=30'),
@@ -12288,7 +12288,7 @@ function exportSuppliersToExcel() {
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   link.href = url;
   link.download = `거래처목록_${today}.csv`;
   document.body.appendChild(link);
@@ -18685,7 +18685,7 @@ async function loadClosingStatus() {
   
   if (!container) return;
   
-  const date = datePicker?.value || new Date().toISOString().split('T')[0];
+  const date = datePicker?.value || getLocalDateString();
   if (dateDisplay) dateDisplay.textContent = date;
   
   container.innerHTML = `
@@ -19076,7 +19076,7 @@ function getChannelBadgeClass(channel) {
 // ========== 생산마감 일괄 출력 기능 ==========
 function printProductionClosing() {
   const cache = window.closingStatusCache;
-  const date = cache.date || new Date().toISOString().split('T')[0];
+  const date = cache.date || getLocalDateString();
   
   if (!cache.dailyReport || cache.dailyReport.length === 0) {
     showToast('출력할 생산 데이터가 없습니다', 'warning');
@@ -19845,7 +19845,7 @@ async function finalApproveProduction() {
   
   if (!confirm(`${items.length}개 품목을 최종 승인하고 DB에 반영하시겠습니까?\\n\\n이 작업은 되돌릴 수 없습니다.`)) return;
   
-  const prodDate = document.getElementById('order-prod-date')?.value || document.getElementById('closing-date-picker')?.value || new Date().toISOString().split('T')[0];
+  const prodDate = document.getElementById('order-prod-date')?.value || document.getElementById('closing-date-picker')?.value || getLocalDateString();
   
   // 버튼 비활성화
   const btn = document.getElementById('btn-final-approve');
@@ -23440,7 +23440,7 @@ async function validateWithBackendDB() {
     return;
   }
   
-  const prodDate = document.getElementById('order-prod-date')?.value || new Date().toISOString().split('T')[0];
+  const prodDate = document.getElementById('order-prod-date')?.value || getLocalDateString();
   const channel = window.orderUploadData.channel;
   const items = window.orderUploadData.items;
   
@@ -24914,7 +24914,7 @@ async function registerProductionFromDailyReport() {
   
   try {
     // 생산일 (리포트 날짜 또는 오늘)
-    const productionDate = reportData.report_date || new Date().toISOString().split('T')[0];
+    const productionDate = reportData.report_date || getLocalDateString();
     
     // 일괄 생산 등록 API 호출 (소비기한, 판매처, 바코드, box_quantity 포함)
     const allItems = matchedItems.map(item => ({
@@ -32950,7 +32950,7 @@ function renderBarcodeProductionPlanResult(data, fileName) {
       <!-- 생산일 선택 -->
       <div class="flex items-center gap-3 pt-2 border-t">
         <label class="text-sm font-medium text-gray-700">생산예정일:</label>
-        <input type="date" id="production-plan-date" value="${new Date().toISOString().split('T')[0]}" 
+        <input type="date" id="production-plan-date" value="${getLocalDateString()}" 
                class="border rounded-lg px-3 py-1.5 text-sm"
                onchange="updateProductionPlanExpiryDates()">
         <span class="text-xs text-gray-500">(소비기한 계산 기준일)</span>
@@ -33220,7 +33220,7 @@ function printProductionPlanReport() {
   }
   
   const dateInput = document.getElementById('production-plan-date');
-  const planDate = dateInput ? dateInput.value : new Date().toISOString().split('T')[0];
+  const planDate = dateInput ? dateInput.value : getLocalDateString();
   const formattedDate = planDate.replace(/-/g, '.');
   
   // 생산명별로 그룹화
@@ -33540,7 +33540,7 @@ async function convertToProductionReport() {
   
   // 생산일 가져오기
   const dateInput = document.getElementById('production-plan-date');
-  const reportDate = dateInput ? dateInput.value : new Date().toISOString().split('T')[0];
+  const reportDate = dateInput ? dateInput.value : getLocalDateString();
   
   if (!reportDate) {
     showToast('생산일을 선택해주세요', 'warning');
@@ -33926,7 +33926,7 @@ async function loadSFLots() {
           </thead>
           <tbody class="divide-y divide-gray-200">
             ${data.data.map(lot => {
-              const today = new Date().toISOString().split('T')[0];
+              const today = getLocalDateString();
               const isExpired = lot.expiry_date < today;
               const isNearExpiry = !isExpired && lot.expiry_date <= new Date(Date.now() + 86400000).toISOString().split('T')[0];
               let statusBadge = '<span class="px-2 py-1 rounded-full text-xs bg-green-100 text-green-800">정상</span>';
@@ -34008,7 +34008,7 @@ async function loadSFHistory() {
 // 반제품 생산 모달
 function showSemiFinishedProductionModal(itemCode = '') {
   const items = window.sfStockData || [];
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   
   const modalContent = `
     <div class="space-y-4">
@@ -34911,7 +34911,7 @@ function downloadProductCosts() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `제품원가_${new Date().toISOString().split('T')[0]}.csv`;
+  a.download = `제품원가_${getLocalDateString()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -35218,7 +35218,7 @@ async function printCostSheet(sheetId) {
             </div>
             <div class="info-item">
               <div class="info-label">작성일자</div>
-              <div class="info-value">${sheet.created_date || new Date().toISOString().split('T')[0]}</div>
+              <div class="info-value">${sheet.created_date || getLocalDateString()}</div>
             </div>
           </div>
           
@@ -35667,7 +35667,7 @@ async function exportCostSheetExcel(sheetId) {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `원가계산서_${sheet.product_code}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `원가계산서_${sheet.product_code}_${getLocalDateString()}.csv`;
     link.click();
     URL.revokeObjectURL(link.href);
     
@@ -35703,7 +35703,7 @@ window.exportCostSheetExcel = exportCostSheetExcel;
 
 async function renderInboundQuery() {
   const content = document.getElementById('page-content');
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   // 기본값: 오늘부터 7일 전까지
   const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   
@@ -36317,7 +36317,7 @@ function printAllInspections() {
 
 async function renderStockLedger() {
   const content = document.getElementById('page-content');
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   const monthStart = today.substring(0, 8) + '01';
   
   content.innerHTML = `
@@ -37423,7 +37423,7 @@ function renderLedgerTable(data, isSampleView = false) {
     return;
   }
   
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   const sampleLabel = isSampleView ? '<span class="ml-2 px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs">샘플</span>' : '';
   
   // 원료/부자재: LOT잔량 기준 / 제품: 현재고 기준
@@ -37504,7 +37504,7 @@ function renderLedgerTable(data, isSampleView = false) {
 
 // 재고 조정 모달 표시
 function showStockAdjustModal(itemCode, itemName, currentStock, unit) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   
   const content = `
     <div class="space-y-4">
@@ -41629,7 +41629,7 @@ async function exportAuditLogs() {
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `audit_logs_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = `audit_logs_${getLocalDateString()}.csv`;
     link.click();
     
     showToast('로그가 다운로드되었습니다', 'success');
@@ -42147,11 +42147,11 @@ async function loadMaterialInventory() {
   const dateInput = document.getElementById('material-inventory-date');
   const search = searchInput?.value?.trim() || '';
   
-  // 날짜 기본값 설정 (오늘)
+  // ★★★ v3.6.142: 날짜 기본값 설정 (KST 시간대 적용) ★★★
   if (dateInput && !dateInput.value) {
-    dateInput.value = new Date().toISOString().split('T')[0];
+    dateInput.value = getLocalDateString();
   }
-  const selectedDate = dateInput?.value || new Date().toISOString().split('T')[0];
+  const selectedDate = dateInput?.value || getLocalDateString();
   
   if (!tbody) return;
   
@@ -43045,7 +43045,7 @@ async function loadTodayTransactions() {
   try {
     // 원료 재고 현황의 날짜와 동일하게 사용
     const dateInput = document.getElementById('material-inventory-date');
-    const targetDate = dateInput?.value || new Date().toISOString().split('T')[0];
+    const targetDate = dateInput?.value || getLocalDateString();
     
     const response = await axios.get(`${API_BASE}/barcode/today-transactions?date=${targetDate}`);
     const result = response.data;
@@ -46325,7 +46325,7 @@ function taskRenderDeptLegend() {
 
 // 당일 업무현황 대시보드 로드
 async function taskLoadDailyDashboard() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   document.getElementById('task-today-date').textContent = today.replace(/-/g, '.');
   
   try {
@@ -46408,7 +46408,7 @@ async function taskRenderCalendar() {
   
   const firstDay = new Date(year, month, 1).getDay();
   const lastDay = new Date(year, month + 1, 0).getDate();
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = getLocalDateString();
   
   let html = '';
   
@@ -46737,7 +46737,7 @@ function taskShowDayTasks(dateStr) {
 }
 
 function showTaskCreateModal(defaultDate) {
-  const today = defaultDate || new Date().toISOString().split('T')[0];
+  const today = defaultDate || getLocalDateString();
   
   showModal('새 업무지시/공지 등록', `
     <div class="space-y-4 p-4">
@@ -47696,12 +47696,12 @@ window.viewDailyReports = viewDailyReports;
 // ========================================
 let dailyReportItems = [];
 let dailyReportDeptId = null;
-let dailyReportDate = new Date().toISOString().split('T')[0];
+let dailyReportDate = getLocalDateString();
 let dailyReportTasks = [];
 
 // 일일보고 작성 모달 (전체)
 async function showTaskDailyReportModal() {
-  dailyReportDate = new Date().toISOString().split('T')[0];
+  dailyReportDate = getLocalDateString();
   
   // 부서 선택 모달
   showModal('일일업무 보고', `
@@ -47942,7 +47942,7 @@ async function submitDailyReport() {
 
 // 오늘 일일보고 현황 보기
 async function viewDailyReports() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   
   try {
     const res = await axios.get('/api/task/daily-dashboard?date=' + today);
@@ -49256,7 +49256,7 @@ window.updateAllBarcodeExpiryFromValidation = updateAllBarcodeExpiryFromValidati
 // ★ v3.5.89: 판매처 입력 추가, 기타 발주서 텍스트 붙여넣기 탭 (GS, 온도감, CJ)
 function renderOrderUpload() {
   const content = document.getElementById('page-content');
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   
   content.innerHTML = `
     <div class="space-y-6">
@@ -50895,7 +50895,7 @@ window.handleOrderJsonUpload = handleOrderJsonUpload;
 
 async function renderOrderList() {
   const content = document.getElementById('page-content');
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   
   content.innerHTML = `
     <div class="space-y-6">
@@ -51435,7 +51435,7 @@ window.initSheets = initSheets;
 
 function renderDailyReportPdf() {
   const content = document.getElementById('page-content');
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   
   content.innerHTML = `
     <div class="space-y-6">
@@ -53134,7 +53134,7 @@ let sfItemsMap = {}; // SF 코드 → 이름 매핑
 
 async function renderLevainMonitor() {
   const content = document.getElementById('page-content');
-  const today = new Date().toISOString().split('T')[0];
+  const today = getLocalDateString();
   const monthStart = today.substring(0, 7) + '-01';
   
   content.innerHTML = `
@@ -53805,7 +53805,7 @@ function showLevainForm(id = null) {
   
   form.reset();
   document.getElementById('levain-id').value = '';
-  document.getElementById('levain-inspection-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('levain-inspection-date').value = getLocalDateString();
   
   if (id) {
     title.textContent = '검사 수정';

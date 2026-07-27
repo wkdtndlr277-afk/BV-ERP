@@ -51537,7 +51537,7 @@ async function generateDailyReportPdf() {
               <thead class="bg-gray-100 sticky top-0">
                 <tr>
                   <th class="px-3 py-2 text-left">제품코드</th>
-                  <th class="px-3 py-2 text-left">제품명</th>
+                  <th class="px-3 py-2 text-left">생산명</th>
                   <th class="px-3 py-2 text-left">발주상품명</th>
                   <th class="px-3 py-2 text-right">생산(EA)</th>
                   <th class="px-3 py-2 text-left">제품LOT</th>
@@ -51744,7 +51744,7 @@ async function printDailyReportPdf(date) {
         <thead>
           <tr style="background:#e0e0e0;">
             <th>제품코드</th>
-            <th>제품명</th>
+            <th>생산명</th>
             <th>발주상품명</th>
             <th style="text-align:right;">생산(EA)</th>
             <th style="text-align:center;">소비기한</th>

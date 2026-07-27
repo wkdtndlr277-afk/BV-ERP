@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>공정 스캔 - 본비반트</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * { -webkit-tap-highlight-color: transparent; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overscroll-behavior: none;
+        }
+        .scan-input {
+            font-size: 20px;
+            padding: 20px;
+            border: 3px solid #10b981;
+            border-radius: 16px;
+            text-align: center;
+            font-weight: bold;
+            letter-spacing: 2px;
+        }
+        .scan-input:focus {
+            outline: none;
+            border-color: #059669;
+            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.3);
+        }
+        .timer-display {
+            font-family: 'Courier New', monospace;
+            font-size: 64px;
+            font-weight: bold;
+            letter-spacing: 4px;
+        }
+        .timer-small {
+            font-size: 14px;
+            color: #6b7280;
+        }
+        .end-btn {
+            padding: 24px 48px;
+            border-radius: 16px;
+            font-size: 24px;
+            font-weight: bold;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .end-btn:active {
+            transform: scale(0.95);
+        }
+        .process-step {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
+        .process-step.completed {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .process-step.current {
+            background: #fef3c7;
+            color: #92400e;
+            border: 2px solid #f59e0b;
+        }
+        .process-step.pending {
+            background: #f3f4f6;
+            color: #6b7280;
+        }
+        .toast {
+            position: fixed;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 16px 32px;
+            border-radius: 12px;
+            color: white;
+            font-weight: 600;
+            z-index: 1000;
+            animation: slideUp 0.3s ease;
+        }
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+            to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .status-normal { color: #10b981; }
+        .status-warning { color: #f59e0b; }
+        .status-delayed { color: #ef4444; }
+        .status-critical { color: #dc2626; animation: blink 1s infinite; }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-emerald-600 to-green-600 text-white p-4 sticky top-0 z-50">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <i class="fas fa-industry text-2xl"></i>
+                <div>
+                    <h1 class="text-lg font-bold">공정 스캔</h1>
+                    <p class="text-xs text-emerald-100">본비반트 생산공정 관리</p>
+                </div>
+            </div>
+            <a href="/" class="p-2 bg-white/20 rounded-lg">
+                <i class="fas fa-home text-xl"></i>
+            </a>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="p-4 pb-32">
+        <!-- 스캔 입력 -->
+        <div id="scanSection" class="bg-white rounded-2xl p-6 shadow-lg mb-4">
+            <label class="block text-sm font-medium text-gray-600 mb-3">
+                <i class="fas fa-barcode mr-1"></i> 배치 바코드 스캔
+            </label>
+            <input type="text" id="barcodeInput" class="scan-input w-full" 
+                   placeholder="바코드를 스캔하세요"
+                   autocomplete="off"
+                   autofocus>
+            <p class="text-xs text-gray-400 mt-3 text-center">
+                <i class="fas fa-info-circle mr-1"></i>
+                배치 바코드를 스캔하면 공정이 자동으로 시작됩니다
+            </p>
+        </div>
+
+        <!-- 현재 배치 정보 (스캔 후 표시) -->
+        <div id="batchInfo" class="hidden">
+            <!-- 배치 기본 정보 -->
+            <div class="bg-white rounded-2xl p-4 shadow-lg mb-4">
+                <div class="flex justify-between items-start mb-3">
+                    <div>
+                        <span class="text-xs bg-emerald-100 text-emerald-700 px-2 py-1 rounded-full font-medium">
+                            <i class="fas fa-box mr-1"></i> 배치
+                        </span>
+                        <h2 id="productName" class="text-xl font-bold text-gray-800 mt-2">제품명</h2>
+                        <p id="batchCode" class="text-sm text-gray-500">BATCH-00000000-000</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs text-gray-500">배치량</p>
+                        <p id="batchQuantity" class="text-lg font-bold text-emerald-600">-</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 현재 공정 상태 (진행 중일 때) -->
+            <div id="currentProcessSection" class="hidden">
+                <div class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-6 shadow-lg mb-4 border-2 border-amber-300">
+                    <div class="text-center mb-4">
+                        <span class="text-sm text-amber-700 font-medium">
+                            <i class="fas fa-play-circle mr-1 pulse"></i> 진행 중
+                        </span>
+                        <h3 id="currentProcessName" class="text-2xl font-bold text-amber-800 mt-1">공정명</h3>
+                    </div>
+                    
+                    <!-- 타이머 -->
+                    <div class="text-center mb-6">
+                        <div id="timerDisplay" class="timer-display text-amber-600">00:00:00</div>
+                        <p class="timer-small mt-2">
+                            표준시간: <span id="standardTime">-</span>분
+                        </p>
+                        <p id="statusMessage" class="text-sm font-medium mt-2 status-normal">
+                            정상 진행 중
+                        </p>
+                    </div>
+                    
+                    <!-- 종료 버튼 -->
+                    <button id="endProcessBtn" onclick="endProcess()" class="end-btn bg-red-500 text-white w-full hover:bg-red-600">
+                        <i class="fas fa-stop-circle mr-2"></i> 공정 종료
+                    </button>
+                </div>
+            </div>
+
+            <!-- 다음 공정 대기 (공정 사이) -->
+            <div id="nextProcessSection" class="hidden">
+                <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl p-6 shadow-lg mb-4 border-2 border-blue-300">
+                    <div class="text-center mb-4">
+                        <span class="text-sm text-blue-700 font-medium">
+                            <i class="fas fa-pause-circle mr-1"></i> 다음 공정 대기
+                        </span>
+                        <h3 id="nextProcessName" class="text-2xl font-bold text-blue-800 mt-1">공정명</h3>
+                        <p class="text-sm text-blue-600 mt-1">
+                            표준시간: <span id="nextStandardTime">-</span>분
+                        </p>
+                    </div>
+                    
+                    <!-- 시작 버튼 -->
+                    <button id="startProcessBtn" onclick="startProcess()" class="end-btn bg-emerald-500 text-white w-full hover:bg-emerald-600">
+                        <i class="fas fa-play-circle mr-2"></i> 공정 시작
+                    </button>
+                </div>
+            </div>
+
+            <!-- 모든 공정 완료 -->
+            <div id="completedSection" class="hidden">
+                <div class="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl p-6 shadow-lg mb-4 border-2 border-green-300">
+                    <div class="text-center">
+                        <i class="fas fa-check-circle text-6xl text-green-500 mb-4"></i>
+                        <h3 class="text-2xl font-bold text-green-800">모든 공정 완료!</h3>
+                        <p class="text-green-600 mt-2">이 배치의 모든 공정이 완료되었습니다.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 공정 목록 -->
+            <div class="bg-white rounded-2xl p-4 shadow-lg">
+                <h4 class="text-sm font-medium text-gray-600 mb-3">
+                    <i class="fas fa-list-ol mr-1"></i> 공정 진행 현황
+                </h4>
+                <div id="processList">
+                    <!-- 동적으로 생성 -->
+                </div>
+            </div>
+
+            <!-- 새 배치 스캔 -->
+            <button onclick="resetScan()" class="mt-4 w-full py-4 bg-gray-200 text-gray-700 rounded-xl font-medium">
+                <i class="fas fa-redo mr-2"></i> 다른 배치 스캔
+            </button>
+        </div>
+    </main>
+
+    <script>
+        const API_BASE = '/api/process-tracking';
+        let currentBatch = null;
+        let currentProcess = null;
+        let timerInterval = null;
+        let startTime = null;
+
+        // 바코드 입력 이벤트
+        document.getElementById('barcodeInput').addEventListener('keypress', async function(e) {
+            if (e.key === 'Enter') {
+                const barcode = this.value.trim();
+                if (barcode) {
+                    await scanBarcode(barcode);
+                    this.value = '';
+                }
+            }
+        });
+
+        // 바코드 스캔 처리
+        async function scanBarcode(barcode) {
+            try {
+                showLoading(true);
+                
+                // 배치 정보 조회
+                const response = await fetch(`${API_BASE}/batch/${barcode}`);
+                const result = await response.json();
+                
+                if (!result.success) {
+                    showToast(result.error || '배치를 찾을 수 없습니다', 'error');
+                    return;
+                }
+                
+                currentBatch = result.data;
+                displayBatchInfo();
+                
+            } catch (error) {
+                console.error('Scan error:', error);
+                showToast('스캔 오류가 발생했습니다', 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // 배치 정보 표시
+        function displayBatchInfo() {
+            if (!currentBatch) return;
+            
+            const { batch, processes, current_process, next_process } = currentBatch;
+            
+            // 기본 정보
+            document.getElementById('productName').textContent = batch.product_name;
+            document.getElementById('batchCode').textContent = batch.batch_code;
+            document.getElementById('batchQuantity').textContent = 
+                batch.batch_quantity ? `${batch.batch_quantity} ${batch.batch_unit}` : '-';
+            
+            // 공정 목록 표시
+            renderProcessList(processes);
+            
+            // 상태별 섹션 표시
+            document.getElementById('scanSection').classList.add('hidden');
+            document.getElementById('batchInfo').classList.remove('hidden');
+            document.getElementById('currentProcessSection').classList.add('hidden');
+            document.getElementById('nextProcessSection').classList.add('hidden');
+            document.getElementById('completedSection').classList.add('hidden');
+            
+            if (current_process) {
+                // 진행 중인 공정이 있음
+                currentProcess = current_process;
+                document.getElementById('currentProcessName').textContent = getProcessDisplayName(current_process.process_code);
+                document.getElementById('standardTime').textContent = current_process.standard_minutes;
+                document.getElementById('currentProcessSection').classList.remove('hidden');
+                
+                // 타이머 시작
+                startTime = new Date(current_process.start_time);
+                startTimer();
+            } else if (next_process) {
+                // 다음 공정 대기
+                document.getElementById('nextProcessName').textContent = getProcessDisplayName(next_process.process_code);
+                document.getElementById('nextStandardTime').textContent = next_process.standard_minutes;
+                document.getElementById('nextProcessSection').classList.remove('hidden');
+            } else {
+                // 모든 공정 완료
+                document.getElementById('completedSection').classList.remove('hidden');
+            }
+        }
+
+        // 공정 목록 렌더링
+        function renderProcessList(processes) {
+            const container = document.getElementById('processList');
+            container.innerHTML = processes.map(p => {
+                let statusClass = 'pending';
+                let icon = 'far fa-circle';
+                let timeInfo = '';
+                
+                if (p.status === 'COMPLETED') {
+                    statusClass = 'completed';
+                    icon = 'fas fa-check-circle';
+                    timeInfo = `${p.actual_minutes}분 소요`;
+                } else if (p.status === 'IN_PROGRESS') {
+                    statusClass = 'current';
+                    icon = 'fas fa-play-circle pulse';
+                    timeInfo = '진행 중';
+                } else if (p.status === 'SKIPPED') {
+                    statusClass = 'pending';
+                    icon = 'fas fa-forward';
+                    timeInfo = '건너뜀';
+                }
+                
+                return `
+                    <div class="process-step ${statusClass}">
+                        <i class="${icon} text-lg mr-3"></i>
+                        <div class="flex-1">
+                            <div class="font-medium">${getProcessDisplayName(p.process_code)}</div>
+                            <div class="text-xs opacity-70">${timeInfo || `표준 ${p.standard_minutes}분`}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 공정명 한글 변환
+        function getProcessDisplayName(code) {
+            const names = {
+                'RF_IN': '저온숙성 IN',
+                'RF_OUT': '저온숙성 OUT',
+                'PROOF_1ST': '1차 발효',
+                'DIVIDING': '분할',
+                'REST': '휴지',
+                'SHAPING': '성형',
+                'PROOF_2ND': '2차 발효',
+                'BAKING': '굽기',
+                'COOLING': '냉각',
+                'PACKING': '포장'
+            };
+            return names[code] || code;
+        }
+
+        // 타이머 시작
+        function startTimer() {
+            if (timerInterval) clearInterval(timerInterval);
+            
+            timerInterval = setInterval(() => {
+                const now = new Date();
+                const elapsed = Math.floor((now - startTime) / 1000);
+                const hours = Math.floor(elapsed / 3600);
+                const minutes = Math.floor((elapsed % 3600) / 60);
+                const seconds = elapsed % 60;
+                
+                document.getElementById('timerDisplay').textContent = 
+                    `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                
+                // 상태 메시지 업데이트
+                const elapsedMinutes = elapsed / 60;
+                const standardMinutes = currentProcess?.standard_minutes || 60;
+                const ratio = elapsedMinutes / standardMinutes;
+                
+                const statusEl = document.getElementById('statusMessage');
+                const timerEl = document.getElementById('timerDisplay');
+                
+                if (ratio >= 1.5) {
+                    statusEl.textContent = '⚠️ 심각한 지연! 즉시 확인 필요';
+                    statusEl.className = 'text-sm font-medium mt-2 status-critical';
+                    timerEl.className = 'timer-display text-red-600';
+                } else if (ratio >= 1.0) {
+                    statusEl.textContent = '⏰ 표준시간 초과';
+                    statusEl.className = 'text-sm font-medium mt-2 status-delayed';
+                    timerEl.className = 'timer-display text-red-500';
+                } else if (ratio >= 0.8) {
+                    statusEl.textContent = '⚡ 표준시간 근접';
+                    statusEl.className = 'text-sm font-medium mt-2 status-warning';
+                    timerEl.className = 'timer-display text-amber-500';
+                } else {
+                    statusEl.textContent = '✓ 정상 진행 중';
+                    statusEl.className = 'text-sm font-medium mt-2 status-normal';
+                    timerEl.className = 'timer-display text-emerald-600';
+                }
+            }, 1000);
+        }
+
+        // 공정 시작
+        async function startProcess() {
+            if (!currentBatch) return;
+            
+            try {
+                showLoading(true);
+                
+                const response = await fetch(`${API_BASE}/scan/start`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        batch_code: currentBatch.batch.batch_code
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (!result.success) {
+                    showToast(result.error || '공정 시작 실패', 'error');
+                    return;
+                }
+                
+                showToast(result.message, 'success');
+                
+                // 배치 정보 다시 로드
+                await scanBarcode(currentBatch.batch.batch_code);
+                
+            } catch (error) {
+                console.error('Start error:', error);
+                showToast('공정 시작 오류', 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // 공정 종료
+        async function endProcess() {
+            if (!currentBatch) return;
+            
+            try {
+                showLoading(true);
+                
+                const response = await fetch(`${API_BASE}/scan/end`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        batch_code: currentBatch.batch.batch_code
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (!result.success) {
+                    showToast(result.error || '공정 종료 실패', 'error');
+                    return;
+                }
+                
+                // 타이머 정지
+                if (timerInterval) {
+                    clearInterval(timerInterval);
+                    timerInterval = null;
+                }
+                
+                showToast(result.message, 'success');
+                
+                // 배치 정보 다시 로드
+                await scanBarcode(currentBatch.batch.batch_code);
+                
+            } catch (error) {
+                console.error('End error:', error);
+                showToast('공정 종료 오류', 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // 스캔 초기화
+        function resetScan() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            currentBatch = null;
+            currentProcess = null;
+            startTime = null;
+            
+            document.getElementById('scanSection').classList.remove('hidden');
+            document.getElementById('batchInfo').classList.add('hidden');
+            document.getElementById('barcodeInput').focus();
+        }
+
+        // 토스트 메시지
+        function showToast(message, type = 'info') {
+            const existing = document.querySelector('.toast');
+            if (existing) existing.remove();
+            
+            const toast = document.createElement('div');
+            toast.className = `toast ${type === 'error' ? 'bg-red-500' : type === 'success' ? 'bg-green-500' : 'bg-blue-500'}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            
+            setTimeout(() => toast.remove(), 3000);
+        }
+
+        // 로딩 표시
+        function showLoading(show) {
+            let overlay = document.getElementById('loadingOverlay');
+            if (show) {
+                if (!overlay) {
+                    overlay = document.createElement('div');
+                    overlay.id = 'loadingOverlay';
+                    overlay.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-50';
+                    overlay.innerHTML = '<div class="bg-white p-6 rounded-xl"><i class="fas fa-spinner fa-spin text-3xl text-emerald-500"></i></div>';
+                    document.body.appendChild(overlay);
+                }
+            } else if (overlay) {
+                overlay.remove();
+            }
+        }
+
+        // 페이지 로드 시 입력창 포커스
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('barcodeInput').focus();
+        });
+    </script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.142';
-const APP_BUILD = '20260728-1';
+const APP_VERSION = '3.6.143';
+const APP_BUILD = '20260728-2';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -1389,6 +1389,8 @@ function renderPage(page) {
     case 'task-calendar': renderTaskCalendar(); break;
     case 'task-board': renderTaskBoard(); break;
     case 'shipment-log': renderShipmentLog(); break;
+    case 'process-tracking': renderProcessTracking(); break;
+    case 'process-routing': renderProcessRouting(); break;
     default: renderDashboard();
   }
 }
@@ -54027,3 +54029,805 @@ window.editLevainInspection = editLevainInspection;
 window.deleteLevainInspection = deleteLevainInspection;
 window.seedLevainSample = seedLevainSample;
 window.printLevainHACCP = printLevainHACCP;
+
+// ========== ★★★ v3.6.143: 공정 추적 시스템 ★★★ ==========
+
+// 공정 현황 대시보드
+async function renderProcessTracking() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-industry mr-2 text-emerald-600"></i>
+          공정 현황 대시보드
+        </h2>
+        <div class="flex items-center gap-2">
+          <button onclick="initProcessTrackingDB()" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm">
+            <i class="fas fa-database mr-1"></i> DB 초기화
+          </button>
+          <button onclick="showBatchCreateModal()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
+            <i class="fas fa-plus mr-1"></i> 배치 발행
+          </button>
+          <a href="/process-scan.html" target="_blank" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <i class="fas fa-external-link-alt mr-1"></i> 공정 스캔
+          </a>
+          <button onclick="loadProcessDashboard()" class="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
+            <i class="fas fa-sync-alt mr-1"></i> 새로고침
+          </button>
+        </div>
+      </div>
+      
+      <!-- 요약 카드 -->
+      <div id="process-summary" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white rounded-xl p-4 shadow text-center">
+          <p class="text-sm text-gray-500">대기중</p>
+          <p id="summary-created" class="text-3xl font-bold text-gray-600">-</p>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow text-center">
+          <p class="text-sm text-gray-500">진행중</p>
+          <p id="summary-progress" class="text-3xl font-bold text-amber-600">-</p>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow text-center">
+          <p class="text-sm text-gray-500">오늘 완료</p>
+          <p id="summary-completed" class="text-3xl font-bold text-emerald-600">-</p>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow text-center border-2 border-red-200">
+          <p class="text-sm text-red-500">지연 배치</p>
+          <p id="summary-delayed" class="text-3xl font-bold text-red-600">-</p>
+        </div>
+      </div>
+      
+      <!-- 공정별 현황 -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-to-r from-emerald-600 to-green-600 p-4">
+          <h3 class="text-lg font-bold text-white">
+            <i class="fas fa-tasks mr-2"></i> 공정별 진행 현황
+          </h3>
+        </div>
+        <div id="process-by-step" class="p-4 grid grid-cols-2 md:grid-cols-5 gap-3">
+          <!-- 동적 생성 -->
+        </div>
+      </div>
+      
+      <!-- 활성 배치 목록 -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-to-r from-amber-500 to-orange-500 p-4 flex items-center justify-between">
+          <h3 class="text-lg font-bold text-white">
+            <i class="fas fa-clock mr-2"></i> 진행 중인 배치
+          </h3>
+          <span class="text-white/70 text-sm">실시간 업데이트</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-4 py-3 text-left">배치코드</th>
+                <th class="px-4 py-3 text-left">제품명</th>
+                <th class="px-4 py-3 text-center">현재 공정</th>
+                <th class="px-4 py-3 text-center">경과시간</th>
+                <th class="px-4 py-3 text-center">표준시간</th>
+                <th class="px-4 py-3 text-center">상태</th>
+                <th class="px-4 py-3 text-center">진행률</th>
+              </tr>
+            </thead>
+            <tbody id="active-batch-tbody">
+              <tr><td colspan="7" class="text-center py-8 text-gray-400">데이터 로딩 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <!-- 오늘 배치 목록 -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="p-4 border-b flex items-center justify-between">
+          <h3 class="text-lg font-bold text-gray-800">
+            <i class="fas fa-list mr-2"></i> 오늘 배치 목록
+          </h3>
+          <input type="date" id="batch-date-filter" class="border rounded-lg px-3 py-2 text-sm" 
+                 value="${getLocalDateString()}" onchange="loadProcessDashboard()">
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50">
+              <tr>
+                <th class="px-4 py-3 text-left">배치코드</th>
+                <th class="px-4 py-3 text-left">제품명</th>
+                <th class="px-4 py-3 text-center">배치량</th>
+                <th class="px-4 py-3 text-center">상태</th>
+                <th class="px-4 py-3 text-center">공정 진행</th>
+                <th class="px-4 py-3 text-center">생성시간</th>
+                <th class="px-4 py-3 text-center">액션</th>
+              </tr>
+            </thead>
+            <tbody id="batch-list-tbody">
+              <tr><td colspan="7" class="text-center py-8 text-gray-400">데이터 로딩 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadProcessDashboard();
+}
+
+// 공정 대시보드 데이터 로드
+async function loadProcessDashboard() {
+  try {
+    const dateFilter = document.getElementById('batch-date-filter')?.value || getLocalDateString();
+    
+    // 요약 및 활성 배치 로드
+    const [summaryRes, activeRes, batchRes] = await Promise.all([
+      fetch('/api/process-tracking/dashboard/summary').then(r => r.json()),
+      fetch('/api/process-tracking/dashboard/active').then(r => r.json()),
+      fetch(`/api/process-tracking/batch?date=${dateFilter}`).then(r => r.json())
+    ]);
+    
+    // 요약 표시
+    if (summaryRes.success) {
+      const total = summaryRes.data.total || {};
+      document.getElementById('summary-created').textContent = total.created || 0;
+      document.getElementById('summary-progress').textContent = total.in_progress || 0;
+      document.getElementById('summary-completed').textContent = total.completed_today || 0;
+      document.getElementById('summary-delayed').textContent = summaryRes.data.delayed_count || 0;
+      
+      // 공정별 현황
+      const byProcess = summaryRes.data.by_process || [];
+      const processStepContainer = document.getElementById('process-by-step');
+      if (byProcess.length > 0) {
+        processStepContainer.innerHTML = byProcess.map(p => `
+          <div class="bg-gray-50 rounded-lg p-3 text-center">
+            <p class="text-xs text-gray-500">${getProcessName(p.process_code)}</p>
+            <p class="text-2xl font-bold text-emerald-600">${p.batch_count}</p>
+            <p class="text-xs text-gray-400">평균 ${Math.round(p.avg_elapsed || 0)}분</p>
+          </div>
+        `).join('');
+      } else {
+        processStepContainer.innerHTML = '<p class="col-span-5 text-center text-gray-400 py-4">진행 중인 공정이 없습니다</p>';
+      }
+    }
+    
+    // 활성 배치 표시
+    const activeTbody = document.getElementById('active-batch-tbody');
+    if (activeRes.success && activeRes.data.length > 0) {
+      activeTbody.innerHTML = activeRes.data.map(b => {
+        const elapsed = b.elapsed_minutes || 0;
+        const standard = b.standard_minutes || 60;
+        const ratio = elapsed / standard;
+        let statusClass = 'bg-green-100 text-green-700';
+        let statusText = '정상';
+        
+        if (ratio >= 1.5) {
+          statusClass = 'bg-red-100 text-red-700 animate-pulse';
+          statusText = '심각 지연';
+        } else if (ratio >= 1.0) {
+          statusClass = 'bg-red-100 text-red-700';
+          statusText = '지연';
+        } else if (ratio >= 0.8) {
+          statusClass = 'bg-amber-100 text-amber-700';
+          statusText = '주의';
+        }
+        
+        return `
+          <tr class="border-b hover:bg-gray-50">
+            <td class="px-4 py-3 font-mono text-sm">${b.batch_code}</td>
+            <td class="px-4 py-3 font-medium">${b.product_name}</td>
+            <td class="px-4 py-3 text-center">${getProcessName(b.current_process_code) || '-'}</td>
+            <td class="px-4 py-3 text-center font-mono">${formatMinutes(elapsed)}</td>
+            <td class="px-4 py-3 text-center text-gray-500">${standard}분</td>
+            <td class="px-4 py-3 text-center">
+              <span class="px-2 py-1 rounded-full text-xs font-medium ${statusClass}">${statusText}</span>
+            </td>
+            <td class="px-4 py-3 text-center">
+              <div class="w-full bg-gray-200 rounded-full h-2">
+                <div class="bg-emerald-500 h-2 rounded-full" style="width: ${Math.min(ratio * 100, 100)}%"></div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    } else {
+      activeTbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-400">진행 중인 배치가 없습니다</td></tr>';
+    }
+    
+    // 배치 목록 표시
+    const batchTbody = document.getElementById('batch-list-tbody');
+    if (batchRes.success && batchRes.data.length > 0) {
+      batchTbody.innerHTML = batchRes.data.map(b => {
+        const statusMap = {
+          'CREATED': '<span class="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600">대기</span>',
+          'IN_PROGRESS': '<span class="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-700">진행중</span>',
+          'COMPLETED': '<span class="px-2 py-1 rounded-full text-xs bg-green-100 text-green-700">완료</span>'
+        };
+        const progress = b.total_count > 0 ? Math.round((b.completed_count / b.total_count) * 100) : 0;
+        
+        return `
+          <tr class="border-b hover:bg-gray-50">
+            <td class="px-4 py-3 font-mono text-sm">${b.batch_code}</td>
+            <td class="px-4 py-3">${b.product_name}</td>
+            <td class="px-4 py-3 text-center">${b.batch_quantity ? b.batch_quantity + ' ' + b.batch_unit : '-'}</td>
+            <td class="px-4 py-3 text-center">${statusMap[b.status] || b.status}</td>
+            <td class="px-4 py-3 text-center">
+              <div class="flex items-center gap-2">
+                <div class="flex-1 bg-gray-200 rounded-full h-2">
+                  <div class="bg-emerald-500 h-2 rounded-full" style="width: ${progress}%"></div>
+                </div>
+                <span class="text-xs text-gray-500">${b.completed_count}/${b.total_count}</span>
+              </div>
+            </td>
+            <td class="px-4 py-3 text-center text-xs text-gray-500">${b.created_at?.slice(11, 16) || '-'}</td>
+            <td class="px-4 py-3 text-center">
+              <button onclick="showBatchHistory('${b.batch_code}')" class="px-2 py-1 text-blue-600 hover:bg-blue-50 rounded text-sm">
+                <i class="fas fa-history mr-1"></i>이력
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    } else {
+      batchTbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-400">배치가 없습니다</td></tr>';
+    }
+    
+  } catch (error) {
+    console.error('Dashboard load error:', error);
+    showToast('대시보드 로드 실패', 'error');
+  }
+}
+
+// 공정명 변환
+function getProcessName(code) {
+  const names = {
+    'RF_IN': '저온숙성 IN',
+    'RF_OUT': '저온숙성 OUT',
+    'PROOF_1ST': '1차 발효',
+    'DIVIDING': '분할',
+    'REST': '휴지',
+    'SHAPING': '성형',
+    'PROOF_2ND': '2차 발효',
+    'BAKING': '굽기',
+    'COOLING': '냉각',
+    'PACKING': '포장'
+  };
+  return names[code] || code;
+}
+
+// 분 -> 시:분 형식
+function formatMinutes(minutes) {
+  if (!minutes || minutes < 0) return '0분';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h > 0) return `${h}시간 ${m}분`;
+  return `${m}분`;
+}
+
+// 배치 발행 모달
+async function showBatchCreateModal() {
+  // 라우팅이 설정된 제품 목록 조회
+  let products = [];
+  try {
+    const res = await fetch('/api/process-tracking/routing-products');
+    const result = await res.json();
+    if (result.success) products = result.data;
+  } catch (e) {
+    console.error('Products load error:', e);
+  }
+  
+  const productOptions = products.length > 0 
+    ? products.map(p => `<option value="${p.product_code}" data-name="${p.product_name}">${p.product_name} (${p.process_count}공정)</option>`).join('')
+    : '<option value="">공정 라우팅 설정 필요</option>';
+  
+  showModal(`
+    <div class="bg-white rounded-xl max-w-lg w-full mx-4">
+      <div class="p-6 border-b">
+        <h3 class="text-xl font-bold text-gray-800">
+          <i class="fas fa-plus-circle text-emerald-600 mr-2"></i>
+          배치 발행
+        </h3>
+      </div>
+      <div class="p-6 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택</label>
+          <select id="batch-product" class="w-full border rounded-lg px-4 py-3" onchange="updateBatchProductName()">
+            <option value="">제품을 선택하세요</option>
+            ${productOptions}
+          </select>
+          ${products.length === 0 ? '<p class="text-xs text-red-500 mt-1">먼저 "공정 라우팅 설정"에서 제품별 공정을 설정하세요</p>' : ''}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">배치량 (선택)</label>
+          <div class="flex gap-2">
+            <input type="number" id="batch-quantity" class="flex-1 border rounded-lg px-4 py-3" placeholder="예: 10" step="0.1">
+            <select id="batch-unit" class="border rounded-lg px-4 py-3">
+              <option value="kg">kg</option>
+              <option value="g">g</option>
+              <option value="개">개</option>
+              <option value="판">판</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">메모 (선택)</label>
+          <input type="text" id="batch-notes" class="w-full border rounded-lg px-4 py-3" placeholder="배치 관련 메모">
+        </div>
+      </div>
+      <div class="p-6 border-t bg-gray-50 flex justify-end gap-3">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+        <button onclick="createBatch()" class="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
+          <i class="fas fa-barcode mr-1"></i> 배치 발행
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+// 배치 제품명 업데이트
+function updateBatchProductName() {
+  const select = document.getElementById('batch-product');
+  const option = select.options[select.selectedIndex];
+  window.selectedProductName = option.dataset.name || '';
+}
+
+// 배치 생성
+async function createBatch() {
+  const productCode = document.getElementById('batch-product').value;
+  const productName = window.selectedProductName || '';
+  const quantity = document.getElementById('batch-quantity').value;
+  const unit = document.getElementById('batch-unit').value;
+  const notes = document.getElementById('batch-notes').value;
+  
+  if (!productCode) {
+    showToast('제품을 선택하세요', 'warning');
+    return;
+  }
+  
+  try {
+    const res = await fetch('/api/process-tracking/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        product_code: productCode,
+        product_name: productName,
+        batch_quantity: quantity ? parseFloat(quantity) : null,
+        batch_unit: unit,
+        notes
+      })
+    });
+    
+    const result = await res.json();
+    
+    if (result.success) {
+      closeModal();
+      showToast(`배치 발행 완료: ${result.data.batch_code}`, 'success');
+      
+      // 바코드 표시
+      showModal(`
+        <div class="bg-white rounded-xl max-w-md w-full mx-4 text-center p-8">
+          <i class="fas fa-check-circle text-6xl text-emerald-500 mb-4"></i>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">배치 발행 완료!</h3>
+          <p class="text-gray-600 mb-4">${result.data.product_name}</p>
+          <div class="bg-gray-100 rounded-lg p-4 mb-4">
+            <p class="text-xs text-gray-500">배치 바코드</p>
+            <p class="text-2xl font-mono font-bold text-gray-800">${result.data.batch_code}</p>
+          </div>
+          <p class="text-sm text-gray-500 mb-6">${result.data.process_count}개 공정이 설정되었습니다</p>
+          <div class="flex gap-3 justify-center">
+            <button onclick="printBatchBarcode('${result.data.batch_code}', '${result.data.product_name}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+              <i class="fas fa-print mr-1"></i> 바코드 인쇄
+            </button>
+            <button onclick="closeModal(); loadProcessDashboard();" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+              닫기
+            </button>
+          </div>
+        </div>
+      `);
+    } else {
+      showToast(result.error || '배치 발행 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Create batch error:', error);
+    showToast('배치 발행 오류', 'error');
+  }
+}
+
+// 배치 바코드 인쇄
+function printBatchBarcode(batchCode, productName) {
+  const printWindow = window.open('', '_blank', 'width=400,height=300');
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>배치 바코드</title>
+      <style>
+        body { font-family: 'Courier New', monospace; text-align: center; padding: 20px; }
+        .barcode { font-size: 24px; font-weight: bold; margin: 20px 0; letter-spacing: 2px; }
+        .product { font-size: 16px; margin-bottom: 10px; }
+        .date { font-size: 12px; color: #666; }
+        @media print { body { padding: 0; } }
+      </style>
+    </head>
+    <body>
+      <div class="product">${productName}</div>
+      <div class="barcode">${batchCode}</div>
+      <div class="date">${getLocalDateString()}</div>
+      <script>window.onload = function() { window.print(); }</script>
+    </body>
+    </html>
+  `);
+}
+
+// 배치 이력 조회
+async function showBatchHistory(batchCode) {
+  try {
+    const res = await fetch(`/api/process-tracking/history/${batchCode}`);
+    const result = await res.json();
+    
+    if (!result.success) {
+      showToast(result.error || '이력 조회 실패', 'error');
+      return;
+    }
+    
+    const { batch, processes, events } = result.data;
+    
+    const processHtml = processes.map(p => {
+      let statusIcon = '<i class="far fa-circle text-gray-400"></i>';
+      let timeInfo = `표준 ${p.standard_minutes}분`;
+      
+      if (p.status === 'COMPLETED') {
+        statusIcon = '<i class="fas fa-check-circle text-green-500"></i>';
+        const delay = p.delay_minutes > 0 ? `<span class="text-red-500">(+${p.delay_minutes}분)</span>` : '';
+        timeInfo = `${p.actual_minutes}분 소요 ${delay}`;
+      } else if (p.status === 'IN_PROGRESS') {
+        statusIcon = '<i class="fas fa-play-circle text-amber-500 animate-pulse"></i>';
+        timeInfo = '진행 중';
+      } else if (p.status === 'SKIPPED') {
+        statusIcon = '<i class="fas fa-forward text-gray-400"></i>';
+        timeInfo = '건너뜀';
+      }
+      
+      return `
+        <div class="flex items-center gap-3 py-2 border-b">
+          ${statusIcon}
+          <div class="flex-1">
+            <p class="font-medium">${getProcessName(p.process_code)}</p>
+            <p class="text-xs text-gray-500">${timeInfo}</p>
+          </div>
+          <div class="text-right text-xs text-gray-400">
+            ${p.start_time ? p.start_time.slice(11, 16) : ''} ~ ${p.end_time ? p.end_time.slice(11, 16) : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    showModal(`
+      <div class="bg-white rounded-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-auto">
+        <div class="p-6 border-b sticky top-0 bg-white">
+          <h3 class="text-xl font-bold text-gray-800">
+            <i class="fas fa-history text-blue-600 mr-2"></i>
+            배치 이력
+          </h3>
+          <p class="text-sm text-gray-500 mt-1">${batchCode}</p>
+        </div>
+        <div class="p-6">
+          <div class="mb-4 p-4 bg-gray-50 rounded-lg">
+            <p class="text-lg font-bold">${batch.product_name}</p>
+            <p class="text-sm text-gray-500">${batch.batch_quantity ? batch.batch_quantity + ' ' + batch.batch_unit : ''}</p>
+          </div>
+          <h4 class="text-sm font-medium text-gray-600 mb-2">공정 진행</h4>
+          <div class="bg-gray-50 rounded-lg p-3">
+            ${processHtml}
+          </div>
+        </div>
+        <div class="p-6 border-t bg-gray-50">
+          <button onclick="closeModal()" class="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">닫기</button>
+        </div>
+      </div>
+    `);
+    
+  } catch (error) {
+    console.error('History load error:', error);
+    showToast('이력 조회 오류', 'error');
+  }
+}
+
+// DB 초기화
+async function initProcessTrackingDB() {
+  if (!confirm('공정 추적 DB를 초기화하시겠습니까?\n(기존 데이터가 있으면 유지됩니다)')) return;
+  
+  try {
+    const res = await fetch('/api/process-tracking/init-db', { method: 'POST' });
+    const result = await res.json();
+    
+    if (result.success) {
+      showToast('DB 초기화 완료', 'success');
+      loadProcessDashboard();
+    } else {
+      showToast(result.error || 'DB 초기화 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Init DB error:', error);
+    showToast('DB 초기화 오류', 'error');
+  }
+}
+
+// ========== 공정 라우팅 설정 ==========
+
+async function renderProcessRouting() {
+  const content = document.getElementById('page-content');
+  
+  content.innerHTML = `
+    <div class="space-y-6">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <h2 class="text-2xl font-bold text-gray-800">
+          <i class="fas fa-route mr-2 text-indigo-600"></i>
+          제품별 공정 라우팅 설정
+        </h2>
+        <button onclick="showAddRoutingModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+          <i class="fas fa-plus mr-1"></i> 새 제품 라우팅 추가
+        </button>
+      </div>
+      
+      <!-- 공정 마스터 -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="p-4 border-b">
+          <h3 class="text-lg font-bold text-gray-800">
+            <i class="fas fa-cogs mr-2"></i> 공정 마스터
+          </h3>
+          <p class="text-sm text-gray-500">사용 가능한 공정 목록</p>
+        </div>
+        <div id="process-master-list" class="p-4 grid grid-cols-2 md:grid-cols-5 gap-3">
+          <!-- 동적 생성 -->
+        </div>
+      </div>
+      
+      <!-- 라우팅 설정된 제품 목록 -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="p-4 border-b">
+          <h3 class="text-lg font-bold text-gray-800">
+            <i class="fas fa-list mr-2"></i> 라우팅 설정된 제품
+          </h3>
+        </div>
+        <div id="routing-products-list" class="divide-y">
+          <!-- 동적 생성 -->
+        </div>
+      </div>
+    </div>
+  `;
+  
+  loadProcessMaster();
+  loadRoutingProducts();
+}
+
+// 공정 마스터 로드
+async function loadProcessMaster() {
+  try {
+    const res = await fetch('/api/process-tracking/process-master');
+    const result = await res.json();
+    
+    const container = document.getElementById('process-master-list');
+    if (result.success && result.data.length > 0) {
+      container.innerHTML = result.data.map(p => `
+        <div class="bg-indigo-50 rounded-lg p-3 text-center">
+          <p class="font-medium text-indigo-800">${p.process_name}</p>
+          <p class="text-xs text-indigo-600">${p.process_name_en || ''}</p>
+          <p class="text-xs text-gray-500 mt-1">표준 ${p.standard_minutes}분</p>
+        </div>
+      `).join('');
+      window.processMasterData = result.data;
+    } else {
+      container.innerHTML = '<p class="col-span-5 text-center text-gray-400 py-4">공정 마스터가 없습니다. DB를 초기화하세요.</p>';
+      window.processMasterData = [];
+    }
+  } catch (error) {
+    console.error('Load process master error:', error);
+  }
+}
+
+// 라우팅 설정된 제품 로드
+async function loadRoutingProducts() {
+  try {
+    const res = await fetch('/api/process-tracking/routing-products');
+    const result = await res.json();
+    
+    const container = document.getElementById('routing-products-list');
+    if (result.success && result.data.length > 0) {
+      container.innerHTML = result.data.map(p => `
+        <div class="p-4 flex items-center justify-between hover:bg-gray-50">
+          <div>
+            <p class="font-medium">${p.product_name}</p>
+            <p class="text-sm text-gray-500">${p.product_code} | ${p.process_count}개 공정</p>
+          </div>
+          <div class="flex gap-2">
+            <button onclick="editProductRouting('${p.product_code}', '${p.product_name}')" class="px-3 py-1 text-blue-600 hover:bg-blue-50 rounded">
+              <i class="fas fa-edit mr-1"></i>수정
+            </button>
+          </div>
+        </div>
+      `).join('');
+    } else {
+      container.innerHTML = '<p class="text-center text-gray-400 py-8">라우팅이 설정된 제품이 없습니다</p>';
+    }
+  } catch (error) {
+    console.error('Load routing products error:', error);
+  }
+}
+
+// 새 라우팅 추가 모달
+async function showAddRoutingModal() {
+  // 제품마스터에서 제품 목록 가져오기
+  let products = [];
+  try {
+    const res = await fetch('/api/sheets/product-master');
+    const result = await res.json();
+    if (result.success) products = result.data || [];
+  } catch (e) {
+    console.error('Products load error:', e);
+  }
+  
+  const productOptions = products.map(p => 
+    `<option value="${p.product_code}" data-name="${p.product_name}">${p.product_name} (${p.product_code})</option>`
+  ).join('');
+  
+  const processCheckboxes = (window.processMasterData || []).map(p => `
+    <label class="flex items-center gap-2 p-2 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
+      <input type="checkbox" name="process" value="${p.process_code}" data-minutes="${p.standard_minutes}" class="w-4 h-4 text-indigo-600">
+      <span>${p.process_name}</span>
+      <span class="text-xs text-gray-400">(${p.standard_minutes}분)</span>
+    </label>
+  `).join('');
+  
+  showModal(`
+    <div class="bg-white rounded-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-auto">
+      <div class="p-6 border-b sticky top-0 bg-white">
+        <h3 class="text-xl font-bold text-gray-800">
+          <i class="fas fa-plus-circle text-indigo-600 mr-2"></i>
+          새 제품 공정 라우팅
+        </h3>
+      </div>
+      <div class="p-6 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택</label>
+          <select id="routing-product" class="w-full border rounded-lg px-4 py-3" onchange="updateRoutingProductName()">
+            <option value="">제품을 선택하세요</option>
+            ${productOptions}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">공정 선택 (순서대로 체크)</label>
+          <div class="space-y-2 max-h-60 overflow-y-auto">
+            ${processCheckboxes}
+          </div>
+          <p class="text-xs text-gray-500 mt-2">* 체크한 순서대로 공정이 진행됩니다</p>
+        </div>
+      </div>
+      <div class="p-6 border-t bg-gray-50 flex justify-end gap-3">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+        <button onclick="saveProductRouting()" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+          <i class="fas fa-save mr-1"></i> 저장
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+function updateRoutingProductName() {
+  const select = document.getElementById('routing-product');
+  const option = select.options[select.selectedIndex];
+  window.routingProductName = option.dataset.name || '';
+}
+
+// 라우팅 저장
+async function saveProductRouting() {
+  const productCode = document.getElementById('routing-product').value;
+  const productName = window.routingProductName || '';
+  
+  if (!productCode) {
+    showToast('제품을 선택하세요', 'warning');
+    return;
+  }
+  
+  const checkboxes = document.querySelectorAll('input[name="process"]:checked');
+  if (checkboxes.length === 0) {
+    showToast('최소 1개 이상의 공정을 선택하세요', 'warning');
+    return;
+  }
+  
+  const processes = Array.from(checkboxes).map((cb, idx) => ({
+    process_code: cb.value,
+    process_order: idx + 1,
+    standard_minutes: parseInt(cb.dataset.minutes) || 60
+  }));
+  
+  try {
+    const res = await fetch(`/api/process-tracking/routing/${productCode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ product_name: productName, processes })
+    });
+    
+    const result = await res.json();
+    
+    if (result.success) {
+      closeModal();
+      showToast('공정 라우팅 저장 완료', 'success');
+      loadRoutingProducts();
+    } else {
+      showToast(result.error || '저장 실패', 'error');
+    }
+  } catch (error) {
+    console.error('Save routing error:', error);
+    showToast('저장 오류', 'error');
+  }
+}
+
+// 라우팅 수정
+async function editProductRouting(productCode, productName) {
+  // 기존 라우팅 조회
+  let existingRouting = [];
+  try {
+    const res = await fetch(`/api/process-tracking/routing/${productCode}`);
+    const result = await res.json();
+    if (result.success) existingRouting = result.data;
+  } catch (e) {
+    console.error('Routing load error:', e);
+  }
+  
+  const existingCodes = existingRouting.map(r => r.process_code);
+  
+  const processCheckboxes = (window.processMasterData || []).map(p => {
+    const checked = existingCodes.includes(p.process_code) ? 'checked' : '';
+    return `
+      <label class="flex items-center gap-2 p-2 bg-gray-50 rounded cursor-pointer hover:bg-gray-100">
+        <input type="checkbox" name="process" value="${p.process_code}" data-minutes="${p.standard_minutes}" class="w-4 h-4 text-indigo-600" ${checked}>
+        <span>${p.process_name}</span>
+        <span class="text-xs text-gray-400">(${p.standard_minutes}분)</span>
+      </label>
+    `;
+  }).join('');
+  
+  window.routingProductName = productName;
+  
+  showModal(`
+    <div class="bg-white rounded-xl max-w-lg w-full mx-4 max-h-[80vh] overflow-auto">
+      <div class="p-6 border-b sticky top-0 bg-white">
+        <h3 class="text-xl font-bold text-gray-800">
+          <i class="fas fa-edit text-indigo-600 mr-2"></i>
+          공정 라우팅 수정
+        </h3>
+        <p class="text-sm text-gray-500 mt-1">${productName}</p>
+      </div>
+      <div class="p-6 space-y-4">
+        <input type="hidden" id="routing-product" value="${productCode}">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">공정 선택 (순서대로 체크)</label>
+          <div class="space-y-2 max-h-60 overflow-y-auto">
+            ${processCheckboxes}
+          </div>
+          <p class="text-xs text-gray-500 mt-2">* 체크한 순서대로 공정이 진행됩니다</p>
+        </div>
+      </div>
+      <div class="p-6 border-t bg-gray-50 flex justify-end gap-3">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+        <button onclick="saveProductRouting()" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+          <i class="fas fa-save mr-1"></i> 저장
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+// 전역 함수 등록
+window.renderProcessTracking = renderProcessTracking;
+window.renderProcessRouting = renderProcessRouting;
+window.loadProcessDashboard = loadProcessDashboard;
+window.showBatchCreateModal = showBatchCreateModal;
+window.createBatch = createBatch;
+window.showBatchHistory = showBatchHistory;
+window.initProcessTrackingDB = initProcessTrackingDB;
+window.showAddRoutingModal = showAddRoutingModal;
+window.saveProductRouting = saveProductRouting;
+window.editProductRouting = editProductRouting;
+window.printBatchBarcode = printBatchBarcode;
+window.updateBatchProductName = updateBatchProductName;
+window.updateRoutingProductName = updateRoutingProductName;

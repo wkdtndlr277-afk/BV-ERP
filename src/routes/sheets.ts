@@ -1697,6 +1697,28 @@ sheets.get('/v2/output/daily-stock', async (c) => {
   try {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
     
+    // ★★★ v3.6.138: 원료마스터에서 품목명 맵 조회 (SSOT) ★★★
+    const rawMasterData = await service.readSheet('원료마스터', 'A2:B1000');
+    const itemNameMap = new Map<string, string>();
+    rawMasterData.forEach(row => {
+      const code = row[0]?.toString().trim();
+      const name = row[1]?.toString().trim();
+      if (code && name) {
+        itemNameMap.set(code, name);
+      }
+    });
+    
+    // ★★★ v3.6.138: BOM마스터에서도 원료명 조회 (백업용) ★★★
+    const bomMasterData = await service.readSheet('BOM마스터', 'C2:D');
+    bomMasterData.forEach(row => {
+      const code = row[0]?.toString().trim();
+      const name = row[1]?.toString().trim();
+      if (code && name && !itemNameMap.has(code)) {
+        itemNameMap.set(code, name);
+      }
+    });
+    console.log(`[v2/output/daily-stock] 품목명 맵 로드: ${itemNameMap.size}개`);
+    
     // 일별수불부 시트에서 조회
     const data = await service.readSheet('일별수불부', 'A2:H');
     
@@ -1713,16 +1735,26 @@ sheets.get('/v2/output/daily-stock', async (c) => {
         }
         return rowDate === date;
       })
-      .map(row => ({
-        date: row[0]?.toString().replace(/^'/, ''),
-        item_code: row[1],  // ★ v3.5.63 fix: code → row[1]
-        item_name: row[2],
-        prev_stock: parseFloat(row[3]) || 0,
-        inbound_qty: parseFloat(row[4]) || 0,
-        usage_qty: parseFloat(row[5]) || 0,
-        current_stock: parseFloat(row[6]) || 0,
-        unit: row[7] || 'kg'
-      }))
+      .map(row => {
+        const itemCode = row[1]?.toString().trim() || '';
+        let itemName = row[2]?.toString().trim() || '';
+        
+        // ★★★ v3.6.138: 품목명이 비었거나 수식이면 마스터에서 조회 ★★★
+        if (!itemName || itemName.startsWith('=') || itemName.includes('VLOOKUP') || itemName.includes('#REF')) {
+          itemName = itemNameMap.get(itemCode) || itemCode;
+        }
+        
+        return {
+          date: row[0]?.toString().replace(/^'/, ''),
+          item_code: itemCode,
+          item_name: itemName,
+          prev_stock: parseFloat(row[3]) || 0,
+          inbound_qty: parseFloat(row[4]) || 0,
+          usage_qty: parseFloat(row[5]) || 0,
+          current_stock: parseFloat(row[6]) || 0,
+          unit: row[7] || 'kg'
+        };
+      })
       // ★ v3.5.68: 품목코드순 정렬 (관리자 재고 검토 편의)
       .sort((a, b) => {
         const aMatch = a.item_code?.match(/^([A-Z]+)(\d+)$/);

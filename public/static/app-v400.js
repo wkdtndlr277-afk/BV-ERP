@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.150';
+const APP_VERSION = '3.6.151';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -55186,17 +55186,26 @@ async function saveShaping(existingCode = '') {
 
 // 성형명 수정
 async function editShaping(code) {
+  console.log('[editShaping] 호출됨, code:', code);
   try {
     const res = await fetch('/api/process-tracking/shaping-master?search=' + encodeURIComponent(code));
     const data = await res.json();
+    console.log('[editShaping] API 응답:', data);
     
     if (data.success && data.data.length > 0) {
       const shaping = data.data.find(s => s.shaping_code === code);
+      console.log('[editShaping] 찾은 성형명:', shaping);
       if (shaping) {
         showAddShapingModal(shaping);
+      } else {
+        // 검색 결과에서 정확한 코드를 못 찾으면 첫 번째 항목 사용
+        showAddShapingModal(data.data[0]);
       }
+    } else {
+      alert('성형명 정보를 찾을 수 없습니다.');
     }
   } catch (error) {
+    console.error('[editShaping] 에러:', error);
     alert('데이터 로드 실패: ' + error.message);
   }
 }

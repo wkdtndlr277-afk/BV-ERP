@@ -2561,7 +2561,7 @@ barcodeRoutes.get('/today-transactions', async (c) => {
       params.push(item_code);
     }
     
-    query += ` ORDER BY t.created_at DESC, t.rowid DESC LIMIT 100`;
+    query += ` ORDER BY t.created_at DESC, t.rowid DESC LIMIT 500`;
     
     const result = await c.env.DB.prepare(query).bind(...params).all<any>();
     

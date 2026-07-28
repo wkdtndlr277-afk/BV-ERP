@@ -1,6 +1,8 @@
-// ★★★ v3.6.145: 생산공정 실시간 추적 시스템 ★★★
-// 바코드 기반 공정시간 관리 - 성형명 기반 공정 라우팅, 배치 추적, 실시간 타이머
-// v3.6.145: 성형명 마스터 추가 - 제품코드와 독립적인 성형/생산 명칭 관리
+// ★★★ v3.6.146: 생산공정 실시간 추적 시스템 ★★★
+// 고정 바코드 기반 공정시간 관리
+// - 바코드 마스터: 고정 바코드 등록 + 성형명 연결
+// - 공정 사이클: 바코드 스캔할 때마다 새 사이클 생성
+// - 성형명 마스터: 제품코드와 독립적인 성형/생산 명칭
 
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
@@ -27,7 +29,60 @@ app.post('/init-db', async (c) => {
       )
     `).run();
 
-    // 2. 제품별 공정 라우팅 테이블
+    // ★★★ v3.6.146: 바코드 마스터 테이블 (고정 바코드 + 성형명 연결) ★★★
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS barcode_master (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        barcode TEXT UNIQUE NOT NULL,
+        shaping_code TEXT,
+        shaping_name TEXT,
+        description TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+
+    // ★★★ v3.6.146: 공정 사이클 테이블 (바코드 스캔마다 새 사이클) ★★★
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS process_cycle (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        barcode TEXT NOT NULL,
+        shaping_code TEXT,
+        shaping_name TEXT,
+        cycle_date TEXT NOT NULL,
+        current_process_code TEXT,
+        current_process_name TEXT,
+        status TEXT DEFAULT 'IN_PROGRESS',
+        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        completed_at DATETIME,
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+
+    // ★★★ v3.6.146: 공정 시간 기록 테이블 ★★★
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS process_time_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cycle_id INTEGER NOT NULL,
+        barcode TEXT NOT NULL,
+        process_code TEXT NOT NULL,
+        process_name TEXT NOT NULL,
+        process_order INTEGER NOT NULL,
+        start_time DATETIME,
+        end_time DATETIME,
+        actual_minutes INTEGER,
+        standard_minutes INTEGER,
+        status TEXT DEFAULT 'PENDING',
+        notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (cycle_id) REFERENCES process_cycle(id)
+      )
+    `).run();
+
+    // 2. 제품별 공정 라우팅 테이블 (기존 호환)
     await c.env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS product_process_routing (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +99,7 @@ app.post('/init-db', async (c) => {
       )
     `).run();
 
-    // 3. 배치(배합) 테이블 - 바코드 발행 단위
+    // 3. 배치(배합) 테이블 - 기존 호환
     await c.env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS production_batch (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,6 +204,11 @@ app.post('/init-db', async (c) => {
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_routing_product ON product_process_routing(product_code)`).run();
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_shaping_name ON shaping_name_master(shaping_name)`).run();
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_shaping_routing ON shaping_process_routing(shaping_code)`).run();
+    // v3.6.146: 바코드 마스터 인덱스
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_barcode_master ON barcode_master(barcode)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_cycle_barcode ON process_cycle(barcode)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_cycle_date ON process_cycle(cycle_date)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_time_log_cycle ON process_time_log(cycle_id)`).run();
 
     // 기본 공정 데이터 삽입
     // ★★★ v3.6.144: 공정 마스터 확장 - 폴딩, 1차발효실전온도 등 추가 ★★★
@@ -1079,6 +1139,395 @@ app.post('/skip-process', async (c) => {
     `).bind(batch.id, batch_code, process_code, now, admin_id || null, admin_name || null, reason || null).run();
 
     return c.json({ success: true, message: '공정 건너뛰기 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ========== v3.6.146: 바코드 마스터 관리 ==========
+
+// 바코드 마스터 목록 조회
+app.get('/barcode-master', async (c) => {
+  try {
+    const result = await c.env.DB.prepare(`
+      SELECT * FROM barcode_master WHERE is_active = 1 ORDER BY barcode
+    `).all();
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 바코드 마스터 추가/수정
+app.post('/barcode-master', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { barcode, shaping_code, shaping_name, description } = body;
+
+    if (!barcode) {
+      return c.json({ success: false, error: '바코드를 입력하세요' }, 400);
+    }
+
+    await c.env.DB.prepare(`
+      INSERT INTO barcode_master (barcode, shaping_code, shaping_name, description)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(barcode) DO UPDATE SET
+        shaping_code = excluded.shaping_code,
+        shaping_name = excluded.shaping_name,
+        description = excluded.description,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(barcode, shaping_code || null, shaping_name || null, description || null).run();
+
+    return c.json({ success: true, message: '바코드 저장 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 바코드 삭제 (비활성화)
+app.delete('/barcode-master/:barcode', async (c) => {
+  try {
+    const barcode = c.req.param('barcode');
+    await c.env.DB.prepare(`
+      UPDATE barcode_master SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE barcode = ?
+    `).bind(barcode).run();
+    return c.json({ success: true, message: '바코드 삭제 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 바코드 조회 (스캔 시)
+app.get('/barcode/:barcode', async (c) => {
+  try {
+    const barcode = c.req.param('barcode');
+    
+    // 바코드 마스터 조회
+    const master = await c.env.DB.prepare(`
+      SELECT * FROM barcode_master WHERE barcode = ? AND is_active = 1
+    `).bind(barcode).first();
+    
+    if (!master) {
+      return c.json({ success: false, error: '등록되지 않은 바코드입니다', not_found: true }, 404);
+    }
+    
+    // 오늘 날짜의 진행 중인 사이클 확인
+    const now = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const kstDate = new Date(now.getTime() + kstOffset);
+    const today = kstDate.toISOString().slice(0, 10);
+    
+    const activeCycle = await c.env.DB.prepare(`
+      SELECT * FROM process_cycle 
+      WHERE barcode = ? AND cycle_date = ? AND status = 'IN_PROGRESS'
+      ORDER BY id DESC LIMIT 1
+    `).bind(barcode, today).first();
+    
+    // 진행 중인 공정 시간 기록 조회
+    let currentTimeLog = null;
+    let timeLogs = [];
+    if (activeCycle) {
+      currentTimeLog = await c.env.DB.prepare(`
+        SELECT * FROM process_time_log 
+        WHERE cycle_id = ? AND status = 'IN_PROGRESS'
+        LIMIT 1
+      `).bind(activeCycle.id).first();
+      
+      const logsResult = await c.env.DB.prepare(`
+        SELECT * FROM process_time_log WHERE cycle_id = ? ORDER BY process_order
+      `).bind(activeCycle.id).all();
+      timeLogs = logsResult.results;
+    }
+    
+    return c.json({ 
+      success: true, 
+      data: {
+        barcode: master,
+        active_cycle: activeCycle,
+        current_process: currentTimeLog,
+        time_logs: timeLogs
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ========== v3.6.146: 공정 사이클 관리 ==========
+
+// 새 사이클 시작 (바코드 스캔 시)
+app.post('/cycle/start', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { barcode } = body;
+
+    // 바코드 마스터 확인
+    const master = await c.env.DB.prepare(`
+      SELECT * FROM barcode_master WHERE barcode = ? AND is_active = 1
+    `).bind(barcode).first();
+
+    if (!master) {
+      return c.json({ success: false, error: '등록되지 않은 바코드입니다' }, 404);
+    }
+
+    if (!master.shaping_code) {
+      return c.json({ success: false, error: '이 바코드에 성형명이 설정되지 않았습니다' }, 400);
+    }
+
+    // 오늘 날짜
+    const now = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const kstDate = new Date(now.getTime() + kstOffset);
+    const today = kstDate.toISOString().slice(0, 10);
+
+    // 이미 진행 중인 사이클이 있는지 확인
+    const existingCycle = await c.env.DB.prepare(`
+      SELECT * FROM process_cycle 
+      WHERE barcode = ? AND cycle_date = ? AND status = 'IN_PROGRESS'
+    `).bind(barcode, today).first();
+
+    if (existingCycle) {
+      // 진행 중인 사이클이 있으면 그 정보 반환
+      const currentProcess = await c.env.DB.prepare(`
+        SELECT * FROM process_time_log 
+        WHERE cycle_id = ? AND status = 'IN_PROGRESS'
+      `).bind(existingCycle.id).first();
+      
+      return c.json({ 
+        success: true, 
+        message: '진행 중인 사이클이 있습니다',
+        data: {
+          cycle: existingCycle,
+          current_process: currentProcess,
+          is_existing: true
+        }
+      });
+    }
+
+    // 새 사이클 생성
+    const cycleResult = await c.env.DB.prepare(`
+      INSERT INTO process_cycle (barcode, shaping_code, shaping_name, cycle_date, status)
+      VALUES (?, ?, ?, ?, 'IN_PROGRESS')
+    `).bind(barcode, master.shaping_code, master.shaping_name, today).run();
+
+    const cycleId = cycleResult.meta.last_row_id;
+
+    // 성형명별 공정 라우팅 조회 후 시간 기록 레코드 생성
+    const routing = await c.env.DB.prepare(`
+      SELECT r.*, pm.process_name 
+      FROM shaping_process_routing r
+      LEFT JOIN process_master pm ON pm.process_code = r.process_code
+      WHERE r.shaping_code = ? AND r.is_active = 1 
+      ORDER BY r.process_order
+    `).bind(master.shaping_code).all();
+
+    for (const r of routing.results as any[]) {
+      await c.env.DB.prepare(`
+        INSERT INTO process_time_log (cycle_id, barcode, process_code, process_name, process_order, standard_minutes, status)
+        VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
+      `).bind(cycleId, barcode, r.process_code, r.process_name || r.process_code, r.process_order, r.standard_minutes).run();
+    }
+
+    return c.json({ 
+      success: true, 
+      message: `새 사이클 시작: ${master.shaping_name}`,
+      data: {
+        cycle_id: cycleId,
+        barcode,
+        shaping_code: master.shaping_code,
+        shaping_name: master.shaping_name,
+        process_count: routing.results.length,
+        is_existing: false
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 공정 시작
+app.post('/cycle/process/start', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { cycle_id, process_code } = body;
+
+    // 사이클 확인
+    const cycle = await c.env.DB.prepare(`
+      SELECT * FROM process_cycle WHERE id = ? AND status = 'IN_PROGRESS'
+    `).bind(cycle_id).first();
+
+    if (!cycle) {
+      return c.json({ success: false, error: '진행 중인 사이클이 없습니다' }, 404);
+    }
+
+    // 이미 진행 중인 공정이 있는지 확인
+    const inProgress = await c.env.DB.prepare(`
+      SELECT * FROM process_time_log WHERE cycle_id = ? AND status = 'IN_PROGRESS'
+    `).bind(cycle_id).first();
+
+    if (inProgress) {
+      return c.json({ 
+        success: false, 
+        error: `'${inProgress.process_name}' 공정이 진행 중입니다. 먼저 종료하세요.`,
+        current_process: inProgress
+      }, 400);
+    }
+
+    // 다음 공정 확인
+    let targetProcess;
+    if (process_code) {
+      targetProcess = await c.env.DB.prepare(`
+        SELECT * FROM process_time_log WHERE cycle_id = ? AND process_code = ? AND status = 'PENDING'
+      `).bind(cycle_id, process_code).first();
+    } else {
+      targetProcess = await c.env.DB.prepare(`
+        SELECT * FROM process_time_log WHERE cycle_id = ? AND status = 'PENDING' ORDER BY process_order LIMIT 1
+      `).bind(cycle_id).first();
+    }
+
+    if (!targetProcess) {
+      return c.json({ success: false, error: '시작할 수 있는 공정이 없습니다' }, 400);
+    }
+
+    const now = new Date().toISOString();
+
+    // 공정 시작
+    await c.env.DB.prepare(`
+      UPDATE process_time_log SET status = 'IN_PROGRESS', start_time = ? WHERE id = ?
+    `).bind(now, targetProcess.id).run();
+
+    // 사이클 현재 공정 업데이트
+    await c.env.DB.prepare(`
+      UPDATE process_cycle SET current_process_code = ?, current_process_name = ?, updated_at = ? WHERE id = ?
+    `).bind(targetProcess.process_code, targetProcess.process_name, now, cycle_id).run();
+
+    return c.json({ 
+      success: true, 
+      message: `${targetProcess.process_name} 시작`,
+      data: {
+        process_code: targetProcess.process_code,
+        process_name: targetProcess.process_name,
+        start_time: now,
+        standard_minutes: targetProcess.standard_minutes
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 공정 종료
+app.post('/cycle/process/end', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { cycle_id, notes } = body;
+
+    // 진행 중인 공정 조회
+    const currentProcess = await c.env.DB.prepare(`
+      SELECT * FROM process_time_log WHERE cycle_id = ? AND status = 'IN_PROGRESS'
+    `).bind(cycle_id).first();
+
+    if (!currentProcess) {
+      return c.json({ success: false, error: '진행 중인 공정이 없습니다' }, 400);
+    }
+
+    const now = new Date().toISOString();
+    const startTime = new Date(currentProcess.start_time as string);
+    const endTime = new Date(now);
+    const actualMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
+
+    // 공정 종료
+    await c.env.DB.prepare(`
+      UPDATE process_time_log 
+      SET status = 'COMPLETED', end_time = ?, actual_minutes = ?, notes = ?
+      WHERE id = ?
+    `).bind(now, actualMinutes, notes || null, currentProcess.id).run();
+
+    // 다음 공정 확인
+    const nextProcess = await c.env.DB.prepare(`
+      SELECT * FROM process_time_log WHERE cycle_id = ? AND status = 'PENDING' ORDER BY process_order LIMIT 1
+    `).bind(cycle_id).first();
+
+    // 사이클 상태 업데이트
+    if (nextProcess) {
+      await c.env.DB.prepare(`
+        UPDATE process_cycle SET current_process_code = NULL, current_process_name = NULL, updated_at = ? WHERE id = ?
+      `).bind(now, cycle_id).run();
+    } else {
+      // 모든 공정 완료
+      await c.env.DB.prepare(`
+        UPDATE process_cycle SET status = 'COMPLETED', current_process_code = NULL, current_process_name = NULL, completed_at = ?, updated_at = ? WHERE id = ?
+      `).bind(now, now, cycle_id).run();
+    }
+
+    return c.json({ 
+      success: true, 
+      message: `${currentProcess.process_name} 완료 (${actualMinutes}분)`,
+      data: {
+        completed_process: {
+          process_code: currentProcess.process_code,
+          process_name: currentProcess.process_name,
+          actual_minutes: actualMinutes,
+          standard_minutes: currentProcess.standard_minutes
+        },
+        next_process: nextProcess,
+        is_all_completed: !nextProcess
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 오늘의 활성 사이클 목록
+app.get('/cycle/active', async (c) => {
+  try {
+    const now = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const kstDate = new Date(now.getTime() + kstOffset);
+    const today = kstDate.toISOString().slice(0, 10);
+
+    const result = await c.env.DB.prepare(`
+      SELECT c.*, 
+             (SELECT COUNT(*) FROM process_time_log WHERE cycle_id = c.id AND status = 'COMPLETED') as completed_count,
+             (SELECT COUNT(*) FROM process_time_log WHERE cycle_id = c.id) as total_count,
+             (SELECT start_time FROM process_time_log WHERE cycle_id = c.id AND status = 'IN_PROGRESS') as current_start_time,
+             (SELECT standard_minutes FROM process_time_log WHERE cycle_id = c.id AND status = 'IN_PROGRESS') as current_standard_minutes
+      FROM process_cycle c
+      WHERE c.cycle_date = ? AND c.status = 'IN_PROGRESS'
+      ORDER BY c.started_at DESC
+    `).bind(today).all();
+
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 사이클 상세 조회
+app.get('/cycle/:cycleId', async (c) => {
+  try {
+    const cycleId = c.req.param('cycleId');
+
+    const cycle = await c.env.DB.prepare(`
+      SELECT * FROM process_cycle WHERE id = ?
+    `).bind(cycleId).first();
+
+    if (!cycle) {
+      return c.json({ success: false, error: '사이클을 찾을 수 없습니다' }, 404);
+    }
+
+    const timeLogs = await c.env.DB.prepare(`
+      SELECT * FROM process_time_log WHERE cycle_id = ? ORDER BY process_order
+    `).bind(cycleId).all();
+
+    return c.json({ 
+      success: true, 
+      data: {
+        cycle,
+        time_logs: timeLogs.results
+      }
+    });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }

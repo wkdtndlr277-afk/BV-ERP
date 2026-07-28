@@ -405,9 +405,10 @@ app.get('/shaping-routing/:shapingCode', async (c) => {
   try {
     const shapingCode = c.req.param('shapingCode');
     const result = await c.env.DB.prepare(`
-      SELECT r.*, m.shaping_name 
+      SELECT r.*, m.shaping_name, pm.process_name
       FROM shaping_process_routing r
       JOIN shaping_name_master m ON m.shaping_code = r.shaping_code
+      LEFT JOIN process_master pm ON pm.process_code = r.process_code
       WHERE r.shaping_code = ? AND r.is_active = 1 
       ORDER BY r.process_order
     `).bind(shapingCode).all();

@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.154';
+const APP_VERSION = '3.6.155';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -55687,12 +55687,12 @@ async function loadBarcodeMasterList() {
               <div class="mt-2 flex flex-wrap gap-1 items-center">
                 <span class="text-xs text-gray-500 mr-1">공정:</span>
                 ${procData.data.map((p, i) => 
-                  `<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">${p.process_name}</span>`
+                  `<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">${p.process_name || p.process_code}</span>`
                 ).join('<i class="fas fa-chevron-right text-gray-300 mx-0.5 text-xs"></i>')}
               </div>
             `;
           }
-        } catch (e) {}
+        } catch (e) { console.error('Process load error:', e); }
       } else if (b.shaping_code && routing.process_count === 0) {
         processHtml = `
           <div class="mt-2 text-xs text-orange-500">
@@ -55874,9 +55874,8 @@ async function updateSelectedShapingInfo() {
     const data = await res.json();
     
     if (data.success && data.data.length > 0) {
-      const processes = data.data.map((p, i) => `${i+1}. ${p.process_name}`).join(' → ');
       listDiv.innerHTML = `<div class="flex flex-wrap gap-1">${data.data.map((p, i) => 
-        `<span class="bg-blue-200 px-2 py-0.5 rounded">${i+1}. ${p.process_name}</span>`
+        `<span class="bg-blue-200 px-2 py-0.5 rounded">${i+1}. ${p.process_name || p.process_code}</span>`
       ).join(' <i class="fas fa-arrow-right text-blue-400 mx-1"></i> ')}</div>`;
       infoDiv.classList.remove('hidden');
     } else {

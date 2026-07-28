@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.148';
+const APP_VERSION = '3.6.149';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -55047,6 +55047,7 @@ async function loadShapingMasterList() {
       `;
       
       grouped[cat].forEach(s => {
+        const safeCode = s.shaping_code.replace(/'/g, "\\'");
         html += `
           <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
             <div class="flex-1 min-w-0">
@@ -55057,10 +55058,10 @@ async function loadShapingMasterList() {
               </div>
             </div>
             <div class="flex gap-2 ml-3">
-              <button onclick="editShaping('${s.shaping_code}')" class="p-2 text-blue-600 hover:bg-blue-100 rounded-lg" title="수정">
+              <button onclick="editShaping('${safeCode}')" class="p-2 text-blue-600 hover:bg-blue-100 rounded-lg" title="수정">
                 <i class="fas fa-edit"></i>
               </button>
-              <button onclick="deleteShaping('${s.shaping_code}')" class="p-2 text-red-600 hover:bg-red-100 rounded-lg" title="삭제">
+              <button onclick="deleteShaping('${safeCode}')" class="p-2 text-red-600 hover:bg-red-100 rounded-lg" title="삭제">
                 <i class="fas fa-trash"></i>
               </button>
             </div>

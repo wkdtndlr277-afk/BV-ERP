@@ -323,8 +323,8 @@ app.get('/shaping-master', async (c) => {
       params.push(category);
     }
     if (search) {
-      query += ` AND shaping_name LIKE ?`;
-      params.push(`%${search}%`);
+      query += ` AND (shaping_name LIKE ? OR shaping_code LIKE ? OR shaping_code = ?)`;
+      params.push(`%${search}%`, `%${search}%`, search);
     }
     
     query += ` ORDER BY category, shaping_name`;

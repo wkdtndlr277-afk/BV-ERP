@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.146';
-const APP_BUILD = '20260728-5';
+const APP_VERSION = '3.6.148';
+const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -54932,7 +54932,7 @@ async function editProductRouting(productCode, productName) {
 
 // 성형명 마스터 관리 화면
 async function renderShapingMaster() {
-  const container = document.getElementById('main-content');
+  const container = document.getElementById('page-content');
   container.innerHTML = `
     <div class="max-w-7xl mx-auto p-4 md:p-6">
       <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
@@ -55015,6 +55015,7 @@ async function loadShapingMasterList() {
     
     const container = document.getElementById('shaping-master-list');
     
+    if (!container) return;
     if (!data.success || !data.data.length) {
       container.innerHTML = `
         <div class="text-center py-8 text-gray-400">
@@ -55221,7 +55222,7 @@ async function deleteShaping(code) {
 // ========== v3.6.145: 성형명별 공정 라우팅 UI ==========
 
 async function renderShapingRouting() {
-  const container = document.getElementById('main-content');
+  const container = document.getElementById('page-content');
   container.innerHTML = `
     <div class="max-w-7xl mx-auto p-4 md:p-6">
       <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
@@ -55260,6 +55261,7 @@ async function loadShapingRoutingList() {
     
     const container = document.getElementById('shaping-routing-list');
     
+    if (!container) return;
     if (!data.success || !data.data.length) {
       container.innerHTML = `
         <div class="text-center py-8 text-gray-400">
@@ -55584,20 +55586,22 @@ window.saveShapingRouting = saveShapingRouting;
 window.updateBatchShapingName = updateBatchShapingName;
 window.createBatchByShaping = createBatchByShaping;
 
-// ========== v3.6.146: 바코드 마스터 관리 UI ==========
+// ========== v3.6.147: 바코드 마스터 관리 UI (단순화) ==========
 
 // 바코드 마스터 관리 화면
 async function renderBarcodeMasterProcess() {
-  const container = document.getElementById('main-content');
+  const container = document.getElementById('page-content');
+  if (!container) return;
+  
   container.innerHTML = `
-    <div class="max-w-7xl mx-auto p-4 md:p-6">
+    <div class="max-w-6xl mx-auto">
       <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
         <div>
           <h1 class="text-xl md:text-2xl font-bold text-gray-800">
             <i class="fas fa-barcode text-blue-600 mr-2"></i>
-            바코드 마스터 (공정용)
+            바코드 마스터
           </h1>
-          <p class="text-gray-500 text-sm mt-1">고정 바코드 등록 및 성형명 연결</p>
+          <p class="text-gray-500 text-sm mt-1">바코드별 성형명 + 공정 설정</p>
         </div>
         <div class="flex gap-2">
           <button onclick="initProcessTrackingDB()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
@@ -55610,11 +55614,10 @@ async function renderBarcodeMasterProcess() {
       </div>
       
       <!-- 바코드 목록 -->
-      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div class="bg-white rounded-xl shadow-sm">
         <div id="barcode-master-list" class="p-4">
           <div class="text-center py-8 text-gray-400">
             <i class="fas fa-spinner fa-spin text-2xl"></i>
-            <p class="mt-2">로딩 중...</p>
           </div>
         </div>
       </div>
@@ -55624,91 +55627,157 @@ async function renderBarcodeMasterProcess() {
   await loadBarcodeMasterList();
 }
 
-// 바코드 마스터 목록 로드
+// 바코드 마스터 목록 로드 (공정 정보 포함)
 async function loadBarcodeMasterList() {
+  const container = document.getElementById('barcode-master-list');
+  if (!container) return;
+  
   try {
-    const res = await fetch('/api/process-tracking/barcode-master');
-    const data = await res.json();
+    // 바코드 목록과 성형명별 라우팅 정보 동시 조회
+    const [barcodeRes, routingRes] = await Promise.all([
+      fetch('/api/process-tracking/barcode-master'),
+      fetch('/api/process-tracking/shaping-routing-list')
+    ]);
     
-    const container = document.getElementById('barcode-master-list');
+    const data = await barcodeRes.json();
+    const routingData = await routingRes.json();
     
-    if (!data.success || !data.data.length) {
+    // 성형명 코드별 공정 개수 매핑
+    const routingMap = {};
+    if (routingData.success && routingData.data) {
+      routingData.data.forEach(r => {
+        routingMap[r.shaping_code] = { process_count: r.process_count, shaping_name: r.shaping_name };
+      });
+    }
+    
+    if (!data.success || !data.data || data.data.length === 0) {
       container.innerHTML = `
-        <div class="text-center py-8 text-gray-400">
-          <i class="fas fa-barcode text-4xl mb-2"></i>
-          <p>등록된 바코드가 없습니다</p>
-          <p class="text-sm mt-1">새 바코드를 등록하세요</p>
+        <div class="text-center py-12 text-gray-400">
+          <i class="fas fa-barcode text-5xl mb-3"></i>
+          <p class="text-lg">등록된 바코드가 없습니다</p>
+          <p class="text-sm mt-1">위의 "바코드 등록" 버튼을 클릭하세요</p>
         </div>
       `;
       return;
     }
     
     let html = `
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="bg-gray-50">
-            <tr>
-              <th class="px-4 py-3 text-left">바코드</th>
-              <th class="px-4 py-3 text-left">성형명</th>
-              <th class="px-4 py-3 text-left">설명</th>
-              <th class="px-4 py-3 text-center">관리</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y">
+      <div class="text-sm text-gray-500 mb-4">
+        <i class="fas fa-info-circle mr-1"></i> 총 ${data.data.length}개 바코드 | 
+        바코드 → 성형명 → 공정 라우팅 순서로 연결됩니다
+      </div>
+      <div class="space-y-3">
     `;
     
-    data.data.forEach(b => {
+    for (const b of data.data) {
+      const routing = routingMap[b.shaping_code] || { process_count: 0 };
+      
+      // 해당 바코드의 공정 라우팅 조회
+      let processHtml = '';
+      if (b.shaping_code && routing.process_count > 0) {
+        try {
+          const procRes = await fetch(`/api/process-tracking/shaping-routing/${b.shaping_code}`);
+          const procData = await procRes.json();
+          if (procData.success && procData.data.length > 0) {
+            processHtml = `
+              <div class="mt-2 flex flex-wrap gap-1 items-center">
+                <span class="text-xs text-gray-500 mr-1">공정:</span>
+                ${procData.data.map((p, i) => 
+                  `<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">${p.process_name}</span>`
+                ).join('<i class="fas fa-chevron-right text-gray-300 mx-0.5 text-xs"></i>')}
+              </div>
+            `;
+          }
+        } catch (e) {}
+      } else if (b.shaping_code && routing.process_count === 0) {
+        processHtml = `
+          <div class="mt-2 text-xs text-orange-500">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            공정 라우팅 미설정 - "성형명 공정 라우팅"에서 설정하세요
+          </div>
+        `;
+      }
+      
       html += `
-        <tr class="hover:bg-gray-50">
-          <td class="px-4 py-3">
-            <span class="font-mono font-bold text-lg">${b.barcode}</span>
-          </td>
-          <td class="px-4 py-3">
-            ${b.shaping_name 
-              ? `<span class="bg-purple-100 text-purple-700 px-2 py-1 rounded">${b.shaping_name}</span>
-                 <span class="text-xs text-gray-400 ml-1">(${b.shaping_code})</span>`
-              : '<span class="text-gray-400">미설정</span>'}
-          </td>
-          <td class="px-4 py-3 text-gray-500">${b.description || '-'}</td>
-          <td class="px-4 py-3 text-center">
-            <button onclick="editBarcodeMapping('${b.barcode}')" class="px-3 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 mr-1">
-              <i class="fas fa-edit mr-1"></i>수정
-            </button>
-            <button onclick="deleteBarcodeMapping('${b.barcode}')" class="px-3 py-1 text-xs bg-red-100 text-red-700 rounded hover:bg-red-200">
-              <i class="fas fa-trash mr-1"></i>삭제
-            </button>
-          </td>
-        </tr>
+        <div class="border rounded-lg p-4 hover:bg-gray-50">
+          <div class="flex items-start justify-between gap-4">
+            <div class="flex-1 min-w-0">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-mono font-bold text-lg bg-gray-100 px-3 py-1 rounded">${b.barcode}</span>
+                <i class="fas fa-arrow-right text-gray-300"></i>
+                ${b.shaping_name 
+                  ? `<span class="bg-purple-100 text-purple-700 px-3 py-1 rounded font-medium">${b.shaping_name}</span>`
+                  : '<span class="text-gray-400 italic">성형명 미설정</span>'}
+                ${routing.process_count > 0 
+                  ? `<span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">${routing.process_count}개 공정</span>`
+                  : ''}
+              </div>
+              ${processHtml}
+              ${b.description ? `<p class="text-gray-500 text-sm mt-2">${b.description}</p>` : ''}
+            </div>
+            <div class="flex gap-2 shrink-0">
+              <button onclick="editBarcodeDetail('${b.barcode}')" 
+                      class="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg hover:bg-blue-200 text-sm">
+                <i class="fas fa-edit"></i>
+              </button>
+              <button onclick="deleteBarcodeItem('${b.barcode}')" 
+                      class="px-3 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 text-sm">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          </div>
+        </div>
       `;
-    });
+    }
     
-    html += `</tbody></table></div>`;
+    html += `</div>`;
     container.innerHTML = html;
     
   } catch (error) {
-    document.getElementById('barcode-master-list').innerHTML = `
-      <div class="text-center py-8 text-red-400">
-        <i class="fas fa-exclamation-triangle text-2xl"></i>
-        <p class="mt-2">로드 실패: ${error.message}</p>
+    container.innerHTML = `
+      <div class="text-center py-8 text-red-500">
+        <i class="fas fa-exclamation-triangle text-3xl mb-2"></i>
+        <p>로드 실패: ${error.message}</p>
       </div>
     `;
   }
 }
 
-// 바코드 등록 모달
+// 바코드 등록/수정 모달 (성형명 마스터에서 선택)
 async function showAddBarcodeModal(editBarcode = null) {
-  // 성형명 목록 조회
-  let shapings = [];
+  let existingData = null;
+  let shapingOptions = '';
+  
+  // 성형명 목록 조회 (라우팅 설정된 것 표시)
   try {
-    const res = await fetch('/api/process-tracking/shaping-master');
-    const result = await res.json();
-    if (result.success) shapings = result.data;
+    const shapingRes = await fetch('/api/process-tracking/shaping-routing-list');
+    const shapingData = await shapingRes.json();
+    
+    if (shapingData.success && shapingData.data.length > 0) {
+      // 카테고리별 그룹핑
+      const grouped = {};
+      shapingData.data.forEach(s => {
+        const cat = s.category || '기타';
+        if (!grouped[cat]) grouped[cat] = [];
+        grouped[cat].push(s);
+      });
+      
+      shapingOptions = '<option value="">-- 성형명 선택 --</option>';
+      Object.keys(grouped).sort().forEach(cat => {
+        shapingOptions += `<optgroup label="${cat}">`;
+        grouped[cat].forEach(s => {
+          const procInfo = s.process_count > 0 ? `[${s.process_count}개 공정]` : '[공정 미설정]';
+          shapingOptions += `<option value="${s.shaping_code}" data-name="${s.shaping_name}">${s.shaping_name} ${procInfo}</option>`;
+        });
+        shapingOptions += '</optgroup>';
+      });
+    } else {
+      shapingOptions = '<option value="">성형명 없음 - 먼저 성형명 마스터에서 추가하세요</option>';
+    }
   } catch (e) {
-    console.error('Shaping load error:', e);
+    shapingOptions = '<option value="">성형명 로드 실패</option>';
   }
   
-  // 기존 바코드 데이터 조회 (수정 시)
-  let existingData = null;
   if (editBarcode) {
     try {
       const res = await fetch('/api/process-tracking/barcode-master');
@@ -55719,31 +55788,14 @@ async function showAddBarcodeModal(editBarcode = null) {
     } catch (e) {}
   }
   
-  // 성형명 옵션 생성
-  let shapingOptions = '<option value="">성형명 선택 (선택사항)</option>';
-  const grouped = {};
-  shapings.forEach(s => {
-    const cat = s.category || '기타';
-    if (!grouped[cat]) grouped[cat] = [];
-    grouped[cat].push(s);
-  });
-  Object.keys(grouped).sort().forEach(cat => {
-    shapingOptions += `<optgroup label="${cat}">`;
-    grouped[cat].forEach(s => {
-      const selected = existingData?.shaping_code === s.shaping_code ? 'selected' : '';
-      shapingOptions += `<option value="${s.shaping_code}" data-name="${s.shaping_name}" ${selected}>${s.shaping_name}</option>`;
-    });
-    shapingOptions += `</optgroup>`;
-  });
-  
-  const modalId = 'barcode-add-modal';
+  const modalId = 'barcode-modal';
   document.getElementById(modalId)?.remove();
   
   const modal = document.createElement('div');
   modal.id = modalId;
   modal.innerHTML = `
     <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) this.remove()">
-      <div class="bg-white rounded-xl w-full max-w-md p-6" onclick="event.stopPropagation()">
+      <div class="bg-white rounded-xl w-full max-w-lg p-6" onclick="event.stopPropagation()">
         <h3 class="text-lg font-bold mb-4">
           <i class="fas fa-barcode text-blue-600 mr-2"></i>
           ${editBarcode ? '바코드 수정' : '바코드 등록'}
@@ -55752,33 +55804,36 @@ async function showAddBarcodeModal(editBarcode = null) {
         <div class="space-y-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">바코드 <span class="text-red-500">*</span></label>
-            <input type="text" id="barcode-input" value="${existingData?.barcode || ''}" 
-                   ${editBarcode ? 'readonly class="w-full px-3 py-2 border rounded-lg bg-gray-100"' : 'class="w-full px-3 py-2 border rounded-lg"'}
-                   placeholder="예: BV-001, BREAD-001">
+            <input type="text" id="input-barcode" value="${existingData?.barcode || ''}" 
+                   ${editBarcode ? 'readonly class="w-full px-4 py-3 border rounded-lg bg-gray-100 font-mono text-lg"' 
+                                 : 'class="w-full px-4 py-3 border rounded-lg font-mono text-lg" placeholder="예: BV-001"'}>
           </div>
           
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              <i class="fas fa-shapes text-purple-500 mr-1"></i>성형명 연결
-            </label>
-            <select id="barcode-shaping" class="w-full px-3 py-2 border rounded-lg" onchange="updateBarcodeShapin()">
+            <label class="block text-sm font-medium text-gray-700 mb-1">성형명 선택 <span class="text-red-500">*</span></label>
+            <select id="input-shaping-code" class="w-full px-4 py-3 border rounded-lg text-sm" onchange="updateSelectedShapingInfo()">
               ${shapingOptions}
             </select>
-            <p class="text-xs text-gray-400 mt-1">이 바코드를 스캔하면 선택한 성형명의 공정이 시작됩니다</p>
+            <p class="text-xs text-gray-500 mt-1">※ 성형명 공정 라우팅에서 공정이 설정된 성형명만 표시됩니다</p>
+          </div>
+          
+          <div id="selected-shaping-info" class="hidden bg-blue-50 p-3 rounded-lg">
+            <div class="text-sm font-medium text-blue-800">선택된 성형명의 공정:</div>
+            <div id="selected-process-list" class="mt-2 text-xs text-blue-600"></div>
           </div>
           
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">설명</label>
-            <input type="text" id="barcode-desc" value="${existingData?.description || ''}"
-                   class="w-full px-3 py-2 border rounded-lg" placeholder="선택사항">
+            <label class="block text-sm font-medium text-gray-700 mb-1">설명 (선택)</label>
+            <input type="text" id="input-description" value="${existingData?.description || ''}"
+                   class="w-full px-4 py-3 border rounded-lg" placeholder="메모">
           </div>
         </div>
         
         <div class="flex justify-end gap-2 mt-6">
           <button onclick="document.getElementById('${modalId}').remove()" 
                   class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
-          <button onclick="saveBarcodeMapping()" 
-                  class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          <button onclick="saveBarcodeItem()" 
+                  class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
             <i class="fas fa-save mr-1"></i> 저장
           </button>
         </div>
@@ -55787,19 +55842,64 @@ async function showAddBarcodeModal(editBarcode = null) {
   `;
   
   document.body.appendChild(modal);
-  if (!editBarcode) document.getElementById('barcode-input').focus();
+  
+  // 기존 데이터가 있으면 선택
+  if (existingData?.shaping_code) {
+    const select = document.getElementById('input-shaping-code');
+    select.value = existingData.shaping_code;
+    updateSelectedShapingInfo();
+  }
+  
+  if (!editBarcode) document.getElementById('input-barcode').focus();
 }
 
+// 선택된 성형명의 공정 정보 표시
+async function updateSelectedShapingInfo() {
+  const select = document.getElementById('input-shaping-code');
+  const shapingCode = select.value;
+  const infoDiv = document.getElementById('selected-shaping-info');
+  const listDiv = document.getElementById('selected-process-list');
+  
+  if (!shapingCode) {
+    infoDiv.classList.add('hidden');
+    return;
+  }
+  
+  try {
+    const res = await fetch(`/api/process-tracking/shaping-routing/${shapingCode}`);
+    const data = await res.json();
+    
+    if (data.success && data.data.length > 0) {
+      const processes = data.data.map((p, i) => `${i+1}. ${p.process_name}`).join(' → ');
+      listDiv.innerHTML = `<div class="flex flex-wrap gap-1">${data.data.map((p, i) => 
+        `<span class="bg-blue-200 px-2 py-0.5 rounded">${i+1}. ${p.process_name}</span>`
+      ).join(' <i class="fas fa-arrow-right text-blue-400 mx-1"></i> ')}</div>`;
+      infoDiv.classList.remove('hidden');
+    } else {
+      listDiv.innerHTML = '<span class="text-orange-600">⚠️ 공정 라우팅이 설정되지 않음</span>';
+      infoDiv.classList.remove('hidden');
+    }
+  } catch (e) {
+    listDiv.innerHTML = '<span class="text-red-600">공정 정보 로드 실패</span>';
+    infoDiv.classList.remove('hidden');
+  }
+}
+window.updateSelectedShapingInfo = updateSelectedShapingInfo;
+
 // 바코드 저장
-async function saveBarcodeMapping() {
-  const barcode = document.getElementById('barcode-input').value.trim();
-  const shapingSelect = document.getElementById('barcode-shaping');
-  const shapingCode = shapingSelect.value;
-  const shapingName = shapingSelect.options[shapingSelect.selectedIndex]?.dataset?.name || '';
-  const desc = document.getElementById('barcode-desc').value.trim();
+async function saveBarcodeItem() {
+  const barcode = document.getElementById('input-barcode').value.trim();
+  const select = document.getElementById('input-shaping-code');
+  const shapingCode = select.value;
+  const shapingName = select.options[select.selectedIndex]?.dataset?.name || '';
+  const description = document.getElementById('input-description').value.trim();
   
   if (!barcode) {
     alert('바코드를 입력하세요');
+    return;
+  }
+  if (!shapingCode) {
+    alert('성형명을 선택하세요');
     return;
   }
   
@@ -55809,17 +55909,17 @@ async function saveBarcodeMapping() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         barcode,
-        shaping_code: shapingCode || null,
-        shaping_name: shapingName || null,
-        description: desc || null
+        shaping_code: shapingCode,
+        shaping_name: shapingName,
+        description: description || null
       })
     });
     
     const data = await res.json();
     if (data.success) {
+      document.getElementById('barcode-modal')?.remove();
       alert('저장되었습니다');
-      document.getElementById('barcode-add-modal')?.remove();
-      await loadBarcodeMasterList();
+      loadBarcodeMasterList();
     } else {
       alert('저장 실패: ' + data.error);
     }
@@ -55829,21 +55929,22 @@ async function saveBarcodeMapping() {
 }
 
 // 바코드 수정
-function editBarcodeMapping(barcode) {
+function editBarcodeDetail(barcode) {
   showAddBarcodeModal(barcode);
 }
 
 // 바코드 삭제
-async function deleteBarcodeMapping(barcode) {
+async function deleteBarcodeItem(barcode) {
   if (!confirm(`바코드 "${barcode}"를 삭제하시겠습니까?`)) return;
   
   try {
-    const res = await fetch(`/api/process-tracking/barcode-master/${encodeURIComponent(barcode)}`, { method: 'DELETE' });
+    const res = await fetch(`/api/process-tracking/barcode-master/${encodeURIComponent(barcode)}`, { 
+      method: 'DELETE' 
+    });
     const data = await res.json();
     
     if (data.success) {
-      alert('삭제되었습니다');
-      await loadBarcodeMasterList();
+      loadBarcodeMasterList();
     } else {
       alert('삭제 실패: ' + data.error);
     }
@@ -55852,10 +55953,10 @@ async function deleteBarcodeMapping(barcode) {
   }
 }
 
-// 전역 함수 등록 추가
+// 전역 함수 등록
 window.renderBarcodeMasterProcess = renderBarcodeMasterProcess;
 window.loadBarcodeMasterList = loadBarcodeMasterList;
 window.showAddBarcodeModal = showAddBarcodeModal;
-window.saveBarcodeMapping = saveBarcodeMapping;
-window.editBarcodeMapping = editBarcodeMapping;
-window.deleteBarcodeMapping = deleteBarcodeMapping;
+window.saveBarcodeItem = saveBarcodeItem;
+window.editBarcodeDetail = editBarcodeDetail;
+window.deleteBarcodeItem = deleteBarcodeItem;

@@ -677,12 +677,7 @@ app.get('/*', (c) => {
                     <span>공정 현황</span>
                 </a>
                 
-                <!-- ★★★ v3.6.146: 바코드 마스터 메뉴 추가 ★★★ -->
-                <a href="#barcode-master-process" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="barcode-master-process">
-                    <i class="fas fa-barcode w-5"></i>
-                    <span>바코드 마스터</span>
-                </a>
-                
+                <!-- ★★★ v3.6.148: 세분화 구조 복원 ★★★ -->
                 <a href="#shaping-master" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="shaping-master">
                     <i class="fas fa-shapes w-5"></i>
                     <span>성형명 마스터</span>
@@ -691,6 +686,11 @@ app.get('/*', (c) => {
                 <a href="#shaping-routing" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="shaping-routing">
                     <i class="fas fa-route w-5"></i>
                     <span>성형명 공정 라우팅</span>
+                </a>
+                
+                <a href="#barcode-master-process" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="barcode-master-process">
+                    <i class="fas fa-barcode w-5"></i>
+                    <span>바코드 마스터</span>
                 </a>
                 
                 <!-- ========== 업무 관리 (상단 배치) ========== -->

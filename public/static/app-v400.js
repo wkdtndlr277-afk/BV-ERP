@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.157';
+const APP_VERSION = '3.6.158';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54047,7 +54047,7 @@ async function renderProcessTracking() {
       <div class="flex items-center justify-between flex-wrap gap-3">
         <h2 class="text-2xl font-bold text-gray-800">
           <i class="fas fa-industry mr-2 text-emerald-600"></i>
-          공정 현황 대시보드
+          공정 현황
         </h2>
         <div class="flex items-center gap-2">
           <button onclick="initProcessTrackingDB()" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm">
@@ -54056,13 +54056,38 @@ async function renderProcessTracking() {
           <button onclick="showBatchCreateModal()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
             <i class="fas fa-plus mr-1"></i> 배치 발행
           </button>
-          <a href="/process-scan.html" target="_blank" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-            <i class="fas fa-external-link-alt mr-1"></i> 공정 스캔
-          </a>
           <button onclick="loadProcessDashboard()" class="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200">
             <i class="fas fa-sync-alt mr-1"></i> 새로고침
           </button>
         </div>
+      </div>
+      
+      <!-- ★★★ v3.6.158: 바코드 스캔 섹션 (공정 현황 페이지에 통합) ★★★ -->
+      <div id="barcode-scan-section" class="bg-gradient-to-r from-emerald-500 to-green-600 rounded-2xl p-6 shadow-xl">
+        <div class="flex flex-col md:flex-row items-center gap-4">
+          <div class="flex-1 w-full">
+            <label class="block text-white text-sm font-bold mb-2">
+              <i class="fas fa-barcode mr-2"></i> 고정 바코드 스캔
+            </label>
+            <input type="text" id="process-barcode-input" 
+                   class="w-full px-4 py-4 text-xl font-mono text-center border-4 border-white/30 rounded-xl bg-white/90 focus:outline-none focus:border-white focus:bg-white"
+                   placeholder="바코드를 스캔하세요"
+                   autocomplete="off"
+                   onkeypress="if(event.key==='Enter') handleProcessBarcodeScan()">
+          </div>
+          <button onclick="handleProcessBarcodeScan()" class="px-8 py-4 bg-white text-emerald-600 rounded-xl font-bold text-lg hover:bg-emerald-50 shadow-lg">
+            <i class="fas fa-play-circle mr-2"></i> 스캔
+          </button>
+        </div>
+        <p class="text-white/80 text-sm mt-3 text-center">
+          <i class="fas fa-info-circle mr-1"></i>
+          바코드 스캔 → 자동으로 새 사이클 생성 + 첫 공정 시작
+        </p>
+      </div>
+      
+      <!-- 현재 진행 중인 사이클 (스캔 후 표시) -->
+      <div id="active-cycle-section" class="hidden">
+        <!-- 동적으로 생성 -->
       </div>
       
       <!-- 요약 카드 -->
@@ -54281,6 +54306,374 @@ async function loadProcessDashboard() {
     showToast('대시보드 로드 실패', 'error');
   }
 }
+
+// ★★★ v3.6.158: 고정 바코드 스캔 처리 (공정 현황 페이지 내장) ★★★
+let activeCycleData = null;
+let activeCycleTimer = null;
+let activeCycleStartTime = null;
+
+async function handleProcessBarcodeScan() {
+  const input = document.getElementById('process-barcode-input');
+  const barcode = input.value.trim();
+  
+  if (!barcode) {
+    showToast('바코드를 입력하세요', 'warning');
+    input.focus();
+    return;
+  }
+  
+  try {
+    // 1. 바코드 마스터 조회
+    const barcodeRes = await fetch(`/api/process-tracking/barcode/${encodeURIComponent(barcode)}`);
+    const barcodeData = await barcodeRes.json();
+    
+    if (!barcodeData.success) {
+      showToast('등록되지 않은 바코드입니다', 'error');
+      input.value = '';
+      input.focus();
+      return;
+    }
+    
+    const barcodeInfo = barcodeData.data.barcode;
+    if (!barcodeInfo.shaping_code) {
+      showToast('성형명이 연결되지 않은 바코드입니다', 'error');
+      input.value = '';
+      input.focus();
+      return;
+    }
+    
+    // 2. 성형명 공정 라우팅 조회
+    const routingRes = await fetch(`/api/process-tracking/shaping-routing/${barcodeInfo.shaping_code}`);
+    const routingData = await routingRes.json();
+    
+    if (!routingData.success || !routingData.data.length) {
+      showToast('공정 라우팅이 설정되지 않았습니다', 'error');
+      input.value = '';
+      input.focus();
+      return;
+    }
+    
+    // 3. 새 사이클 시작
+    const cycleRes = await fetch('/api/process-tracking/cycle/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ barcode })
+    });
+    const cycleData = await cycleRes.json();
+    
+    if (!cycleData.success) {
+      showToast(cycleData.error || '사이클 시작 실패', 'error');
+      return;
+    }
+    
+    // 4. 사이클 데이터 저장
+    activeCycleData = {
+      cycle: cycleData.data,
+      barcode: barcode,
+      shapingName: barcodeInfo.shaping_name,
+      shapingCode: barcodeInfo.shaping_code,
+      processes: routingData.data,
+      currentIndex: 0,
+      isExisting: cycleData.data.is_existing
+    };
+    
+    // 기존 진행 중인 사이클인 경우
+    if (cycleData.data.is_existing && barcodeData.data.time_logs) {
+      const inProgressIdx = barcodeData.data.time_logs.findIndex(t => t.status === 'IN_PROGRESS');
+      if (inProgressIdx >= 0) {
+        activeCycleData.currentIndex = inProgressIdx;
+        activeCycleData.processes = barcodeData.data.time_logs;
+      }
+    }
+    
+    // 5. 첫 공정 시작 (기존 진행 중인 것이 없는 경우)
+    if (!cycleData.data.is_existing || !barcodeData.data.current_process) {
+      await startCycleProcess();
+    } else {
+      activeCycleStartTime = new Date(barcodeData.data.current_process.start_time);
+      startCycleTimer();
+    }
+    
+    // 6. UI 표시
+    renderActiveCycleSection();
+    input.value = '';
+    
+    showToast(`${barcodeInfo.shaping_name} - 사이클 시작!`, 'success');
+    
+  } catch (error) {
+    console.error('Barcode scan error:', error);
+    showToast('스캔 오류: ' + error.message, 'error');
+  }
+}
+
+// 현재 공정 시작
+async function startCycleProcess() {
+  if (!activeCycleData || activeCycleData.currentIndex >= activeCycleData.processes.length) {
+    return;
+  }
+  
+  const process = activeCycleData.processes[activeCycleData.currentIndex];
+  
+  try {
+    const res = await fetch('/api/process-tracking/cycle/process/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cycle_id: activeCycleData.cycle.cycle_id,
+        process_code: process.process_code
+      })
+    });
+    
+    const data = await res.json();
+    if (data.success) {
+      activeCycleStartTime = new Date();
+      startCycleTimer();
+    }
+  } catch (error) {
+    console.error('Start process error:', error);
+  }
+}
+
+// 현재 공정 종료
+async function endCycleProcess() {
+  if (!activeCycleData) return;
+  
+  stopCycleTimer();
+  
+  const process = activeCycleData.processes[activeCycleData.currentIndex];
+  const elapsedSeconds = Math.floor((new Date() - activeCycleStartTime) / 1000);
+  
+  try {
+    const res = await fetch('/api/process-tracking/cycle/process/end', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cycle_id: activeCycleData.cycle.cycle_id
+      })
+    });
+    
+    const data = await res.json();
+    if (!data.success) {
+      showToast(data.error || '공정 종료 실패', 'error');
+      return;
+    }
+    
+    // 완료 표시
+    activeCycleData.processes[activeCycleData.currentIndex].status = 'COMPLETED';
+    activeCycleData.processes[activeCycleData.currentIndex].elapsed_seconds = elapsedSeconds;
+    
+    // 다음 공정으로
+    activeCycleData.currentIndex++;
+    
+    if (activeCycleData.currentIndex >= activeCycleData.processes.length) {
+      // 모든 공정 완료
+      showCycleCompleted();
+      showToast('모든 공정 완료!', 'success');
+    } else {
+      // 다음 공정 시작
+      await startCycleProcess();
+      renderActiveCycleSection();
+      const nextProcess = activeCycleData.processes[activeCycleData.currentIndex];
+      showToast(`${nextProcess.process_name || nextProcess.process_code} 시작`, 'success');
+    }
+    
+    // 대시보드 새로고침
+    loadProcessDashboard();
+    
+  } catch (error) {
+    console.error('End process error:', error);
+    showToast('공정 종료 오류', 'error');
+  }
+}
+
+// 타이머 시작
+function startCycleTimer() {
+  stopCycleTimer();
+  
+  activeCycleTimer = setInterval(() => {
+    if (!activeCycleStartTime || !activeCycleData) return;
+    
+    const elapsed = Math.floor((new Date() - activeCycleStartTime) / 1000);
+    const hours = Math.floor(elapsed / 3600);
+    const minutes = Math.floor((elapsed % 3600) / 60);
+    const seconds = elapsed % 60;
+    
+    const timerEl = document.getElementById('cycle-timer-display');
+    if (timerEl) {
+      timerEl.textContent = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      
+      // 상태 색상 업데이트
+      const process = activeCycleData.processes[activeCycleData.currentIndex];
+      const standardMinutes = process?.standard_minutes || 60;
+      const elapsedMinutes = elapsed / 60;
+      const ratio = elapsedMinutes / standardMinutes;
+      
+      const statusEl = document.getElementById('cycle-status-message');
+      if (statusEl) {
+        if (ratio >= 1.5) {
+          timerEl.className = 'text-5xl md:text-6xl font-mono font-bold text-red-600';
+          statusEl.textContent = '⚠️ 심각한 지연!';
+          statusEl.className = 'text-lg font-bold text-red-600';
+        } else if (ratio >= 1.0) {
+          timerEl.className = 'text-5xl md:text-6xl font-mono font-bold text-red-500';
+          statusEl.textContent = '⏰ 표준시간 초과';
+          statusEl.className = 'text-lg font-bold text-red-500';
+        } else if (ratio >= 0.8) {
+          timerEl.className = 'text-5xl md:text-6xl font-mono font-bold text-amber-500';
+          statusEl.textContent = '⚡ 표준시간 근접';
+          statusEl.className = 'text-lg font-bold text-amber-500';
+        } else {
+          timerEl.className = 'text-5xl md:text-6xl font-mono font-bold text-emerald-600';
+          statusEl.textContent = '✓ 정상 진행 중';
+          statusEl.className = 'text-lg font-bold text-emerald-600';
+        }
+      }
+    }
+  }, 1000);
+}
+
+// 타이머 정지
+function stopCycleTimer() {
+  if (activeCycleTimer) {
+    clearInterval(activeCycleTimer);
+    activeCycleTimer = null;
+  }
+}
+
+// 활성 사이클 섹션 렌더링
+function renderActiveCycleSection() {
+  const section = document.getElementById('active-cycle-section');
+  if (!section || !activeCycleData) return;
+  
+  const currentProcess = activeCycleData.processes[activeCycleData.currentIndex];
+  
+  section.innerHTML = `
+    <div class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-6 shadow-xl border-2 border-amber-300">
+      <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 mb-6">
+        <div>
+          <span class="text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-bold">
+            <i class="fas fa-shapes mr-1"></i> ${activeCycleData.shapingName}
+          </span>
+          <p class="text-sm text-gray-500 font-mono mt-2">${activeCycleData.barcode}</p>
+        </div>
+        <button onclick="closeCycleSection()" class="text-gray-400 hover:text-gray-600">
+          <i class="fas fa-times text-xl"></i>
+        </button>
+      </div>
+      
+      <div class="text-center mb-6">
+        <p class="text-sm text-amber-700 font-bold mb-2">
+          <i class="fas fa-play-circle mr-1"></i> 현재 공정 (${activeCycleData.currentIndex + 1}/${activeCycleData.processes.length})
+        </p>
+        <h3 class="text-3xl font-bold text-amber-800">${currentProcess.process_name || currentProcess.process_code}</h3>
+        <p class="text-amber-600 text-sm mt-1">표준시간: ${currentProcess.standard_minutes || 60}분</p>
+      </div>
+      
+      <div class="text-center mb-6">
+        <div id="cycle-timer-display" class="text-5xl md:text-6xl font-mono font-bold text-emerald-600">00:00:00</div>
+        <p id="cycle-status-message" class="text-lg font-bold text-emerald-600 mt-2">✓ 정상 진행 중</p>
+      </div>
+      
+      <button onclick="endCycleProcess()" class="w-full py-5 bg-red-500 text-white rounded-xl font-bold text-xl hover:bg-red-600 shadow-lg">
+        <i class="fas fa-stop-circle mr-2"></i> 공정 종료
+      </button>
+      
+      <div class="mt-6 pt-6 border-t border-amber-200">
+        <p class="text-sm font-bold text-gray-600 mb-3">
+          <i class="fas fa-list-ol mr-2"></i> 공정 진행 현황
+        </p>
+        <div class="space-y-2">
+          ${activeCycleData.processes.map((p, idx) => {
+            let bgClass = 'bg-gray-100 text-gray-400';
+            let icon = 'far fa-circle';
+            let timeInfo = `표준 ${p.standard_minutes || 60}분`;
+            
+            if (p.status === 'COMPLETED') {
+              bgClass = 'bg-green-100 text-green-700';
+              icon = 'fas fa-check-circle text-green-500';
+              const mins = Math.floor((p.elapsed_seconds || 0) / 60);
+              const secs = (p.elapsed_seconds || 0) % 60;
+              timeInfo = `${mins}분 ${secs}초 소요`;
+            } else if (idx === activeCycleData.currentIndex) {
+              bgClass = 'bg-amber-100 text-amber-800 border-2 border-amber-400';
+              icon = 'fas fa-play-circle text-amber-500';
+              timeInfo = '진행 중...';
+            }
+            
+            return `
+              <div class="flex items-center gap-3 px-4 py-3 rounded-lg ${bgClass}">
+                <i class="${icon}"></i>
+                <span class="font-bold">${idx + 1}. ${p.process_name || p.process_code}</span>
+                <span class="ml-auto text-sm">${timeInfo}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+  
+  section.classList.remove('hidden');
+}
+
+// 사이클 완료 표시
+function showCycleCompleted() {
+  stopCycleTimer();
+  
+  const section = document.getElementById('active-cycle-section');
+  if (!section || !activeCycleData) return;
+  
+  const totalSeconds = activeCycleData.processes.reduce((sum, p) => sum + (p.elapsed_seconds || 0), 0);
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  
+  section.innerHTML = `
+    <div class="bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl p-8 shadow-xl border-2 border-green-400 text-center">
+      <i class="fas fa-check-circle text-7xl text-green-500 mb-4"></i>
+      <h3 class="text-3xl font-bold text-green-800">모든 공정 완료!</h3>
+      <p class="text-gray-600 mt-2">${activeCycleData.shapingName}</p>
+      <p class="text-green-600 mt-2 text-lg">총 소요시간: ${mins}분 ${secs}초</p>
+      
+      <div class="mt-6 space-y-2 text-left">
+        ${activeCycleData.processes.map((p, idx) => {
+          const pMins = Math.floor((p.elapsed_seconds || 0) / 60);
+          const pSecs = (p.elapsed_seconds || 0) % 60;
+          return `
+            <div class="flex items-center gap-3 px-4 py-2 bg-green-100 text-green-700 rounded-lg">
+              <i class="fas fa-check-circle"></i>
+              <span>${idx + 1}. ${p.process_name || p.process_code}</span>
+              <span class="ml-auto text-sm">${pMins}분 ${pSecs}초</span>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      
+      <button onclick="closeCycleSection()" class="mt-6 px-8 py-3 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700">
+        <i class="fas fa-check mr-2"></i> 확인
+      </button>
+    </div>
+  `;
+}
+
+// 사이클 섹션 닫기
+function closeCycleSection() {
+  stopCycleTimer();
+  activeCycleData = null;
+  activeCycleStartTime = null;
+  
+  const section = document.getElementById('active-cycle-section');
+  if (section) {
+    section.classList.add('hidden');
+    section.innerHTML = '';
+  }
+  
+  document.getElementById('process-barcode-input')?.focus();
+}
+
+// 전역 함수 등록
+window.handleProcessBarcodeScan = handleProcessBarcodeScan;
+window.endCycleProcess = endCycleProcess;
+window.closeCycleSection = closeCycleSection;
 
 // 공정명 변환
 // ★★★ v3.6.144: 공정명 변환 - 폴딩, 1차발효실전온도 추가 ★★★

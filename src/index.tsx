@@ -666,11 +666,11 @@ app.get('/*', (c) => {
                     <p class="text-xs font-semibold text-emerald-600 uppercase tracking-wider px-4">⏱️ 공정 관리</p>
                 </div>
                 
-                <a href="/process-scan.html" target="_blank" class="flex items-center gap-3 px-4 py-3 rounded-lg bg-gradient-to-r from-emerald-500 to-green-600 text-white font-medium shadow-md hover:shadow-lg transition-all">
+                <button onclick="window.open('/process-scan.html', '_blank')" class="w-full flex items-center gap-3 px-4 py-3 rounded-lg bg-gradient-to-r from-emerald-500 to-green-600 text-white font-medium shadow-md hover:shadow-lg transition-all">
                     <i class="fas fa-industry w-5"></i>
                     <span>공정 스캔</span>
                     <i class="fas fa-external-link-alt text-xs ml-auto opacity-70"></i>
-                </a>
+                </button>
                 
                 <a href="#process-tracking" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="process-tracking">
                     <i class="fas fa-tasks w-5"></i>

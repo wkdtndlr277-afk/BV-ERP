@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.156';
+const APP_VERSION = '3.6.157';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -16034,8 +16034,11 @@ async function initializeApp() {
     });
   }
   
-  // Navigation links
+  // Navigation links (sidebar-link만 SPA 네비게이션 처리, no-spa-nav는 제외)
   document.querySelectorAll('.sidebar-link').forEach(link => {
+    // no-spa-nav 클래스가 있으면 기본 동작 유지 (새 탭 열기 등)
+    if (link.classList.contains('no-spa-nav')) return;
+    
     link.addEventListener('click', function(e) {
       e.preventDefault();
       const page = this.dataset.page;

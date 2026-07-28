@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.152';
+const APP_VERSION = '3.6.153';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54314,15 +54314,14 @@ function formatMinutes(minutes) {
 
 // 배치 발행 모달
 async function showBatchCreateModal() {
-  // ★★★ v3.6.145: 성형명 기반으로 변경 ★★★
+  // ★★★ v3.6.152: 모든 성형명 표시 (공정 미설정도 포함) ★★★
   // 성형명 라우팅 목록 조회
   let shapings = [];
   try {
     const res = await fetch('/api/process-tracking/shaping-routing-list');
     const result = await res.json();
     if (result.success) {
-      // 라우팅이 설정된 성형명만 필터링
-      shapings = result.data.filter(s => s.process_count > 0);
+      shapings = result.data || [];
     }
   } catch (e) {
     console.error('Shaping load error:', e);
@@ -54341,59 +54340,54 @@ async function showBatchCreateModal() {
     Object.keys(grouped).sort().forEach(cat => {
       shapingOptions += `<optgroup label="${cat}">`;
       grouped[cat].forEach(s => {
-        shapingOptions += `<option value="${s.shaping_code}" data-name="${s.shaping_name}">${s.shaping_name} (${s.process_count}공정)</option>`;
+        const procInfo = s.process_count > 0 ? `(${s.process_count}공정)` : '⚠️ 공정 미설정';
+        shapingOptions += `<option value="${s.shaping_code}" data-name="${s.shaping_name}" data-proc="${s.process_count}">${s.shaping_name} ${procInfo}</option>`;
       });
       shapingOptions += `</optgroup>`;
     });
   } else {
-    shapingOptions = '<option value="">공정 라우팅 설정 필요</option>';
+    shapingOptions = '<option value="">성형명 없음 - 먼저 성형명 마스터에서 추가하세요</option>';
   }
   
-  showModal(`
-    <div class="bg-white rounded-xl max-w-lg w-full mx-4">
-      <div class="p-6 border-b">
-        <h3 class="text-xl font-bold text-gray-800">
-          <i class="fas fa-plus-circle text-emerald-600 mr-2"></i>
-          배치 발행
-        </h3>
-        <p class="text-sm text-gray-500 mt-1">성형명 기반 배치 생성</p>
+  const modalContent = `
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          <i class="fas fa-shapes text-purple-500 mr-1"></i> 성형명 선택
+        </label>
+        <select id="batch-shaping" class="w-full border rounded-lg px-4 py-3" onchange="updateBatchShapingName()">
+          <option value="">성형명을 선택하세요</option>
+          ${shapingOptions}
+        </select>
+        ${shapings.length === 0 ? '<p class="text-xs text-red-500 mt-1">먼저 "성형명 마스터"에서 성형명을 추가하세요</p>' : ''}
       </div>
-      <div class="p-6 space-y-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            <i class="fas fa-shapes text-purple-500 mr-1"></i> 성형명 선택
-          </label>
-          <select id="batch-shaping" class="w-full border rounded-lg px-4 py-3" onchange="updateBatchShapingName()">
-            <option value="">성형명을 선택하세요</option>
-            ${shapingOptions}
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">배치량 (선택)</label>
+        <div class="flex gap-2">
+          <input type="number" id="batch-quantity" class="flex-1 border rounded-lg px-4 py-3" placeholder="예: 10" step="0.1">
+          <select id="batch-unit" class="border rounded-lg px-4 py-3">
+            <option value="kg">kg</option>
+            <option value="g">g</option>
+            <option value="개">개</option>
+            <option value="판">판</option>
           </select>
-          ${shapings.length === 0 ? '<p class="text-xs text-red-500 mt-1">먼저 "성형명 공정 라우팅"에서 성형명별 공정을 설정하세요</p>' : ''}
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">배치량 (선택)</label>
-          <div class="flex gap-2">
-            <input type="number" id="batch-quantity" class="flex-1 border rounded-lg px-4 py-3" placeholder="예: 10" step="0.1">
-            <select id="batch-unit" class="border rounded-lg px-4 py-3">
-              <option value="kg">kg</option>
-              <option value="g">g</option>
-              <option value="개">개</option>
-              <option value="판">판</option>
-            </select>
-          </div>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">메모 (선택)</label>
-          <input type="text" id="batch-notes" class="w-full border rounded-lg px-4 py-3" placeholder="배치 관련 메모">
         </div>
       </div>
-      <div class="p-6 border-t bg-gray-50 flex justify-end gap-3">
-        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
-        <button onclick="createBatchByShaping()" class="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
-          <i class="fas fa-barcode mr-1"></i> 배치 발행
-        </button>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">메모 (선택)</label>
+        <input type="text" id="batch-notes" class="w-full border rounded-lg px-4 py-3" placeholder="배치 관련 메모">
       </div>
     </div>
-  `);
+  `;
+  
+  const modalActions = `
+    <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+    <button onclick="createBatchByShaping()" class="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
+      <i class="fas fa-barcode mr-1"></i> 배치 발행
+    </button>
+  `;
+  
+  showModal('<i class="fas fa-plus-circle text-emerald-600 mr-2"></i> 배치 발행', modalContent, modalActions);
 }
 
 // 성형명 업데이트 (v3.6.145)
@@ -54434,26 +54428,26 @@ async function createBatchByShaping() {
       showToast(`배치 발행 완료: ${result.data.batch_code}`, 'success');
       
       // 바코드 표시
-      showModal(`
-        <div class="bg-white rounded-xl max-w-md w-full mx-4 text-center p-8">
+      const successContent = `
+        <div class="text-center">
           <i class="fas fa-check-circle text-6xl text-emerald-500 mb-4"></i>
-          <h3 class="text-xl font-bold text-gray-800 mb-2">배치 발행 완료!</h3>
           <p class="text-gray-600 mb-1">${result.data.shaping_name}</p>
           <p class="text-xs text-purple-600 mb-4">${result.data.category || ''} | ${result.data.process_count}개 공정</p>
           <div class="bg-gray-100 rounded-lg p-4 mb-4">
             <p class="text-xs text-gray-500">배치 바코드</p>
             <p class="text-2xl font-mono font-bold text-gray-800">${result.data.batch_code}</p>
           </div>
-          <div class="flex justify-center gap-3">
-            <button onclick="printBatchBarcode('${result.data.batch_code}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg">
-              <i class="fas fa-print mr-1"></i> 인쇄
-            </button>
-            <button onclick="closeModal(); loadProcessDashboard();" class="px-4 py-2 bg-gray-600 text-white rounded-lg">
-              확인
-            </button>
-          </div>
         </div>
-      `);
+      `;
+      const successActions = `
+        <button onclick="printBatchBarcode('${result.data.batch_code}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg">
+          <i class="fas fa-print mr-1"></i> 인쇄
+        </button>
+        <button onclick="closeModal(); loadProcessDashboard();" class="px-4 py-2 bg-gray-600 text-white rounded-lg">
+          확인
+        </button>
+      `;
+      showModal('🎉 배치 발행 완료!', successContent, successActions, 'max-w-md');
     } else {
       showToast('배치 발행 실패: ' + result.error, 'error');
     }

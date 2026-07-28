@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.155';
+const APP_VERSION = '3.6.156';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54495,27 +54495,27 @@ async function createBatch() {
       closeModal();
       showToast(`배치 발행 완료: ${result.data.batch_code}`, 'success');
       
-      // 바코드 표시
-      showModal(`
-        <div class="bg-white rounded-xl max-w-md w-full mx-4 text-center p-8">
+      // 바코드 표시 (showModal 3인자 형식 사용)
+      const batchSuccessContent = `
+        <div class="text-center">
           <i class="fas fa-check-circle text-6xl text-emerald-500 mb-4"></i>
-          <h3 class="text-xl font-bold text-gray-800 mb-2">배치 발행 완료!</h3>
           <p class="text-gray-600 mb-4">${result.data.product_name}</p>
           <div class="bg-gray-100 rounded-lg p-4 mb-4">
             <p class="text-xs text-gray-500">배치 바코드</p>
             <p class="text-2xl font-mono font-bold text-gray-800">${result.data.batch_code}</p>
           </div>
-          <p class="text-sm text-gray-500 mb-6">${result.data.process_count}개 공정이 설정되었습니다</p>
-          <div class="flex gap-3 justify-center">
-            <button onclick="printBatchBarcode('${result.data.batch_code}', '${result.data.product_name}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-              <i class="fas fa-print mr-1"></i> 바코드 인쇄
-            </button>
-            <button onclick="closeModal(); loadProcessDashboard();" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
-              닫기
-            </button>
-          </div>
+          <p class="text-sm text-gray-500">${result.data.process_count}개 공정이 설정되었습니다</p>
         </div>
-      `);
+      `;
+      const batchSuccessActions = `
+        <button onclick="printBatchBarcode('${result.data.batch_code}', '${result.data.product_name}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          <i class="fas fa-print mr-1"></i> 인쇄
+        </button>
+        <button onclick="closeModal(); loadProcessDashboard();" class="px-4 py-2 bg-gray-600 text-white rounded-lg">
+          확인
+        </button>
+      `;
+      showModal('🎉 배치 발행 완료!', batchSuccessContent, batchSuccessActions, 'max-w-md');
     } else {
       showToast(result.error || '배치 발행 실패', 'error');
     }

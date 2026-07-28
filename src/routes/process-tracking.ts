@@ -1,5 +1,6 @@
-// ★★★ v3.6.143: 생산공정 실시간 추적 시스템 ★★★
-// 바코드 기반 공정시간 관리 - 제품별 공정 라우팅, 배치 추적, 실시간 타이머
+// ★★★ v3.6.145: 생산공정 실시간 추적 시스템 ★★★
+// 바코드 기반 공정시간 관리 - 성형명 기반 공정 라우팅, 배치 추적, 실시간 타이머
+// v3.6.145: 성형명 마스터 추가 - 제품코드와 독립적인 성형/생산 명칭 관리
 
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
@@ -107,12 +108,47 @@ app.post('/init-db', async (c) => {
       )
     `).run();
 
+    // ★★★ v3.6.145: 성형명 마스터 테이블 (제품코드와 독립) ★★★
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS shaping_name_master (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shaping_code TEXT UNIQUE NOT NULL,
+        shaping_name TEXT NOT NULL,
+        recipe_code TEXT,
+        category TEXT,
+        description TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+
+    // ★★★ v3.6.145: 성형명별 공정 라우팅 테이블 ★★★
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS shaping_process_routing (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        shaping_id INTEGER NOT NULL,
+        shaping_code TEXT NOT NULL,
+        process_code TEXT NOT NULL,
+        process_order INTEGER NOT NULL,
+        standard_minutes INTEGER DEFAULT 60,
+        is_optional INTEGER DEFAULT 0,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(shaping_code, process_code),
+        FOREIGN KEY (shaping_id) REFERENCES shaping_name_master(id)
+      )
+    `).run();
+
     // 인덱스 생성
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_batch_code ON production_batch(batch_code)`).run();
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_batch_status ON production_batch(status)`).run();
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_tracking_batch ON process_tracking(batch_id)`).run();
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_tracking_status ON process_tracking(status)`).run();
     await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_routing_product ON product_process_routing(product_code)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_shaping_name ON shaping_name_master(shaping_name)`).run();
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_shaping_routing ON shaping_process_routing(shaping_code)`).run();
 
     // 기본 공정 데이터 삽입
     // ★★★ v3.6.144: 공정 마스터 확장 - 폴딩, 1차발효실전온도 등 추가 ★★★
@@ -142,9 +178,316 @@ app.post('/init-db', async (c) => {
       `).bind(p.code, p.name, p.name_en, p.order, p.minutes, p.optional || 0).run();
     }
 
-    return c.json({ success: true, message: '공정 추적 테이블 초기화 완료' });
+    // ★★★ v3.6.145: 50+ 성형명 기본 데이터 삽입 ★★★
+    const defaultShapingNames = [
+      // 깜빠뉴/슬랩 계열
+      { code: 'SH001', name: '컨트리 통밀 깜빠뉴 (통밀깜바뉴AA)R-①', recipe: 'R-①', category: '깜빠뉴' },
+      { code: 'SH002', name: '컨트리 통밀 슬랩 (통밀깜바뉴AA)R-①', recipe: 'R-①', category: '슬랩' },
+      { code: 'SH003', name: '멀티그레인 컨트리 깜빠뉴 (뺑오시리얼)R-②', recipe: 'R-②', category: '깜빠뉴' },
+      { code: 'SH004', name: '멀티그레인 컨트리 슬랩 (뺑오시리얼)R-②', recipe: 'R-②', category: '슬랩' },
+      { code: 'SH005', name: '잡곡 후르츠 사워도우 깜빠뉴 (뺑오시리얼후르츠)', recipe: '', category: '깜빠뉴' },
+      { code: 'SH006', name: '호밀 사워도우 깜빠뉴 (CW)R-③', recipe: 'R-③', category: '깜빠뉴' },
+      { code: 'SH007', name: '호밀 사워도우 슬랩 (CW)R-③', recipe: 'R-③', category: '슬랩' },
+      { code: 'SH008', name: '호밀 사워도우 피칸 깜빠뉴 (CW)R-③', recipe: 'R-③', category: '깜빠뉴' },
+      { code: 'SH009', name: '호밀 후르츠 사워도우 깜빠뉴 (CW)R-③', recipe: 'R-③', category: '깜빠뉴' },
+      { code: 'SH010', name: '호밀통밀 사워도우 깜빠뉴 (뺑오)R-④', recipe: 'R-④', category: '깜빠뉴' },
+      { code: 'SH011', name: '호밀통밀 사워도우 슬랩 (뺑오)R-④', recipe: 'R-④', category: '슬랩' },
+      { code: 'SH012', name: '사워도우 슬랩 (크리스탈)R-⑤', recipe: 'R-⑤', category: '슬랩' },
+      { code: 'SH013', name: '사워도우 치아바타 (크리스탈)', recipe: '', category: '치아바타' },
+      { code: 'SH014', name: '사워도우 무화과 치아바타 (크리스탈)', recipe: '', category: '치아바타' },
+      { code: 'SH015', name: '사워도우 올리브 치아바타 (크리스탈)', recipe: '', category: '치아바타' },
+      { code: 'SH016', name: '버터 사워도우 깜빠뉴 (버터치아바타)R-⑥', recipe: 'R-⑥', category: '깜빠뉴' },
+      { code: 'SH017', name: '버터 사워도우 슬랩 (버터치아바타)R-⑥', recipe: 'R-⑥', category: '슬랩' },
+      { code: 'SH018', name: '오레가노 슬랩 (소프트르방)', recipe: '', category: '슬랩' },
+      { code: 'SH019', name: '올리브 푸가스 (소프트르방)R-⑦', recipe: 'R-⑦', category: '푸가스' },
+      { code: 'SH020', name: '토마토 푸가스 (소프트르방)R-⑦', recipe: 'R-⑦', category: '푸가스' },
+      { code: 'SH021', name: '올리브 가득 치아바타 슬랩', recipe: '', category: '치아바타' },
+      { code: 'SH022', name: '씨앗가득 치아바타 슬랩', recipe: '', category: '치아바타' },
+      { code: 'SH023', name: '씨앗가득 치아바타 깜빠뉴', recipe: '', category: '깜빠뉴' },
+      // 호밀 계열
+      { code: 'SH024', name: '100% 호밀 사워도우', recipe: '', category: '호밀' },
+      { code: 'SH025', name: '100% 호밀 사워도우 식빵', recipe: '', category: '호밀' },
+      { code: 'SH026', name: '70% 호밀 사워도우', recipe: '', category: '호밀' },
+      { code: 'SH027', name: '70% 호밀 사워도우 식빵', recipe: '', category: '호밀' },
+      // 초코/카카오 계열
+      { code: 'SH028', name: '초코 카카오 크림치즈 깜빠뉴', recipe: '', category: '초코' },
+      { code: 'SH029', name: '더블 초코 카카오 깜빠뉴', recipe: '', category: '초코' },
+      { code: 'SH030', name: '카카오 사워도우 깜빠뉴 (진한 초코)', recipe: '', category: '초코' },
+      // 병아리콩/고단백 계열
+      { code: 'SH031', name: '병아리콩 토마토 사워도우 슬랩', recipe: '', category: '고단백' },
+      { code: 'SH032', name: '병아리콩 토마토 사워도우 깜빠뉴', recipe: '', category: '고단백' },
+      { code: 'SH033', name: '고단백 슬랩', recipe: '', category: '고단백' },
+      { code: 'SH034', name: '고단백 통밀 슬랩', recipe: '', category: '고단백' },
+      // 브리오슈 계열
+      { code: 'SH035', name: '밤 브리오슈', recipe: '', category: '브리오슈' },
+      { code: 'SH036', name: '콩 브리오슈', recipe: '', category: '브리오슈' },
+      { code: 'SH037', name: '오렌지 화이트초코 브리오슈', recipe: '', category: '브리오슈' },
+      { code: 'SH038', name: '건포도 브리오슈', recipe: '', category: '브리오슈' },
+      { code: 'SH039', name: '크랜베리 호두 브리오슈', recipe: '', category: '브리오슈' },
+      { code: 'SH040', name: '호두 단팥 브리오슈', recipe: '', category: '브리오슈' },
+      // 치아바타 계열
+      { code: 'SH041', name: '버터 치아바타', recipe: '', category: '치아바타' },
+      { code: 'SH042', name: '소프트 플레인 치아바타', recipe: '', category: '치아바타' },
+      { code: 'SH043', name: '치즈 치아바타', recipe: '', category: '치아바타' },
+      // 중복 제거된 초코 계열 (원래 데이터에 중복 있었음)
+      // 이미 SH028, SH029, SH030에서 정의됨
+    ];
+
+    for (const s of defaultShapingNames) {
+      await c.env.DB.prepare(`
+        INSERT OR IGNORE INTO shaping_name_master (shaping_code, shaping_name, recipe_code, category)
+        VALUES (?, ?, ?, ?)
+      `).bind(s.code, s.name, s.recipe || null, s.category || null).run();
+    }
+
+    return c.json({ success: true, message: '공정 추적 및 성형명 마스터 테이블 초기화 완료' });
   } catch (error: any) {
     console.error('Init DB error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ========== 성형명 마스터 CRUD (v3.6.145) ==========
+
+// 성형명 마스터 목록 조회
+app.get('/shaping-master', async (c) => {
+  try {
+    const category = c.req.query('category');
+    const search = c.req.query('search');
+    
+    let query = `SELECT * FROM shaping_name_master WHERE is_active = 1`;
+    const params: any[] = [];
+    
+    if (category) {
+      query += ` AND category = ?`;
+      params.push(category);
+    }
+    if (search) {
+      query += ` AND shaping_name LIKE ?`;
+      params.push(`%${search}%`);
+    }
+    
+    query += ` ORDER BY category, shaping_name`;
+    
+    const result = await c.env.DB.prepare(query).bind(...params).all();
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 성형명 카테고리 목록
+app.get('/shaping-master/categories', async (c) => {
+  try {
+    const result = await c.env.DB.prepare(`
+      SELECT DISTINCT category, COUNT(*) as count 
+      FROM shaping_name_master 
+      WHERE is_active = 1 AND category IS NOT NULL
+      GROUP BY category 
+      ORDER BY category
+    `).all();
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 성형명 추가/수정
+app.post('/shaping-master', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { shaping_code, shaping_name, recipe_code, category, description } = body;
+
+    // 자동 코드 생성 (없는 경우)
+    let code = shaping_code;
+    if (!code) {
+      const countResult = await c.env.DB.prepare(`
+        SELECT COUNT(*) as cnt FROM shaping_name_master
+      `).first();
+      const seq = ((countResult?.cnt as number) || 0) + 1;
+      code = `SH${String(seq).padStart(3, '0')}`;
+    }
+
+    await c.env.DB.prepare(`
+      INSERT INTO shaping_name_master (shaping_code, shaping_name, recipe_code, category, description)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(shaping_code) DO UPDATE SET
+        shaping_name = excluded.shaping_name,
+        recipe_code = excluded.recipe_code,
+        category = excluded.category,
+        description = excluded.description,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(code, shaping_name, recipe_code || null, category || null, description || null).run();
+
+    return c.json({ success: true, message: '성형명 저장 완료', data: { shaping_code: code } });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 성형명 삭제 (비활성화)
+app.delete('/shaping-master/:code', async (c) => {
+  try {
+    const code = c.req.param('code');
+    await c.env.DB.prepare(`
+      UPDATE shaping_name_master SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE shaping_code = ?
+    `).bind(code).run();
+    return c.json({ success: true, message: '성형명 삭제 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ========== 성형명별 공정 라우팅 (v3.6.145) ==========
+
+// 성형명별 공정 라우팅 조회
+app.get('/shaping-routing/:shapingCode', async (c) => {
+  try {
+    const shapingCode = c.req.param('shapingCode');
+    const result = await c.env.DB.prepare(`
+      SELECT r.*, m.shaping_name 
+      FROM shaping_process_routing r
+      JOIN shaping_name_master m ON m.shaping_code = r.shaping_code
+      WHERE r.shaping_code = ? AND r.is_active = 1 
+      ORDER BY r.process_order
+    `).bind(shapingCode).all();
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 성형명별 공정 라우팅 저장 (전체 덮어쓰기)
+app.post('/shaping-routing/:shapingCode', async (c) => {
+  try {
+    const shapingCode = c.req.param('shapingCode');
+    const body = await c.req.json();
+    const { processes } = body;
+
+    // 성형명 마스터에서 ID 조회
+    const shaping = await c.env.DB.prepare(`
+      SELECT id FROM shaping_name_master WHERE shaping_code = ?
+    `).bind(shapingCode).first();
+
+    if (!shaping) {
+      return c.json({ success: false, error: '성형명을 찾을 수 없습니다' }, 404);
+    }
+
+    // 기존 라우팅 비활성화
+    await c.env.DB.prepare(`
+      UPDATE shaping_process_routing SET is_active = 0 WHERE shaping_code = ?
+    `).bind(shapingCode).run();
+
+    // 새 라우팅 저장
+    for (const p of processes) {
+      await c.env.DB.prepare(`
+        INSERT INTO shaping_process_routing (shaping_id, shaping_code, process_code, process_order, standard_minutes, is_optional)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(shaping_code, process_code) DO UPDATE SET
+          process_order = excluded.process_order,
+          standard_minutes = excluded.standard_minutes,
+          is_optional = excluded.is_optional,
+          is_active = 1,
+          updated_at = CURRENT_TIMESTAMP
+      `).bind(shaping.id, shapingCode, p.process_code, p.process_order, p.standard_minutes || 60, p.is_optional || 0).run();
+    }
+
+    return c.json({ success: true, message: '성형명 공정 라우팅 저장 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 라우팅이 설정된 성형명 목록 조회
+app.get('/shaping-routing-list', async (c) => {
+  try {
+    const result = await c.env.DB.prepare(`
+      SELECT m.shaping_code, m.shaping_name, m.category, m.recipe_code,
+             COUNT(r.id) as process_count,
+             MAX(r.updated_at) as last_updated
+      FROM shaping_name_master m
+      LEFT JOIN shaping_process_routing r ON r.shaping_code = m.shaping_code AND r.is_active = 1
+      WHERE m.is_active = 1
+      GROUP BY m.shaping_code, m.shaping_name, m.category, m.recipe_code
+      ORDER BY m.category, m.shaping_name
+    `).all();
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ========== 배치 생성 v3.6.145: 성형명 기반으로 변경 ==========
+
+// 배치 바코드 생성 (성형명 기반)
+app.post('/batch-by-shaping', async (c) => {
+  try {
+    const body = await c.req.json();
+    const { shaping_code, batch_quantity, batch_unit, notes } = body;
+
+    // 성형명 마스터 조회
+    const shaping = await c.env.DB.prepare(`
+      SELECT * FROM shaping_name_master WHERE shaping_code = ? AND is_active = 1
+    `).bind(shaping_code).first();
+
+    if (!shaping) {
+      return c.json({ success: false, error: '성형명을 찾을 수 없습니다' }, 404);
+    }
+
+    // 오늘 날짜 기반 배치 코드 생성 (KST)
+    const now = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const kstDate = new Date(now.getTime() + kstOffset);
+    const dateStr = kstDate.toISOString().slice(0, 10).replace(/-/g, '');
+    
+    // 오늘 배치 수 조회
+    const countResult = await c.env.DB.prepare(`
+      SELECT COUNT(*) as cnt FROM production_batch 
+      WHERE batch_code LIKE ?
+    `).bind(`BATCH-${dateStr}-%`).first();
+    
+    const seq = ((countResult?.cnt as number) || 0) + 1;
+    const batchCode = `BATCH-${dateStr}-${String(seq).padStart(3, '0')}`;
+
+    // 배치 생성 (성형명 정보 저장)
+    const result = await c.env.DB.prepare(`
+      INSERT INTO production_batch (batch_code, product_code, product_name, batch_quantity, batch_unit, status, notes)
+      VALUES (?, ?, ?, ?, ?, 'CREATED', ?)
+    `).bind(batchCode, shaping_code, shaping.shaping_name, batch_quantity || null, batch_unit || 'kg', notes || null).run();
+
+    const batchId = result.meta.last_row_id;
+
+    // 성형명별 공정 라우팅 조회 후 추적 레코드 생성
+    const routing = await c.env.DB.prepare(`
+      SELECT r.*, pm.process_name 
+      FROM shaping_process_routing r
+      LEFT JOIN process_master pm ON pm.process_code = r.process_code
+      WHERE r.shaping_code = ? AND r.is_active = 1 
+      ORDER BY r.process_order
+    `).bind(shaping_code).all();
+
+    if (routing.results.length > 0) {
+      for (const r of routing.results as any[]) {
+        await c.env.DB.prepare(`
+          INSERT INTO process_tracking (batch_id, batch_code, process_code, process_name, process_order, standard_minutes, status)
+          VALUES (?, ?, ?, ?, ?, ?, 'PENDING')
+        `).bind(batchId, batchCode, r.process_code, r.process_name || r.process_code, r.process_order, r.standard_minutes).run();
+      }
+    }
+
+    return c.json({ 
+      success: true, 
+      data: { 
+        batch_id: batchId, 
+        batch_code: batchCode,
+        shaping_code,
+        shaping_name: shaping.shaping_name,
+        category: shaping.category,
+        process_count: routing.results.length
+      },
+      message: `배치 생성 완료: ${batchCode}` 
+    });
+  } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }
 });

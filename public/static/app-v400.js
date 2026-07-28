@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.144';
-const APP_BUILD = '20260728-3';
+const APP_VERSION = '3.6.145';
+const APP_BUILD = '20260728-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -1391,6 +1391,8 @@ function renderPage(page) {
     case 'shipment-log': renderShipmentLog(); break;
     case 'process-tracking': renderProcessTracking(); break;
     case 'process-routing': renderProcessRouting(); break;
+    case 'shaping-master': renderShapingMaster(); break;
+    case 'shaping-routing': renderShapingRouting(); break;
     default: renderDashboard();
   }
 }
@@ -54311,19 +54313,40 @@ function formatMinutes(minutes) {
 
 // 배치 발행 모달
 async function showBatchCreateModal() {
-  // 라우팅이 설정된 제품 목록 조회
-  let products = [];
+  // ★★★ v3.6.145: 성형명 기반으로 변경 ★★★
+  // 성형명 라우팅 목록 조회
+  let shapings = [];
   try {
-    const res = await fetch('/api/process-tracking/routing-products');
+    const res = await fetch('/api/process-tracking/shaping-routing-list');
     const result = await res.json();
-    if (result.success) products = result.data;
+    if (result.success) {
+      // 라우팅이 설정된 성형명만 필터링
+      shapings = result.data.filter(s => s.process_count > 0);
+    }
   } catch (e) {
-    console.error('Products load error:', e);
+    console.error('Shaping load error:', e);
   }
   
-  const productOptions = products.length > 0 
-    ? products.map(p => `<option value="${p.product_code}" data-name="${p.product_name}">${p.product_name} (${p.process_count}공정)</option>`).join('')
-    : '<option value="">공정 라우팅 설정 필요</option>';
+  // 카테고리별 그룹핑
+  let shapingOptions = '';
+  if (shapings.length > 0) {
+    const grouped = {};
+    shapings.forEach(s => {
+      const cat = s.category || '기타';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(s);
+    });
+    
+    Object.keys(grouped).sort().forEach(cat => {
+      shapingOptions += `<optgroup label="${cat}">`;
+      grouped[cat].forEach(s => {
+        shapingOptions += `<option value="${s.shaping_code}" data-name="${s.shaping_name}">${s.shaping_name} (${s.process_count}공정)</option>`;
+      });
+      shapingOptions += `</optgroup>`;
+    });
+  } else {
+    shapingOptions = '<option value="">공정 라우팅 설정 필요</option>';
+  }
   
   showModal(`
     <div class="bg-white rounded-xl max-w-lg w-full mx-4">
@@ -54332,15 +54355,18 @@ async function showBatchCreateModal() {
           <i class="fas fa-plus-circle text-emerald-600 mr-2"></i>
           배치 발행
         </h3>
+        <p class="text-sm text-gray-500 mt-1">성형명 기반 배치 생성</p>
       </div>
       <div class="p-6 space-y-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">제품 선택</label>
-          <select id="batch-product" class="w-full border rounded-lg px-4 py-3" onchange="updateBatchProductName()">
-            <option value="">제품을 선택하세요</option>
-            ${productOptions}
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            <i class="fas fa-shapes text-purple-500 mr-1"></i> 성형명 선택
+          </label>
+          <select id="batch-shaping" class="w-full border rounded-lg px-4 py-3" onchange="updateBatchShapingName()">
+            <option value="">성형명을 선택하세요</option>
+            ${shapingOptions}
           </select>
-          ${products.length === 0 ? '<p class="text-xs text-red-500 mt-1">먼저 "공정 라우팅 설정"에서 제품별 공정을 설정하세요</p>' : ''}
+          ${shapings.length === 0 ? '<p class="text-xs text-red-500 mt-1">먼저 "성형명 공정 라우팅"에서 성형명별 공정을 설정하세요</p>' : ''}
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">배치량 (선택)</label>
@@ -54361,12 +54387,78 @@ async function showBatchCreateModal() {
       </div>
       <div class="p-6 border-t bg-gray-50 flex justify-end gap-3">
         <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
-        <button onclick="createBatch()" class="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
+        <button onclick="createBatchByShaping()" class="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
           <i class="fas fa-barcode mr-1"></i> 배치 발행
         </button>
       </div>
     </div>
   `);
+}
+
+// 성형명 업데이트 (v3.6.145)
+function updateBatchShapingName() {
+  const select = document.getElementById('batch-shaping');
+  const option = select.options[select.selectedIndex];
+  window.selectedShapingName = option.dataset.name || '';
+}
+
+// 성형명 기반 배치 생성 (v3.6.145)
+async function createBatchByShaping() {
+  const shapingCode = document.getElementById('batch-shaping').value;
+  const quantity = document.getElementById('batch-quantity').value;
+  const unit = document.getElementById('batch-unit').value;
+  const notes = document.getElementById('batch-notes').value;
+  
+  if (!shapingCode) {
+    showToast('성형명을 선택하세요', 'warning');
+    return;
+  }
+  
+  try {
+    const res = await fetch('/api/process-tracking/batch-by-shaping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shaping_code: shapingCode,
+        batch_quantity: quantity ? parseFloat(quantity) : null,
+        batch_unit: unit,
+        notes
+      })
+    });
+    
+    const result = await res.json();
+    
+    if (result.success) {
+      closeModal();
+      showToast(`배치 발행 완료: ${result.data.batch_code}`, 'success');
+      
+      // 바코드 표시
+      showModal(`
+        <div class="bg-white rounded-xl max-w-md w-full mx-4 text-center p-8">
+          <i class="fas fa-check-circle text-6xl text-emerald-500 mb-4"></i>
+          <h3 class="text-xl font-bold text-gray-800 mb-2">배치 발행 완료!</h3>
+          <p class="text-gray-600 mb-1">${result.data.shaping_name}</p>
+          <p class="text-xs text-purple-600 mb-4">${result.data.category || ''} | ${result.data.process_count}개 공정</p>
+          <div class="bg-gray-100 rounded-lg p-4 mb-4">
+            <p class="text-xs text-gray-500">배치 바코드</p>
+            <p class="text-2xl font-mono font-bold text-gray-800">${result.data.batch_code}</p>
+          </div>
+          <div class="flex justify-center gap-3">
+            <button onclick="printBatchBarcode('${result.data.batch_code}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg">
+              <i class="fas fa-print mr-1"></i> 인쇄
+            </button>
+            <button onclick="closeModal(); loadProcessDashboard();" class="px-4 py-2 bg-gray-600 text-white rounded-lg">
+              확인
+            </button>
+          </div>
+        </div>
+      `);
+    } else {
+      showToast('배치 발행 실패: ' + result.error, 'error');
+    }
+  } catch (error) {
+    showToast('오류: ' + error.message, 'error');
+  }
 }
 
 // 배치 제품명 업데이트
@@ -54835,9 +54927,638 @@ async function editProductRouting(productCode, productName) {
   `);
 }
 
+// ========== v3.6.145: 성형명 마스터 관리 UI ==========
+
+// 성형명 마스터 관리 화면
+async function renderShapingMaster() {
+  const container = document.getElementById('main-content');
+  container.innerHTML = `
+    <div class="max-w-7xl mx-auto p-4 md:p-6">
+      <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div>
+          <h1 class="text-xl md:text-2xl font-bold text-gray-800">
+            <i class="fas fa-shapes text-purple-600 mr-2"></i>
+            성형명 마스터
+          </h1>
+          <p class="text-gray-500 text-sm mt-1">제품코드와 독립적인 성형/생산 명칭 관리</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="initProcessTrackingDB()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+            <i class="fas fa-database mr-1"></i> DB 초기화
+          </button>
+          <button onclick="showAddShapingModal()" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+            <i class="fas fa-plus mr-1"></i> 성형명 추가
+          </button>
+        </div>
+      </div>
+      
+      <!-- 필터 -->
+      <div class="bg-white rounded-xl shadow-sm p-4 mb-4">
+        <div class="flex flex-wrap gap-3">
+          <select id="shaping-category-filter" onchange="loadShapingMasterList()" class="px-3 py-2 border rounded-lg text-sm">
+            <option value="">전체 카테고리</option>
+          </select>
+          <input type="text" id="shaping-search" placeholder="성형명 검색..." 
+                 oninput="loadShapingMasterList()" class="px-3 py-2 border rounded-lg text-sm flex-1 min-w-[200px]">
+        </div>
+      </div>
+      
+      <!-- 성형명 목록 -->
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div id="shaping-master-list" class="p-4">
+          <div class="text-center py-8 text-gray-400">
+            <i class="fas fa-spinner fa-spin text-2xl"></i>
+            <p class="mt-2">로딩 중...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  await loadShapingCategories();
+  await loadShapingMasterList();
+}
+
+// 성형명 카테고리 로드
+async function loadShapingCategories() {
+  try {
+    const res = await fetch('/api/process-tracking/shaping-master/categories');
+    const data = await res.json();
+    
+    if (data.success) {
+      const select = document.getElementById('shaping-category-filter');
+      data.data.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.category;
+        opt.textContent = `${c.category} (${c.count})`;
+        select.appendChild(opt);
+      });
+    }
+  } catch (error) {
+    console.error('카테고리 로드 실패:', error);
+  }
+}
+
+// 성형명 목록 로드
+async function loadShapingMasterList() {
+  const category = document.getElementById('shaping-category-filter')?.value || '';
+  const search = document.getElementById('shaping-search')?.value || '';
+  
+  try {
+    const params = new URLSearchParams();
+    if (category) params.append('category', category);
+    if (search) params.append('search', search);
+    
+    const res = await fetch(`/api/process-tracking/shaping-master?${params}`);
+    const data = await res.json();
+    
+    const container = document.getElementById('shaping-master-list');
+    
+    if (!data.success || !data.data.length) {
+      container.innerHTML = `
+        <div class="text-center py-8 text-gray-400">
+          <i class="fas fa-shapes text-4xl mb-2"></i>
+          <p>등록된 성형명이 없습니다</p>
+          <p class="text-sm mt-1">DB 초기화를 실행하거나 새로운 성형명을 추가하세요</p>
+        </div>
+      `;
+      return;
+    }
+    
+    // 카테고리별 그룹핑
+    const grouped = {};
+    data.data.forEach(s => {
+      const cat = s.category || '기타';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(s);
+    });
+    
+    let html = '';
+    Object.keys(grouped).sort().forEach(cat => {
+      html += `
+        <div class="mb-6">
+          <h3 class="text-sm font-bold text-gray-600 mb-2 flex items-center">
+            <i class="fas fa-folder text-yellow-500 mr-2"></i>
+            ${cat} <span class="ml-2 text-xs text-gray-400">(${grouped[cat].length}개)</span>
+          </h3>
+          <div class="grid gap-2">
+      `;
+      
+      grouped[cat].forEach(s => {
+        html += `
+          <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+            <div class="flex-1 min-w-0">
+              <div class="font-medium text-gray-800 truncate">${s.shaping_name}</div>
+              <div class="text-xs text-gray-400 mt-1">
+                <span class="bg-purple-100 text-purple-700 px-2 py-0.5 rounded">${s.shaping_code}</span>
+                ${s.recipe_code ? `<span class="ml-2 bg-blue-100 text-blue-700 px-2 py-0.5 rounded">${s.recipe_code}</span>` : ''}
+              </div>
+            </div>
+            <div class="flex gap-2 ml-3">
+              <button onclick="editShaping('${s.shaping_code}')" class="p-2 text-blue-600 hover:bg-blue-100 rounded-lg" title="수정">
+                <i class="fas fa-edit"></i>
+              </button>
+              <button onclick="deleteShaping('${s.shaping_code}')" class="p-2 text-red-600 hover:bg-red-100 rounded-lg" title="삭제">
+                <i class="fas fa-trash"></i>
+              </button>
+            </div>
+          </div>
+        `;
+      });
+      
+      html += `</div></div>`;
+    });
+    
+    container.innerHTML = html;
+    
+  } catch (error) {
+    console.error('성형명 목록 로드 실패:', error);
+    document.getElementById('shaping-master-list').innerHTML = `
+      <div class="text-center py-8 text-red-400">
+        <i class="fas fa-exclamation-triangle text-2xl"></i>
+        <p class="mt-2">로드 실패: ${error.message}</p>
+      </div>
+    `;
+  }
+}
+
+// 성형명 추가 모달
+function showAddShapingModal(editData = null) {
+  const isEdit = !!editData;
+  const modalId = 'shaping-modal';
+  
+  document.getElementById(modalId)?.remove();
+  
+  const modal = document.createElement('div');
+  modal.id = modalId;
+  modal.innerHTML = `
+    <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) this.remove()">
+      <div class="bg-white rounded-xl w-full max-w-md p-6" onclick="event.stopPropagation()">
+        <h3 class="text-lg font-bold mb-4">
+          <i class="fas fa-shapes text-purple-600 mr-2"></i>
+          ${isEdit ? '성형명 수정' : '성형명 추가'}
+        </h3>
+        
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">성형명 <span class="text-red-500">*</span></label>
+            <input type="text" id="shaping-name-input" value="${editData?.shaping_name || ''}"
+                   class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-purple-500"
+                   placeholder="예: 컨트리 통밀 깜빠뉴 (통밀깜바뉴AA)R-①">
+          </div>
+          
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">레시피 코드</label>
+              <input type="text" id="shaping-recipe-input" value="${editData?.recipe_code || ''}"
+                     class="w-full px-3 py-2 border rounded-lg" placeholder="R-①">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">카테고리</label>
+              <input type="text" id="shaping-category-input" value="${editData?.category || ''}"
+                     class="w-full px-3 py-2 border rounded-lg" placeholder="깜빠뉴, 슬랩, 브리오슈...">
+            </div>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">설명</label>
+            <textarea id="shaping-desc-input" class="w-full px-3 py-2 border rounded-lg" rows="2"
+                      placeholder="선택사항">${editData?.description || ''}</textarea>
+          </div>
+        </div>
+        
+        <div class="flex justify-end gap-2 mt-6">
+          <button onclick="document.getElementById('${modalId}').remove()" 
+                  class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
+          <button onclick="saveShaping('${editData?.shaping_code || ''}')" 
+                  class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+            <i class="fas fa-save mr-1"></i> 저장
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  document.getElementById('shaping-name-input').focus();
+}
+
+// 성형명 저장
+async function saveShaping(existingCode = '') {
+  const name = document.getElementById('shaping-name-input').value.trim();
+  const recipe = document.getElementById('shaping-recipe-input').value.trim();
+  const category = document.getElementById('shaping-category-input').value.trim();
+  const desc = document.getElementById('shaping-desc-input').value.trim();
+  
+  if (!name) {
+    alert('성형명을 입력하세요');
+    return;
+  }
+  
+  try {
+    const res = await fetch('/api/process-tracking/shaping-master', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        shaping_code: existingCode || undefined,
+        shaping_name: name,
+        recipe_code: recipe || null,
+        category: category || null,
+        description: desc || null
+      })
+    });
+    
+    const data = await res.json();
+    if (data.success) {
+      alert('저장되었습니다');
+      document.getElementById('shaping-modal')?.remove();
+      await loadShapingMasterList();
+    } else {
+      alert('저장 실패: ' + data.error);
+    }
+  } catch (error) {
+    alert('저장 오류: ' + error.message);
+  }
+}
+
+// 성형명 수정
+async function editShaping(code) {
+  try {
+    const res = await fetch('/api/process-tracking/shaping-master?search=' + encodeURIComponent(code));
+    const data = await res.json();
+    
+    if (data.success && data.data.length > 0) {
+      const shaping = data.data.find(s => s.shaping_code === code);
+      if (shaping) {
+        showAddShapingModal(shaping);
+      }
+    }
+  } catch (error) {
+    alert('데이터 로드 실패: ' + error.message);
+  }
+}
+
+// 성형명 삭제
+async function deleteShaping(code) {
+  if (!confirm('이 성형명을 삭제하시겠습니까?')) return;
+  
+  try {
+    const res = await fetch(`/api/process-tracking/shaping-master/${code}`, { method: 'DELETE' });
+    const data = await res.json();
+    
+    if (data.success) {
+      alert('삭제되었습니다');
+      await loadShapingMasterList();
+    } else {
+      alert('삭제 실패: ' + data.error);
+    }
+  } catch (error) {
+    alert('삭제 오류: ' + error.message);
+  }
+}
+
+// ========== v3.6.145: 성형명별 공정 라우팅 UI ==========
+
+async function renderShapingRouting() {
+  const container = document.getElementById('main-content');
+  container.innerHTML = `
+    <div class="max-w-7xl mx-auto p-4 md:p-6">
+      <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <div>
+          <h1 class="text-xl md:text-2xl font-bold text-gray-800">
+            <i class="fas fa-route text-indigo-600 mr-2"></i>
+            성형명별 공정 라우팅
+          </h1>
+          <p class="text-gray-500 text-sm mt-1">성형명에 따른 공정 순서 및 표준시간 설정</p>
+        </div>
+        <button onclick="showAddShapingRoutingModal()" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+          <i class="fas fa-plus mr-1"></i> 라우팅 추가
+        </button>
+      </div>
+      
+      <!-- 라우팅 목록 -->
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+        <div id="shaping-routing-list" class="p-4">
+          <div class="text-center py-8 text-gray-400">
+            <i class="fas fa-spinner fa-spin text-2xl"></i>
+            <p class="mt-2">로딩 중...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  await loadShapingRoutingList();
+}
+
+// 성형명별 라우팅 목록 로드
+async function loadShapingRoutingList() {
+  try {
+    const res = await fetch('/api/process-tracking/shaping-routing-list');
+    const data = await res.json();
+    
+    const container = document.getElementById('shaping-routing-list');
+    
+    if (!data.success || !data.data.length) {
+      container.innerHTML = `
+        <div class="text-center py-8 text-gray-400">
+          <i class="fas fa-route text-4xl mb-2"></i>
+          <p>등록된 성형명 라우팅이 없습니다</p>
+          <p class="text-sm mt-1">새로운 라우팅을 추가하세요</p>
+        </div>
+      `;
+      return;
+    }
+    
+    // 카테고리별 그룹핑
+    const grouped = {};
+    data.data.forEach(s => {
+      const cat = s.category || '기타';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(s);
+    });
+    
+    let html = '';
+    Object.keys(grouped).sort().forEach(cat => {
+      html += `
+        <div class="mb-6">
+          <h3 class="text-sm font-bold text-gray-600 mb-2">
+            <i class="fas fa-folder text-yellow-500 mr-1"></i> ${cat}
+          </h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-3 py-2 text-left">성형명</th>
+                  <th class="px-3 py-2 text-center">레시피</th>
+                  <th class="px-3 py-2 text-center">공정수</th>
+                  <th class="px-3 py-2 text-center">최종수정</th>
+                  <th class="px-3 py-2 text-center">관리</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y">
+      `;
+      
+      grouped[cat].forEach(s => {
+        html += `
+          <tr class="hover:bg-gray-50">
+            <td class="px-3 py-2">
+              <div class="font-medium">${s.shaping_name}</div>
+              <div class="text-xs text-gray-400">${s.shaping_code}</div>
+            </td>
+            <td class="px-3 py-2 text-center">
+              ${s.recipe_code ? `<span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">${s.recipe_code}</span>` : '-'}
+            </td>
+            <td class="px-3 py-2 text-center">
+              ${s.process_count > 0 
+                ? `<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded">${s.process_count}개</span>`
+                : `<span class="text-gray-400">미설정</span>`}
+            </td>
+            <td class="px-3 py-2 text-center text-xs text-gray-400">
+              ${s.last_updated ? new Date(s.last_updated).toLocaleDateString('ko-KR') : '-'}
+            </td>
+            <td class="px-3 py-2 text-center">
+              <button onclick="editShapingRouting('${s.shaping_code}')" 
+                      class="px-3 py-1 text-xs bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200">
+                <i class="fas fa-edit mr-1"></i>설정
+              </button>
+            </td>
+          </tr>
+        `;
+      });
+      
+      html += `</tbody></table></div></div>`;
+    });
+    
+    container.innerHTML = html;
+    
+  } catch (error) {
+    console.error('라우팅 목록 로드 실패:', error);
+    document.getElementById('shaping-routing-list').innerHTML = `
+      <div class="text-center py-8 text-red-400">
+        <i class="fas fa-exclamation-triangle text-2xl"></i>
+        <p class="mt-2">로드 실패: ${error.message}</p>
+      </div>
+    `;
+  }
+}
+
+// 성형명별 라우팅 추가 모달
+async function showAddShapingRoutingModal() {
+  try {
+    // 성형명 목록 조회 (라우팅 미설정된 것 우선)
+    const res = await fetch('/api/process-tracking/shaping-master');
+    const data = await res.json();
+    
+    if (!data.success || !data.data.length) {
+      alert('등록된 성형명이 없습니다. 먼저 성형명을 추가하세요.');
+      return;
+    }
+    
+    const modalId = 'shaping-routing-add-modal';
+    document.getElementById(modalId)?.remove();
+    
+    let optionsHtml = '<option value="">선택하세요</option>';
+    
+    // 카테고리별 그룹핑
+    const grouped = {};
+    data.data.forEach(s => {
+      const cat = s.category || '기타';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(s);
+    });
+    
+    Object.keys(grouped).sort().forEach(cat => {
+      optionsHtml += `<optgroup label="${cat}">`;
+      grouped[cat].forEach(s => {
+        optionsHtml += `<option value="${s.shaping_code}">${s.shaping_name}</option>`;
+      });
+      optionsHtml += `</optgroup>`;
+    });
+    
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.innerHTML = `
+      <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) this.remove()">
+        <div class="bg-white rounded-xl w-full max-w-md p-6" onclick="event.stopPropagation()">
+          <h3 class="text-lg font-bold mb-4">
+            <i class="fas fa-route text-indigo-600 mr-2"></i>
+            라우팅 추가할 성형명 선택
+          </h3>
+          
+          <select id="shaping-routing-select" class="w-full px-3 py-2 border rounded-lg text-sm">
+            ${optionsHtml}
+          </select>
+          
+          <div class="flex justify-end gap-2 mt-4">
+            <button onclick="document.getElementById('${modalId}').remove()" 
+                    class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
+            <button onclick="openShapingRoutingEditor()" 
+                    class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+              다음 <i class="fas fa-arrow-right ml-1"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+  } catch (error) {
+    alert('성형명 목록 로드 실패: ' + error.message);
+  }
+}
+
+// 성형명 라우팅 에디터 열기
+function openShapingRoutingEditor() {
+  const select = document.getElementById('shaping-routing-select');
+  const code = select?.value;
+  
+  if (!code) {
+    alert('성형명을 선택하세요');
+    return;
+  }
+  
+  document.getElementById('shaping-routing-add-modal')?.remove();
+  editShapingRouting(code);
+}
+
+// 성형명별 라우팅 편집 모달
+async function editShapingRouting(shapingCode) {
+  try {
+    // 성형명 정보 조회
+    const masterRes = await fetch('/api/process-tracking/shaping-master?search=' + encodeURIComponent(shapingCode));
+    const masterData = await masterRes.json();
+    const shapingInfo = masterData.data?.find(s => s.shaping_code === shapingCode);
+    
+    if (!shapingInfo) {
+      alert('성형명 정보를 찾을 수 없습니다');
+      return;
+    }
+    
+    // 기존 라우팅 조회
+    const routingRes = await fetch(`/api/process-tracking/shaping-routing/${shapingCode}`);
+    const routingData = await routingRes.json();
+    const existingProcesses = routingData.data || [];
+    
+    // 공정 마스터 조회
+    const processRes = await fetch('/api/process-tracking/process-master');
+    const processData = await processRes.json();
+    const allProcesses = processData.data || [];
+    
+    const modalId = 'shaping-routing-edit-modal';
+    document.getElementById(modalId)?.remove();
+    
+    // 체크박스 목록 생성
+    let processListHtml = '';
+    allProcesses.forEach(p => {
+      const existing = existingProcesses.find(e => e.process_code === p.process_code);
+      const checked = existing ? 'checked' : '';
+      const stdMin = existing?.standard_minutes || p.standard_minutes;
+      
+      processListHtml += `
+        <div class="flex items-center gap-3 p-2 hover:bg-gray-50 rounded-lg">
+          <input type="checkbox" id="shp-proc-${p.process_code}" value="${p.process_code}" ${checked}
+                 class="shaping-process-check w-4 h-4 text-indigo-600 rounded">
+          <label for="shp-proc-${p.process_code}" class="flex-1 cursor-pointer">
+            <span class="font-medium">${p.process_name}</span>
+            ${p.is_optional ? '<span class="ml-1 text-xs text-orange-500">(선택)</span>' : ''}
+          </label>
+          <input type="number" id="shp-min-${p.process_code}" value="${stdMin}" min="0" max="999"
+                 class="w-16 px-2 py-1 border rounded text-sm text-center" placeholder="분">
+          <span class="text-xs text-gray-400">분</span>
+        </div>
+      `;
+    });
+    
+    const modal = document.createElement('div');
+    modal.id = modalId;
+    modal.innerHTML = `
+      <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this) this.remove()">
+        <div class="bg-white rounded-xl w-full max-w-lg max-h-[90vh] flex flex-col" onclick="event.stopPropagation()">
+          <div class="p-4 border-b">
+            <h3 class="text-lg font-bold">
+              <i class="fas fa-route text-indigo-600 mr-2"></i>
+              공정 라우팅 설정
+            </h3>
+            <p class="text-sm text-gray-500 mt-1">${shapingInfo.shaping_name}</p>
+          </div>
+          
+          <div class="flex-1 overflow-y-auto p-4">
+            <div class="text-sm text-gray-500 mb-3">
+              사용할 공정을 선택하고 표준시간(분)을 설정하세요
+            </div>
+            <div class="space-y-1">
+              ${processListHtml}
+            </div>
+          </div>
+          
+          <div class="p-4 border-t flex justify-end gap-2">
+            <button onclick="document.getElementById('${modalId}').remove()" 
+                    class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">취소</button>
+            <button onclick="saveShapingRouting('${shapingCode}')" 
+                    class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+              <i class="fas fa-save mr-1"></i> 저장
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+  } catch (error) {
+    alert('라우팅 로드 실패: ' + error.message);
+  }
+}
+
+// 성형명별 라우팅 저장
+async function saveShapingRouting(shapingCode) {
+  const checkboxes = document.querySelectorAll('.shaping-process-check:checked');
+  
+  if (checkboxes.length === 0) {
+    alert('최소 1개 이상의 공정을 선택하세요');
+    return;
+  }
+  
+  const processes = [];
+  let order = 1;
+  
+  checkboxes.forEach(cb => {
+    const code = cb.value;
+    const minutes = parseInt(document.getElementById(`shp-min-${code}`)?.value) || 60;
+    processes.push({
+      process_code: code,
+      process_order: order++,
+      standard_minutes: minutes
+    });
+  });
+  
+  try {
+    const res = await fetch(`/api/process-tracking/shaping-routing/${shapingCode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ processes })
+    });
+    
+    const data = await res.json();
+    if (data.success) {
+      alert(`${processes.length}개 공정 라우팅이 저장되었습니다`);
+      document.getElementById('shaping-routing-edit-modal')?.remove();
+      await loadShapingRoutingList();
+    } else {
+      alert('저장 실패: ' + data.error);
+    }
+  } catch (error) {
+    alert('저장 오류: ' + error.message);
+  }
+}
+
 // 전역 함수 등록
 window.renderProcessTracking = renderProcessTracking;
 window.renderProcessRouting = renderProcessRouting;
+window.renderShapingMaster = renderShapingMaster;
+window.renderShapingRouting = renderShapingRouting;
 window.loadProcessDashboard = loadProcessDashboard;
 window.showBatchCreateModal = showBatchCreateModal;
 window.createBatch = createBatch;
@@ -54849,3 +55570,15 @@ window.editProductRouting = editProductRouting;
 window.printBatchBarcode = printBatchBarcode;
 window.updateBatchProductName = updateBatchProductName;
 window.updateRoutingProductName = updateRoutingProductName;
+window.loadShapingMasterList = loadShapingMasterList;
+window.showAddShapingModal = showAddShapingModal;
+window.saveShaping = saveShaping;
+window.editShaping = editShaping;
+window.deleteShaping = deleteShaping;
+window.loadShapingRoutingList = loadShapingRoutingList;
+window.showAddShapingRoutingModal = showAddShapingRoutingModal;
+window.openShapingRoutingEditor = openShapingRoutingEditor;
+window.editShapingRouting = editShapingRouting;
+window.saveShapingRouting = saveShapingRouting;
+window.updateBatchShapingName = updateBatchShapingName;
+window.createBatchByShaping = createBatchByShaping;

@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.158';
+const APP_VERSION = '3.6.159';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -42065,11 +42065,15 @@ async function renderBarcodeInventory() {
     let scanTimeout = null;
     
     document.addEventListener('keypress', (e) => {
+      // ★★★ v3.6.159: 공정 현황 스캔 입력창 우선 지원 ★★★
+      const processInput = document.getElementById('process-barcode-input');
       const barcodeInput = document.getElementById('barcode-scan-input');
-      if (!barcodeInput) return; // 바코드 페이지가 아니면 무시
       
-      // 이미 입력창에 포커스가 있으면 기본 동작
-      if (document.activeElement === barcodeInput) return;
+      // 둘 다 없으면 무시
+      if (!processInput && !barcodeInput) return;
+      
+      // 현재 활성 입력창이 스캔용 입력창이면 기본 동작 (직접 입력 중)
+      if (document.activeElement === processInput || document.activeElement === barcodeInput) return;
       
       // 다른 입력창에 포커스가 있으면 무시 (수량 입력 등)
       if (document.activeElement.tagName === 'INPUT' || 
@@ -42078,9 +42082,18 @@ async function renderBarcodeInventory() {
       // Enter 키: 버퍼에 있는 내용을 처리
       if (e.key === 'Enter') {
         if (scanBuffer.length > 0) {
-          barcodeInput.value = scanBuffer;
-          scanBuffer = '';
-          scanBarcode();
+          // 공정 현황 스캔 입력창이 있으면 우선 사용
+          if (processInput) {
+            processInput.value = scanBuffer;
+            scanBuffer = '';
+            if (typeof handleProcessBarcodeScan === 'function') {
+              handleProcessBarcodeScan();
+            }
+          } else if (barcodeInput) {
+            barcodeInput.value = scanBuffer;
+            scanBuffer = '';
+            scanBarcode();
+          }
         }
         return;
       }
@@ -54313,8 +54326,16 @@ let activeCycleTimer = null;
 let activeCycleStartTime = null;
 
 async function handleProcessBarcodeScan() {
+  console.log('★★★ handleProcessBarcodeScan 호출됨 ★★★');
+  
   const input = document.getElementById('process-barcode-input');
+  if (!input) {
+    console.error('process-barcode-input 요소를 찾을 수 없음');
+    return;
+  }
+  
   const barcode = input.value.trim();
+  console.log('스캔된 바코드:', barcode);
   
   if (!barcode) {
     showToast('바코드를 입력하세요', 'warning');
@@ -54324,6 +54345,7 @@ async function handleProcessBarcodeScan() {
   
   try {
     // 1. 바코드 마스터 조회
+    console.log('바코드 마스터 조회 시작...');
     const barcodeRes = await fetch(`/api/process-tracking/barcode/${encodeURIComponent(barcode)}`);
     const barcodeData = await barcodeRes.json();
     
@@ -54395,10 +54417,12 @@ async function handleProcessBarcodeScan() {
     }
     
     // 6. UI 표시
+    console.log('사이클 UI 표시...');
     renderActiveCycleSection();
     input.value = '';
     
     showToast(`${barcodeInfo.shaping_name} - 사이클 시작!`, 'success');
+    console.log('★★★ 사이클 시작 완료! ★★★');
     
   } catch (error) {
     console.error('Barcode scan error:', error);

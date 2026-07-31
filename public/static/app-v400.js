@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.161';
+const APP_VERSION = '3.6.162';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54087,9 +54087,12 @@ async function renderProcessTracking() {
             </label>
             <input type="text" id="process-barcode-input" 
                    class="w-full px-4 py-4 text-xl font-mono text-center border-4 border-white/30 rounded-xl bg-white/90 focus:outline-none focus:border-white focus:bg-white"
-                   placeholder="바코드를 스캔하세요"
+                   placeholder="👉 여기를 클릭 후 바코드를 스캔하세요"
                    autocomplete="off"
-                   onkeypress="if(event.key==='Enter') handleProcessBarcodeScan()">
+                   autofocus
+                   onkeypress="if(event.key==='Enter') { event.preventDefault(); handleProcessBarcodeScan(); }"
+                   oninput="handleProcessBarcodeAutoScan(event)"
+                   onblur="setTimeout(() => { if(document.getElementById('process-barcode-input')) document.getElementById('process-barcode-input').focus(); }, 100)">
           </div>
           <button onclick="handleProcessBarcodeScan()" class="px-8 py-4 bg-white text-emerald-600 rounded-xl font-bold text-lg hover:bg-emerald-50 shadow-lg">
             <i class="fas fa-play-circle mr-2"></i> 스캔
@@ -54097,7 +54100,7 @@ async function renderProcessTracking() {
         </div>
         <p class="text-white/80 text-sm mt-3 text-center">
           <i class="fas fa-info-circle mr-1"></i>
-          바코드 스캔 → 자동으로 새 사이클 생성 + 첫 공정 시작
+          바코드 스캔 → 자동 처리 (Enter 키 없이도 작동) | 진행 중 스캔 = 공정 종료/시작 토글
         </p>
       </div>
       
@@ -54199,6 +54202,88 @@ async function renderProcessTracking() {
   `;
   
   loadProcessDashboard();
+  
+  // ★★★ v3.6.162: 바코드 입력창 자동 포커스 + 활성 사이클 자동 로드 ★★★
+  setTimeout(() => {
+    const input = document.getElementById('process-barcode-input');
+    if (input) {
+      input.focus();
+      input.value = '';
+    }
+  }, 200);
+  
+  // 페이지 로드 시 진행 중인 사이클이 있는지 확인
+  loadCurrentActiveCycle();
+}
+
+// ★★★ v3.6.162: 페이지 진입 시 진행 중인 사이클 자동 표시 ★★★
+async function loadCurrentActiveCycle() {
+  try {
+    const res = await fetch('/api/process-tracking/cycle/active');
+    const data = await res.json();
+    if (data.success && data.data && data.data.length > 0) {
+      // 가장 최근 활성 사이클 표시
+      const latestCycle = data.data[0];
+      console.log('진행 중인 사이클 발견:', latestCycle);
+      // 사이클의 바코드로 상세 정보 조회
+      const barcodeRes = await fetch(`/api/process-tracking/barcode/${encodeURIComponent(latestCycle.barcode)}`);
+      const barcodeData = await barcodeRes.json();
+      if (barcodeData.success && barcodeData.data.active_cycle) {
+        const timeLogs = barcodeData.data.time_logs || [];
+        const currentProcess = barcodeData.data.current_process;
+        
+        activeCycleData = {
+          cycle: { cycle_id: latestCycle.id, ...latestCycle },
+          barcode: latestCycle.barcode,
+          shapingName: latestCycle.shaping_name,
+          shapingCode: latestCycle.shaping_code,
+          processes: timeLogs,
+          currentIndex: currentProcess ? timeLogs.findIndex(t => t.process_code === currentProcess.process_code) : -1
+        };
+        
+        if (currentProcess) {
+          // 진행 중인 공정이 있음
+          activeCycleStartTime = new Date(currentProcess.start_time);
+          startCycleTimer();
+          renderActiveCycleSection();
+        } else {
+          // 대기 상태
+          const pendingProcess = timeLogs.find(t => t.status === 'PENDING');
+          if (pendingProcess) {
+            renderActiveCycleSectionWaiting(pendingProcess);
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('활성 사이클 로드 오류:', error);
+  }
+}
+
+// ★★★ v3.6.162: 바코드 자동 스캔 처리 (Enter 없이도 작동) ★★★
+// 바코드 스캐너는 일반적으로 짧은 시간(<100ms) 안에 모든 문자를 입력함
+// 마지막 입력 후 150ms 대기 → 자동으로 스캔 처리
+let processBarcodeAutoScanTimeout = null;
+function handleProcessBarcodeAutoScan(event) {
+  const input = event.target;
+  const value = input.value.trim();
+  
+  // 이전 타이머 취소
+  if (processBarcodeAutoScanTimeout) {
+    clearTimeout(processBarcodeAutoScanTimeout);
+  }
+  
+  // 값이 있고, 최소 8자 이상이면 자동 처리 대기
+  if (value.length >= 8) {
+    processBarcodeAutoScanTimeout = setTimeout(() => {
+      // 여전히 같은 값이면 스캔 실행
+      const currentValue = input.value.trim();
+      if (currentValue === value && currentValue.length >= 8) {
+        console.log('★ 자동 스캔 트리거:', currentValue);
+        handleProcessBarcodeScan();
+      }
+    }, 150); // 150ms 대기 (스캐너는 이보다 빠름)
+  }
 }
 
 // 공정 대시보드 데이터 로드
@@ -55049,6 +55134,8 @@ function closeCycleSection() {
 
 // 전역 함수 등록
 window.handleProcessBarcodeScan = handleProcessBarcodeScan;
+window.handleProcessBarcodeAutoScan = handleProcessBarcodeAutoScan;
+window.loadCurrentActiveCycle = loadCurrentActiveCycle;
 window.endCycleProcess = endCycleProcess;
 window.closeCycleSection = closeCycleSection;
 

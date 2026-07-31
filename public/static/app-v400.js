@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.162';
+const APP_VERSION = '3.6.163';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54129,6 +54129,19 @@ async function renderProcessTracking() {
         </div>
       </div>
       
+      <!-- ★★★ v3.6.163: 진행 중인 사이클 (바코드 스캔 기반) ★★★ -->
+      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+        <div class="bg-gradient-to-r from-blue-600 to-cyan-600 p-4 flex items-center justify-between">
+          <h3 class="text-lg font-bold text-white">
+            <i class="fas fa-play-circle mr-2"></i> 진행 중인 사이클 (바코드 스캔)
+          </h3>
+          <span id="active-cycle-count" class="bg-white/20 text-white px-3 py-1 rounded-full text-sm font-bold">0개</span>
+        </div>
+        <div id="active-cycles-list" class="p-4 space-y-3">
+          <p class="text-center py-4 text-gray-400">로딩 중...</p>
+        </div>
+      </div>
+      
       <!-- 공정별 현황 -->
       <div class="bg-white rounded-xl shadow-lg overflow-hidden">
         <div class="bg-gradient-to-r from-emerald-600 to-green-600 p-4">
@@ -54286,17 +54299,143 @@ function handleProcessBarcodeAutoScan(event) {
   }
 }
 
+// ★★★ v3.6.163: 진행 중인 사이클 목록 렌더링 (바코드 스캔 기반) ★★★
+function renderActiveCyclesList(cyclesRes) {
+  const container = document.getElementById('active-cycles-list');
+  const countBadge = document.getElementById('active-cycle-count');
+  if (!container) return;
+  
+  if (!cyclesRes.success || !cyclesRes.data || cyclesRes.data.length === 0) {
+    container.innerHTML = '<p class="text-center py-4 text-gray-400"><i class="fas fa-info-circle mr-1"></i> 진행 중인 사이클이 없습니다. 바코드를 스캔하여 시작하세요.</p>';
+    if (countBadge) countBadge.textContent = '0개';
+    return;
+  }
+  
+  if (countBadge) countBadge.textContent = `${cyclesRes.data.length}개`;
+  
+  container.innerHTML = cyclesRes.data.map(cycle => {
+    const startTime = cycle.current_start_time ? new Date(cycle.current_start_time) : new Date(cycle.started_at.replace(' ', 'T') + 'Z');
+    const now = new Date();
+    const elapsedSec = Math.floor((now - startTime) / 1000);
+    const elapsedMin = Math.floor(elapsedSec / 60);
+    const elapsedSecRem = elapsedSec % 60;
+    const stdMin = cycle.current_standard_minutes || 60;
+    const progress = Math.min(100, Math.floor((elapsedMin / stdMin) * 100));
+    const isDelayed = elapsedMin > stdMin;
+    const progressBarColor = isDelayed ? 'bg-red-500' : progress >= 80 ? 'bg-amber-500' : 'bg-emerald-500';
+    const cycleProgress = Math.floor((cycle.completed_count / cycle.total_count) * 100);
+    
+    return `
+      <div class="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-xl p-4 border-2 border-blue-200 hover:border-blue-400 cursor-pointer transition-all" 
+           onclick="loadCycleDetail(${cycle.id})">
+        <div class="flex flex-col md:flex-row items-start md:items-center gap-4">
+          <!-- 왼쪽: 바코드/제품 정보 -->
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1">
+              <span class="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full font-bold">
+                <i class="fas fa-shapes mr-1"></i> ${cycle.shaping_name || '-'}
+              </span>
+              <span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded font-mono">
+                ${cycle.barcode}
+              </span>
+            </div>
+            <div class="flex items-center gap-2 mt-2">
+              <i class="fas fa-cog fa-spin text-blue-500"></i>
+              <span class="font-bold text-blue-900">${cycle.current_process_name || '대기 중'}</span>
+              <span class="text-xs text-gray-500">(${cycle.completed_count}/${cycle.total_count} 완료)</span>
+            </div>
+          </div>
+          
+          <!-- 가운데: 시간 정보 -->
+          <div class="flex-shrink-0 text-center">
+            <div class="text-2xl font-bold ${isDelayed ? 'text-red-600' : 'text-blue-600'}">
+              ${elapsedMin}<span class="text-sm">분</span> ${elapsedSecRem}<span class="text-sm">초</span>
+            </div>
+            <div class="text-xs text-gray-500">표준 ${stdMin}분</div>
+          </div>
+          
+          <!-- 오른쪽: 진행률 바 -->
+          <div class="w-full md:w-48 flex-shrink-0">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs text-gray-500">현재 공정</span>
+              <span class="text-xs font-bold ${isDelayed ? 'text-red-600' : 'text-gray-700'}">${progress}%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2 mb-2">
+              <div class="${progressBarColor} h-2 rounded-full transition-all" style="width: ${progress}%"></div>
+            </div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs text-gray-500">전체 사이클</span>
+              <span class="text-xs font-bold text-gray-700">${cycleProgress}%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2">
+              <div class="bg-cyan-500 h-2 rounded-full transition-all" style="width: ${cycleProgress}%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+// 사이클 상세 로드 (활성 사이클 카드 클릭 시)
+async function loadCycleDetail(cycleId) {
+  try {
+    const res = await fetch(`/api/process-tracking/cycle/${cycleId}`);
+    const data = await res.json();
+    if (!data.success) {
+      showToast('사이클 정보를 불러오지 못했습니다', 'error');
+      return;
+    }
+    
+    const cycle = data.data.cycle;
+    const timeLogs = data.data.time_logs || [];
+    const currentProcess = timeLogs.find(t => t.status === 'IN_PROGRESS');
+    
+    activeCycleData = {
+      cycle: { cycle_id: cycle.id, ...cycle },
+      barcode: cycle.barcode,
+      shapingName: cycle.shaping_name,
+      shapingCode: cycle.shaping_code,
+      processes: timeLogs,
+      currentIndex: currentProcess ? timeLogs.findIndex(t => t.process_code === currentProcess.process_code) : -1
+    };
+    
+    if (currentProcess) {
+      activeCycleStartTime = new Date(currentProcess.start_time);
+      startCycleTimer();
+      renderActiveCycleSection();
+    } else {
+      const pendingProcess = timeLogs.find(t => t.status === 'PENDING');
+      if (pendingProcess) {
+        renderActiveCycleSectionWaiting(pendingProcess);
+      } else {
+        showCycleCompleted();
+      }
+    }
+    
+    // 화면 상단으로 스크롤
+    document.getElementById('active-cycle-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (error) {
+    console.error('사이클 상세 로드 오류:', error);
+    showToast('오류: ' + error.message, 'error');
+  }
+}
+
 // 공정 대시보드 데이터 로드
 async function loadProcessDashboard() {
   try {
     const dateFilter = document.getElementById('batch-date-filter')?.value || getLocalDateString();
     
-    // 요약 및 활성 배치 로드
-    const [summaryRes, activeRes, batchRes] = await Promise.all([
+    // 요약, 활성 배치, 활성 사이클(바코드 스캔) 로드
+    const [summaryRes, activeRes, batchRes, cyclesRes] = await Promise.all([
       fetch('/api/process-tracking/dashboard/summary').then(r => r.json()),
       fetch('/api/process-tracking/dashboard/active').then(r => r.json()),
-      fetch(`/api/process-tracking/batch?date=${dateFilter}`).then(r => r.json())
+      fetch(`/api/process-tracking/batch?date=${dateFilter}`).then(r => r.json()),
+      fetch('/api/process-tracking/cycle/active').then(r => r.json())
     ]);
+    
+    // ★★★ v3.6.163: 진행 중인 사이클(바코드 스캔) 표시 ★★★
+    renderActiveCyclesList(cyclesRes);
     
     // 요약 표시
     if (summaryRes.success) {
@@ -55136,6 +55275,8 @@ function closeCycleSection() {
 window.handleProcessBarcodeScan = handleProcessBarcodeScan;
 window.handleProcessBarcodeAutoScan = handleProcessBarcodeAutoScan;
 window.loadCurrentActiveCycle = loadCurrentActiveCycle;
+window.renderActiveCyclesList = renderActiveCyclesList;
+window.loadCycleDetail = loadCycleDetail;
 window.endCycleProcess = endCycleProcess;
 window.closeCycleSection = closeCycleSection;
 

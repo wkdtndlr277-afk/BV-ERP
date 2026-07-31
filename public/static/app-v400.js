@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.163';
+const APP_VERSION = '3.6.164';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54129,28 +54129,16 @@ async function renderProcessTracking() {
         </div>
       </div>
       
-      <!-- ★★★ v3.6.163: 진행 중인 사이클 (바코드 스캔 기반) ★★★ -->
+      <!-- ★★★ v3.6.164: 공정별 진행 현황 (네비게이션 플로우) ★★★ -->
       <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-        <div class="bg-gradient-to-r from-blue-600 to-cyan-600 p-4 flex items-center justify-between">
+        <div class="bg-gradient-to-r from-emerald-600 to-green-600 p-4 flex items-center justify-between">
           <h3 class="text-lg font-bold text-white">
-            <i class="fas fa-play-circle mr-2"></i> 진행 중인 사이클 (바코드 스캔)
+            <i class="fas fa-project-diagram mr-2"></i> 공정별 진행 현황
           </h3>
-          <span id="active-cycle-count" class="bg-white/20 text-white px-3 py-1 rounded-full text-sm font-bold">0개</span>
+          <span class="text-white/70 text-xs">각 공정별 진행 중인 사이클 수</span>
         </div>
-        <div id="active-cycles-list" class="p-4 space-y-3">
-          <p class="text-center py-4 text-gray-400">로딩 중...</p>
-        </div>
-      </div>
-      
-      <!-- 공정별 현황 -->
-      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-        <div class="bg-gradient-to-r from-emerald-600 to-green-600 p-4">
-          <h3 class="text-lg font-bold text-white">
-            <i class="fas fa-tasks mr-2"></i> 공정별 진행 현황
-          </h3>
-        </div>
-        <div id="process-by-step" class="p-4 grid grid-cols-2 md:grid-cols-5 gap-3">
-          <!-- 동적 생성 -->
+        <div id="process-flow-nav" class="p-6">
+          <!-- 6단계 파이프라인 (동적 생성) -->
         </div>
       </div>
       
@@ -54299,6 +54287,154 @@ function handleProcessBarcodeAutoScan(event) {
   }
 }
 
+// ★★★ v3.6.164: 공정별 진행 현황 네비게이션 플로우 ★★★
+// 각 성형명(shaping_code)별로 6개 공정의 진행 상태를 파이프라인으로 표시
+async function renderProcessFlowNav(cyclesRes) {
+  const container = document.getElementById('process-flow-nav');
+  if (!container) return;
+  
+  if (!cyclesRes.success || !cyclesRes.data || cyclesRes.data.length === 0) {
+    container.innerHTML = `
+      <div class="text-center py-8 text-gray-400">
+        <i class="fas fa-info-circle text-3xl mb-2"></i>
+        <p>진행 중인 공정이 없습니다</p>
+        <p class="text-xs mt-1">바코드를 스캔하면 여기에 공정 진행 상황이 표시됩니다</p>
+      </div>
+    `;
+    return;
+  }
+  
+  // 각 사이클의 상세 정보 가져오기 (time_logs 포함)
+  const cycleDetails = await Promise.all(
+    cyclesRes.data.map(cycle => 
+      fetch(`/api/process-tracking/cycle/${cycle.id}`).then(r => r.json()).catch(() => null)
+    )
+  );
+  
+  // 사이클별 플로우 렌더링
+  const flowsHtml = cycleDetails.filter(d => d && d.success).map(detail => {
+    const cycle = detail.data.cycle;
+    const timeLogs = detail.data.time_logs || [];
+    
+    // 현재 시간 계산
+    const now = new Date();
+    
+    return `
+      <div class="mb-6 last:mb-0 border-2 border-gray-100 rounded-xl p-4 hover:border-blue-300 cursor-pointer transition-all bg-gradient-to-br from-white to-gray-50" 
+           onclick="loadCycleDetail(${cycle.id})">
+        <!-- 사이클 헤더 -->
+        <div class="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
+          <div class="flex items-center gap-3">
+            <span class="text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-bold">
+              <i class="fas fa-shapes mr-1"></i> ${cycle.shaping_name || '-'}
+            </span>
+            <span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded font-mono">
+              <i class="fas fa-barcode mr-1"></i>${cycle.barcode}
+            </span>
+          </div>
+          <div class="text-xs text-gray-500">
+            <i class="fas fa-play-circle text-blue-500 mr-1"></i>
+            시작: ${cycle.started_at ? cycle.started_at.substring(11, 16) : '-'}
+          </div>
+        </div>
+        
+        <!-- 6단계 파이프라인 -->
+        <div class="flex items-center justify-between overflow-x-auto pb-2">
+          ${timeLogs.map((log, idx) => {
+            const isLast = idx === timeLogs.length - 1;
+            let statusIcon, statusBg, statusText, statusBorder, timeText, animation = '';
+            
+            if (log.status === 'COMPLETED') {
+              statusIcon = 'fas fa-check';
+              statusBg = 'bg-emerald-500';
+              statusBorder = 'border-emerald-500';
+              statusText = 'text-emerald-700';
+              const mins = log.actual_minutes || 0;
+              timeText = `${mins}분 소요`;
+            } else if (log.status === 'IN_PROGRESS') {
+              statusIcon = 'fas fa-cog fa-spin';
+              statusBg = 'bg-blue-500';
+              statusBorder = 'border-blue-500 ring-4 ring-blue-200';
+              statusText = 'text-blue-700';
+              animation = 'animate-pulse';
+              const startTime = new Date(log.start_time);
+              const elapsedSec = Math.floor((now - startTime) / 1000);
+              const elapsedMin = Math.floor(elapsedSec / 60);
+              const elapsedSecRem = elapsedSec % 60;
+              const stdMin = log.standard_minutes || 60;
+              const isDelayed = elapsedMin > stdMin;
+              timeText = `<span class="${isDelayed ? 'text-red-600 font-bold' : 'text-blue-600 font-bold'}">${elapsedMin}분 ${elapsedSecRem}초</span> / 표준 ${stdMin}분`;
+            } else {
+              // PENDING - 다음 대기 상태인지 확인
+              const prevLog = idx > 0 ? timeLogs[idx - 1] : null;
+              const isNextPending = prevLog && prevLog.status === 'COMPLETED' && 
+                !timeLogs.some(l => l.status === 'IN_PROGRESS');
+              
+              if (isNextPending) {
+                statusIcon = 'fas fa-pause';
+                statusBg = 'bg-amber-400';
+                statusBorder = 'border-amber-400 ring-4 ring-amber-100';
+                statusText = 'text-amber-700';
+                animation = 'animate-pulse';
+                timeText = '<span class="text-amber-600 font-bold">⏸ 다시 스캔 대기</span>';
+              } else {
+                statusIcon = 'far fa-circle';
+                statusBg = 'bg-gray-300';
+                statusBorder = 'border-gray-300';
+                statusText = 'text-gray-400';
+                timeText = `표준 ${log.standard_minutes || 60}분`;
+              }
+            }
+            
+            return `
+              <div class="flex items-center flex-shrink-0">
+                <div class="flex flex-col items-center min-w-[100px]">
+                  <div class="w-12 h-12 rounded-full ${statusBg} border-4 ${statusBorder} flex items-center justify-center text-white ${animation}">
+                    <i class="${statusIcon} text-lg"></i>
+                  </div>
+                  <div class="mt-2 text-center">
+                    <p class="text-xs font-bold ${statusText}">${idx + 1}. ${log.process_name || log.process_code}</p>
+                    <p class="text-xs text-gray-500 mt-1">${timeText}</p>
+                  </div>
+                </div>
+                ${!isLast ? `
+                  <div class="flex-shrink-0 mx-1 md:mx-2">
+                    <div class="w-8 md:w-12 h-1 ${log.status === 'COMPLETED' ? 'bg-emerald-500' : 'bg-gray-300'} rounded"></div>
+                  </div>
+                ` : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+        
+        <!-- 하단 요약 -->
+        <div class="mt-4 pt-3 border-t border-gray-200 flex items-center justify-between">
+          <div class="flex items-center gap-4 text-xs">
+            <span class="text-emerald-600 font-bold">
+              <i class="fas fa-check-circle mr-1"></i>
+              완료 ${timeLogs.filter(l => l.status === 'COMPLETED').length}개
+            </span>
+            <span class="text-blue-600 font-bold">
+              <i class="fas fa-cog mr-1"></i>
+              진행중 ${timeLogs.filter(l => l.status === 'IN_PROGRESS').length}개
+            </span>
+            <span class="text-gray-500">
+              <i class="far fa-circle mr-1"></i>
+              대기 ${timeLogs.filter(l => l.status === 'PENDING').length}개
+            </span>
+          </div>
+          <button onclick="event.stopPropagation(); loadCycleDetail(${cycle.id})" 
+                  class="text-xs bg-blue-500 text-white px-3 py-1 rounded-lg hover:bg-blue-600">
+            <i class="fas fa-external-link-alt mr-1"></i> 상세 보기
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  container.innerHTML = flowsHtml || '<p class="text-center py-4 text-gray-400">데이터 로드 중...</p>';
+}
+
 // ★★★ v3.6.163: 진행 중인 사이클 목록 렌더링 (바코드 스캔 기반) ★★★
 function renderActiveCyclesList(cyclesRes) {
   const container = document.getElementById('active-cycles-list');
@@ -54434,32 +54570,20 @@ async function loadProcessDashboard() {
       fetch('/api/process-tracking/cycle/active').then(r => r.json())
     ]);
     
-    // ★★★ v3.6.163: 진행 중인 사이클(바코드 스캔) 표시 ★★★
-    renderActiveCyclesList(cyclesRes);
+    // ★★★ v3.6.163: 진행 중인 사이클(바코드 스캔) 표시 - v3.6.164에서 flow nav로 통합
+    // renderActiveCyclesList(cyclesRes); // 제거됨
     
     // 요약 표시
     if (summaryRes.success) {
       const total = summaryRes.data.total || {};
       document.getElementById('summary-created').textContent = total.created || 0;
-      document.getElementById('summary-progress').textContent = total.in_progress || 0;
+      document.getElementById('summary-progress').textContent = (cyclesRes.success ? cyclesRes.data.length : 0) + (total.in_progress || 0);
       document.getElementById('summary-completed').textContent = total.completed_today || 0;
       document.getElementById('summary-delayed').textContent = summaryRes.data.delayed_count || 0;
-      
-      // 공정별 현황
-      const byProcess = summaryRes.data.by_process || [];
-      const processStepContainer = document.getElementById('process-by-step');
-      if (byProcess.length > 0) {
-        processStepContainer.innerHTML = byProcess.map(p => `
-          <div class="bg-gray-50 rounded-lg p-3 text-center">
-            <p class="text-xs text-gray-500">${getProcessName(p.process_code)}</p>
-            <p class="text-2xl font-bold text-emerald-600">${p.batch_count}</p>
-            <p class="text-xs text-gray-400">평균 ${Math.round(p.avg_elapsed || 0)}분</p>
-          </div>
-        `).join('');
-      } else {
-        processStepContainer.innerHTML = '<p class="col-span-5 text-center text-gray-400 py-4">진행 중인 공정이 없습니다</p>';
-      }
     }
+    
+    // ★★★ v3.6.164: 공정별 진행 현황을 네비게이션 플로우로 렌더링 ★★★
+    await renderProcessFlowNav(cyclesRes);
     
     // 활성 배치 표시
     const activeTbody = document.getElementById('active-batch-tbody');
@@ -55277,6 +55401,7 @@ window.handleProcessBarcodeAutoScan = handleProcessBarcodeAutoScan;
 window.loadCurrentActiveCycle = loadCurrentActiveCycle;
 window.renderActiveCyclesList = renderActiveCyclesList;
 window.loadCycleDetail = loadCycleDetail;
+window.renderProcessFlowNav = renderProcessFlowNav;
 window.endCycleProcess = endCycleProcess;
 window.closeCycleSection = closeCycleSection;
 

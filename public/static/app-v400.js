@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.165';
+const APP_VERSION = '3.6.166';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54100,7 +54100,7 @@ async function renderProcessTracking() {
         </div>
         <p class="text-white/80 text-sm mt-3 text-center">
           <i class="fas fa-info-circle mr-1"></i>
-          바코드 스캔 → 자동 처리 (Enter 키 없이도 작동) | 진행 중 스캔 = 공정 종료/시작 토글
+          바코드 스캔 → 자동 처리 (Enter 키 없이도 작동) | 스캔 1회로 이전 공정 종료 + 다음 공정 자동 시작
         </p>
       </div>
       
@@ -55067,12 +55067,46 @@ async function scanScenario2_EndCurrentProcess(barcode, barcodeInfo, activeCycle
     // 모든 공정 완료
     showCycleCompleted();
     showToast(`🎉 모든 공정 완료! (${currentProcess.process_name} 완료: ${elapsedMinutes}분 ${elapsedSec}초)`, 'success');
+    loadProcessDashboard();
   } else {
-    // 다음 공정은 대기 상태
-    renderActiveCycleSectionWaiting(nextProcess);
-    showToast(`✅ ${currentProcess.process_name} 완료 (${elapsedMinutes}분 ${elapsedSec}초) → 다음: ${nextProcess?.process_name || nextProcess?.process_code}. 바코드를 다시 스캔하세요`, 'success');
+    // ★★★ v3.6.166: 옵션 A - 자동으로 다음 공정 바로 시작 ★★★
+    showToast(`✅ ${currentProcess.process_name} 완료 (${elapsedMinutes}분 ${elapsedSec}초) → 다음: ${nextProcess?.process_name} 자동 시작!`, 'success');
+    
+    // 다음 공정 자동 시작
+    const startRes = await fetch('/api/process-tracking/cycle/process/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        cycle_id: activeCycle.id,
+        process_code: nextProcess.process_code
+      })
+    });
+    const startData = await startRes.json();
+    
+    if (startData.success) {
+      // 사이클 데이터 갱신
+      activeCycleData.processes = activeCycleData.processes.map(t => {
+        if (t.process_code === nextProcess.process_code) {
+          return { ...t, status: 'IN_PROGRESS', start_time: startData.data.start_time };
+        }
+        return t;
+      });
+      activeCycleData.currentIndex = activeCycleData.processes.findIndex(t => t.process_code === nextProcess.process_code);
+      
+      activeCycleStartTime = new Date(startData.data.start_time);
+      startCycleTimer();
+      renderActiveCycleSection();
+      
+      setTimeout(() => {
+        showToast(`▶️ ${nextProcess.process_name} 시작!`, 'info');
+      }, 800);
+    } else {
+      // 자동 시작 실패 시 대기 상태로 폴백
+      renderActiveCycleSectionWaiting(nextProcess);
+      showToast(startData.error || '다음 공정 자동 시작 실패. 바코드를 다시 스캔하세요.', 'warning');
+    }
+    loadProcessDashboard();
   }
-  loadProcessDashboard();
 }
 
 // [시나리오 3] 다음 공정 시작 (대기 중 → 진행 중)

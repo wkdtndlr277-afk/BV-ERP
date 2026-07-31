@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.159';
+const APP_VERSION = '3.6.160';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54062,9 +54062,12 @@ async function renderProcessTracking() {
           <i class="fas fa-industry mr-2 text-emerald-600"></i>
           공정 현황
         </h2>
-        <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2 flex-wrap">
           <button onclick="initProcessTrackingDB()" class="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm">
             <i class="fas fa-database mr-1"></i> DB 초기화
+          </button>
+          <button onclick="cleanupOldBatches()" class="px-3 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 text-sm">
+            <i class="fas fa-broom mr-1"></i> 오래된 배치 정리
           </button>
           <button onclick="showBatchCreateModal()" class="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700">
             <i class="fas fa-plus mr-1"></i> 배치 발행
@@ -54154,10 +54157,11 @@ async function renderProcessTracking() {
                 <th class="px-4 py-3 text-center">표준시간</th>
                 <th class="px-4 py-3 text-center">상태</th>
                 <th class="px-4 py-3 text-center">진행률</th>
+                <th class="px-4 py-3 text-center">액션</th>
               </tr>
             </thead>
             <tbody id="active-batch-tbody">
-              <tr><td colspan="7" class="text-center py-8 text-gray-400">데이터 로딩 중...</td></tr>
+              <tr><td colspan="8" class="text-center py-8 text-gray-400">데이터 로딩 중...</td></tr>
             </tbody>
           </table>
         </div>
@@ -54269,11 +54273,16 @@ async function loadProcessDashboard() {
                 <div class="bg-emerald-500 h-2 rounded-full" style="width: ${Math.min(ratio * 100, 100)}%"></div>
               </div>
             </td>
+            <td class="px-4 py-3 text-center">
+              <button onclick="cancelBatch('${b.batch_code}')" class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600" title="취소">
+                <i class="fas fa-times"></i> 취소
+              </button>
+            </td>
           </tr>
         `;
       }).join('');
     } else {
-      activeTbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-400">진행 중인 배치가 없습니다</td></tr>';
+      activeTbody.innerHTML = '<tr><td colspan="8" class="text-center py-8 text-gray-400">진행 중인 배치가 없습니다</td></tr>';
     }
     
     // 배치 목록 표시
@@ -54319,6 +54328,132 @@ async function loadProcessDashboard() {
     showToast('대시보드 로드 실패', 'error');
   }
 }
+
+// ★★★ v3.6.160: 배치 관리 함수 ★★★
+
+// 개별 배치 취소
+async function cancelBatch(batchCode) {
+  if (!confirm(`배치 ${batchCode}를 취소하시겠습니까?`)) return;
+  
+  try {
+    const res = await fetch(`/api/process-tracking/batch/${batchCode}/cancel`, {
+      method: 'POST'
+    });
+    const data = await res.json();
+    
+    if (data.success) {
+      showToast('배치 취소 완료', 'success');
+      loadProcessDashboard();
+    } else {
+      showToast(data.error || '취소 실패', 'error');
+    }
+  } catch (error) {
+    showToast('오류: ' + error.message, 'error');
+  }
+}
+
+// 오래된 배치 일괄 정리
+async function cleanupOldBatches() {
+  const content = `
+    <div class="space-y-4">
+      <p class="text-gray-700">진행 중인 배치를 정리합니다. 정리 옵션을 선택하세요:</p>
+      
+      <div class="space-y-2">
+        <label class="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-orange-50 has-[:checked]:border-orange-500 has-[:checked]:bg-orange-50">
+          <input type="radio" name="cleanup-option" value="today-before" checked class="w-5 h-5">
+          <div>
+            <div class="font-bold">오늘 이전 배치 모두 취소</div>
+            <div class="text-xs text-gray-500">어제까지 생성된 진행중/대기중 배치를 모두 취소합니다</div>
+          </div>
+        </label>
+        
+        <label class="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-orange-50 has-[:checked]:border-orange-500 has-[:checked]:bg-orange-50">
+          <input type="radio" name="cleanup-option" value="24h" class="w-5 h-5">
+          <div>
+            <div class="font-bold">24시간 이상 된 배치 취소</div>
+            <div class="text-xs text-gray-500">24시간 이상 진행되지 않은 배치를 취소합니다</div>
+          </div>
+        </label>
+        
+        <label class="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-orange-50 has-[:checked]:border-orange-500 has-[:checked]:bg-orange-50">
+          <input type="radio" name="cleanup-option" value="12h" class="w-5 h-5">
+          <div>
+            <div class="font-bold">12시간 이상 된 배치 취소</div>
+            <div class="text-xs text-gray-500">12시간 이상 진행되지 않은 배치를 취소합니다</div>
+          </div>
+        </label>
+        
+        <label class="flex items-center gap-3 p-3 border-2 rounded-lg cursor-pointer hover:bg-orange-50 has-[:checked]:border-orange-500 has-[:checked]:bg-orange-50">
+          <input type="radio" name="cleanup-option" value="1h" class="w-5 h-5">
+          <div>
+            <div class="font-bold">1시간 이상 된 배치 취소</div>
+            <div class="text-xs text-gray-500">1시간 이상 진행되지 않은 배치를 취소합니다</div>
+          </div>
+        </label>
+      </div>
+      
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+        <i class="fas fa-exclamation-triangle mr-1"></i>
+        취소된 배치는 CANCELLED 상태로 변경되며, 히스토리에는 남습니다.
+      </div>
+    </div>
+  `;
+  
+  const actions = `
+    <button onclick="closeModal()" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">
+      취소
+    </button>
+    <button onclick="executeCleanup()" class="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600">
+      <i class="fas fa-broom mr-1"></i> 정리 실행
+    </button>
+  `;
+  
+  showModal('🧹 오래된 배치 정리', content, actions, 'max-w-md');
+}
+
+// 정리 실행
+async function executeCleanup() {
+  const selected = document.querySelector('input[name="cleanup-option"]:checked')?.value;
+  if (!selected) {
+    showToast('옵션을 선택하세요', 'warning');
+    return;
+  }
+  
+  try {
+    let url, body;
+    
+    if (selected === 'today-before') {
+      url = '/api/process-tracking/batch/cancel-all-active';
+      body = {};
+    } else {
+      const hours = parseInt(selected);
+      url = '/api/process-tracking/batch/cleanup-old';
+      body = { hours_old: hours };
+    }
+    
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    
+    closeModal();
+    
+    if (data.success) {
+      showToast(`${data.data.count}개 배치 취소 완료`, 'success');
+      loadProcessDashboard();
+    } else {
+      showToast(data.error || '정리 실패', 'error');
+    }
+  } catch (error) {
+    showToast('오류: ' + error.message, 'error');
+  }
+}
+
+window.cancelBatch = cancelBatch;
+window.cleanupOldBatches = cleanupOldBatches;
+window.executeCleanup = executeCleanup;
 
 // ★★★ v3.6.158: 고정 바코드 스캔 처리 (공정 현황 페이지 내장) ★★★
 let activeCycleData = null;

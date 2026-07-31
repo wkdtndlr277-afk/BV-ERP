@@ -1145,6 +1145,149 @@ app.post('/skip-process', async (c) => {
   }
 });
 
+// ★★★ v3.6.160: 배치 취소/삭제 ★★★
+app.post('/batch/:batchCode/cancel', async (c) => {
+  try {
+    const batchCode = c.req.param('batchCode');
+    const now = new Date().toISOString();
+    
+    // 배치 상태를 CANCELLED로 변경
+    const result = await c.env.DB.prepare(`
+      UPDATE production_batch 
+      SET status = 'CANCELLED', 
+          completed_at = ?, 
+          updated_at = ?,
+          notes = COALESCE(notes || ' | ', '') || '[취소됨]'
+      WHERE batch_code = ?
+    `).bind(now, now, batchCode).run();
+    
+    // 진행 중인 공정도 취소
+    await c.env.DB.prepare(`
+      UPDATE process_tracking 
+      SET status = 'CANCELLED', updated_at = ?
+      WHERE batch_code = ? AND status IN ('PENDING', 'IN_PROGRESS')
+    `).bind(now, batchCode).run();
+    
+    return c.json({ success: true, message: '배치 취소 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// 배치 삭제 (완전 삭제)
+app.delete('/batch/:batchCode', async (c) => {
+  try {
+    const batchCode = c.req.param('batchCode');
+    
+    // 배치 조회
+    const batch = await c.env.DB.prepare(`
+      SELECT * FROM production_batch WHERE batch_code = ?
+    `).bind(batchCode).first();
+    
+    if (!batch) {
+      return c.json({ success: false, error: '배치를 찾을 수 없습니다' }, 404);
+    }
+    
+    // 관련 데이터 삭제
+    await c.env.DB.prepare(`DELETE FROM process_event_log WHERE batch_id = ?`).bind(batch.id).run();
+    await c.env.DB.prepare(`DELETE FROM process_tracking WHERE batch_id = ?`).bind(batch.id).run();
+    await c.env.DB.prepare(`DELETE FROM production_batch WHERE id = ?`).bind(batch.id).run();
+    
+    return c.json({ success: true, message: '배치 삭제 완료' });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.160: 오래된 진행중 배치 일괄 취소 ★★★
+app.post('/batch/cleanup-old', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const hoursOld = body.hours_old || 24;  // 기본 24시간 이상 된 것
+    const now = new Date().toISOString();
+    
+    // hoursOld 시간 이상 된 CREATED/IN_PROGRESS 배치를 CANCELLED로 변경
+    const cutoff = new Date(Date.now() - hoursOld * 60 * 60 * 1000).toISOString();
+    
+    // 대상 배치 조회
+    const targets = await c.env.DB.prepare(`
+      SELECT id, batch_code FROM production_batch 
+      WHERE status IN ('CREATED', 'IN_PROGRESS')
+        AND created_at < ?
+    `).bind(cutoff).all();
+    
+    let count = 0;
+    for (const b of targets.results as any[]) {
+      await c.env.DB.prepare(`
+        UPDATE production_batch 
+        SET status = 'CANCELLED', completed_at = ?, updated_at = ?,
+            notes = COALESCE(notes || ' | ', '') || '[자동취소:오래됨]'
+        WHERE id = ?
+      `).bind(now, now, b.id).run();
+      
+      await c.env.DB.prepare(`
+        UPDATE process_tracking 
+        SET status = 'CANCELLED', updated_at = ?
+        WHERE batch_id = ? AND status IN ('PENDING', 'IN_PROGRESS')
+      `).bind(now, b.id).run();
+      
+      count++;
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: `${count}개 배치 자동 취소 완료`,
+      data: { count, hours_old: hoursOld }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.160: 모든 진행중 배치 취소 (오늘 이전) ★★★
+app.post('/batch/cancel-all-active', async (c) => {
+  try {
+    const now = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const kstDate = new Date(now.getTime() + kstOffset);
+    const today = kstDate.toISOString().slice(0, 10);
+    const nowStr = now.toISOString();
+    
+    // 오늘 이전에 생성된 CREATED/IN_PROGRESS 배치 조회
+    const targets = await c.env.DB.prepare(`
+      SELECT id FROM production_batch 
+      WHERE status IN ('CREATED', 'IN_PROGRESS')
+        AND DATE(created_at) < ?
+    `).bind(today).all();
+    
+    let count = 0;
+    for (const b of targets.results as any[]) {
+      await c.env.DB.prepare(`
+        UPDATE production_batch 
+        SET status = 'CANCELLED', completed_at = ?, updated_at = ?,
+            notes = COALESCE(notes || ' | ', '') || '[일괄취소]'
+        WHERE id = ?
+      `).bind(nowStr, nowStr, b.id).run();
+      
+      await c.env.DB.prepare(`
+        UPDATE process_tracking 
+        SET status = 'CANCELLED', updated_at = ?
+        WHERE batch_id = ? AND status IN ('PENDING', 'IN_PROGRESS')
+      `).bind(nowStr, b.id).run();
+      
+      count++;
+    }
+    
+    return c.json({ 
+      success: true, 
+      message: `${count}개 배치 일괄 취소 완료`,
+      data: { count }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ========== v3.6.146: 바코드 마스터 관리 ==========
 
 // 바코드 마스터 목록 조회

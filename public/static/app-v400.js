@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.164';
+const APP_VERSION = '3.6.165';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54287,8 +54287,8 @@ function handleProcessBarcodeAutoScan(event) {
   }
 }
 
-// ★★★ v3.6.164: 공정별 진행 현황 네비게이션 플로우 ★★★
-// 각 성형명(shaping_code)별로 6개 공정의 진행 상태를 파이프라인으로 표시
+// ★★★ v3.6.164/165: 공정별 진행 현황 네비게이션 플로우 ★★★
+// 각 사이클별로 6개 공정의 진행 상태를 파이프라인으로 표시 (진행중 + 완료 모두)
 async function renderProcessFlowNav(cyclesRes) {
   const container = document.getElementById('process-flow-nav');
   if (!container) return;
@@ -54297,7 +54297,7 @@ async function renderProcessFlowNav(cyclesRes) {
     container.innerHTML = `
       <div class="text-center py-8 text-gray-400">
         <i class="fas fa-info-circle text-3xl mb-2"></i>
-        <p>진행 중인 공정이 없습니다</p>
+        <p>오늘 진행한 사이클이 없습니다</p>
         <p class="text-xs mt-1">바코드를 스캔하면 여기에 공정 진행 상황이 표시됩니다</p>
       </div>
     `;
@@ -54311,20 +54311,72 @@ async function renderProcessFlowNav(cyclesRes) {
     )
   );
   
+  // 필터 탭 (진행중 / 완료 / 전체)
+  const validDetails = cycleDetails.filter(d => d && d.success);
+  const inProgressCount = validDetails.filter(d => d.data.cycle.status === 'IN_PROGRESS').length;
+  const completedCount = validDetails.filter(d => d.data.cycle.status === 'COMPLETED').length;
+  
+  const currentFilter = window.__processFlowFilter || 'ALL';
+  const filterHtml = `
+    <div class="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
+      <button onclick="setProcessFlowFilter('ALL')" 
+              class="px-4 py-2 rounded-lg text-sm font-bold ${currentFilter === 'ALL' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">
+        전체 (${validDetails.length})
+      </button>
+      <button onclick="setProcessFlowFilter('IN_PROGRESS')" 
+              class="px-4 py-2 rounded-lg text-sm font-bold ${currentFilter === 'IN_PROGRESS' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">
+        <i class="fas fa-cog fa-spin mr-1"></i> 진행중 (${inProgressCount})
+      </button>
+      <button onclick="setProcessFlowFilter('COMPLETED')" 
+              class="px-4 py-2 rounded-lg text-sm font-bold ${currentFilter === 'COMPLETED' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">
+        <i class="fas fa-check-circle mr-1"></i> 완료 (${completedCount})
+      </button>
+    </div>
+  `;
+  
+  // 필터 적용
+  const filteredDetails = currentFilter === 'ALL' ? validDetails :
+    validDetails.filter(d => d.data.cycle.status === currentFilter);
+  
+  if (filteredDetails.length === 0) {
+    container.innerHTML = filterHtml + `
+      <div class="text-center py-8 text-gray-400">
+        <i class="fas fa-filter text-2xl mb-2"></i>
+        <p>해당 상태의 사이클이 없습니다</p>
+      </div>
+    `;
+    return;
+  }
+  
   // 사이클별 플로우 렌더링
-  const flowsHtml = cycleDetails.filter(d => d && d.success).map(detail => {
+  const flowsHtml = filteredDetails.map(detail => {
     const cycle = detail.data.cycle;
     const timeLogs = detail.data.time_logs || [];
+    const isCompleted = cycle.status === 'COMPLETED';
+    
+    // 총 소요시간 계산 (완료된 사이클의 경우)
+    let totalDuration = 0;
+    timeLogs.forEach(log => { totalDuration += (log.actual_minutes || 0); });
     
     // 현재 시간 계산
     const now = new Date();
     
+    // 헤더 상태 배지
+    const statusBadge = isCompleted 
+      ? '<span class="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full font-bold"><i class="fas fa-check-circle mr-1"></i> 완료</span>'
+      : '<span class="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold animate-pulse"><i class="fas fa-cog fa-spin mr-1"></i> 진행중</span>';
+    
+    // 카드 배경
+    const cardBg = isCompleted ? 'bg-gradient-to-br from-green-50/50 to-white border-green-200' : 'bg-gradient-to-br from-blue-50/30 to-white border-blue-200';
+    const cardHover = isCompleted ? 'hover:border-green-400' : 'hover:border-blue-400';
+    
     return `
-      <div class="mb-6 last:mb-0 border-2 border-gray-100 rounded-xl p-4 hover:border-blue-300 cursor-pointer transition-all bg-gradient-to-br from-white to-gray-50" 
+      <div class="mb-6 last:mb-0 border-2 ${cardBg} rounded-xl p-4 ${cardHover} cursor-pointer transition-all" 
            onclick="loadCycleDetail(${cycle.id})">
         <!-- 사이클 헤더 -->
-        <div class="flex items-center justify-between mb-4 pb-3 border-b border-gray-200">
-          <div class="flex items-center gap-3">
+        <div class="flex items-center justify-between mb-4 pb-3 border-b border-gray-200 flex-wrap gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
+            ${statusBadge}
             <span class="text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-bold">
               <i class="fas fa-shapes mr-1"></i> ${cycle.shaping_name || '-'}
             </span>
@@ -54332,9 +54384,10 @@ async function renderProcessFlowNav(cyclesRes) {
               <i class="fas fa-barcode mr-1"></i>${cycle.barcode}
             </span>
           </div>
-          <div class="text-xs text-gray-500">
-            <i class="fas fa-play-circle text-blue-500 mr-1"></i>
-            시작: ${cycle.started_at ? cycle.started_at.substring(11, 16) : '-'}
+          <div class="text-xs text-gray-500 flex items-center gap-3">
+            <span><i class="fas fa-play-circle text-blue-500 mr-1"></i> 시작: ${cycle.started_at ? cycle.started_at.substring(11, 16) : '-'}</span>
+            ${isCompleted ? `<span><i class="fas fa-flag-checkered text-green-600 mr-1"></i> 종료: ${cycle.completed_at ? cycle.completed_at.substring(11, 16) : '-'}</span>` : ''}
+            ${isCompleted && totalDuration > 0 ? `<span class="font-bold text-green-700"><i class="fas fa-stopwatch mr-1"></i> 총 ${totalDuration}분</span>` : ''}
           </div>
         </div>
         
@@ -54432,7 +54485,13 @@ async function renderProcessFlowNav(cyclesRes) {
     `;
   }).join('');
   
-  container.innerHTML = flowsHtml || '<p class="text-center py-4 text-gray-400">데이터 로드 중...</p>';
+  container.innerHTML = filterHtml + (flowsHtml || '<p class="text-center py-4 text-gray-400">데이터 로드 중...</p>');
+}
+
+// ★★★ v3.6.165: 공정 플로우 필터 설정 ★★★
+function setProcessFlowFilter(filter) {
+  window.__processFlowFilter = filter;
+  loadProcessDashboard();
 }
 
 // ★★★ v3.6.163: 진행 중인 사이클 목록 렌더링 (바코드 스캔 기반) ★★★
@@ -54562,23 +54621,27 @@ async function loadProcessDashboard() {
   try {
     const dateFilter = document.getElementById('batch-date-filter')?.value || getLocalDateString();
     
-    // 요약, 활성 배치, 활성 사이클(바코드 스캔) 로드
+    // 요약, 활성 배치, 오늘의 모든 사이클(진행중+완료) 로드
     const [summaryRes, activeRes, batchRes, cyclesRes] = await Promise.all([
       fetch('/api/process-tracking/dashboard/summary').then(r => r.json()),
       fetch('/api/process-tracking/dashboard/active').then(r => r.json()),
       fetch(`/api/process-tracking/batch?date=${dateFilter}`).then(r => r.json()),
-      fetch('/api/process-tracking/cycle/active').then(r => r.json())
+      fetch(`/api/process-tracking/cycle/today?date=${dateFilter}`).then(r => r.json())
     ]);
     
     // ★★★ v3.6.163: 진행 중인 사이클(바코드 스캔) 표시 - v3.6.164에서 flow nav로 통합
     // renderActiveCyclesList(cyclesRes); // 제거됨
     
-    // 요약 표시
+    // 요약 표시 (사이클 기반으로 카운트)
     if (summaryRes.success) {
       const total = summaryRes.data.total || {};
+      const cycleList = (cyclesRes.success && cyclesRes.data) ? cyclesRes.data : [];
+      const inProgressCycles = cycleList.filter(c => c.status === 'IN_PROGRESS').length;
+      const completedCycles = cycleList.filter(c => c.status === 'COMPLETED').length;
+      
       document.getElementById('summary-created').textContent = total.created || 0;
-      document.getElementById('summary-progress').textContent = (cyclesRes.success ? cyclesRes.data.length : 0) + (total.in_progress || 0);
-      document.getElementById('summary-completed').textContent = total.completed_today || 0;
+      document.getElementById('summary-progress').textContent = inProgressCycles + (total.in_progress || 0);
+      document.getElementById('summary-completed').textContent = completedCycles + (total.completed_today || 0);
       document.getElementById('summary-delayed').textContent = summaryRes.data.delayed_count || 0;
     }
     
@@ -55402,6 +55465,7 @@ window.loadCurrentActiveCycle = loadCurrentActiveCycle;
 window.renderActiveCyclesList = renderActiveCyclesList;
 window.loadCycleDetail = loadCycleDetail;
 window.renderProcessFlowNav = renderProcessFlowNav;
+window.setProcessFlowFilter = setProcessFlowFilter;
 window.endCycleProcess = endCycleProcess;
 window.closeCycleSection = closeCycleSection;
 

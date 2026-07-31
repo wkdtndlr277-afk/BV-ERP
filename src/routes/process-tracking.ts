@@ -1648,6 +1648,37 @@ app.get('/cycle/active', async (c) => {
   }
 });
 
+// ★★★ v3.6.165: 오늘의 모든 사이클 조회 (진행 중 + 완료 + 대기) ★★★
+app.get('/cycle/today', async (c) => {
+  try {
+    const now = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000;
+    const kstDate = new Date(now.getTime() + kstOffset);
+    const today = c.req.query('date') || kstDate.toISOString().slice(0, 10);
+
+    const result = await c.env.DB.prepare(`
+      SELECT c.*, 
+             (SELECT COUNT(*) FROM process_time_log WHERE cycle_id = c.id AND status = 'COMPLETED') as completed_count,
+             (SELECT COUNT(*) FROM process_time_log WHERE cycle_id = c.id) as total_count,
+             (SELECT start_time FROM process_time_log WHERE cycle_id = c.id AND status = 'IN_PROGRESS') as current_start_time,
+             (SELECT standard_minutes FROM process_time_log WHERE cycle_id = c.id AND status = 'IN_PROGRESS') as current_standard_minutes
+      FROM process_cycle c
+      WHERE c.cycle_date = ?
+      ORDER BY 
+        CASE c.status 
+          WHEN 'IN_PROGRESS' THEN 1
+          WHEN 'COMPLETED' THEN 2
+          ELSE 3
+        END,
+        c.started_at DESC
+    `).bind(today).all();
+
+    return c.json({ success: true, data: result.results });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 사이클 상세 조회
 app.get('/cycle/:cycleId', async (c) => {
   try {

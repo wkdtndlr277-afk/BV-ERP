@@ -4210,80 +4210,104 @@ productionRoutes.get('/diagnose-stock/:itemQuery', async (c) => {
   try {
     const itemQuery = c.req.param('itemQuery');
     const date = c.req.query('date') || '2026-07-28';
-    
-    // 1. 매칭되는 원료 찾기
+
+    // 1. 매칭되는 원료 찾기 (실제 테이블명: master, category='원료' 또는 '부자재')
     const materials = await c.env.DB.prepare(`
-      SELECT item_code, item_name, current_stock, unit
-      FROM material_master
-      WHERE item_name LIKE ? OR item_code LIKE ?
+      SELECT item_code, item_name, current_stock, unit, category, safety_stock
+      FROM master
+      WHERE (item_name LIKE ? OR item_code LIKE ?)
+        AND category != '제품'
       LIMIT 20
     `).bind(`%${itemQuery}%`, `%${itemQuery}%`).all();
-    
+
     if (!materials.results || materials.results.length === 0) {
       return c.json({ success: false, error: `'${itemQuery}' 원료를 찾을 수 없습니다.` }, 404);
     }
-    
+
     // 2. 각 원료별 사용/거래 이력 조회
     const diagnosis = [];
     for (const mat of materials.results as any[]) {
-      // production_materials에서 해당 날짜 사용 이력
+      // production_materials에서 해당 날짜 사용 이력 (실제 컬럼: planned_qty, actual_qty)
       const usageInProduction = await c.env.DB.prepare(`
-        SELECT pm.*, p.prod_date, p.product_name, p.lot_number
+        SELECT pm.id, pm.production_id, pm.item_code, pm.lot_number,
+               pm.planned_qty, pm.actual_qty, pm.unit, pm.created_at,
+               p.prod_date, p.product_code, p.lot_number as prod_lot, p.quantity as prod_qty, p.status
         FROM production_materials pm
         JOIN production p ON pm.production_id = p.id
         WHERE pm.item_code = ? AND p.prod_date = ?
         ORDER BY p.id DESC
       `).bind(mat.item_code, date).all();
-      
-      // production_usage에서 해당 날짜 사용 이력
+
+      // production_usage에서 해당 날짜 사용 이력 (문서용)
       const usageInLog = await c.env.DB.prepare(`
         SELECT * FROM production_usage
         WHERE item_code = ? AND usage_date = ?
+        ORDER BY id DESC
       `).bind(mat.item_code, date).all();
-      
-      // transactions 테이블에서 관련 거래 이력
+
+      // transactions 테이블에서 관련 거래 이력 (한글 trans_type)
       const txResult = await c.env.DB.prepare(`
-        SELECT id, trans_date, trans_type, quantity, memo, created_at
+        SELECT id, trans_date, trans_type, quantity, lot_number, memo, remain_qty, created_at
         FROM transactions
         WHERE item_code = ? AND trans_date = ?
         ORDER BY id DESC
-        LIMIT 30
+        LIMIT 50
       `).bind(mat.item_code, date).all();
-      
-      // 총 사용량 계산
+
+      // 총 사용량 계산: actual_qty 우선, 없으면 planned_qty
       const totalUsedInProduction = (usageInProduction.results as any[]).reduce(
-        (sum: number, row: any) => sum + (row.quantity_used || 0), 0
+        (sum: number, row: any) => sum + (row.actual_qty ?? row.planned_qty ?? 0), 0
       );
       const totalUsedInLog = (usageInLog.results as any[]).reduce(
         (sum: number, row: any) => sum + (row.quantity || 0), 0
       );
+      // 실제 재고 차감 거래: '사용', '출고'
       const totalTxOut = (txResult.results as any[])
-        .filter((t: any) => t.trans_type === 'OUT' || t.trans_type === 'USAGE' || t.trans_type === 'PRODUCTION')
+        .filter((t: any) => t.trans_type === '사용' || t.trans_type === '출고')
         .reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
-      
-      // 중복 트랜잭션 감지
+      const totalTxIn = (txResult.results as any[])
+        .filter((t: any) => t.trans_type === '입고' || t.trans_type === '재고조정')
+        .reduce((sum: number, row: any) => sum + (row.quantity || 0), 0);
+
+      // 중복 트랜잭션 감지 (같은 memo + quantity)
       const memoMap = new Map<string, any[]>();
-      (txResult.results as any[]).forEach((t: any) => {
-        const key = `${t.memo || ''}_${t.quantity}`;
-        if (!memoMap.has(key)) memoMap.set(key, []);
-        memoMap.get(key)!.push(t);
-      });
+      (txResult.results as any[])
+        .filter((t: any) => t.trans_type === '사용' || t.trans_type === '출고')
+        .forEach((t: any) => {
+          const key = `${t.memo || ''}_${t.quantity}`;
+          if (!memoMap.has(key)) memoMap.set(key, []);
+          memoMap.get(key)!.push(t);
+        });
       const duplicates: any[] = [];
       memoMap.forEach((arr, key) => {
         if (arr.length > 1) duplicates.push({ key, count: arr.length, items: arr });
       });
-      
+
+      // 같은 production_id에 대한 중복 사용 감지
+      const prodIdMap = new Map<number, any[]>();
+      (usageInProduction.results as any[]).forEach((row: any) => {
+        const pid = row.production_id;
+        if (!prodIdMap.has(pid)) prodIdMap.set(pid, []);
+        prodIdMap.get(pid)!.push(row);
+      });
+      const duplicateProductions: any[] = [];
+      prodIdMap.forEach((arr, pid) => {
+        if (arr.length > 1) duplicateProductions.push({ production_id: pid, count: arr.length, rows: arr });
+      });
+
       diagnosis.push({
         item_code: mat.item_code,
         item_name: mat.item_name,
         current_stock: mat.current_stock,
+        safety_stock: mat.safety_stock,
         unit: mat.unit,
+        category: mat.category,
         usage_in_production_materials: {
           count: (usageInProduction.results as any[]).length,
           total_quantity: totalUsedInProduction,
           rows: usageInProduction.results
         },
-        usage_in_production_usage: {
+        usage_in_production_usage_doc: {
           count: (usageInLog.results as any[]).length,
           total_quantity: totalUsedInLog,
           rows: usageInLog.results
@@ -4291,23 +4315,26 @@ productionRoutes.get('/diagnose-stock/:itemQuery', async (c) => {
         transactions: {
           count: (txResult.results as any[]).length,
           total_out: totalTxOut,
+          total_in: totalTxIn,
+          net: totalTxIn - totalTxOut,
           rows: txResult.results
         },
-        possible_duplicates: duplicates,
+        possible_duplicate_transactions: duplicates,
+        possible_duplicate_production_materials: duplicateProductions,
         analysis: {
-          double_charged: duplicates.length > 0,
+          double_charged: duplicates.length > 0 || duplicateProductions.length > 0,
           expected_usage: totalUsedInProduction,
           actual_deducted: totalTxOut,
           discrepancy: totalTxOut - totalUsedInProduction,
-          recommendation: duplicates.length > 0 
-            ? `⚠️ 중복 트랜잭션 ${duplicates.length}건 발견. 재고 복원 필요.` 
-            : (Math.abs(totalTxOut - totalUsedInProduction) > 0.01 
-                ? `⚠️ 사용량(${totalUsedInProduction})과 차감량(${totalTxOut}) 불일치. 차이: ${(totalTxOut - totalUsedInProduction).toFixed(2)}` 
+          recommendation: (duplicates.length > 0 || duplicateProductions.length > 0)
+            ? `⚠️ 중복 트랜잭션 ${duplicates.length}건 / 중복 생산자재 ${duplicateProductions.length}건 발견. 재고 복원 필요.`
+            : (Math.abs(totalTxOut - totalUsedInProduction) > 0.01
+                ? `⚠️ 사용량(${totalUsedInProduction})과 차감량(${totalTxOut}) 불일치. 차이: ${(totalTxOut - totalUsedInProduction).toFixed(2)}`
                 : '✅ 정상')
         }
       });
     }
-    
+
     return c.json({
       success: true,
       date,
@@ -4335,33 +4362,33 @@ productionRoutes.post('/restore-stock', async (c) => {
       return c.json({ success: false, error: 'item_code와 restore_qty(양수)가 필요합니다.' }, 400);
     }
     
-    // 현재 재고 조회
+    // 현재 재고 조회 (master 테이블)
     const before = await c.env.DB.prepare(`
-      SELECT item_code, item_name, current_stock, unit FROM material_master WHERE item_code = ?
+      SELECT item_code, item_name, current_stock, unit FROM master WHERE item_code = ?
     `).bind(item_code).first<any>();
-    
+
     if (!before) {
       return c.json({ success: false, error: `원료 ${item_code}를 찾을 수 없습니다.` }, 404);
     }
-    
+
     // 재고 복원
     await c.env.DB.prepare(`
-      UPDATE material_master 
+      UPDATE master
       SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
       WHERE item_code = ?
     `).bind(restore_qty, item_code).run();
-    
-    // 복원 트랜잭션 기록
-    const now = new Date().toISOString();
+
+    // 복원 트랜잭션 기록 (trans_type: '재고조정')
+    const today = new Date().toISOString().slice(0, 10);
     const memo = `[재고복원] ${reason || '이중 차감 복원'} (+${restore_qty} ${before.unit})`;
     await c.env.DB.prepare(`
-      INSERT INTO transactions (item_code, item_name, trans_date, trans_type, quantity, unit, memo, created_at)
-      VALUES (?, ?, date(?), 'ADJUST_IN', ?, ?, ?, ?)
-    `).bind(item_code, before.item_name, now, restore_qty, before.unit, memo, now).run();
-    
+      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+      VALUES (?, ?, '재고조정', ?, ?)
+    `).bind(today, item_code, restore_qty, memo).run();
+
     // 복원 후 재고
     const after = await c.env.DB.prepare(`
-      SELECT current_stock FROM material_master WHERE item_code = ?
+      SELECT current_stock FROM master WHERE item_code = ?
     `).bind(item_code).first<any>();
     
     return c.json({
@@ -4392,15 +4419,17 @@ productionRoutes.post('/auto-restore-duplicates', async (c) => {
       return c.json({ success: false, error: 'date가 필요합니다.' }, 400);
     }
     
-    // 해당 날짜의 모든 트랜잭션 조회 (감소 방향)
+    // 해당 날짜의 모든 트랜잭션 조회 (감소 방향: '사용', '출고')
     const txs = await c.env.DB.prepare(`
-      SELECT id, item_code, item_name, trans_type, quantity, memo, created_at
-      FROM transactions
-      WHERE trans_date = ? 
-        AND (trans_type = 'OUT' OR trans_type = 'USAGE' OR trans_type = 'PRODUCTION')
-      ORDER BY item_code, memo, id
+      SELECT t.id, t.item_code, t.trans_type, t.quantity, t.lot_number, t.memo, t.created_at,
+             m.item_name, m.unit
+      FROM transactions t
+      LEFT JOIN master m ON t.item_code = m.item_code
+      WHERE t.trans_date = ?
+        AND (t.trans_type = '사용' OR t.trans_type = '출고')
+      ORDER BY t.item_code, t.memo, t.id
     `).bind(date).all();
-    
+
     // 같은 (item_code, memo, quantity)로 그룹핑 → 중복 감지
     const groupMap = new Map<string, any[]>();
     (txs.results as any[]).forEach((t: any) => {
@@ -4408,10 +4437,10 @@ productionRoutes.post('/auto-restore-duplicates', async (c) => {
       if (!groupMap.has(key)) groupMap.set(key, []);
       groupMap.get(key)!.push(t);
     });
-    
+
     const duplicates: any[] = [];
     const restoreActions: any[] = [];
-    
+
     groupMap.forEach((rows, key) => {
       if (rows.length > 1) {
         // 첫 번째만 남기고 나머지는 복원 대상
@@ -4421,6 +4450,7 @@ productionRoutes.post('/auto-restore-duplicates', async (c) => {
           key,
           item_code: keep.item_code,
           item_name: keep.item_name,
+          unit: keep.unit,
           count: rows.length,
           duplicate_count: toRestore.length,
           restore_qty: restoreQty,
@@ -4434,7 +4464,7 @@ productionRoutes.post('/auto-restore-duplicates', async (c) => {
         });
       }
     });
-    
+
     // dry_run이면 미리보기만 반환
     if (dry_run) {
       return c.json({
@@ -4447,39 +4477,37 @@ productionRoutes.post('/auto-restore-duplicates', async (c) => {
         message: '이것은 미리보기입니다. 실제 실행하려면 dry_run: false로 재요청하세요.'
       });
     }
-    
+
     // 실제 실행
+    const today = new Date().toISOString().slice(0, 10);
     let restoredCount = 0;
     for (const action of restoreActions) {
-      // 원료 재고 복원
+      // 원료 재고 복원 (master 테이블)
       await c.env.DB.prepare(`
-        UPDATE material_master 
+        UPDATE master
         SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP
         WHERE item_code = ?
       `).bind(action.restore_qty, action.item_code).run();
-      
+
       // 중복 트랜잭션 삭제
       for (const txId of action.tx_ids_to_delete) {
         await c.env.DB.prepare(`DELETE FROM transactions WHERE id = ?`).bind(txId).run();
       }
-      
-      // 복원 로그 트랜잭션 추가
-      const now = new Date().toISOString();
+
+      // 복원 로그 트랜잭션 추가 (trans_type: '재고조정')
       await c.env.DB.prepare(`
-        INSERT INTO transactions (item_code, item_name, trans_date, trans_type, quantity, memo, created_at)
-        VALUES (?, ?, date(?), 'ADJUST_IN', ?, ?, ?)
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+        VALUES (?, ?, '재고조정', ?, ?)
       `).bind(
-        action.item_code, 
-        action.item_name, 
-        now, 
-        action.restore_qty, 
-        `[자동복원] ${date} 이중 차감 정리 (+${action.restore_qty})`,
-        now
+        today,
+        action.item_code,
+        action.restore_qty,
+        `[자동복원] ${date} 이중 차감 정리 (+${action.restore_qty})`
       ).run();
-      
+
       restoredCount++;
     }
-    
+
     return c.json({
       success: true,
       dry_run: false,
@@ -4491,6 +4519,264 @@ productionRoutes.post('/auto-restore-duplicates', async (c) => {
     });
   } catch (error: any) {
     console.error('[auto-restore-duplicates] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.168b: 원료 최근 거래/사용 이력 조회 ★★★
+// GET /api/production/material-history/:itemCode?days=30
+productionRoutes.get('/material-history/:itemCode', async (c) => {
+  try {
+    const itemCode = c.req.param('itemCode');
+    const days = parseInt(c.req.query('days') || '30');
+
+    const master = await c.env.DB.prepare(`
+      SELECT item_code, item_name, current_stock, safety_stock, unit, category
+      FROM master WHERE item_code = ?
+    `).bind(itemCode).first<any>();
+
+    if (!master) {
+      return c.json({ success: false, error: `${itemCode} 원료를 찾을 수 없습니다.` }, 404);
+    }
+
+    // 최근 N일 전체 거래
+    const txs = await c.env.DB.prepare(`
+      SELECT id, trans_date, trans_type, quantity, lot_number, remain_qty, memo, created_at
+      FROM transactions
+      WHERE item_code = ?
+        AND trans_date >= date('now', '-' || ? || ' days')
+      ORDER BY trans_date DESC, id DESC
+      LIMIT 200
+    `).bind(itemCode, days).all();
+
+    // 최근 입고 (inbound) - 실제 컬럼: origin_qty, remain_qty
+    const inbounds = await c.env.DB.prepare(`
+      SELECT id, inbound_date, item_code, origin_qty, remain_qty, lot_number, supplier, expiry_date, quality_status, created_at
+      FROM inbound
+      WHERE item_code = ?
+      ORDER BY inbound_date DESC, id DESC
+      LIMIT 50
+    `).bind(itemCode).all();
+
+    // 최근 N일 생산 자재 사용
+    const usages = await c.env.DB.prepare(`
+      SELECT pm.id, pm.production_id, pm.lot_number, pm.planned_qty, pm.actual_qty, pm.unit,
+             p.prod_date, p.product_code, p.lot_number as prod_lot, p.status
+      FROM production_materials pm
+      JOIN production p ON pm.production_id = p.id
+      WHERE pm.item_code = ?
+        AND p.prod_date >= date('now', '-' || ? || ' days')
+      ORDER BY p.prod_date DESC, pm.id DESC
+      LIMIT 100
+    `).bind(itemCode, days).all();
+
+    // 집계
+    const txRows = (txs.results as any[]) || [];
+    const totalIn = txRows.filter(t => t.trans_type === '입고').reduce((s, r) => s + (r.quantity || 0), 0);
+    const totalOut = txRows.filter(t => t.trans_type === '사용' || t.trans_type === '출고').reduce((s, r) => s + (r.quantity || 0), 0);
+    const totalAdjust = txRows.filter(t => t.trans_type === '재고조정').reduce((s, r) => s + (r.quantity || 0), 0);
+
+    // 잔여 재고 있는 inbound lot
+    const remainingLots = (inbounds.results as any[]).filter((i: any) => (i.remain_qty || 0) > 0);
+    const totalInboundRemain = remainingLots.reduce((s: number, r: any) => s + (r.remain_qty || 0), 0);
+
+    return c.json({
+      success: true,
+      item: master,
+      period_days: days,
+      summary: {
+        current_stock: master.current_stock,
+        safety_stock: master.safety_stock,
+        is_shortage: master.current_stock < master.safety_stock,
+        total_inbound_last_period: totalIn,
+        total_outbound_last_period: totalOut,
+        total_adjust_last_period: totalAdjust,
+        inbound_lots_with_stock: remainingLots.length,
+        inbound_remain_total: totalInboundRemain,
+        stock_vs_inbound_mismatch: Math.abs(master.current_stock - totalInboundRemain) > 0.01
+      },
+      transactions: { count: txRows.length, rows: txRows },
+      inbounds: { count: (inbounds.results as any[]).length, rows: inbounds.results, remaining_lots: remainingLots },
+      production_usages: { count: (usages.results as any[]).length, rows: usages.results }
+    });
+  } catch (error: any) {
+    console.error('[material-history] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.168c: 원료 lot 재활성화 (remain_qty + expiry_date 복원) ★★★
+// POST /api/production/reactivate-lot
+// Body: { lot_number, remain_qty, expiry_date?, reason? }
+// - remain_qty를 복원하고 (선택적으로) expiry_date도 연장
+// - master.current_stock에도 반영
+productionRoutes.post('/reactivate-lot', async (c) => {
+  try {
+    const { lot_number, remain_qty, expiry_date, reason } = await c.req.json<{
+      lot_number: string;
+      remain_qty: number;
+      expiry_date?: string;
+      reason?: string;
+    }>();
+
+    if (!lot_number || remain_qty === undefined || remain_qty === null || remain_qty < 0) {
+      return c.json({ success: false, error: 'lot_number와 remain_qty(0 이상)가 필요합니다.' }, 400);
+    }
+
+    // 현재 lot 상태
+    const before = await c.env.DB.prepare(`
+      SELECT id, lot_number, item_code, origin_qty, remain_qty, expiry_date, quality_status
+      FROM inbound WHERE lot_number = ?
+    `).bind(lot_number).first<any>();
+
+    if (!before) {
+      return c.json({ success: false, error: `Lot ${lot_number}를 찾을 수 없습니다.` }, 404);
+    }
+
+    // master 정보
+    const master = await c.env.DB.prepare(`
+      SELECT item_code, item_name, current_stock, unit FROM master WHERE item_code = ?
+    `).bind(before.item_code).first<any>();
+
+    // remain_qty 차이만큼 master.current_stock에도 반영
+    const remainDiff = remain_qty - (before.remain_qty || 0);
+    const today = new Date().toISOString().slice(0, 10);
+
+    // 1) inbound 업데이트 (remain_qty + expiry_date, 품질상태 '합격'으로 강제)
+    if (expiry_date) {
+      await c.env.DB.prepare(`
+        UPDATE inbound
+        SET remain_qty = ?, expiry_date = ?, quality_status = '합격', updated_at = CURRENT_TIMESTAMP
+        WHERE lot_number = ?
+      `).bind(remain_qty, expiry_date, lot_number).run();
+    } else {
+      await c.env.DB.prepare(`
+        UPDATE inbound
+        SET remain_qty = ?, quality_status = '합격', updated_at = CURRENT_TIMESTAMP
+        WHERE lot_number = ?
+      `).bind(remain_qty, lot_number).run();
+    }
+
+    // 2) master.current_stock 조정
+    if (remainDiff !== 0) {
+      await c.env.DB.prepare(`
+        UPDATE master
+        SET current_stock = MAX(0, current_stock + ?), updated_at = CURRENT_TIMESTAMP
+        WHERE item_code = ?
+      `).bind(remainDiff, before.item_code).run();
+
+      // 3) 재고조정 트랜잭션 기록
+      const memo = `[Lot 재활성화] ${lot_number} remain_qty ${before.remain_qty}→${remain_qty}` +
+        (expiry_date ? `, 소비기한 ${before.expiry_date}→${expiry_date}` : '') +
+        (reason ? ` (${reason})` : '');
+      await c.env.DB.prepare(`
+        INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo)
+        VALUES (?, ?, '재고조정', ?, ?, ?)
+      `).bind(today, before.item_code, remainDiff, lot_number, memo).run();
+    }
+
+    // 4) 결과 조회
+    const after = await c.env.DB.prepare(`
+      SELECT lot_number, remain_qty, expiry_date, quality_status FROM inbound WHERE lot_number = ?
+    `).bind(lot_number).first<any>();
+    const masterAfter = await c.env.DB.prepare(`
+      SELECT current_stock FROM master WHERE item_code = ?
+    `).bind(before.item_code).first<any>();
+
+    return c.json({
+      success: true,
+      message: `Lot ${lot_number} 재활성화 완료`,
+      before: {
+        remain_qty: before.remain_qty,
+        expiry_date: before.expiry_date,
+        quality_status: before.quality_status,
+        master_stock: master?.current_stock
+      },
+      after: {
+        remain_qty: after?.remain_qty,
+        expiry_date: after?.expiry_date,
+        quality_status: after?.quality_status,
+        master_stock: masterAfter?.current_stock
+      },
+      diff: {
+        remain_qty_diff: remainDiff,
+        expiry_extended: expiry_date && expiry_date !== before.expiry_date
+      }
+    });
+  } catch (error: any) {
+    console.error('[reactivate-lot] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.168b: 원료 재고를 inbound remain_qty 합계로 재동기화 ★★★
+// POST /api/production/resync-stock  Body: { item_code, dry_run=true }
+productionRoutes.post('/resync-stock', async (c) => {
+  try {
+    const { item_code, dry_run = true } = await c.req.json<{ item_code: string; dry_run?: boolean }>();
+    if (!item_code) return c.json({ success: false, error: 'item_code가 필요합니다.' }, 400);
+
+    const master = await c.env.DB.prepare(`
+      SELECT item_code, item_name, current_stock, unit FROM master WHERE item_code = ?
+    `).bind(item_code).first<any>();
+    if (!master) return c.json({ success: false, error: `${item_code} 원료를 찾을 수 없습니다.` }, 404);
+
+    // 유효 재고 = 유통기한 지나지 않은 inbound remain_qty 합계
+    const validSum = await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(remain_qty), 0) as total
+      FROM inbound
+      WHERE item_code = ?
+        AND remain_qty > 0
+        AND (expiry_date IS NULL OR expiry_date >= date('now'))
+    `).bind(item_code).first<any>();
+
+    // 전체 remain_qty 합계 (유통기한 무관)
+    const allSum = await c.env.DB.prepare(`
+      SELECT COALESCE(SUM(remain_qty), 0) as total
+      FROM inbound
+      WHERE item_code = ? AND remain_qty > 0
+    `).bind(item_code).first<any>();
+
+    const newStock = allSum?.total || 0;
+    const diff = newStock - (master.current_stock || 0);
+
+    if (dry_run) {
+      return c.json({
+        success: true,
+        dry_run: true,
+        item_code,
+        item_name: master.item_name,
+        current_stock: master.current_stock,
+        inbound_remain_all: allSum?.total || 0,
+        inbound_remain_valid: validSum?.total || 0,
+        diff,
+        recommendation: `현재 재고 ${master.current_stock} → 재동기화 후 ${newStock} (${diff >= 0 ? '+' : ''}${diff})`,
+        message: '이것은 미리보기입니다. 실제 적용하려면 dry_run: false로 재요청하세요.'
+      });
+    }
+
+    // 실제 적용
+    await c.env.DB.prepare(`
+      UPDATE master SET current_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+    `).bind(newStock, item_code).run();
+
+    const today = new Date().toISOString().slice(0, 10);
+    await c.env.DB.prepare(`
+      INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo)
+      VALUES (?, ?, '재고조정', ?, ?)
+    `).bind(today, item_code, diff, `[재고 재동기화] inbound 합계 기준 (${master.current_stock} → ${newStock})`).run();
+
+    return c.json({
+      success: true,
+      dry_run: false,
+      item_code,
+      item_name: master.item_name,
+      before: master.current_stock,
+      after: newStock,
+      diff
+    });
+  } catch (error: any) {
+    console.error('[resync-stock] 오류:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });

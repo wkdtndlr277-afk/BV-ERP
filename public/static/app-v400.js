@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.166';
+const APP_VERSION = '3.6.167';
 const APP_BUILD = '20260728-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -54109,24 +54109,25 @@ async function renderProcessTracking() {
         <!-- 동적으로 생성 -->
       </div>
       
-      <!-- 요약 카드 -->
-      <div id="process-summary" class="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div class="bg-white rounded-xl p-4 shadow text-center">
-          <p class="text-sm text-gray-500">대기중</p>
-          <p id="summary-created" class="text-3xl font-bold text-gray-600">-</p>
+      <!-- ★★★ v3.6.167: 요약 카드 (사이클 중심) ★★★ -->
+      <div id="process-summary" class="grid grid-cols-3 gap-4">
+        <div class="bg-gradient-to-br from-blue-50 to-white rounded-xl p-4 shadow border border-blue-200 text-center">
+          <i class="fas fa-cog fa-spin text-2xl text-blue-500 mb-2"></i>
+          <p class="text-xs text-gray-500 font-medium">진행중</p>
+          <p id="summary-progress" class="text-3xl font-bold text-blue-600">-</p>
         </div>
-        <div class="bg-white rounded-xl p-4 shadow text-center">
-          <p class="text-sm text-gray-500">진행중</p>
-          <p id="summary-progress" class="text-3xl font-bold text-amber-600">-</p>
+        <div class="bg-gradient-to-br from-green-50 to-white rounded-xl p-4 shadow border border-green-200 text-center">
+          <i class="fas fa-check-circle text-2xl text-green-500 mb-2"></i>
+          <p class="text-xs text-gray-500 font-medium">오늘 완료</p>
+          <p id="summary-completed" class="text-3xl font-bold text-green-600">-</p>
         </div>
-        <div class="bg-white rounded-xl p-4 shadow text-center">
-          <p class="text-sm text-gray-500">오늘 완료</p>
-          <p id="summary-completed" class="text-3xl font-bold text-emerald-600">-</p>
-        </div>
-        <div class="bg-white rounded-xl p-4 shadow text-center border-2 border-red-200">
-          <p class="text-sm text-red-500">지연 배치</p>
+        <div class="bg-gradient-to-br from-red-50 to-white rounded-xl p-4 shadow border border-red-200 text-center">
+          <i class="fas fa-exclamation-triangle text-2xl text-red-500 mb-2"></i>
+          <p class="text-xs text-gray-500 font-medium">지연</p>
           <p id="summary-delayed" class="text-3xl font-bold text-red-600">-</p>
         </div>
+        <!-- hidden legacy element (숨김) -->
+        <p id="summary-created" class="hidden">-</p>
       </div>
       
       <!-- ★★★ v3.6.164: 공정별 진행 현황 (네비게이션 플로우) ★★★ -->
@@ -54142,63 +54143,8 @@ async function renderProcessTracking() {
         </div>
       </div>
       
-      <!-- 활성 배치 목록 -->
-      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-        <div class="bg-gradient-to-r from-amber-500 to-orange-500 p-4 flex items-center justify-between">
-          <h3 class="text-lg font-bold text-white">
-            <i class="fas fa-clock mr-2"></i> 진행 중인 배치
-          </h3>
-          <span class="text-white/70 text-sm">실시간 업데이트</span>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-gray-100">
-              <tr>
-                <th class="px-4 py-3 text-left">배치코드</th>
-                <th class="px-4 py-3 text-left">제품명</th>
-                <th class="px-4 py-3 text-center">현재 공정</th>
-                <th class="px-4 py-3 text-center">경과시간</th>
-                <th class="px-4 py-3 text-center">표준시간</th>
-                <th class="px-4 py-3 text-center">상태</th>
-                <th class="px-4 py-3 text-center">진행률</th>
-                <th class="px-4 py-3 text-center">액션</th>
-              </tr>
-            </thead>
-            <tbody id="active-batch-tbody">
-              <tr><td colspan="8" class="text-center py-8 text-gray-400">데이터 로딩 중...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-      
-      <!-- 오늘 배치 목록 -->
-      <div class="bg-white rounded-xl shadow-lg overflow-hidden">
-        <div class="p-4 border-b flex items-center justify-between">
-          <h3 class="text-lg font-bold text-gray-800">
-            <i class="fas fa-list mr-2"></i> 오늘 배치 목록
-          </h3>
-          <input type="date" id="batch-date-filter" class="border rounded-lg px-3 py-2 text-sm" 
-                 value="${getLocalDateString()}" onchange="loadProcessDashboard()">
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-gray-50">
-              <tr>
-                <th class="px-4 py-3 text-left">배치코드</th>
-                <th class="px-4 py-3 text-left">제품명</th>
-                <th class="px-4 py-3 text-center">배치량</th>
-                <th class="px-4 py-3 text-center">상태</th>
-                <th class="px-4 py-3 text-center">공정 진행</th>
-                <th class="px-4 py-3 text-center">생성시간</th>
-                <th class="px-4 py-3 text-center">액션</th>
-              </tr>
-            </thead>
-            <tbody id="batch-list-tbody">
-              <tr><td colspan="7" class="text-center py-8 text-gray-400">데이터 로딩 중...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <!-- v3.6.167: 날짜 필터 (숨김 - loadProcessDashboard 호환용) -->
+      <input type="hidden" id="batch-date-filter" value="${getLocalDateString()}">
     </div>
   `;
   
@@ -54289,203 +54235,183 @@ function handleProcessBarcodeAutoScan(event) {
 
 // ★★★ v3.6.164/165: 공정별 진행 현황 네비게이션 플로우 ★★★
 // 각 사이클별로 6개 공정의 진행 상태를 파이프라인으로 표시 (진행중 + 완료 모두)
+// ★★★ v3.6.167: 공정별 진행 현황 (직관적 재설계) ★★★
+// 성형명별로 그룹화, 완료/진행 상태를 카드 형태로 명확히 표시
 async function renderProcessFlowNav(cyclesRes) {
   const container = document.getElementById('process-flow-nav');
   if (!container) return;
   
   if (!cyclesRes.success || !cyclesRes.data || cyclesRes.data.length === 0) {
     container.innerHTML = `
-      <div class="text-center py-8 text-gray-400">
-        <i class="fas fa-info-circle text-3xl mb-2"></i>
-        <p>오늘 진행한 사이클이 없습니다</p>
-        <p class="text-xs mt-1">바코드를 스캔하면 여기에 공정 진행 상황이 표시됩니다</p>
+      <div class="text-center py-12 text-gray-400">
+        <i class="fas fa-barcode text-5xl mb-3 opacity-30"></i>
+        <p class="text-lg font-medium">오늘 진행한 사이클이 없습니다</p>
+        <p class="text-sm mt-2">위 바코드 스캔 창에서 바코드를 스캔하여 시작하세요</p>
       </div>
     `;
     return;
   }
   
-  // 각 사이클의 상세 정보 가져오기 (time_logs 포함)
+  // 각 사이클의 상세 정보 가져오기
   const cycleDetails = await Promise.all(
     cyclesRes.data.map(cycle => 
       fetch(`/api/process-tracking/cycle/${cycle.id}`).then(r => r.json()).catch(() => null)
     )
   );
   
-  // 필터 탭 (진행중 / 완료 / 전체)
   const validDetails = cycleDetails.filter(d => d && d.success);
   const inProgressCount = validDetails.filter(d => d.data.cycle.status === 'IN_PROGRESS').length;
   const completedCount = validDetails.filter(d => d.data.cycle.status === 'COMPLETED').length;
   
   const currentFilter = window.__processFlowFilter || 'ALL';
+  
+  // 필터 탭
   const filterHtml = `
-    <div class="flex items-center gap-2 mb-4 pb-3 border-b border-gray-200">
+    <div class="flex items-center gap-2 mb-5 flex-wrap">
       <button onclick="setProcessFlowFilter('ALL')" 
-              class="px-4 py-2 rounded-lg text-sm font-bold ${currentFilter === 'ALL' ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">
-        전체 (${validDetails.length})
+              class="px-4 py-2 rounded-lg text-sm font-bold transition-all ${currentFilter === 'ALL' ? 'bg-emerald-600 text-white shadow-md' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}">
+        전체 <span class="ml-1 px-2 py-0.5 rounded ${currentFilter === 'ALL' ? 'bg-white/20' : 'bg-gray-100'}">${validDetails.length}</span>
       </button>
       <button onclick="setProcessFlowFilter('IN_PROGRESS')" 
-              class="px-4 py-2 rounded-lg text-sm font-bold ${currentFilter === 'IN_PROGRESS' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">
-        <i class="fas fa-cog fa-spin mr-1"></i> 진행중 (${inProgressCount})
+              class="px-4 py-2 rounded-lg text-sm font-bold transition-all ${currentFilter === 'IN_PROGRESS' ? 'bg-blue-600 text-white shadow-md' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}">
+        <i class="fas fa-cog ${currentFilter === 'IN_PROGRESS' ? 'fa-spin' : ''} mr-1"></i> 진행중 
+        <span class="ml-1 px-2 py-0.5 rounded ${currentFilter === 'IN_PROGRESS' ? 'bg-white/20' : 'bg-blue-100 text-blue-700'}">${inProgressCount}</span>
       </button>
       <button onclick="setProcessFlowFilter('COMPLETED')" 
-              class="px-4 py-2 rounded-lg text-sm font-bold ${currentFilter === 'COMPLETED' ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}">
-        <i class="fas fa-check-circle mr-1"></i> 완료 (${completedCount})
+              class="px-4 py-2 rounded-lg text-sm font-bold transition-all ${currentFilter === 'COMPLETED' ? 'bg-green-600 text-white shadow-md' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-50'}">
+        <i class="fas fa-check-circle mr-1"></i> 완료 
+        <span class="ml-1 px-2 py-0.5 rounded ${currentFilter === 'COMPLETED' ? 'bg-white/20' : 'bg-green-100 text-green-700'}">${completedCount}</span>
       </button>
     </div>
   `;
   
-  // 필터 적용
   const filteredDetails = currentFilter === 'ALL' ? validDetails :
     validDetails.filter(d => d.data.cycle.status === currentFilter);
   
   if (filteredDetails.length === 0) {
     container.innerHTML = filterHtml + `
-      <div class="text-center py-8 text-gray-400">
-        <i class="fas fa-filter text-2xl mb-2"></i>
+      <div class="text-center py-10 text-gray-400 bg-gray-50 rounded-xl">
+        <i class="fas fa-filter text-3xl mb-2 opacity-40"></i>
         <p>해당 상태의 사이클이 없습니다</p>
       </div>
     `;
     return;
   }
   
-  // 사이클별 플로우 렌더링
+  const now = new Date();
+  
+  // 심플하고 직관적인 카드 렌더링
   const flowsHtml = filteredDetails.map(detail => {
     const cycle = detail.data.cycle;
     const timeLogs = detail.data.time_logs || [];
     const isCompleted = cycle.status === 'COMPLETED';
+    const currentLog = timeLogs.find(l => l.status === 'IN_PROGRESS');
+    const totalDuration = timeLogs.reduce((sum, l) => sum + (l.actual_minutes || 0), 0);
+    const completedCnt = timeLogs.filter(l => l.status === 'COMPLETED').length;
+    const totalCnt = timeLogs.length;
+    const progressPct = totalCnt > 0 ? Math.round((completedCnt / totalCnt) * 100) : 0;
     
-    // 총 소요시간 계산 (완료된 사이클의 경우)
-    let totalDuration = 0;
-    timeLogs.forEach(log => { totalDuration += (log.actual_minutes || 0); });
-    
-    // 현재 시간 계산
-    const now = new Date();
-    
-    // 헤더 상태 배지
-    const statusBadge = isCompleted 
-      ? '<span class="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full font-bold"><i class="fas fa-check-circle mr-1"></i> 완료</span>'
-      : '<span class="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-bold animate-pulse"><i class="fas fa-cog fa-spin mr-1"></i> 진행중</span>';
-    
-    // 카드 배경
-    const cardBg = isCompleted ? 'bg-gradient-to-br from-green-50/50 to-white border-green-200' : 'bg-gradient-to-br from-blue-50/30 to-white border-blue-200';
-    const cardHover = isCompleted ? 'hover:border-green-400' : 'hover:border-blue-400';
+    // 상태 색상
+    const themeColor = isCompleted ? 'green' : 'blue';
+    const statusText = isCompleted ? '완료' : '진행중';
+    const statusIcon = isCompleted ? 'fa-check-circle' : 'fa-cog fa-spin';
     
     return `
-      <div class="mb-6 last:mb-0 border-2 ${cardBg} rounded-xl p-4 ${cardHover} cursor-pointer transition-all" 
-           onclick="loadCycleDetail(${cycle.id})">
-        <!-- 사이클 헤더 -->
-        <div class="flex items-center justify-between mb-4 pb-3 border-b border-gray-200 flex-wrap gap-2">
-          <div class="flex items-center gap-2 flex-wrap">
-            ${statusBadge}
-            <span class="text-xs bg-purple-100 text-purple-700 px-3 py-1 rounded-full font-bold">
-              <i class="fas fa-shapes mr-1"></i> ${cycle.shaping_name || '-'}
-            </span>
-            <span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded font-mono">
-              <i class="fas fa-barcode mr-1"></i>${cycle.barcode}
-            </span>
+      <div class="mb-4 last:mb-0 bg-white rounded-2xl shadow-sm border-2 border-${themeColor}-100 hover:border-${themeColor}-400 hover:shadow-lg transition-all overflow-hidden">
+        <!-- 상단 헤더 -->
+        <div class="flex items-center justify-between p-4 bg-gradient-to-r from-${themeColor}-50 to-white border-b border-${themeColor}-100">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-full bg-${themeColor}-500 text-white flex items-center justify-center shadow-md">
+              <i class="fas ${statusIcon}"></i>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="font-bold text-gray-800 text-base">${cycle.shaping_name || '-'}</span>
+                <span class="text-xs bg-${themeColor}-100 text-${themeColor}-700 px-2 py-0.5 rounded-full font-bold">${statusText}</span>
+              </div>
+              <p class="text-xs text-gray-500 font-mono mt-0.5">
+                <i class="fas fa-barcode mr-1"></i>${cycle.barcode}
+              </p>
+            </div>
           </div>
-          <div class="text-xs text-gray-500 flex items-center gap-3">
-            <span><i class="fas fa-play-circle text-blue-500 mr-1"></i> 시작: ${cycle.started_at ? cycle.started_at.substring(11, 16) : '-'}</span>
-            ${isCompleted ? `<span><i class="fas fa-flag-checkered text-green-600 mr-1"></i> 종료: ${cycle.completed_at ? cycle.completed_at.substring(11, 16) : '-'}</span>` : ''}
-            ${isCompleted && totalDuration > 0 ? `<span class="font-bold text-green-700"><i class="fas fa-stopwatch mr-1"></i> 총 ${totalDuration}분</span>` : ''}
+          <div class="flex items-center gap-2">
+            <div class="text-right text-xs text-gray-500">
+              <div><i class="fas fa-play-circle text-blue-400 mr-1"></i>${cycle.started_at ? cycle.started_at.substring(11, 16) : '-'}</div>
+              ${isCompleted ? `<div class="mt-0.5"><i class="fas fa-flag-checkered text-green-500 mr-1"></i>${cycle.completed_at ? cycle.completed_at.substring(11, 16) : '-'}</div>` : ''}
+              ${totalDuration > 0 ? `<div class="mt-0.5 font-bold text-gray-700"><i class="fas fa-stopwatch mr-1"></i>총 ${totalDuration}분</div>` : ''}
+            </div>
+            <button onclick="showCycleDetailModal(${cycle.id})" 
+                    class="ml-2 px-3 py-2 bg-${themeColor}-500 hover:bg-${themeColor}-600 text-white rounded-lg text-xs font-bold shadow-sm">
+              <i class="fas fa-expand-alt mr-1"></i> 상세
+            </button>
+          </div>
+        </div>
+        
+        <!-- 진행률 바 -->
+        <div class="px-4 pt-3">
+          <div class="flex items-center justify-between text-xs mb-1">
+            <span class="text-gray-500">진행률</span>
+            <span class="font-bold text-${themeColor}-700">${completedCnt}/${totalCnt} (${progressPct}%)</span>
+          </div>
+          <div class="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+            <div class="bg-gradient-to-r from-${themeColor}-400 to-${themeColor}-600 h-2 rounded-full transition-all" style="width: ${progressPct}%"></div>
           </div>
         </div>
         
         <!-- 6단계 파이프라인 -->
-        <div class="flex items-center justify-between overflow-x-auto pb-2">
-          ${timeLogs.map((log, idx) => {
-            const isLast = idx === timeLogs.length - 1;
-            let statusIcon, statusBg, statusText, statusBorder, timeText, animation = '';
-            
-            if (log.status === 'COMPLETED') {
-              statusIcon = 'fas fa-check';
-              statusBg = 'bg-emerald-500';
-              statusBorder = 'border-emerald-500';
-              statusText = 'text-emerald-700';
-              const mins = log.actual_minutes || 0;
-              timeText = `${mins}분 소요`;
-            } else if (log.status === 'IN_PROGRESS') {
-              statusIcon = 'fas fa-cog fa-spin';
-              statusBg = 'bg-blue-500';
-              statusBorder = 'border-blue-500 ring-4 ring-blue-200';
-              statusText = 'text-blue-700';
-              animation = 'animate-pulse';
-              const startTime = new Date(log.start_time);
-              const elapsedSec = Math.floor((now - startTime) / 1000);
-              const elapsedMin = Math.floor(elapsedSec / 60);
-              const elapsedSecRem = elapsedSec % 60;
-              const stdMin = log.standard_minutes || 60;
-              const isDelayed = elapsedMin > stdMin;
-              timeText = `<span class="${isDelayed ? 'text-red-600 font-bold' : 'text-blue-600 font-bold'}">${elapsedMin}분 ${elapsedSecRem}초</span> / 표준 ${stdMin}분`;
-            } else {
-              // PENDING - 다음 대기 상태인지 확인
-              const prevLog = idx > 0 ? timeLogs[idx - 1] : null;
-              const isNextPending = prevLog && prevLog.status === 'COMPLETED' && 
-                !timeLogs.some(l => l.status === 'IN_PROGRESS');
+        <div class="p-4">
+          <div class="flex items-center justify-between gap-1 overflow-x-auto">
+            ${timeLogs.map((log, idx) => {
+              const isLast = idx === timeLogs.length - 1;
+              let bgClass, iconClass, textClass, subText;
               
-              if (isNextPending) {
-                statusIcon = 'fas fa-pause';
-                statusBg = 'bg-amber-400';
-                statusBorder = 'border-amber-400 ring-4 ring-amber-100';
-                statusText = 'text-amber-700';
-                animation = 'animate-pulse';
-                timeText = '<span class="text-amber-600 font-bold">⏸ 다시 스캔 대기</span>';
+              if (log.status === 'COMPLETED') {
+                bgClass = 'bg-green-500';
+                iconClass = 'fas fa-check';
+                textClass = 'text-green-700 font-bold';
+                subText = `${log.actual_minutes || 0}분`;
+              } else if (log.status === 'IN_PROGRESS') {
+                bgClass = 'bg-blue-500 ring-4 ring-blue-200 animate-pulse';
+                iconClass = 'fas fa-cog fa-spin';
+                textClass = 'text-blue-700 font-bold';
+                const startTime = new Date(log.start_time);
+                const elapsedSec = Math.floor((now - startTime) / 1000);
+                const elapsedMin = Math.floor(elapsedSec / 60);
+                const stdMin = log.standard_minutes || 60;
+                const isDelayed = elapsedMin > stdMin;
+                subText = `<span class="${isDelayed ? 'text-red-600' : 'text-blue-600'} font-bold">${elapsedMin}분</span>`;
               } else {
-                statusIcon = 'far fa-circle';
-                statusBg = 'bg-gray-300';
-                statusBorder = 'border-gray-300';
-                statusText = 'text-gray-400';
-                timeText = `표준 ${log.standard_minutes || 60}분`;
+                bgClass = 'bg-gray-200';
+                iconClass = 'far fa-circle';
+                textClass = 'text-gray-400';
+                subText = `${log.standard_minutes || 60}분`;
               }
-            }
-            
-            return `
-              <div class="flex items-center flex-shrink-0">
-                <div class="flex flex-col items-center min-w-[100px]">
-                  <div class="w-12 h-12 rounded-full ${statusBg} border-4 ${statusBorder} flex items-center justify-center text-white ${animation}">
-                    <i class="${statusIcon} text-lg"></i>
+              
+              // 연결선 색상
+              const lineClass = log.status === 'COMPLETED' ? 'bg-green-400' : 'bg-gray-200';
+              
+              return `
+                <div class="flex items-center flex-1 min-w-0">
+                  <div class="flex flex-col items-center flex-shrink-0" style="min-width: 70px;">
+                    <div class="w-10 h-10 rounded-full ${bgClass} flex items-center justify-center text-white shadow-sm">
+                      <i class="${iconClass} text-sm"></i>
+                    </div>
+                    <div class="mt-1.5 text-center">
+                      <p class="text-xs ${textClass} leading-tight">${idx + 1}. ${log.process_name || log.process_code}</p>
+                      <p class="text-xs text-gray-500 mt-0.5">${subText}</p>
+                    </div>
                   </div>
-                  <div class="mt-2 text-center">
-                    <p class="text-xs font-bold ${statusText}">${idx + 1}. ${log.process_name || log.process_code}</p>
-                    <p class="text-xs text-gray-500 mt-1">${timeText}</p>
-                  </div>
+                  ${!isLast ? `<div class="flex-1 h-1 ${lineClass} rounded mx-0.5 md:mx-1" style="margin-bottom: 24px;"></div>` : ''}
                 </div>
-                ${!isLast ? `
-                  <div class="flex-shrink-0 mx-1 md:mx-2">
-                    <div class="w-8 md:w-12 h-1 ${log.status === 'COMPLETED' ? 'bg-emerald-500' : 'bg-gray-300'} rounded"></div>
-                  </div>
-                ` : ''}
-              </div>
-            `;
-          }).join('')}
-        </div>
-        
-        <!-- 하단 요약 -->
-        <div class="mt-4 pt-3 border-t border-gray-200 flex items-center justify-between">
-          <div class="flex items-center gap-4 text-xs">
-            <span class="text-emerald-600 font-bold">
-              <i class="fas fa-check-circle mr-1"></i>
-              완료 ${timeLogs.filter(l => l.status === 'COMPLETED').length}개
-            </span>
-            <span class="text-blue-600 font-bold">
-              <i class="fas fa-cog mr-1"></i>
-              진행중 ${timeLogs.filter(l => l.status === 'IN_PROGRESS').length}개
-            </span>
-            <span class="text-gray-500">
-              <i class="far fa-circle mr-1"></i>
-              대기 ${timeLogs.filter(l => l.status === 'PENDING').length}개
-            </span>
+              `;
+            }).join('')}
           </div>
-          <button onclick="event.stopPropagation(); loadCycleDetail(${cycle.id})" 
-                  class="text-xs bg-blue-500 text-white px-3 py-1 rounded-lg hover:bg-blue-600">
-            <i class="fas fa-external-link-alt mr-1"></i> 상세 보기
-          </button>
         </div>
       </div>
     `;
   }).join('');
   
-  container.innerHTML = filterHtml + (flowsHtml || '<p class="text-center py-4 text-gray-400">데이터 로드 중...</p>');
+  container.innerHTML = filterHtml + flowsHtml;
 }
 
 // ★★★ v3.6.165: 공정 플로우 필터 설정 ★★★
@@ -54572,6 +54498,155 @@ function renderActiveCyclesList(cyclesRes) {
   }).join('');
 }
 
+// ★★★ v3.6.167: 사이클 상세 모달 (직관적인 큰 화면) ★★★
+async function showCycleDetailModal(cycleId) {
+  try {
+    const res = await fetch(`/api/process-tracking/cycle/${cycleId}`);
+    const data = await res.json();
+    if (!data.success) {
+      showToast('사이클 정보를 불러오지 못했습니다', 'error');
+      return;
+    }
+    
+    const cycle = data.data.cycle;
+    const timeLogs = data.data.time_logs || [];
+    const isCompleted = cycle.status === 'COMPLETED';
+    const totalDuration = timeLogs.reduce((sum, l) => sum + (l.actual_minutes || 0), 0);
+    const completedCnt = timeLogs.filter(l => l.status === 'COMPLETED').length;
+    const totalCnt = timeLogs.length;
+    const themeColor = isCompleted ? 'green' : 'blue';
+    const now = new Date();
+    
+    const bodyHtml = `
+      <div class="space-y-4">
+        <!-- 사이클 요약 정보 -->
+        <div class="bg-gradient-to-br from-${themeColor}-50 to-white rounded-xl p-5 border-2 border-${themeColor}-200">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <p class="text-xs text-gray-500 mb-1"><i class="fas fa-shapes mr-1"></i> 성형명</p>
+              <p class="font-bold text-gray-800">${cycle.shaping_name || '-'}</p>
+            </div>
+            <div>
+              <p class="text-xs text-gray-500 mb-1"><i class="fas fa-barcode mr-1"></i> 바코드</p>
+              <p class="font-mono text-sm text-gray-800">${cycle.barcode}</p>
+            </div>
+            <div>
+              <p class="text-xs text-gray-500 mb-1"><i class="fas fa-info-circle mr-1"></i> 상태</p>
+              <span class="text-xs bg-${themeColor}-100 text-${themeColor}-700 px-2 py-1 rounded-full font-bold">
+                <i class="fas ${isCompleted ? 'fa-check-circle' : 'fa-cog fa-spin'} mr-1"></i>
+                ${isCompleted ? '완료' : '진행중'}
+              </span>
+            </div>
+            <div>
+              <p class="text-xs text-gray-500 mb-1"><i class="fas fa-stopwatch mr-1"></i> 총 소요시간</p>
+              <p class="font-bold text-${themeColor}-700 text-lg">${totalDuration}분</p>
+            </div>
+            <div>
+              <p class="text-xs text-gray-500 mb-1"><i class="fas fa-play-circle mr-1"></i> 시작</p>
+              <p class="font-mono text-sm text-gray-800">${cycle.started_at ? cycle.started_at.substring(0, 16) : '-'}</p>
+            </div>
+            <div>
+              <p class="text-xs text-gray-500 mb-1"><i class="fas fa-flag-checkered mr-1"></i> 종료</p>
+              <p class="font-mono text-sm text-gray-800">${cycle.completed_at ? cycle.completed_at.substring(0, 16) : '진행중...'}</p>
+            </div>
+            <div>
+              <p class="text-xs text-gray-500 mb-1"><i class="fas fa-tasks mr-1"></i> 진행률</p>
+              <p class="font-bold text-${themeColor}-700 text-lg">${completedCnt}/${totalCnt}</p>
+            </div>
+            <div>
+              <p class="text-xs text-gray-500 mb-1"><i class="fas fa-calendar-day mr-1"></i> 사이클 날짜</p>
+              <p class="font-mono text-sm text-gray-800">${cycle.cycle_date || '-'}</p>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 공정 상세 타임라인 -->
+        <div class="bg-white rounded-xl border-2 border-gray-200 overflow-hidden">
+          <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
+            <h4 class="font-bold text-gray-800">
+              <i class="fas fa-list-ol mr-2 text-${themeColor}-600"></i> 공정 진행 상세
+            </h4>
+          </div>
+          <div class="p-4">
+            <div class="space-y-3">
+              ${timeLogs.map((log, idx) => {
+                let statusIcon, statusBg, statusText, statusColor;
+                let timeDetail = '';
+                
+                if (log.status === 'COMPLETED') {
+                  statusIcon = 'fa-check-circle';
+                  statusBg = 'bg-green-100';
+                  statusColor = 'text-green-700';
+                  statusText = '완료';
+                  const startT = log.start_time ? log.start_time.substring(11, 16) : '-';
+                  const endT = log.end_time ? log.end_time.substring(11, 16) : '-';
+                  timeDetail = `<span class="text-green-600 font-bold">${log.actual_minutes || 0}분 소요</span> · ${startT} ~ ${endT}`;
+                } else if (log.status === 'IN_PROGRESS') {
+                  statusIcon = 'fa-cog fa-spin';
+                  statusBg = 'bg-blue-100';
+                  statusColor = 'text-blue-700';
+                  statusText = '진행중';
+                  const startTime = new Date(log.start_time);
+                  const elapsedSec = Math.floor((now - startTime) / 1000);
+                  const elapsedMin = Math.floor(elapsedSec / 60);
+                  const elapsedSecRem = elapsedSec % 60;
+                  const stdMin = log.standard_minutes || 60;
+                  const isDelayed = elapsedMin > stdMin;
+                  const startT = log.start_time ? log.start_time.substring(11, 16) : '-';
+                  timeDetail = `<span class="${isDelayed ? 'text-red-600' : 'text-blue-600'} font-bold">${elapsedMin}분 ${elapsedSecRem}초 경과</span> · 시작: ${startT}`;
+                } else {
+                  statusIcon = 'fa-circle';
+                  statusBg = 'bg-gray-100';
+                  statusColor = 'text-gray-500';
+                  statusText = '대기';
+                  timeDetail = `<span class="text-gray-500">표준 ${log.standard_minutes || 60}분</span>`;
+                }
+                
+                return `
+                  <div class="flex items-center gap-3 p-3 rounded-lg border ${log.status === 'IN_PROGRESS' ? 'border-blue-300 bg-blue-50 shadow-sm' : log.status === 'COMPLETED' ? 'border-green-200 bg-green-50/50' : 'border-gray-200'}">
+                    <div class="w-8 h-8 rounded-full ${statusBg} ${statusColor} flex items-center justify-center flex-shrink-0">
+                      <span class="font-bold text-sm">${idx + 1}</span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <p class="font-bold ${statusColor}">${log.process_name || log.process_code}</p>
+                        <span class="text-xs ${statusBg} ${statusColor} px-2 py-0.5 rounded-full font-bold">
+                          <i class="fas ${statusIcon} mr-1"></i>${statusText}
+                        </span>
+                      </div>
+                      <p class="text-xs text-gray-600 mt-1">${timeDetail}</p>
+                    </div>
+                    <div class="text-right flex-shrink-0">
+                      <p class="text-xs text-gray-400">표준</p>
+                      <p class="font-bold text-gray-600">${log.standard_minutes || 60}분</p>
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    const actions = `
+      <button onclick="closeModal()" class="px-5 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium">
+        <i class="fas fa-times mr-1"></i> 닫기
+      </button>
+    `;
+    
+    const title = `
+      <i class="fas fa-${isCompleted ? 'check-circle text-green-600' : 'cog fa-spin text-blue-600'} mr-2"></i>
+      사이클 상세 - ${cycle.shaping_name || cycle.barcode}
+    `;
+    
+    showModal(title, bodyHtml, actions, 'max-w-4xl');
+  } catch (error) {
+    console.error('사이클 상세 모달 오류:', error);
+    showToast('오류: ' + error.message, 'error');
+  }
+}
+
 // 사이클 상세 로드 (활성 사이클 카드 클릭 시)
 async function loadCycleDetail(cycleId) {
   try {
@@ -54632,107 +54707,33 @@ async function loadProcessDashboard() {
     // ★★★ v3.6.163: 진행 중인 사이클(바코드 스캔) 표시 - v3.6.164에서 flow nav로 통합
     // renderActiveCyclesList(cyclesRes); // 제거됨
     
-    // 요약 표시 (사이클 기반으로 카운트)
-    if (summaryRes.success) {
-      const total = summaryRes.data.total || {};
-      const cycleList = (cyclesRes.success && cyclesRes.data) ? cyclesRes.data : [];
-      const inProgressCycles = cycleList.filter(c => c.status === 'IN_PROGRESS').length;
-      const completedCycles = cycleList.filter(c => c.status === 'COMPLETED').length;
-      
-      document.getElementById('summary-created').textContent = total.created || 0;
-      document.getElementById('summary-progress').textContent = inProgressCycles + (total.in_progress || 0);
-      document.getElementById('summary-completed').textContent = completedCycles + (total.completed_today || 0);
-      document.getElementById('summary-delayed').textContent = summaryRes.data.delayed_count || 0;
-    }
+    // ★★★ v3.6.167: 요약 표시 (사이클 중심) ★★★
+    const cycleList = (cyclesRes.success && cyclesRes.data) ? cyclesRes.data : [];
+    const inProgressCycles = cycleList.filter(c => c.status === 'IN_PROGRESS').length;
+    const completedCycles = cycleList.filter(c => c.status === 'COMPLETED').length;
+    
+    // 지연 사이클 계산 (진행중이면서 현재 공정이 표준시간 초과)
+    let delayedCount = 0;
+    const nowTime = new Date();
+    cycleList.forEach(c => {
+      if (c.status === 'IN_PROGRESS' && c.current_start_time && c.current_standard_minutes) {
+        const startTime = new Date(c.current_start_time);
+        const elapsedMin = Math.floor((nowTime - startTime) / 60000);
+        if (elapsedMin > c.current_standard_minutes) delayedCount++;
+      }
+    });
+    
+    const progressEl = document.getElementById('summary-progress');
+    const completedEl = document.getElementById('summary-completed');
+    const delayedEl = document.getElementById('summary-delayed');
+    if (progressEl) progressEl.textContent = inProgressCycles;
+    if (completedEl) completedEl.textContent = completedCycles;
+    if (delayedEl) delayedEl.textContent = delayedCount;
     
     // ★★★ v3.6.164: 공정별 진행 현황을 네비게이션 플로우로 렌더링 ★★★
     await renderProcessFlowNav(cyclesRes);
     
-    // 활성 배치 표시
-    const activeTbody = document.getElementById('active-batch-tbody');
-    if (activeRes.success && activeRes.data.length > 0) {
-      activeTbody.innerHTML = activeRes.data.map(b => {
-        const elapsed = b.elapsed_minutes || 0;
-        const standard = b.standard_minutes || 60;
-        const ratio = elapsed / standard;
-        let statusClass = 'bg-green-100 text-green-700';
-        let statusText = '정상';
-        
-        if (ratio >= 1.5) {
-          statusClass = 'bg-red-100 text-red-700 animate-pulse';
-          statusText = '심각 지연';
-        } else if (ratio >= 1.0) {
-          statusClass = 'bg-red-100 text-red-700';
-          statusText = '지연';
-        } else if (ratio >= 0.8) {
-          statusClass = 'bg-amber-100 text-amber-700';
-          statusText = '주의';
-        }
-        
-        return `
-          <tr class="border-b hover:bg-gray-50">
-            <td class="px-4 py-3 font-mono text-sm">${b.batch_code}</td>
-            <td class="px-4 py-3 font-medium">${b.product_name}</td>
-            <td class="px-4 py-3 text-center">${getProcessName(b.current_process_code) || '-'}</td>
-            <td class="px-4 py-3 text-center font-mono">${formatMinutes(elapsed)}</td>
-            <td class="px-4 py-3 text-center text-gray-500">${standard}분</td>
-            <td class="px-4 py-3 text-center">
-              <span class="px-2 py-1 rounded-full text-xs font-medium ${statusClass}">${statusText}</span>
-            </td>
-            <td class="px-4 py-3 text-center">
-              <div class="w-full bg-gray-200 rounded-full h-2">
-                <div class="bg-emerald-500 h-2 rounded-full" style="width: ${Math.min(ratio * 100, 100)}%"></div>
-              </div>
-            </td>
-            <td class="px-4 py-3 text-center">
-              <button onclick="cancelBatch('${b.batch_code}')" class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600" title="취소">
-                <i class="fas fa-times"></i> 취소
-              </button>
-            </td>
-          </tr>
-        `;
-      }).join('');
-    } else {
-      activeTbody.innerHTML = '<tr><td colspan="8" class="text-center py-8 text-gray-400">진행 중인 배치가 없습니다</td></tr>';
-    }
-    
-    // 배치 목록 표시
-    const batchTbody = document.getElementById('batch-list-tbody');
-    if (batchRes.success && batchRes.data.length > 0) {
-      batchTbody.innerHTML = batchRes.data.map(b => {
-        const statusMap = {
-          'CREATED': '<span class="px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600">대기</span>',
-          'IN_PROGRESS': '<span class="px-2 py-1 rounded-full text-xs bg-amber-100 text-amber-700">진행중</span>',
-          'COMPLETED': '<span class="px-2 py-1 rounded-full text-xs bg-green-100 text-green-700">완료</span>'
-        };
-        const progress = b.total_count > 0 ? Math.round((b.completed_count / b.total_count) * 100) : 0;
-        
-        return `
-          <tr class="border-b hover:bg-gray-50">
-            <td class="px-4 py-3 font-mono text-sm">${b.batch_code}</td>
-            <td class="px-4 py-3">${b.product_name}</td>
-            <td class="px-4 py-3 text-center">${b.batch_quantity ? b.batch_quantity + ' ' + b.batch_unit : '-'}</td>
-            <td class="px-4 py-3 text-center">${statusMap[b.status] || b.status}</td>
-            <td class="px-4 py-3 text-center">
-              <div class="flex items-center gap-2">
-                <div class="flex-1 bg-gray-200 rounded-full h-2">
-                  <div class="bg-emerald-500 h-2 rounded-full" style="width: ${progress}%"></div>
-                </div>
-                <span class="text-xs text-gray-500">${b.completed_count}/${b.total_count}</span>
-              </div>
-            </td>
-            <td class="px-4 py-3 text-center text-xs text-gray-500">${b.created_at?.slice(11, 16) || '-'}</td>
-            <td class="px-4 py-3 text-center">
-              <button onclick="showBatchHistory('${b.batch_code}')" class="px-2 py-1 text-blue-600 hover:bg-blue-50 rounded text-sm">
-                <i class="fas fa-history mr-1"></i>이력
-              </button>
-            </td>
-          </tr>
-        `;
-      }).join('');
-    } else {
-      batchTbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-gray-400">배치가 없습니다</td></tr>';
-    }
+    // v3.6.167: 배치 렌더링 제거 (사이클 시스템으로 통합)
     
   } catch (error) {
     console.error('Dashboard load error:', error);
@@ -55500,6 +55501,7 @@ window.renderActiveCyclesList = renderActiveCyclesList;
 window.loadCycleDetail = loadCycleDetail;
 window.renderProcessFlowNav = renderProcessFlowNav;
 window.setProcessFlowFilter = setProcessFlowFilter;
+window.showCycleDetailModal = showCycleDetailModal;
 window.endCycleProcess = endCycleProcess;
 window.closeCycleSection = closeCycleSection;
 

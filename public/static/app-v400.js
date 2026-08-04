@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.169';
-const APP_BUILD = '20260804-1';
+const APP_VERSION = '3.6.170';
+const APP_BUILD = '20260804-2';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -6998,25 +6998,63 @@ function renderSheetsDailyStock(result, date, search, category) {
     return;
   }
   
+  // ★★★ v3.6.170: 편집 가능 모드 지원 ★★★
+  // 각 행에 sheet_row 매핑을 위해 별도 API 호출로 행번호 얻기
+  // (이 함수는 편집 UI만 렌더링; 실제 데이터는 loadDailyLedgerEditable에서 로드)
+  const editMode = window.dailyEditMode === true;
+  
+  // 각 행에 sheet_row가 있는지 확인
+  const hasRowMapping = data.length > 0 && data.every(d => typeof d._sheet_row === 'number');
+  
   contentEl.innerHTML = `
     <div class="p-3 border-b bg-gradient-to-r from-green-50 to-white flex justify-between items-center flex-wrap gap-2">
       <div class="flex items-center gap-3">
         <span class="text-lg font-bold text-gray-700">${date}</span>
         <span class="text-sm text-gray-500">품목 ${data.length}건</span>
         <span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">📊 구글시트 SSOT</span>
+        ${editMode ? '<span class="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded font-bold animate-pulse">✏️ 편집 모드</span>' : ''}
       </div>
-      <div class="flex items-center gap-4 text-sm">
-        <span class="text-purple-600"><b>전일재고</b> ${formatNumber(summary.prev_stock)}</span>
-        <span class="text-blue-600"><b>입고</b> +${formatNumber(summary.inbound_qty)}</span>
-        <span class="text-red-600"><b>사용</b> -${formatNumber(summary.usage_qty)}</span>
-        <span class="text-gray-800 font-bold"><b>현재고</b> ${formatNumber(summary.current_stock)}</span>
+      <div class="flex items-center gap-2 flex-wrap">
+        <!-- ★★★ v3.6.170: 정정 도구 버튼들 ★★★ -->
+        <button onclick="toggleDailyEditMode()" 
+                class="px-3 py-1.5 rounded-lg text-sm font-medium ${editMode ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}">
+          <i class="fas fa-${editMode ? 'check' : 'edit'} mr-1"></i>
+          ${editMode ? '편집 완료' : '수동 정정 모드'}
+        </button>
+        <button onclick="fixDailyItemNames('${date}')" 
+                class="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-200"
+                title="품목명이 코드로 표시된 행을 원료마스터에서 자동 복구">
+          <i class="fas fa-wand-magic-sparkles mr-1"></i>
+          이름 자동복구
+        </button>
+        <button onclick="flipDailyNegatives('${date}')" 
+                class="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200"
+                title="마이너스로 표시된 재고를 플러스로 일괄 전환">
+          <i class="fas fa-exchange-alt mr-1"></i>
+          음수→양수 일괄
+        </button>
       </div>
     </div>
+    
+    <div class="p-3 border-b bg-white flex items-center gap-4 text-sm">
+      <span class="text-purple-600"><b>전일재고</b> ${formatNumber(summary.prev_stock)}</span>
+      <span class="text-blue-600"><b>입고</b> +${formatNumber(summary.inbound_qty)}</span>
+      <span class="text-red-600"><b>사용</b> -${formatNumber(summary.usage_qty)}</span>
+      <span class="text-gray-800 font-bold"><b>현재고</b> ${formatNumber(summary.current_stock)}</span>
+    </div>
+    
+    ${editMode && !hasRowMapping ? `
+      <div class="p-3 bg-yellow-50 border-b text-sm text-yellow-800">
+        <i class="fas fa-info-circle mr-1"></i>
+        편집 모드 데이터 로딩 중... (행 번호 매핑 필요)
+      </div>
+    ` : ''}
     
     <div class="overflow-auto" style="max-height: 600px;">
       <table class="w-full text-sm">
         <thead class="bg-gray-100 sticky top-0">
           <tr>
+            ${editMode ? '<th class="p-2 text-center font-medium w-16">행#</th>' : ''}
             <th class="p-2 text-left font-medium">품목코드</th>
             <th class="p-2 text-left font-medium">품목명</th>
             <th class="p-2 text-right font-medium">전일재고</th>
@@ -7024,35 +7062,333 @@ function renderSheetsDailyStock(result, date, search, category) {
             <th class="p-2 text-right font-medium text-red-600">사용</th>
             <th class="p-2 text-right font-medium">현재고</th>
             <th class="p-2 text-center font-medium">단위</th>
+            ${editMode ? '<th class="p-2 text-center font-medium w-40">액션</th>' : ''}
           </tr>
         </thead>
         <tbody>
-          ${data.map(item => `
-            <tr class="border-b hover:bg-gray-50">
-              <td class="p-2 font-mono text-xs">${item.item_code || ''}</td>
-              <td class="p-2">${item.item_name || ''}</td>
-              <td class="p-2 text-right">${formatNumber(item.prev_stock || 0)}</td>
-              <td class="p-2 text-right text-blue-600">${item.inbound_qty ? '+' + formatNumber(item.inbound_qty) : '-'}</td>
-              <td class="p-2 text-right text-red-600">${item.usage_qty ? '-' + formatNumber(item.usage_qty) : '-'}</td>
-              <td class="p-2 text-right font-bold">${formatNumber(item.current_stock || 0)}</td>
-              <td class="p-2 text-center text-gray-500">${item.unit || ''}</td>
-            </tr>
-          `).join('')}
+          ${data.map(item => {
+            const nameLooksLikeCode = item.item_name && item.item_name === item.item_code;
+            const rowKey = item._sheet_row || 0;
+            
+            if (editMode && hasRowMapping) {
+              // 편집 모드: input 필드 표시
+              return `
+                <tr class="border-b hover:bg-orange-50" data-sheet-row="${rowKey}">
+                  <td class="p-2 text-center text-xs text-gray-400">${rowKey}</td>
+                  <td class="p-2 font-mono text-xs">${item.item_code || ''}</td>
+                  <td class="p-2">
+                    <input type="text" 
+                           class="w-full border border-gray-300 rounded px-2 py-1 text-sm ${nameLooksLikeCode ? 'bg-yellow-50 border-yellow-400' : ''}" 
+                           value="${(item.item_name || '').replace(/"/g, '&quot;')}" 
+                           id="edit-name-${rowKey}"
+                           placeholder="${item.item_code}">
+                    ${nameLooksLikeCode ? '<span class="text-xs text-yellow-600 ml-1">⚠️코드=이름</span>' : ''}
+                  </td>
+                  <td class="p-2">
+                    <input type="number" step="0.01" 
+                           class="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right ${(item.prev_stock||0) < 0 ? 'bg-red-50 text-red-600' : ''}" 
+                           value="${item.prev_stock || 0}" 
+                           id="edit-prev-${rowKey}">
+                  </td>
+                  <td class="p-2">
+                    <input type="number" step="0.01" 
+                           class="w-24 border border-blue-300 rounded px-2 py-1 text-sm text-right text-blue-600 ${(item.inbound_qty||0) < 0 ? 'bg-red-50' : ''}" 
+                           value="${item.inbound_qty || 0}" 
+                           id="edit-inbound-${rowKey}">
+                  </td>
+                  <td class="p-2">
+                    <input type="number" step="0.01" 
+                           class="w-24 border border-red-300 rounded px-2 py-1 text-sm text-right text-red-600 ${(item.usage_qty||0) < 0 ? 'bg-red-50' : ''}" 
+                           value="${item.usage_qty || 0}" 
+                           id="edit-usage-${rowKey}">
+                  </td>
+                  <td class="p-2">
+                    <input type="number" step="0.01" 
+                           class="w-24 border border-gray-500 rounded px-2 py-1 text-sm text-right font-bold ${(item.current_stock||0) < 0 ? 'bg-red-100 text-red-700 border-red-500' : ''}" 
+                           value="${item.current_stock || 0}" 
+                           id="edit-cur-${rowKey}">
+                  </td>
+                  <td class="p-2 text-center text-gray-500">${item.unit || ''}</td>
+                  <td class="p-2 text-center">
+                    <div class="flex gap-1 justify-center">
+                      <button onclick="saveDailyRow(${rowKey})" 
+                              class="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600"
+                              title="이 행 저장">
+                        <i class="fas fa-save"></i>
+                      </button>
+                      <button onclick="flipRowSigns(${rowKey})" 
+                              class="px-2 py-1 bg-purple-500 text-white rounded text-xs hover:bg-purple-600"
+                              title="이 행의 모든 음수를 양수로">
+                        ±
+                      </button>
+                      <button onclick="deleteDailyRow(${rowKey})" 
+                              class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
+                              title="행 삭제">
+                        <i class="fas fa-trash"></i>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              `;
+            } else {
+              // 조회 모드: 기존 UI
+              const nameCell = nameLooksLikeCode 
+                ? `<span class="text-yellow-700 bg-yellow-100 px-1 rounded" title="품목명이 코드로 표시됨">⚠️ ${item.item_name}</span>`
+                : (item.item_name || '');
+              const stockCell = (item.current_stock || 0) < 0 
+                ? `<span class="text-red-600 font-bold bg-red-50 px-1 rounded">${formatNumber(item.current_stock)}</span>`
+                : `<span class="font-bold">${formatNumber(item.current_stock || 0)}</span>`;
+              return `
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="p-2 font-mono text-xs">${item.item_code || ''}</td>
+                  <td class="p-2">${nameCell}</td>
+                  <td class="p-2 text-right ${(item.prev_stock||0) < 0 ? 'text-red-600' : ''}">${formatNumber(item.prev_stock || 0)}</td>
+                  <td class="p-2 text-right text-blue-600">${item.inbound_qty ? (item.inbound_qty > 0 ? '+' : '') + formatNumber(item.inbound_qty) : '-'}</td>
+                  <td class="p-2 text-right text-red-600">${item.usage_qty ? (item.usage_qty > 0 ? '-' : '+') + formatNumber(Math.abs(item.usage_qty)) : '-'}</td>
+                  <td class="p-2 text-right">${stockCell}</td>
+                  <td class="p-2 text-center text-gray-500">${item.unit || ''}</td>
+                </tr>
+              `;
+            }
+          }).join('')}
         </tbody>
         <tfoot class="bg-gray-100 font-bold">
           <tr>
+            ${editMode ? '<td></td>' : ''}
             <td class="p-2" colspan="2">합계</td>
             <td class="p-2 text-right">${formatNumber(summary.prev_stock)}</td>
             <td class="p-2 text-right text-blue-600">+${formatNumber(summary.inbound_qty)}</td>
             <td class="p-2 text-right text-red-600">-${formatNumber(summary.usage_qty)}</td>
             <td class="p-2 text-right">${formatNumber(summary.current_stock)}</td>
             <td class="p-2"></td>
+            ${editMode ? '<td></td>' : ''}
           </tr>
         </tfoot>
       </table>
     </div>
   `;
+  
+  // 편집 모드 진입 시 sheet_row 매핑 없으면 별도 API로 로드
+  if (editMode && !hasRowMapping && data.length > 0) {
+    loadSheetRowMapping(date);
+  }
 }
+
+// ★★★ v3.6.170: 일별수불부 편집 도구 함수들 ★★★
+
+// 편집 모드 토글
+async function toggleDailyEditMode() {
+  window.dailyEditMode = !window.dailyEditMode;
+  if (window.dailyEditMode) {
+    showToast('✏️ 편집 모드 진입 — 각 셀을 직접 수정할 수 있습니다', 'info');
+  } else {
+    showToast('조회 모드로 전환됨', 'info');
+  }
+  await loadDailyLedger();
+}
+
+// sheet_row 매핑 로드 (편집 모드 진입 시)
+async function loadSheetRowMapping(date) {
+  try {
+    const result = await api(`/sheets/daily-stock/list-rows?date=${date}`);
+    if (result.success && result.rows) {
+      // 기존 data에 sheet_row 매핑
+      const rowsByCode = new Map();
+      result.rows.forEach(r => {
+        if (!rowsByCode.has(r.item_code)) rowsByCode.set(r.item_code, []);
+        rowsByCode.get(r.item_code).push(r);
+      });
+      
+      (window.dailyLedgerData || []).forEach(d => {
+        const rows = rowsByCode.get(d.item_code);
+        if (rows && rows.length > 0) {
+          // 첫 매칭 사용 (같은 코드가 여러 개면 순서대로)
+          const match = rows.shift();
+          d._sheet_row = match.sheet_row;
+        }
+      });
+      
+      // 다시 렌더링
+      renderSheetsDailyStock(
+        { data: window.dailyLedgerData, summary: window.dailyLedgerSummary },
+        date,
+        document.getElementById('daily-search')?.value?.trim() || '',
+        window.dailyCategory || ''
+      );
+    }
+  } catch (e) {
+    console.error('sheet row mapping load error:', e);
+    showToast('행 번호 매핑 로드 실패: ' + (e.message || e), 'error');
+  }
+}
+
+// 특정 행 저장
+async function saveDailyRow(sheetRow) {
+  const nameEl = document.getElementById(`edit-name-${sheetRow}`);
+  const prevEl = document.getElementById(`edit-prev-${sheetRow}`);
+  const inboundEl = document.getElementById(`edit-inbound-${sheetRow}`);
+  const usageEl = document.getElementById(`edit-usage-${sheetRow}`);
+  const curEl = document.getElementById(`edit-cur-${sheetRow}`);
+  
+  if (!nameEl) return showToast('행을 찾을 수 없습니다.', 'error');
+  
+  showLoading('저장 중...');
+  try {
+    const result = await api('/sheets/daily-stock/update-row', 'POST', {
+      sheet_row: sheetRow,
+      item_name: nameEl.value.trim(),
+      prev_stock: parseFloat(prevEl.value) || 0,
+      inbound_qty: parseFloat(inboundEl.value) || 0,
+      usage_qty: parseFloat(usageEl.value) || 0,
+      current_stock: parseFloat(curEl.value) || 0
+    });
+    hideLoading();
+    if (result.success) {
+      showToast(`✅ 행 ${sheetRow} 저장 완료`, 'success');
+      await loadDailyLedger();
+    } else {
+      showToast('저장 실패: ' + (result.error || ''), 'error');
+    }
+  } catch (e) {
+    hideLoading();
+    showToast('저장 실패: ' + (e.message || e), 'error');
+  }
+}
+
+// 특정 행의 모든 필드 음수 → 양수
+async function flipRowSigns(sheetRow) {
+  if (!confirm(`행 ${sheetRow}의 음수 값을 모두 양수로 바꿀까요?`)) return;
+  
+  showLoading('부호 변경 중...');
+  try {
+    // 각 필드별로 flip-sign 호출
+    const fields = ['prev_stock', 'inbound_qty', 'usage_qty', 'current_stock'];
+    let changed = 0;
+    for (const field of fields) {
+      const result = await api('/sheets/daily-stock/flip-sign', 'POST', {
+        sheet_rows: [sheetRow],
+        field,
+        only_negative: true
+      });
+      if (result.success) changed += result.changed_count || 0;
+    }
+    hideLoading();
+    showToast(`✅ 행 ${sheetRow}: ${changed}개 값 변경`, 'success');
+    await loadDailyLedger();
+  } catch (e) {
+    hideLoading();
+    showToast('실패: ' + (e.message || e), 'error');
+  }
+}
+
+// 특정 행 삭제
+async function deleteDailyRow(sheetRow) {
+  if (!confirm(`행 ${sheetRow}을(를) 삭제하시겠습니까? (값이 모두 비워집니다)`)) return;
+  
+  showLoading('삭제 중...');
+  try {
+    const result = await api('/sheets/daily-stock/delete-row', 'POST', {
+      sheet_row: sheetRow, confirm: true
+    });
+    hideLoading();
+    if (result.success) {
+      showToast(`✅ 행 ${sheetRow} 삭제 완료`, 'success');
+      await loadDailyLedger();
+    } else {
+      showToast('삭제 실패: ' + (result.error || ''), 'error');
+    }
+  } catch (e) {
+    hideLoading();
+    showToast('삭제 실패: ' + (e.message || e), 'error');
+  }
+}
+
+// 품목명 일괄 자동복구
+async function fixDailyItemNames(date) {
+  if (!confirm(`${date}의 잘못된 품목명(코드=이름)을 원료마스터에서 자동 복구하시겠습니까?`)) return;
+  
+  showLoading('품목명 복구 중...');
+  try {
+    const result = await api('/sheets/daily-stock/fix-item-names', 'POST', {
+      date
+    });
+    hideLoading();
+    if (result.success) {
+      const msg = `✅ ${result.fixed_count}개 복구 완료` + 
+                  (result.not_found_count > 0 ? ` (원료마스터에 없는 코드 ${result.not_found_count}개는 스킵)` : '');
+      showToast(msg, 'success');
+      if (result.fixes && result.fixes.length > 0) {
+        console.table(result.fixes.slice(0, 10));
+      }
+      if (result.not_found && result.not_found.length > 0) {
+        console.warn('원료마스터에 없는 코드:', result.not_found);
+      }
+      await loadDailyLedger();
+    } else {
+      showToast('복구 실패: ' + (result.error || ''), 'error');
+    }
+  } catch (e) {
+    hideLoading();
+    showToast('복구 실패: ' + (e.message || e), 'error');
+  }
+}
+
+// 음수 → 양수 일괄 전환 (해당 날짜 전체)
+async function flipDailyNegatives(date) {
+  const fieldNames = { prev_stock: '전일재고', inbound_qty: '입고', usage_qty: '사용', current_stock: '현재고' };
+  const choice = prompt(
+    `${date}의 음수 값을 양수로 일괄 변환합니다.\n` +
+    '어떤 필드를 변경할까요?\n' +
+    '1: 전일재고\n2: 입고\n3: 사용\n4: 현재고\n5: 모두\n\n(1~5 입력, 취소는 Cancel)',
+    '4'
+  );
+  if (!choice) return;
+  
+  const fields = choice === '5' 
+    ? ['prev_stock', 'inbound_qty', 'usage_qty', 'current_stock']
+    : choice === '1' ? ['prev_stock']
+    : choice === '2' ? ['inbound_qty']
+    : choice === '3' ? ['usage_qty']
+    : choice === '4' ? ['current_stock']
+    : null;
+  
+  if (!fields) {
+    showToast('잘못된 선택입니다.', 'error');
+    return;
+  }
+  
+  showLoading('부호 변환 중...');
+  try {
+    let totalChanged = 0;
+    const details = [];
+    for (const field of fields) {
+      const result = await api('/sheets/daily-stock/flip-sign', 'POST', {
+        date,
+        field,
+        only_negative: true
+      });
+      if (result.success) {
+        totalChanged += result.changed_count || 0;
+        details.push(`${fieldNames[field]}: ${result.changed_count}개`);
+      }
+    }
+    hideLoading();
+    showToast(`✅ ${date} 음수→양수: 총 ${totalChanged}개 변경 (${details.join(', ')})`, 'success');
+    await loadDailyLedger();
+  } catch (e) {
+    hideLoading();
+    showToast('변환 실패: ' + (e.message || e), 'error');
+  }
+}
+
+// 전역 노출
+window.toggleDailyEditMode = toggleDailyEditMode;
+window.saveDailyRow = saveDailyRow;
+window.flipRowSigns = flipRowSigns;
+window.deleteDailyRow = deleteDailyRow;
+window.fixDailyItemNames = fixDailyItemNames;
+window.flipDailyNegatives = flipDailyNegatives;
+window.loadSheetRowMapping = loadSheetRowMapping;
 
 // 일별 품목 요약 렌더링
 function renderDailySummary(result, date) {

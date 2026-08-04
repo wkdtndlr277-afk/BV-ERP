@@ -5792,6 +5792,469 @@ sheets.post('/sync-active-materials', async (c) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+// ★★★ v3.6.170: 일별수불부 인라인 편집/일괄 정정 API ★★★
+// 사용자 시나리오: 10일치 오류 발생, 수동 정정 필요
+// - 특정 행의 값 수정
+// - 품목명 자동복구 (코드가 이름 자리에 들어간 경우)
+// - 부호 뒤집기 (마이너스 → 플러스)
+// ═══════════════════════════════════════════════════════════════
+
+// GET /daily-stock/list-rows?date=YYYY-MM-DD - 특정 날짜의 모든 행 (행번호 포함)
+sheets.get('/daily-stock/list-rows', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const date = c.req.query('date');
+    if (!date) {
+      return c.json({ success: false, error: 'date 파라미터가 필요합니다 (YYYY-MM-DD).' }, 400);
+    }
+    
+    const data = await service.readSheet('일별수불부', 'A2:H');
+    
+    // 각 행에 sheetRow(구글시트 실제 행번호) 부여
+    const rows = data.map((row: any[], idx: number) => {
+      let rowDate = row[0];
+      if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      } else if (typeof rowDate === 'string') {
+        rowDate = rowDate.replace(/^'/, '');
+      }
+      
+      return {
+        sheet_row: idx + 2,  // A2가 첫 데이터 행
+        date: rowDate,
+        item_code: (row[1]?.toString().trim()) || '',
+        item_name: (row[2]?.toString().trim()) || '',
+        prev_stock: parseFloat(row[3]) || 0,
+        inbound_qty: parseFloat(row[4]) || 0,
+        usage_qty: parseFloat(row[5]) || 0,
+        current_stock: parseFloat(row[6]) || 0,
+        unit: row[7] || 'kg',
+        _raw_date: row[0],
+        _name_looks_like_code: !!(row[2]?.toString().trim().match(/^[A-Z]+\d+$/))
+      };
+    }).filter(r => r.date === date);
+    
+    return c.json({
+      success: true,
+      date,
+      count: rows.length,
+      rows,
+      note: '각 행의 sheet_row 값이 실제 구글시트 행 번호. update-row API에서 사용.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// POST /daily-stock/update-row - 특정 행(구글시트 행번호 기준)의 값 수정
+sheets.post('/daily-stock/update-row', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const body = await c.req.json<{
+      sheet_row: number;
+      item_code?: string;
+      item_name?: string;
+      prev_stock?: number;
+      inbound_qty?: number;
+      usage_qty?: number;
+      current_stock?: number;
+      unit?: string;
+    }>();
+    
+    const { sheet_row } = body;
+    if (!sheet_row || sheet_row < 2) {
+      return c.json({ success: false, error: 'sheet_row는 2 이상이어야 합니다.' }, 400);
+    }
+    
+    // 기존 값 조회 (해당 행 하나만)
+    const currentRow = await service.readSheet('일별수불부', `A${sheet_row}:H${sheet_row}`);
+    if (!currentRow || currentRow.length === 0) {
+      return c.json({ success: false, error: `행 ${sheet_row}이 존재하지 않습니다.` }, 404);
+    }
+    const before = currentRow[0];
+    
+    // 새 값 (지정된 필드만 교체)
+    const newRow = [
+      before[0],  // A: date (변경 안 함)
+      body.item_code !== undefined ? body.item_code : (before[1] || ''),
+      body.item_name !== undefined ? body.item_name : (before[2] || ''),
+      body.prev_stock !== undefined ? body.prev_stock : (parseFloat(before[3]) || 0),
+      body.inbound_qty !== undefined ? body.inbound_qty : (parseFloat(before[4]) || 0),
+      body.usage_qty !== undefined ? body.usage_qty : (parseFloat(before[5]) || 0),
+      body.current_stock !== undefined ? body.current_stock : (parseFloat(before[6]) || 0),
+      body.unit !== undefined ? body.unit : (before[7] || 'kg')
+    ];
+    
+    // 쓰기
+    await service.writeSheet('일별수불부', `A${sheet_row}:H${sheet_row}`, [newRow]);
+    
+    return c.json({
+      success: true,
+      sheet_row,
+      before: {
+        date: before[0],
+        item_code: before[1],
+        item_name: before[2],
+        prev_stock: parseFloat(before[3]) || 0,
+        inbound_qty: parseFloat(before[4]) || 0,
+        usage_qty: parseFloat(before[5]) || 0,
+        current_stock: parseFloat(before[6]) || 0,
+        unit: before[7]
+      },
+      after: {
+        date: newRow[0],
+        item_code: newRow[1],
+        item_name: newRow[2],
+        prev_stock: newRow[3],
+        inbound_qty: newRow[4],
+        usage_qty: newRow[5],
+        current_stock: newRow[6],
+        unit: newRow[7]
+      }
+    });
+  } catch (error: any) {
+    console.error('[daily-stock/update-row] error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// POST /daily-stock/flip-sign - 부호 뒤집기 (특정 행 또는 날짜/필드 범위)
+// body: { sheet_rows?: number[], date?: string, field: 'prev_stock'|'inbound_qty'|'usage_qty'|'current_stock' }
+sheets.post('/daily-stock/flip-sign', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const body = await c.req.json<{
+      sheet_rows?: number[];
+      date?: string;
+      field: 'prev_stock' | 'inbound_qty' | 'usage_qty' | 'current_stock';
+      only_negative?: boolean;  // true면 음수만 양수로 (양수는 그대로), false면 부호 교체
+    }>();
+    
+    const fieldToColIndex: Record<string, number> = {
+      prev_stock: 3,      // D
+      inbound_qty: 4,     // E
+      usage_qty: 5,       // F
+      current_stock: 6    // G
+    };
+    const fieldToCol: Record<string, string> = {
+      prev_stock: 'D',
+      inbound_qty: 'E',
+      usage_qty: 'F',
+      current_stock: 'G'
+    };
+    
+    if (!body.field || !fieldToColIndex.hasOwnProperty(body.field)) {
+      return c.json({ success: false, error: 'field는 prev_stock/inbound_qty/usage_qty/current_stock 중 하나여야 합니다.' }, 400);
+    }
+    
+    const onlyNegative = body.only_negative !== false;  // 기본 true
+    const colIndex = fieldToColIndex[body.field];
+    const col = fieldToCol[body.field];
+    
+    // 대상 행 결정
+    let targetRows: number[] = [];
+    let allData: any[][] = [];
+    
+    if (body.sheet_rows && body.sheet_rows.length > 0) {
+      targetRows = body.sheet_rows;
+    } else if (body.date) {
+      allData = await service.readSheet('일별수불부', 'A2:H');
+      allData.forEach((row, idx) => {
+        let rowDate = row[0];
+        if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
+          const excelDate = parseInt(rowDate);
+          rowDate = new Date((excelDate - 25569) * 86400 * 1000).toISOString().split('T')[0];
+        } else if (typeof rowDate === 'string') {
+          rowDate = rowDate.replace(/^'/, '');
+        }
+        if (rowDate === body.date) targetRows.push(idx + 2);
+      });
+    } else {
+      return c.json({ success: false, error: 'sheet_rows 또는 date 중 하나는 필요합니다.' }, 400);
+    }
+    
+    if (targetRows.length === 0) {
+      return c.json({ success: false, error: '대상 행이 없습니다.' }, 404);
+    }
+    
+    const changes: any[] = [];
+    const skipped: any[] = [];
+    
+    // ★★★ 배치 처리: 전체 열을 한 번에 읽고 청크로 씀 (subrequest 절감) ★★★
+    // 대상 열 전체 조회
+    if (allData.length === 0) {
+      allData = await service.readSheet('일별수불부', 'A2:H');
+    }
+    
+    // 수정 대상 매핑 (idx → new value)
+    const valueUpdates = new Map<number, number>();
+    
+    for (const sheetRow of targetRows) {
+      const idx = sheetRow - 2;
+      if (idx < 0 || idx >= allData.length) {
+        skipped.push({ sheet_row: sheetRow, reason: '범위 벗어남' });
+        continue;
+      }
+      const oldValue = parseFloat(allData[idx][colIndex]) || 0;
+      
+      if (onlyNegative && oldValue >= 0) {
+        skipped.push({ sheet_row: sheetRow, value: oldValue, reason: '음수 아님' });
+        continue;
+      }
+      if (oldValue === 0) {
+        skipped.push({ sheet_row: sheetRow, value: 0, reason: '0 값' });
+        continue;
+      }
+      const newValue = -oldValue;
+      valueUpdates.set(idx, newValue);
+      changes.push({ sheet_row: sheetRow, field: body.field, before: oldValue, after: newValue });
+    }
+    
+    // 연속 구간별 배치 쓰기
+    if (valueUpdates.size > 0) {
+      const sortedIdx = Array.from(valueUpdates.keys()).sort((a, b) => a - b);
+      const chunks: { start: number; end: number; values: number[] }[] = [];
+      let cur: { start: number; end: number; values: number[] } | null = null;
+      for (const idx of sortedIdx) {
+        if (cur && idx === cur.end + 1) {
+          cur.end = idx;
+          cur.values.push(valueUpdates.get(idx)!);
+        } else {
+          if (cur) chunks.push(cur);
+          cur = { start: idx, end: idx, values: [valueUpdates.get(idx)!] };
+        }
+      }
+      if (cur) chunks.push(cur);
+      
+      for (const chunk of chunks) {
+        const startRow = chunk.start + 2;
+        const endRow = chunk.end + 2;
+        const values = chunk.values.map(v => [v]);
+        await service.writeSheet('일별수불부', `${col}${startRow}:${col}${endRow}`, values);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      field: body.field,
+      only_negative: onlyNegative,
+      target_count: targetRows.length,
+      changed_count: changes.length,
+      skipped_count: skipped.length,
+      changes,
+      skipped: skipped.slice(0, 20)
+    });
+  } catch (error: any) {
+    console.error('[daily-stock/flip-sign] error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// POST /daily-stock/fix-item-names - 품목명이 코드로 되어있는 행 일괄복구
+// body: { date?: string (있으면 해당 날짜만) }
+// ★★★ v3.6.170: 개별 writeSheet 대신 C열 전체를 한 번에 쓰기 → subrequest 절감
+sheets.post('/daily-stock/fix-item-names', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const body = await c.req.json<{ date?: string }>().catch(() => ({} as any));
+    const targetDate = body.date;
+    
+    // 1. 원료마스터에서 code→name 맵 로드
+    const rawMasterData = await service.readSheet('원료마스터', 'A2:B1000');
+    const itemNameMap = new Map<string, string>();
+    rawMasterData.forEach(row => {
+      const code = row[0]?.toString().trim();
+      const name = row[1]?.toString().trim();
+      if (code && name) itemNameMap.set(code, name);
+    });
+    
+    // BOM마스터 백업
+    const bomMasterData = await service.readSheet('BOM마스터', 'C2:D');
+    bomMasterData.forEach(row => {
+      const code = row[0]?.toString().trim();
+      const name = row[1]?.toString().trim();
+      if (code && name && !itemNameMap.has(code)) itemNameMap.set(code, name);
+    });
+    
+    // ★★★ v3.6.170: D1 master 테이블도 fallback으로 사용 ★★★
+    // 구글시트 원료마스터에 없어도 D1에 있으면 그 이름을 사용
+    try {
+      const d1Master = await c.env.DB.prepare(`
+        SELECT item_code, item_name FROM master WHERE item_name IS NOT NULL AND item_name != ''
+      `).all<{ item_code: string; item_name: string }>();
+      let d1FallbackCount = 0;
+      for (const row of d1Master.results || []) {
+        if (row.item_code && row.item_name && !itemNameMap.has(row.item_code)) {
+          itemNameMap.set(row.item_code, row.item_name);
+          d1FallbackCount++;
+        }
+      }
+      console.log(`[fix-item-names] D1 master 폴백: ${d1FallbackCount}개 추가 (총 맵: ${itemNameMap.size}개)`);
+    } catch (d1e) {
+      console.error('[fix-item-names] D1 master 폴백 실패:', d1e);
+    }
+    
+    // 2. 일별수불부 전체 조회
+    const allData = await service.readSheet('일별수불부', 'A2:H');
+    
+    const fixes: any[] = [];
+    const notFound: any[] = [];
+    // 배치 업데이트용: idx → 새 이름 매핑
+    const nameUpdates = new Map<number, string>();  // idx (0-based in allData) → new name
+    
+    for (let idx = 0; idx < allData.length; idx++) {
+      const row = allData[idx];
+      const sheetRow = idx + 2;
+      let rowDate = row[0];
+      if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
+        rowDate = new Date((parseInt(rowDate) - 25569) * 86400 * 1000).toISOString().split('T')[0];
+      } else if (typeof rowDate === 'string') {
+        rowDate = rowDate.replace(/^'/, '');
+      }
+      
+      // 날짜 필터
+      if (targetDate && rowDate !== targetDate) continue;
+      
+      const itemCode = row[1]?.toString().trim() || '';
+      const itemName = row[2]?.toString().trim() || '';
+      
+      if (!itemCode) continue;
+      
+      // 품목명이 코드와 같거나, 코드 패턴이거나, 비어있으면 복구 대상
+      const needFix = 
+        itemName === itemCode ||
+        itemName === '' ||
+        !!itemName.match(/^[A-Z]+\d+$/) ||
+        itemName.startsWith('=') ||
+        itemName.includes('#REF') ||
+        itemName.includes('VLOOKUP');
+      
+      if (!needFix) continue;
+      
+      const correctName = itemNameMap.get(itemCode);
+      if (!correctName) {
+        notFound.push({ sheet_row: sheetRow, date: rowDate, item_code: itemCode, current_name: itemName });
+        continue;
+      }
+      
+      nameUpdates.set(idx, correctName);
+      fixes.push({
+        sheet_row: sheetRow,
+        date: rowDate,
+        item_code: itemCode,
+        before: itemName,
+        after: correctName
+      });
+    }
+    
+    // ★★★ 배치 업데이트: C열 전체를 한 번에 씀 ★★★
+    // 원본 C열 값을 유지하되, 수정 대상만 새 이름으로 교체
+    if (nameUpdates.size > 0) {
+      // 연속 범위로 최소화: 수정 대상 행만 골라 각각 한 번씩 씀
+      // 하지만 subrequest 한도 초과가 우려되므로 → 인접한 행들끼리 묶어 쓰기
+      const sortedIdx = Array.from(nameUpdates.keys()).sort((a, b) => a - b);
+      
+      // 연속 구간(chunk)으로 그룹화
+      const chunks: { start: number; end: number; names: string[] }[] = [];
+      let cur: { start: number; end: number; names: string[] } | null = null;
+      for (const idx of sortedIdx) {
+        if (cur && idx === cur.end + 1) {
+          cur.end = idx;
+          cur.names.push(nameUpdates.get(idx)!);
+        } else {
+          if (cur) chunks.push(cur);
+          cur = { start: idx, end: idx, names: [nameUpdates.get(idx)!] };
+        }
+      }
+      if (cur) chunks.push(cur);
+      
+      console.log(`[fix-item-names] ${nameUpdates.size}개 수정을 ${chunks.length}개 청크로 배치 처리`);
+      
+      // 각 청크는 1번의 writeSheet 호출로 처리
+      for (const chunk of chunks) {
+        const startRow = chunk.start + 2;  // 시트 실제 행번호
+        const endRow = chunk.end + 2;
+        const values = chunk.names.map(n => [n]);
+        await service.writeSheet('일별수불부', `C${startRow}:C${endRow}`, values);
+      }
+    }
+    
+    return c.json({
+      success: true,
+      target_date: targetDate || '전체',
+      master_size: itemNameMap.size,
+      fixed_count: fixes.length,
+      not_found_count: notFound.length,
+      batch_chunks: nameUpdates.size,
+      fixes: fixes.slice(0, 50),
+      not_found: notFound.slice(0, 20),
+      note: notFound.length > 0 
+        ? `${notFound.length}개는 원료마스터에도 없는 코드입니다. 원료마스터에 먼저 등록해주세요.`
+        : '모든 잘못된 품목명을 복구했습니다.'
+    });
+  } catch (error: any) {
+    console.error('[daily-stock/fix-item-names] error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// POST /daily-stock/delete-row - 특정 행 삭제 (빈 값으로 만들기)
+sheets.post('/daily-stock/delete-row', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const body = await c.req.json<{ sheet_row: number; confirm: boolean }>();
+    if (!body.sheet_row || body.sheet_row < 2) {
+      return c.json({ success: false, error: 'sheet_row는 2 이상이어야 합니다.' }, 400);
+    }
+    if (!body.confirm) {
+      return c.json({ success: false, error: 'confirm: true 를 함께 보내주세요.' }, 400);
+    }
+    
+    // 기존 값 조회
+    const currentRow = await service.readSheet('일별수불부', `A${body.sheet_row}:H${body.sheet_row}`);
+    const before = currentRow?.[0] || [];
+    
+    // 빈 값으로 덮어쓰기 (행 삭제는 API로 불가, 값만 비움)
+    await service.writeSheet('일별수불부', `A${body.sheet_row}:H${body.sheet_row}`, [['', '', '', '', '', '', '', '']]);
+    
+    return c.json({
+      success: true,
+      sheet_row: body.sheet_row,
+      before: {
+        date: before[0], item_code: before[1], item_name: before[2],
+        prev_stock: before[3], inbound_qty: before[4], usage_qty: before[5],
+        current_stock: before[6], unit: before[7]
+      },
+      note: '행의 값을 모두 비웠습니다. (물리적 삭제는 아니지만 화면에서 사라집니다)'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;
 
 // ★★★ v3.6.45: 일별수불부 수식 날짜형식 통일 (SUMPRODUCT 방식) ★★★

@@ -832,6 +832,139 @@ dashboardRoutes.get('/safety-stock-status', async (c) => {
   }
 });
 
+// ★★★ v3.6.170: 개별 품목의 안전재고 판정 상세 진단 (왜 긴급/주의로 안 뜨는지) ★★★
+dashboardRoutes.get('/safety-stock-diagnose/:itemCode', async (c) => {
+  try {
+    const itemCode = c.req.param('itemCode');
+    if (!itemCode) {
+      return c.json({ success: false, error: 'itemCode가 필요합니다.' }, 400);
+    }
+    
+    // 1. master 테이블 원본
+    const master = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, current_stock, safety_stock, 
+             daily_usage_avg, monthly_usage_avg, inbound_frequency, lead_time,
+             usage_std_dev, usage_cv, item_grade, calculated_reorder_point, stats_updated_at,
+             expiry_days, is_active
+      FROM master WHERE item_code = ?
+    `).bind(itemCode).first();
+    
+    if (!master) {
+      return c.json({ success: false, error: `${itemCode}가 master 테이블에 없습니다.` }, 404);
+    }
+    
+    // 2. inbound 합계 (safety-stock-status API가 실제로 쓰는 값)
+    const inboundSum = await c.env.DB.prepare(`
+      SELECT 
+        COALESCE(SUM(remain_qty), 0) as total_remain,
+        COUNT(*) as lot_count,
+        SUM(CASE WHEN remain_qty > 0 AND quality_status = '합격' THEN remain_qty ELSE 0 END) as usable_remain,
+        SUM(CASE WHEN remain_qty > 0 AND quality_status = '합격' THEN 1 ELSE 0 END) as usable_lots
+      FROM inbound WHERE item_code = ?
+    `).bind(itemCode).first() as any;
+    
+    // 3. 각 lot 상세
+    const lots = await c.env.DB.prepare(`
+      SELECT lot_number, inbound_date, expiry_date, origin_qty, remain_qty, quality_status
+      FROM inbound WHERE item_code = ?
+      ORDER BY inbound_date DESC
+      LIMIT 20
+    `).bind(itemCode).all();
+    
+    // 4. 최근 30일 사용량 (D1 transactions)
+    const todayStr = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const start = new Date(Date.now() + 9 * 60 * 60 * 1000 - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const usageStats = await c.env.DB.prepare(`
+      SELECT 
+        COUNT(DISTINCT trans_date) as usage_days,
+        SUM(ABS(quantity)) as total_usage,
+        AVG(ABS(quantity)) as avg_per_transaction
+      FROM transactions
+      WHERE item_code = ? AND trans_type = '사용' AND trans_date >= ? AND trans_date <= ?
+    `).bind(itemCode, start, todayStr).first() as any;
+    
+    // 5. 판정 시뮬레이션 (safety-stock-status와 동일한 로직)
+    const usableStock = (inboundSum?.usable_remain as number) || 0;
+    const dailyAvg = usageStats?.usage_days > 0 
+      ? Math.round(((usageStats.total_usage as number) / (usageStats.usage_days as number)) * 100) / 100
+      : ((master as any).daily_usage_avg ?? 0);
+    const safetyStock = (master as any).safety_stock || 0;
+    const leadTime = (master as any).lead_time || 3;
+    const reorderPoint = (master as any).calculated_reorder_point || (dailyAvg * leadTime);
+    const daysOfStock = dailyAvg > 0 
+      ? Math.round((usableStock / dailyAvg) * 10) / 10 
+      : (usableStock > 0 ? 999 : 0);
+    const expiryDays = (master as any).expiry_days || 365;
+    
+    // 등급 판정
+    let grade: string;
+    if (expiryDays <= 30) grade = 'C';
+    else if (dailyAvg >= 100) grade = 'A';
+    else if (dailyAvg >= 10) grade = 'B';
+    else grade = '기타';
+    
+    // 신호등
+    let status: string, statusColor: string, needOrder = false;
+    if (daysOfStock <= 3) { status = '🔴 긴급'; statusColor = 'red'; needOrder = true; }
+    else if (daysOfStock <= 10) { status = '🟡 주의'; statusColor = 'yellow'; needOrder = usableStock <= reorderPoint; }
+    else { status = '🟢 정상'; statusColor = 'green'; }
+    // safety_stock 이하면 무조건 주의 이상
+    if (usableStock <= safetyStock && safetyStock > 0) {
+      if (statusColor === 'green') { status = '🟡 주의'; statusColor = 'yellow'; }
+      needOrder = true;
+    }
+    
+    // 제외 대상 체크
+    const EXCLUDED_ITEM_CODES = ['RM184', 'RM266', 'RM267'];
+    const EXCLUDED_ITEM_PREFIXES = ['SF'];
+    const isExcluded = EXCLUDED_ITEM_CODES.includes(itemCode) || EXCLUDED_ITEM_PREFIXES.some(p => itemCode.startsWith(p));
+    const isCategoryOK = (master as any).category === '원료';
+    const isActive = ((master as any).is_active ?? 1) === 1;
+    
+    return c.json({
+      success: true,
+      item_code: itemCode,
+      master: master,
+      inbound_summary: inboundSum,
+      recent_lots: lots.results,
+      usage_last_30days: usageStats,
+      computed: {
+        usable_stock_from_inbound: usableStock,
+        master_current_stock: (master as any).current_stock,
+        stock_mismatch: usableStock !== (master as any).current_stock 
+          ? `⚠️ inbound 합계(${usableStock})와 master.current_stock(${(master as any).current_stock})이 다름`
+          : '✅ 일치',
+        daily_avg: dailyAvg,
+        days_of_stock: daysOfStock,
+        safety_stock: safetyStock,
+        reorder_point: reorderPoint,
+        grade,
+        status,
+        status_color: statusColor,
+        need_order: needOrder
+      },
+      inclusion_check: {
+        category: (master as any).category,
+        is_category_material: isCategoryOK,
+        is_active: isActive,
+        is_excluded: isExcluded,
+        will_appear_in_safety_status: isCategoryOK && isActive && !isExcluded,
+        reason: !isCategoryOK 
+          ? `❌ category가 '원료'가 아님: '${(master as any).category}'`
+          : !isActive
+          ? `❌ is_active=0 (비활성)`
+          : isExcluded
+          ? `❌ 제외 목록에 포함`
+          : statusColor === 'green'
+          ? `⚠️ 판정 결과가 정상이라 alert 목록에 안 뜸 (재고 ${usableStock} > 안전재고 ${safetyStock}, 잔여일 ${daysOfStock}일)`
+          : `✅ 알림 목록에 포함되어야 함`
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.6.122: 발주점 3일 이하 품목의 최근 사용 추이 (라인 차트용) - KST 날짜 적용 ★★★
 dashboardRoutes.get('/usage-trend', async (c) => {
   try {

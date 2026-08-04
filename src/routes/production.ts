@@ -4781,6 +4781,118 @@ productionRoutes.post('/resync-stock', async (c) => {
   }
 });
 
+// ★★★ v3.6.169: master 테이블 바코드 진단/정리 API ★★★
+// 짧거나 잘못 등록된 바코드(예: 실수로 "60"이 등록된 제품) 조회 및 정리
+
+// GET /diagnose-barcode/:barcode - 특정 바코드로 등록된 모든 항목 조회 (전체 테이블)
+productionRoutes.get('/diagnose-barcode/:barcode', async (c) => {
+  try {
+    const barcode = c.req.param('barcode');
+    if (!barcode) {
+      return c.json({ success: false, error: '바코드가 필요합니다.' }, 400);
+    }
+    
+    // 1. master 테이블 (원료/부자재/제품 혼합)
+    const masterHits = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, barcode, current_stock
+      FROM master
+      WHERE barcode = ?
+    `).bind(barcode).all();
+    
+    // 2. supplies 테이블
+    let suppliesHits: any = { results: [] };
+    try {
+      suppliesHits = await c.env.DB.prepare(`
+        SELECT item_code, item_name, category, unit, barcode, current_stock
+        FROM supplies
+        WHERE barcode = ?
+      `).bind(barcode).all();
+    } catch (e) { /* table may not exist */ }
+    
+    // 3. production_barcodes 테이블 (제품 바코드 매핑)
+    let productionBarcodeHits: any = { results: [] };
+    try {
+      productionBarcodeHits = await c.env.DB.prepare(`
+        SELECT pb.*, pi.production_name, pi.production_code
+        FROM production_barcodes pb
+        LEFT JOIN production_items pi ON pb.production_code = pi.production_code
+        WHERE pb.barcode = ?
+      `).bind(barcode).all();
+    } catch (e) { /* table may not exist */ }
+    
+    // 4. barcode_mapping 테이블 (업체별 바코드)
+    let mappingHits: any = { results: [] };
+    try {
+      mappingHits = await c.env.DB.prepare(`
+        SELECT * FROM barcode_mapping WHERE barcode = ?
+      `).bind(barcode).all();
+    } catch (e) { /* table may not exist */ }
+    
+    return c.json({
+      success: true,
+      barcode,
+      matches: {
+        master: masterHits.results || [],
+        supplies: suppliesHits.results || [],
+        production_barcodes: productionBarcodeHits.results || [],
+        barcode_mapping: mappingHits.results || []
+      },
+      total_matches: 
+        (masterHits.results?.length || 0) +
+        (suppliesHits.results?.length || 0) +
+        (productionBarcodeHits.results?.length || 0) +
+        (mappingHits.results?.length || 0),
+      warning: barcode.length < 4 
+        ? `⚠️ 바코드 "${barcode}"는 너무 짧습니다 (${barcode.length}자리). 실수 등록일 가능성이 높습니다.`
+        : null
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// POST /clear-master-barcode - master 테이블의 특정 item_code의 barcode 컬럼 비우기
+productionRoutes.post('/clear-master-barcode', async (c) => {
+  try {
+    const { item_code, confirm } = await c.req.json<{ item_code: string; confirm: boolean }>();
+    
+    if (!item_code) {
+      return c.json({ success: false, error: 'item_code가 필요합니다.' }, 400);
+    }
+    if (!confirm) {
+      return c.json({ success: false, error: 'confirm: true 를 함께 보내주세요.' }, 400);
+    }
+    
+    // 현재 값 조회
+    const before = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, barcode FROM master WHERE item_code = ?
+    `).bind(item_code).first();
+    
+    if (!before) {
+      return c.json({ success: false, error: `master 테이블에 ${item_code}가 없습니다.` }, 404);
+    }
+    
+    // barcode 컬럼 NULL 처리
+    await c.env.DB.prepare(`
+      UPDATE master SET barcode = NULL, updated_at = CURRENT_TIMESTAMP
+      WHERE item_code = ?
+    `).bind(item_code).run();
+    
+    const after = await c.env.DB.prepare(`
+      SELECT item_code, item_name, category, barcode FROM master WHERE item_code = ?
+    `).bind(item_code).first();
+    
+    return c.json({
+      success: true,
+      message: `${before.item_name} (${item_code})의 바코드를 제거했습니다.`,
+      before,
+      after
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default productionRoutes;
 
 // v2.2.8: 개별 바코드 소비기한(expiry_days) 수정 API

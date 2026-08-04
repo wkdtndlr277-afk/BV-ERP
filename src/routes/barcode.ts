@@ -103,14 +103,19 @@ barcodeRoutes.get('/scan', async (c) => {
       }
     }
     
-    // 2. master 테이블에서 바코드 또는 item_code로 검색 (pack_unit 포함)
+    // ★★★ v3.6.169: 정확 매칭 우선, LIKE 부분매칭은 fallback ★★★
+    // 문제: master WHERE item_name LIKE '%60%' 때문에 이름에 "60"이 포함된 다른 품목이 매칭됨
+    // 해결: 먼저 모든 테이블에서 barcode / item_code 정확 매칭으로 찾고,
+    //       그래도 없으면 마지막에 LIKE 검색 fallback
+    
+    // 2a. master 테이블에서 정확 매칭 (barcode 또는 item_code)
     if (!item) {
       const masterResult = await c.env.DB.prepare(`
         SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
                pack_unit, pack_unit_name
         FROM master
-        WHERE barcode = ? OR item_code = ? OR item_name LIKE ?
-      `).bind(barcode, barcode, `%${barcode}%`).first();
+        WHERE barcode = ? OR item_code = ?
+      `).bind(barcode, barcode).first();
       
       if (masterResult) {
         item = masterResult;
@@ -118,14 +123,14 @@ barcodeRoutes.get('/scan', async (c) => {
       }
     }
     
-    // 3. supplies 테이블에서 검색 (부자재, pack_unit 포함)
+    // 3a. supplies 테이블에서 정확 매칭
     if (!item) {
       const suppliesResult = await c.env.DB.prepare(`
         SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
                pack_unit, pack_unit_name
         FROM supplies
-        WHERE barcode = ? OR item_code = ? OR item_name LIKE ?
-      `).bind(barcode, barcode, `%${barcode}%`).first();
+        WHERE barcode = ? OR item_code = ?
+      `).bind(barcode, barcode).first();
       
       if (suppliesResult) {
         item = suppliesResult;
@@ -133,7 +138,7 @@ barcodeRoutes.get('/scan', async (c) => {
       }
     }
     
-    // 4. production_items 테이블에서 검색 (제품)
+    // 4a. production_items 테이블에서 정확 매칭 (제품)
     if (!item) {
       const productResult = await c.env.DB.prepare(`
         SELECT production_code as item_code, 
@@ -142,12 +147,65 @@ barcodeRoutes.get('/scan', async (c) => {
                COALESCE(unit, 'EA') as unit, 
                current_stock
         FROM production_items
-        WHERE production_code = ? OR production_name LIKE ? OR alias1 LIKE ?
-      `).bind(barcode, `%${barcode}%`, `%${barcode}%`).first();
+        WHERE production_code = ?
+      `).bind(barcode).first();
       
       if (productResult) {
         item = productResult;
         source = 'production_items';
+      }
+    }
+    
+    // 5. Fallback: 정확 매칭이 없을 때만 LIKE 부분매칭 시도
+    //    단, 4자리 이상의 검색어에서만 (짧으면 오매칭 위험 높음)
+    if (!item && barcode.length >= 4) {
+      // master에서 이름 부분매칭
+      const masterFuzzy = await c.env.DB.prepare(`
+        SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
+               pack_unit, pack_unit_name
+        FROM master
+        WHERE item_name LIKE ?
+        LIMIT 1
+      `).bind(`%${barcode}%`).first();
+      
+      if (masterFuzzy) {
+        item = masterFuzzy;
+        source = 'master_fuzzy';
+      }
+      
+      // supplies 이름 부분매칭
+      if (!item) {
+        const suppliesFuzzy = await c.env.DB.prepare(`
+          SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
+                 pack_unit, pack_unit_name
+          FROM supplies
+          WHERE item_name LIKE ?
+          LIMIT 1
+        `).bind(`%${barcode}%`).first();
+        
+        if (suppliesFuzzy) {
+          item = suppliesFuzzy;
+          source = 'supplies_fuzzy';
+        }
+      }
+      
+      // production_items 이름 부분매칭
+      if (!item) {
+        const productFuzzy = await c.env.DB.prepare(`
+          SELECT production_code as item_code, 
+                 COALESCE(alias1, production_name) as item_name,
+                 '제품' as category, 
+                 COALESCE(unit, 'EA') as unit, 
+                 current_stock
+          FROM production_items
+          WHERE production_name LIKE ? OR alias1 LIKE ?
+          LIMIT 1
+        `).bind(`%${barcode}%`, `%${barcode}%`).first();
+        
+        if (productFuzzy) {
+          item = productFuzzy;
+          source = 'production_items_fuzzy';
+        }
       }
     }
     

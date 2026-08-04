@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.167';
-const APP_BUILD = '20260728-6';
+const APP_VERSION = '3.6.169';
+const APP_BUILD = '20260804-1';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -43465,6 +43465,22 @@ async function scanBarcode() {
     const result = response.data;
     
     if (result.success && result.data) {
+      // ★★★ v3.6.169: 원료 재고관리 페이지에서는 제품 스캔 차단 ★★★
+      // #barcode-inventory 는 원료/부자재 전용, 제품이 스캔되면 경고 표시
+      if (window.location.hash === '#barcode-inventory' && result.data.category === '제품') {
+        hideLoading();
+        showToast(
+          `⚠️ 이 페이지는 원료/부자재 전용입니다.\n"${result.data.item_name}"은(는) 제품이므로 여기서 스캔할 수 없습니다.\n(바코드: ${barcode})`,
+          'error'
+        );
+        playBeepSound('error');
+        console.warn('[바코드] 원료 페이지에서 제품 스캔 차단:', result.data);
+        input.value = '';
+        input.focus();
+        setTimeout(() => { scanBarcodeProcessing = false; }, 500);
+        return;
+      }
+      
       barcodeCurrentItem = result.data;
       
       // 자동 차감 모드 처리

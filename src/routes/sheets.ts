@@ -6860,6 +6860,334 @@ sheets.get('/daily-stock/inbound-check', async (c) => {
   }
 });
 
+// ★★★ v3.6.174: 날짜 간 연속성 진단 (전일재고 vs 이전날 현재재고 비교) ★★★
+// GET /daily-stock/continuity-check?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+// 목적: 어느 품목이 어느 날짜부터 데이터가 어긋났는지 자동 감지
+sheets.get('/daily-stock/continuity-check', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const startDate = c.req.query('start_date'); // 검사 시작일 (이후)
+    const endDate = c.req.query('end_date');     // 검사 종료일 (이하)
+    const itemFilter = c.req.query('item_code');
+    const tolerance = parseFloat(c.req.query('tolerance') || '0.01'); // 허용 오차
+    
+    const allData = await service.readSheet('일별수불부', 'A2:H') || [];
+    
+    // 품목별 날짜별 맵 구성: code → date → row
+    const byCode = new Map<string, Map<string, {
+      sheet_row: number;
+      date: string;
+      item_name: string;
+      prev_stock: number;
+      inbound_qty: number;
+      usage_qty: number;
+      current_stock: number;
+      unit: string;
+    }>>();
+    
+    allData.forEach((row, idx) => {
+      const code = String(row[1] || '').trim();
+      const dateStr = String(row[0] || '').slice(0, 10);
+      if (!code || !dateStr) return;
+      if (itemFilter && code !== itemFilter) return;
+      if (startDate && dateStr < startDate) return;
+      // 종료일은 검사 대상 자체이므로, 그 하루 앞도 필요 (이전날 확인용)
+      
+      if (!byCode.has(code)) byCode.set(code, new Map());
+      byCode.get(code)!.set(dateStr, {
+        sheet_row: idx + 2,
+        date: dateStr,
+        item_name: row[2] || '',
+        prev_stock: parseFloat(row[3]) || 0,
+        inbound_qty: parseFloat(row[4]) || 0,
+        usage_qty: parseFloat(row[5]) || 0,
+        current_stock: parseFloat(row[6]) || 0,
+        unit: row[7] || 'kg'
+      });
+    });
+    
+    // 각 품목마다 날짜순 정렬하고 연속성 검사
+    const discontinuities: Array<{
+      item_code: string;
+      item_name: string;
+      date: string;              // 문제 날짜
+      prev_date: string;         // 이전 날짜
+      sheet_row: number;         // 문제 행의 sheet_row
+      prev_sheet_row: number;    // 이전 날짜 행의 sheet_row
+      expected_prev_stock: number;  // 이전날 현재고
+      actual_prev_stock: number;    // 이 날의 전일재고
+      diff: number;
+      current_stock: number;
+      current_stock_recompute_error: number; // (prev + in - use) - current 차이
+    }> = [];
+    
+    const currentComputeErrors: Array<{
+      item_code: string;
+      item_name: string;
+      date: string;
+      sheet_row: number;
+      prev_stock: number;
+      inbound_qty: number;
+      usage_qty: number;
+      current_stock: number;
+      expected_current: number;
+      diff: number;
+    }> = [];
+    
+    for (const [code, dateMap] of byCode.entries()) {
+      const dates = Array.from(dateMap.keys()).sort();
+      
+      for (let i = 0; i < dates.length; i++) {
+        const d = dates[i];
+        if (endDate && d > endDate) continue;
+        
+        const row = dateMap.get(d)!;
+        
+        // 1. current_stock 계산 오차 (같은 행 안)
+        const expectedCurrent = row.prev_stock + row.inbound_qty - row.usage_qty;
+        const currentErr = row.current_stock - expectedCurrent;
+        if (Math.abs(currentErr) > tolerance) {
+          currentComputeErrors.push({
+            item_code: code,
+            item_name: row.item_name,
+            date: d,
+            sheet_row: row.sheet_row,
+            prev_stock: row.prev_stock,
+            inbound_qty: row.inbound_qty,
+            usage_qty: row.usage_qty,
+            current_stock: row.current_stock,
+            expected_current: Number(expectedCurrent.toFixed(4)),
+            diff: Number(currentErr.toFixed(4))
+          });
+        }
+        
+        // 2. 연속성: 이전 날짜의 현재고 == 이 날의 전일재고?
+        if (i > 0) {
+          const prevD = dates[i - 1];
+          const prevRow = dateMap.get(prevD)!;
+          const diff = row.prev_stock - prevRow.current_stock;
+          if (Math.abs(diff) > tolerance) {
+            discontinuities.push({
+              item_code: code,
+              item_name: row.item_name,
+              date: d,
+              prev_date: prevD,
+              sheet_row: row.sheet_row,
+              prev_sheet_row: prevRow.sheet_row,
+              expected_prev_stock: Number(prevRow.current_stock.toFixed(4)),
+              actual_prev_stock: Number(row.prev_stock.toFixed(4)),
+              diff: Number(diff.toFixed(4)),
+              current_stock: Number(row.current_stock.toFixed(4)),
+              current_stock_recompute_error: Number(currentErr.toFixed(4))
+            });
+          }
+        }
+      }
+    }
+    
+    // 정렬: 날짜순, 그 다음 diff 절대값 큰 순
+    discontinuities.sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return Math.abs(b.diff) - Math.abs(a.diff);
+    });
+    currentComputeErrors.sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return Math.abs(b.diff) - Math.abs(a.diff);
+    });
+    
+    // 요약: 날짜별로 문제 개수
+    const byDate = new Map<string, number>();
+    discontinuities.forEach(d => {
+      byDate.set(d.date, (byDate.get(d.date) || 0) + 1);
+    });
+    const dateSummary = Array.from(byDate.entries())
+      .map(([date, count]) => ({ date, discontinuity_count: count }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    
+    return c.json({
+      success: true,
+      start_date: startDate || 'all',
+      end_date: endDate || 'all',
+      item_filter: itemFilter || 'all',
+      tolerance,
+      totals: {
+        items_scanned: byCode.size,
+        discontinuities: discontinuities.length,   // 이전날 현재고 ≠ 이날 전일재고
+        current_compute_errors: currentComputeErrors.length  // 이날 (전일+입고-사용) ≠ 이날 현재고
+      },
+      date_summary: dateSummary,
+      discontinuities: discontinuities.slice(0, 100),
+      current_compute_errors: currentComputeErrors.slice(0, 100),
+      note: `1) discontinuities: 이전 날짜의 현재고와 이 날의 전일재고가 어긋난 케이스. 2) current_compute_errors: 이 날의 (전일+입고-사용) 값이 이 날의 현재고와 어긋난 케이스. tolerance=${tolerance}kg 이내는 무시.`
+    });
+  } catch (error: any) {
+    console.error('[continuity-check] error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.174: 연속성 자동 수정 ★★★
+// POST /daily-stock/fix-continuity
+// body: { start_date, end_date?, item_code?, mode: 'prev_from_previous_current' | 'current_from_formula' | 'both', confirm }
+// mode 설명:
+//  - prev_from_previous_current: 각 행의 전일재고를 '이전날 현재고'로 덮어쓰기 → 현재고도 재계산
+//  - current_from_formula: 각 행의 현재고를 (전일+입고-사용) 값으로 덮어쓰기
+//  - both: 두 개 다 (권장)
+sheets.post('/daily-stock/fix-continuity', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const body = await c.req.json<{
+      start_date: string;
+      end_date?: string;
+      item_code?: string;
+      mode: 'prev_from_previous_current' | 'current_from_formula' | 'both';
+      confirm: boolean;
+      tolerance?: number;
+    }>();
+    
+    if (!body.start_date) return c.json({ success: false, error: 'start_date 필수' }, 400);
+    if (!body.confirm) return c.json({ success: false, error: 'confirm: true 필요' }, 400);
+    const mode = body.mode || 'both';
+    const tolerance = body.tolerance ?? 0.01;
+    
+    const allData = await service.readSheet('일별수불부', 'A2:H') || [];
+    
+    // 품목별 날짜별 맵
+    const byCode = new Map<string, Map<string, any>>();
+    allData.forEach((row, idx) => {
+      const code = String(row[1] || '').trim();
+      const dateStr = String(row[0] || '').slice(0, 10);
+      if (!code || !dateStr) return;
+      if (body.item_code && code !== body.item_code) return;
+      
+      if (!byCode.has(code)) byCode.set(code, new Map());
+      byCode.get(code)!.set(dateStr, {
+        sheet_row: idx + 2,
+        date: dateStr,
+        item_code: code,
+        item_name: row[2] || '',
+        prev_stock: parseFloat(row[3]) || 0,
+        inbound_qty: parseFloat(row[4]) || 0,
+        usage_qty: parseFloat(row[5]) || 0,
+        current_stock: parseFloat(row[6]) || 0,
+        unit: row[7] || 'kg'
+      });
+    });
+    
+    const updates: Array<{ sheet_row: number; values: any[]; before: any; after: any }> = [];
+    
+    for (const [code, dateMap] of byCode.entries()) {
+      const dates = Array.from(dateMap.keys()).sort();
+      
+      // 시작일부터 순회하며 이전날 현재고를 seed로 흘림
+      let carryStock: number | null = null;
+      
+      for (let i = 0; i < dates.length; i++) {
+        const d = dates[i];
+        const row = dateMap.get(d)!;
+        
+        if (d < body.start_date) {
+          // 검사 시작 전이지만, 이 값은 carry로 저장 (start_date의 전일재고 seed)
+          carryStock = row.current_stock;
+          continue;
+        }
+        if (body.end_date && d > body.end_date) continue;
+        
+        // 이 행이 시작일이거나 이후
+        let newPrev = row.prev_stock;
+        let newCurrent = row.current_stock;
+        
+        // mode에 따라 계산
+        if (mode === 'prev_from_previous_current' || mode === 'both') {
+          if (carryStock !== null) {
+            newPrev = carryStock;
+          }
+        }
+        
+        if (mode === 'current_from_formula' || mode === 'both') {
+          newCurrent = newPrev + row.inbound_qty - row.usage_qty;
+        }
+        
+        const prevChanged = Math.abs(newPrev - row.prev_stock) > tolerance;
+        const curChanged = Math.abs(newCurrent - row.current_stock) > tolerance;
+        
+        if (prevChanged || curChanged) {
+          updates.push({
+            sheet_row: row.sheet_row,
+            values: [
+              row.date,
+              row.item_code,
+              row.item_name,
+              Number(newPrev.toFixed(4)),
+              Number(row.inbound_qty.toFixed(4)),
+              Number(row.usage_qty.toFixed(4)),
+              Number(newCurrent.toFixed(4)),
+              row.unit
+            ],
+            before: {
+              prev_stock: row.prev_stock,
+              current_stock: row.current_stock
+            },
+            after: {
+              prev_stock: Number(newPrev.toFixed(4)),
+              current_stock: Number(newCurrent.toFixed(4))
+            }
+          });
+        }
+        
+        carryStock = newCurrent;  // 다음 날의 전일재고 seed
+      }
+    }
+    
+    // Batch chunked 쓰기
+    updates.sort((a, b) => a.sheet_row - b.sheet_row);
+    const chunks: Array<{ startRow: number; endRow: number; values: any[][] }> = [];
+    let currentChunk: { startRow: number; endRow: number; values: any[][] } | null = null;
+    
+    for (const item of updates) {
+      if (currentChunk && item.sheet_row === currentChunk.endRow + 1) {
+        currentChunk.endRow = item.sheet_row;
+        currentChunk.values.push(item.values);
+      } else {
+        if (currentChunk) chunks.push(currentChunk);
+        currentChunk = { startRow: item.sheet_row, endRow: item.sheet_row, values: [item.values] };
+      }
+    }
+    if (currentChunk) chunks.push(currentChunk);
+    
+    for (const chunk of chunks) {
+      await service.writeSheet('일별수불부', `A${chunk.startRow}:H${chunk.endRow}`, chunk.values);
+    }
+    
+    return c.json({
+      success: true,
+      start_date: body.start_date,
+      end_date: body.end_date || 'end',
+      item_filter: body.item_code || 'all',
+      mode,
+      items_processed: byCode.size,
+      updated_rows: updates.length,
+      batch_chunks: chunks.length,
+      sample_updates: updates.slice(0, 20).map(u => ({
+        sheet_row: u.sheet_row,
+        values: u.values,
+        change: `prev ${u.before.prev_stock}→${u.after.prev_stock}, cur ${u.before.current_stock}→${u.after.current_stock}`
+      }))
+    });
+  } catch (error: any) {
+    console.error('[fix-continuity] error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 export default sheets;
 
 // ★★★ v3.6.45: 일별수불부 수식 날짜형식 통일 (SUMPRODUCT 방식) ★★★

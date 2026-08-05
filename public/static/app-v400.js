@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.173';
-const APP_BUILD = '20260805-3';
+const APP_VERSION = '3.6.174';
+const APP_BUILD = '20260805-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -7063,6 +7063,13 @@ function renderSheetsDailyStock(result, date, search, category) {
           <i class="fas fa-forward mr-1"></i>
           이후 날짜 연쇄 재계산
         </button>
+        <!-- ★★★ v3.6.174: 연속성 진단 및 자동수정 ★★★ -->
+        <button onclick="checkContinuity('${date}')" 
+                class="px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-sm font-medium hover:bg-orange-200 border border-orange-300"
+                title="이 날짜와 앞뒤 날짜의 연속성 검사 (이전 현재고 vs 이날 전일재고 불일치 감지)">
+          <i class="fas fa-search-plus mr-1"></i>
+          연속성 진단
+        </button>
       </div>
     </div>
     
@@ -7653,6 +7660,162 @@ async function cascadeRecalcFromDate(startDate) {
   }
 }
 
+// ★★★ v3.6.174: 연속성 진단 (이전날 현재고 vs 이 날 전일재고 비교) ★★★
+async function checkContinuity(centerDate) {
+  // 검사 범위: 앞뒤 3일씩
+  const d = new Date(centerDate + 'T00:00:00');
+  const startD = new Date(d); startD.setDate(startD.getDate() - 3);
+  const endD = new Date(d); endD.setDate(endD.getDate() + 3);
+  const fmt = dt => dt.toISOString().split('T')[0];
+  const startDate = fmt(startD);
+  const endDate = fmt(endD);
+  
+  const range = prompt(
+    `🔍 연속성 진단\n\n` +
+    `검사할 날짜 범위 (기본: ${centerDate} 앞뒤 3일)\n\n` +
+    `▶ 그대로 진행: 확인 클릭\n` +
+    `▶ 전 기간 검사: 'all' 입력\n` +
+    `▶ 사용자 지정: 'YYYY-MM-DD ~ YYYY-MM-DD' 입력\n` +
+    `▶ 취소: 빈칸`,
+    `${startDate} ~ ${endDate}`
+  );
+  if (!range) return;
+  
+  let qStart = startDate, qEnd = endDate;
+  if (range.trim().toLowerCase() === 'all') {
+    qStart = ''; qEnd = '';
+  } else if (range.includes('~')) {
+    const parts = range.split('~').map(s => s.trim());
+    if (parts.length === 2) {
+      qStart = parts[0]; qEnd = parts[1];
+    }
+  }
+  
+  showLoading('연속성 검사 중...');
+  try {
+    const qs = new URLSearchParams();
+    if (qStart) qs.set('start_date', qStart);
+    if (qEnd) qs.set('end_date', qEnd);
+    const result = await api(`/sheets/daily-stock/continuity-check?${qs.toString()}`, 'GET');
+    hideLoading();
+    
+    if (!result.success) {
+      showToast('진단 실패: ' + (result.error || ''), 'error');
+      return;
+    }
+    
+    const t = result.totals;
+    const ds = result.date_summary || [];
+    
+    let msg = `📊 연속성 진단 결과 (${qStart || '전체'} ~ ${qEnd || '전체'})\n\n`;
+    msg += `▶ 검사 품목: ${t.items_scanned}개\n`;
+    msg += `▶ 불연속(이전 현재고 ≠ 이날 전일재고): ${t.discontinuities}건 ⚠️\n`;
+    msg += `▶ 계산오차(전일+입고-사용 ≠ 현재고): ${t.current_compute_errors}건 ⚠️\n\n`;
+    
+    if (ds.length > 0) {
+      msg += `📅 날짜별 불연속 개수:\n`;
+      ds.slice(0, 20).forEach(x => {
+        msg += `  ${x.date}: ${x.discontinuity_count}건\n`;
+      });
+      msg += `\n`;
+    }
+    
+    if (result.discontinuities && result.discontinuities.length > 0) {
+      msg += `📋 상위 불연속 예시 (최대 10건):\n`;
+      result.discontinuities.slice(0, 10).forEach(x => {
+        msg += `  ${x.date} ${x.item_code}(${x.item_name}):\n`;
+        msg += `    ${x.prev_date} 현재고 ${x.expected_prev_stock} vs 이날 전일재고 ${x.actual_prev_stock} (차이 ${x.diff})\n`;
+      });
+      msg += `\n`;
+    }
+    
+    if (t.discontinuities === 0 && t.current_compute_errors === 0) {
+      msg += `✅ 완벽합니다! 문제 없음.`;
+      alert(msg);
+      return;
+    }
+    
+    msg += `❓ 자동 수정할까요?\n`;
+    msg += `   1: 전일재고 + 현재고 둘 다 (권장)\n`;
+    msg += `   2: 전일재고만 (이전 현재고를 그대로 반영)\n`;
+    msg += `   3: 현재고만 (전일+입고-사용 공식)\n`;
+    msg += `   4: 상세 결과를 콘솔로 확인 (수정 안함)\n`;
+    msg += `   취소: 아무것도 안 함`;
+    
+    const choice = prompt(msg, '1');
+    if (!choice) return;
+    
+    if (choice === '4') {
+      console.group('[연속성 진단 상세 결과]');
+      console.log('요약:', result.totals);
+      console.log('날짜별:', result.date_summary);
+      console.log('불연속:');
+      console.table(result.discontinuities);
+      console.log('계산오차:');
+      console.table(result.current_compute_errors);
+      console.groupEnd();
+      showToast('브라우저 개발자 도구(F12) 콘솔을 확인하세요', 'info');
+      return;
+    }
+    
+    const modeMap = { '1': 'both', '2': 'prev_from_previous_current', '3': 'current_from_formula' };
+    const mode = modeMap[choice];
+    if (!mode) {
+      showToast('취소됨', 'info');
+      return;
+    }
+    
+    // 시작일 결정
+    let fixStart = qStart;
+    if (!fixStart) {
+      // 전체 검사인 경우, 가장 이른 불연속 날짜 사용
+      if (result.discontinuities && result.discontinuities.length > 0) {
+        fixStart = result.discontinuities[0].date;
+      } else if (result.current_compute_errors && result.current_compute_errors.length > 0) {
+        fixStart = result.current_compute_errors[0].date;
+      }
+    }
+    
+    if (!fixStart) {
+      showToast('수정 시작일을 결정할 수 없습니다', 'error');
+      return;
+    }
+    
+    if (!confirm(
+      `⚠️ 최종 확인\n\n` +
+      `시작일: ${fixStart}${qEnd ? ` ~ ${qEnd}` : ' 이후'}\n` +
+      `모드: ${mode}\n\n` +
+      `이 범위의 모든 품목의 전일재고/현재고가 재계산됩니다.\n` +
+      `되돌릴 수 없습니다. 계속하시겠습니까?`
+    )) return;
+    
+    showLoading('자동 수정 중...');
+    const fixBody = {
+      start_date: fixStart,
+      mode,
+      confirm: true
+    };
+    if (qEnd) fixBody.end_date = qEnd;
+    
+    const fixResult = await api('/sheets/daily-stock/fix-continuity', 'POST', fixBody);
+    hideLoading();
+    
+    if (fixResult.success) {
+      showToast(
+        `✅ 완료: ${fixResult.updated_rows}개 행 수정 (${fixResult.items_processed}개 품목, ${fixResult.batch_chunks} chunks)`,
+        'success'
+      );
+      console.log('[fix-continuity 결과]', fixResult);
+      await loadDailyLedger();
+    } else {
+      showToast('수정 실패: ' + (fixResult.error || ''), 'error');
+    }
+  } catch (e) {
+    hideLoading();
+    showToast('오류: ' + (e.message || e), 'error');
+  }
+}
+
 // 전역 노출
 window.toggleDailyEditMode = toggleDailyEditMode;
 window.saveDailyRow = saveDailyRow;
@@ -7665,6 +7828,7 @@ window.loadSheetRowMapping = loadSheetRowMapping;
 window.recalcCurrentStock = recalcCurrentStock;
 window.rebuildFromInbound = rebuildFromInbound;
 window.cascadeRecalcFromDate = cascadeRecalcFromDate;
+window.checkContinuity = checkContinuity;
 
 // 일별 품목 요약 렌더링
 function renderDailySummary(result, date) {

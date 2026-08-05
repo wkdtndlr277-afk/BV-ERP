@@ -6860,6 +6860,182 @@ sheets.get('/daily-stock/inbound-check', async (c) => {
   }
 });
 
+// ★★★ v3.6.175: 시트 원본 URL/ID 확인 (ERP가 어떤 시트를 참조하는지) ★★★
+sheets.get('/daily-stock/source-info', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  // SHEET_ID는 GoogleSheetsService에 하드코딩되어 있음
+  const SHEET_ID = '1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU';
+  
+  try {
+    // 시트 메타정보 (탭 목록, 행 개수 등)
+    const tabsInfo = await service.getSheetTabsInfo?.() || null;
+    
+    // 일별수불부 첫 5개 행 raw 조회 (헤더 포함)
+    const rawSample = await service.readSheet('일별수불부', 'A1:H6') || [];
+    
+    // 전체 행 수
+    const allData = await service.readSheet('일별수불부', 'A2:H') || [];
+    const totalRows = allData.length;
+    
+    // 날짜별 행 카운트
+    const dateCount = new Map<string, number>();
+    allData.forEach(row => {
+      const d = String(row[0] || '').slice(0, 10);
+      if (d) dateCount.set(d, (dateCount.get(d) || 0) + 1);
+    });
+    const dates = Array.from(dateCount.entries())
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 30);
+    
+    return c.json({
+      success: true,
+      spreadsheet_id: SHEET_ID,
+      spreadsheet_url: `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`,
+      sheet_name: '일별수불부',
+      sheet_direct_url: `https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit#gid=0`,
+      total_data_rows: totalRows,
+      recent_dates: dates,
+      raw_header_and_first_rows: rawSample,
+      note: '이 spreadsheet_url이 ERP가 실제로 읽고 쓰는 구글시트입니다. 사용자가 보는 시트와 다르면, 이 URL을 확인하세요.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.175: 특정 날짜의 raw 데이터 완전 비교 ★★★
+// GET /daily-stock/raw-compare?date=YYYY-MM-DD
+// 시트의 원본 값 그대로 반환 (ERP 필터/변환 없이)
+sheets.get('/daily-stock/raw-compare', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const targetDate = c.req.query('date');
+    if (!targetDate) return c.json({ success: false, error: 'date 필수' }, 400);
+    
+    // 값 형식으로 읽기
+    const values = await service.readSheet('일별수불부', 'A1:H') || [];
+    
+    // 수식 형식으로도 읽기 (셀에 수식이 있는지 확인)
+    let formulas: any[] = [];
+    try {
+      formulas = await service.readSheetFormulas('일별수불부', 'A1:H') || [];
+    } catch (e) {
+      // 없어도 무시
+    }
+    
+    // 헤더
+    const header = values[0] || [];
+    
+    // 데이터 (A2부터)
+    const dataRows: Array<{
+      sheet_row: number;
+      raw_values: any[];
+      raw_formulas: any[] | null;
+      parsed: {
+        date: string;
+        item_code: string;
+        item_name: string;
+        prev_stock: any;
+        inbound_qty: any;
+        usage_qty: any;
+        current_stock: any;
+        unit: any;
+      };
+      date_field_type: string;
+      is_target_date: boolean;
+    }> = [];
+    
+    const targetRows: any[] = [];
+    
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const rowDate = String(row[0] || '').slice(0, 10);
+      if (rowDate !== targetDate) continue;
+      
+      const formulaRow = formulas[i] || [];
+      
+      const item = {
+        sheet_row: i + 1,
+        raw_values: row,
+        raw_formulas: formulaRow.length > 0 ? formulaRow : null,
+        parsed: {
+          date: rowDate,
+          item_code: row[1] || '',
+          item_name: row[2] || '',
+          prev_stock: row[3],
+          inbound_qty: row[4],
+          usage_qty: row[5],
+          current_stock: row[6],
+          unit: row[7]
+        },
+        date_field_type: typeof row[0],
+        is_target_date: true
+      };
+      targetRows.push(item);
+    }
+    
+    // 계산 검증
+    let calcErrors = 0;
+    let discontinuities = 0;
+    const issues: any[] = [];
+    
+    targetRows.forEach(r => {
+      const prev = parseFloat(r.parsed.prev_stock) || 0;
+      const inb = parseFloat(r.parsed.inbound_qty) || 0;
+      const use = parseFloat(r.parsed.usage_qty) || 0;
+      const cur = parseFloat(r.parsed.current_stock) || 0;
+      const expected = prev + inb - use;
+      const diff = cur - expected;
+      if (Math.abs(diff) > 0.01) {
+        calcErrors++;
+        issues.push({
+          sheet_row: r.sheet_row,
+          item_code: r.parsed.item_code,
+          item_name: r.parsed.item_name,
+          formula: `${prev} + ${inb} - ${use}`,
+          expected,
+          actual: cur,
+          diff: Number(diff.toFixed(4))
+        });
+      }
+    });
+    
+    return c.json({
+      success: true,
+      target_date: targetDate,
+      spreadsheet_id: '1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU',
+      spreadsheet_url: 'https://docs.google.com/spreadsheets/d/1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU/edit',
+      header,
+      total_rows_for_date: targetRows.length,
+      has_any_formulas: formulas.length > 0 && targetRows.some((r: any) => 
+        r.raw_formulas && r.raw_formulas.some((v: any) => 
+          typeof v === 'string' && v.startsWith('=')
+        )
+      ),
+      formula_examples: targetRows.slice(0, 5).map(r => ({
+        sheet_row: r.sheet_row,
+        item_code: r.parsed.item_code,
+        formulas: r.raw_formulas
+      })).filter(x => x.formulas && x.formulas.some((f: any) => typeof f === 'string' && f.startsWith('='))),
+      calc_errors: calcErrors,
+      calc_error_details: issues.slice(0, 20),
+      rows: targetRows.slice(0, 200),
+      note: '이 데이터는 ERP가 아닌 구글시트 API에서 직접 raw로 읽은 것입니다. 사용자가 보는 시트와 이 데이터가 다르면 서로 다른 시트를 보고 있는 것입니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.6.174: 날짜 간 연속성 진단 (전일재고 vs 이전날 현재재고 비교) ★★★
 // GET /daily-stock/continuity-check?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
 // 목적: 어느 품목이 어느 날짜부터 데이터가 어긋났는지 자동 감지

@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.174';
-const APP_BUILD = '20260805-4';
+const APP_VERSION = '3.6.175';
+const APP_BUILD = '20260805-5';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -7070,6 +7070,13 @@ function renderSheetsDailyStock(result, date, search, category) {
           <i class="fas fa-search-plus mr-1"></i>
           연속성 진단
         </button>
+        <!-- ★★★ v3.6.175: 시트 원본과 비교 ★★★ -->
+        <button onclick="showSheetSource('${date}')" 
+                class="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 border border-gray-400"
+                title="ERP가 실제 참조 중인 구글시트 URL 및 raw 데이터 확인">
+          <i class="fas fa-external-link-alt mr-1"></i>
+          시트 원본 확인
+        </button>
       </div>
     </div>
     
@@ -7816,6 +7823,157 @@ async function checkContinuity(centerDate) {
   }
 }
 
+// ★★★ v3.6.175: 시트 원본 URL 및 raw 데이터 확인 ★★★
+async function showSheetSource(date) {
+  showLoading('시트 원본 조회 중...');
+  try {
+    // 1) 시트 소스 정보
+    const src = await api('/sheets/daily-stock/source-info', 'GET');
+    hideLoading();
+    
+    if (!src.success) {
+      showToast('조회 실패: ' + (src.error || ''), 'error');
+      return;
+    }
+    
+    // 2) raw 비교 데이터
+    showLoading('원본 비교 조회 중...');
+    const raw = await api(`/sheets/daily-stock/raw-compare?date=${date}`, 'GET');
+    hideLoading();
+    
+    // 모달 UI로 표시
+    const existing = document.getElementById('sheet-source-modal');
+    if (existing) existing.remove();
+    
+    const modal = document.createElement('div');
+    modal.id = 'sheet-source-modal';
+    modal.className = 'fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4';
+    modal.innerHTML = `
+      <div class="bg-white rounded-lg shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        <div class="p-4 border-b bg-blue-50 flex justify-between items-start">
+          <div>
+            <h3 class="text-lg font-bold text-blue-900">
+              <i class="fas fa-external-link-alt mr-2"></i>
+              ERP가 참조 중인 구글시트 원본 확인
+            </h3>
+            <p class="text-xs text-gray-600 mt-1">
+              날짜: <b>${date}</b> · 시트: <b>${src.sheet_name}</b> · 총 데이터: ${src.total_data_rows}행
+            </p>
+          </div>
+          <button onclick="document.getElementById('sheet-source-modal').remove()" class="text-gray-500 hover:text-gray-800 text-2xl">&times;</button>
+        </div>
+        
+        <div class="p-4 border-b bg-yellow-50">
+          <p class="text-sm font-bold text-yellow-900 mb-2">
+            <i class="fas fa-exclamation-triangle mr-1"></i>
+            ERP는 아래 URL의 구글시트만 읽고 씁니다:
+          </p>
+          <div class="flex items-center gap-2">
+            <input type="text" readonly value="${src.spreadsheet_url}" 
+                   class="flex-1 border rounded px-2 py-1 text-sm font-mono bg-white"
+                   onclick="this.select()"/>
+            <a href="${src.spreadsheet_url}" target="_blank" 
+               class="px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+              <i class="fas fa-external-link-alt mr-1"></i>새 탭에서 열기
+            </a>
+            <button onclick="navigator.clipboard.writeText('${src.spreadsheet_url}'); showToast('복사됨', 'success')" 
+                    class="px-2 py-1 bg-gray-200 rounded text-sm">복사</button>
+          </div>
+          <p class="text-xs text-gray-600 mt-2">
+            📌 사용자가 보는 구글시트 URL과 이 URL이 다르면 <b>서로 다른 시트를 보고 있는 것</b>입니다.
+          </p>
+        </div>
+        
+        <div class="p-4 border-b bg-gray-50">
+          <p class="text-sm font-bold mb-2">📅 최근 저장된 날짜 (상위 10):</p>
+          <div class="flex flex-wrap gap-1">
+            ${(src.recent_dates || []).slice(0, 10).map(d => 
+              `<span class="px-2 py-0.5 bg-white border rounded text-xs">
+                ${d.date} <b>(${d.count}건)</b>
+              </span>`
+            ).join('')}
+          </div>
+        </div>
+        
+        ${raw.success ? `
+          <div class="p-4 flex-1 overflow-auto">
+            <p class="text-sm font-bold mb-2">
+              🔍 [${date}] 시트 raw 데이터 (${raw.total_rows_for_date}행)
+              ${raw.has_any_formulas ? '<span class="ml-2 px-2 py-0.5 bg-purple-100 text-purple-800 rounded text-xs">수식 사용 중</span>' : '<span class="ml-2 px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs">값 저장</span>'}
+              ${raw.calc_errors > 0 ? `<span class="ml-2 px-2 py-0.5 bg-red-100 text-red-800 rounded text-xs">계산오차 ${raw.calc_errors}건</span>` : ''}
+            </p>
+            
+            ${raw.calc_errors > 0 ? `
+              <div class="p-2 bg-red-50 rounded mb-2 text-xs">
+                <b class="text-red-800">⚠️ 계산 오차 (상위 5건):</b>
+                <ul class="mt-1 ml-4 list-disc">
+                  ${raw.calc_error_details.slice(0, 5).map(e => 
+                    `<li>${e.item_code}(${e.item_name}): ${e.formula} = <b>기대 ${e.expected}</b> vs <b>실제 ${e.actual}</b> (차이 ${e.diff})</li>`
+                  ).join('')}
+                </ul>
+              </div>
+            ` : ''}
+            
+            <div class="overflow-x-auto">
+              <table class="w-full text-xs border">
+                <thead class="bg-gray-100">
+                  <tr>
+                    <th class="border px-2 py-1">행#</th>
+                    <th class="border px-2 py-1">A:날짜</th>
+                    <th class="border px-2 py-1">B:코드</th>
+                    <th class="border px-2 py-1">C:품명</th>
+                    <th class="border px-2 py-1 text-right">D:전일</th>
+                    <th class="border px-2 py-1 text-right">E:입고</th>
+                    <th class="border px-2 py-1 text-right">F:사용</th>
+                    <th class="border px-2 py-1 text-right">G:현재</th>
+                    <th class="border px-2 py-1">H:단위</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${(raw.rows || []).slice(0, 100).map(r => {
+                    const p = r.parsed;
+                    const prev = parseFloat(p.prev_stock) || 0;
+                    const inb = parseFloat(p.inbound_qty) || 0;
+                    const use = parseFloat(p.usage_qty) || 0;
+                    const cur = parseFloat(p.current_stock) || 0;
+                    const expected = prev + inb - use;
+                    const diffMark = Math.abs(cur - expected) > 0.01 ? 
+                      `<span class="text-red-600 font-bold" title="계산값 ${expected.toFixed(4)}">⚠</span>` : '';
+                    return `<tr class="hover:bg-yellow-50">
+                      <td class="border px-2 py-0.5 text-center text-gray-500">${r.sheet_row}</td>
+                      <td class="border px-2 py-0.5 font-mono">${p.date}</td>
+                      <td class="border px-2 py-0.5 font-mono">${p.item_code}</td>
+                      <td class="border px-2 py-0.5">${p.item_name}</td>
+                      <td class="border px-2 py-0.5 text-right ${prev < 0 ? 'text-red-600' : ''}">${prev}</td>
+                      <td class="border px-2 py-0.5 text-right text-blue-600">${inb}</td>
+                      <td class="border px-2 py-0.5 text-right text-red-600">${use}</td>
+                      <td class="border px-2 py-0.5 text-right font-bold ${cur < 0 ? 'text-red-600 bg-red-50' : ''}">${cur} ${diffMark}</td>
+                      <td class="border px-2 py-0.5 text-center">${p.unit}</td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table>
+              ${(raw.rows || []).length > 100 ? `<p class="text-xs text-gray-500 mt-2">상위 100건만 표시 (전체 ${raw.rows.length}건)</p>` : ''}
+            </div>
+          </div>
+        ` : `<div class="p-4 text-red-600">raw 조회 실패: ${raw.error || ''}</div>`}
+        
+        <div class="p-3 border-t bg-gray-100 flex justify-end gap-2">
+          <button onclick="console.log('[sheet source]', ${JSON.stringify(src).replace(/'/g, '\\\'')}, ${JSON.stringify(raw).replace(/'/g, '\\\'')})" 
+                  class="px-3 py-1 bg-gray-300 rounded text-sm">콘솔 출력</button>
+          <button onclick="document.getElementById('sheet-source-modal').remove()" 
+                  class="px-4 py-1 bg-blue-600 text-white rounded text-sm">닫기</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    
+  } catch (e) {
+    hideLoading();
+    showToast('조회 오류: ' + (e.message || e), 'error');
+  }
+}
+
 // 전역 노출
 window.toggleDailyEditMode = toggleDailyEditMode;
 window.saveDailyRow = saveDailyRow;
@@ -7829,6 +7987,7 @@ window.recalcCurrentStock = recalcCurrentStock;
 window.rebuildFromInbound = rebuildFromInbound;
 window.cascadeRecalcFromDate = cascadeRecalcFromDate;
 window.checkContinuity = checkContinuity;
+window.showSheetSource = showSheetSource;
 
 // 일별 품목 요약 렌더링
 function renderDailySummary(result, date) {

@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.171';
-const APP_BUILD = '20260805-1';
+const APP_VERSION = '3.6.172';
+const APP_BUILD = '20260805-2';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -7049,6 +7049,13 @@ function renderSheetsDailyStock(result, date, search, category) {
           <i class="fas fa-exchange-alt mr-1"></i>
           음수→양수 일괄
         </button>
+        <!-- ★★★ v3.6.172: 원료입고 기반 재계산 ★★★ -->
+        <button onclick="rebuildFromInbound('${date}')" 
+                class="px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-sm font-medium hover:bg-green-200 border border-green-300"
+                title="구글시트 원료입고를 수정한 후 이 버튼을 누르면 일별수불부가 자동 재계산됩니다">
+          <i class="fas fa-sync-alt mr-1"></i>
+          원료입고 기준 재계산
+        </button>
       </div>
     </div>
     
@@ -7442,6 +7449,101 @@ function recalcCurrentStock(rowKey) {
   }
 }
 
+// ★★★ v3.6.172: 원료입고 기반 일별수불부 재계산 ★★★
+async function rebuildFromInbound(date) {
+  try {
+    // Step 1: 미리보기
+    showToast('원료입고 데이터 조회 중...', 'info');
+    const preview = await api(`/sheets/daily-stock/rebuild-preview?date=${date}`, 'GET');
+    
+    if (!preview.success) {
+      showToast('미리보기 실패: ' + (preview.error || 'unknown'), 'error');
+      return;
+    }
+    
+    const summary = preview.summary;
+    const inboundInfo = preview.inbound_summary;
+    
+    // 미리보기 정보 요약
+    let msg = `📊 [${date}] 원료입고 기준 재계산 미리보기\n\n`;
+    msg += `▶ 원료입고 시트 기록:\n`;
+    msg += `   - 매칭된 입고 행: ${inboundInfo.inbound_rows_matched}건\n`;
+    msg += `   - 입고 품목 수: ${inboundInfo.unique_items_with_inbound}개\n\n`;
+    msg += `▶ 일별수불부 상태:\n`;
+    msg += `   - 총 행: ${summary.total_rows}개\n`;
+    msg += `   - 변경될 행: ${summary.will_change}개\n`;
+    msg += `   - 현재 음수재고: ${summary.currently_negative}건\n`;
+    msg += `   - 재계산 후 음수 해소: ${summary.will_fix_negative}건 ✅\n`;
+    msg += `   - 재계산 후에도 음수: ${summary.still_negative_after_rebuild}건 ⚠️\n\n`;
+    
+    if (summary.will_change === 0) {
+      msg += `변경사항 없음. 이미 원료입고 기준으로 계산된 상태입니다.`;
+      alert(msg);
+      return;
+    }
+    
+    // 변경 예시 5건 미리 보여주기
+    if (preview.changes && preview.changes.length > 0) {
+      msg += `📋 변경 예시 (최대 5건):\n`;
+      preview.changes.slice(0, 5).forEach(c => {
+        msg += `\n  ${c.item_code} (${c.item_name}):\n`;
+        msg += `    전일: ${c.before.prev_stock} → ${c.after.prev_stock}\n`;
+        msg += `    입고: ${c.before.inbound_qty} → ${c.after.inbound_qty}\n`;
+        msg += `    현재고: ${c.before.current_stock} → ${c.after.current_stock}${c.will_fix_negative ? ' ✅음수해소' : c.still_negative ? ' ⚠️여전히 음수' : ''}`;
+      });
+      msg += `\n\n`;
+    }
+    
+    msg += `❓ 어떻게 반영할까요?\n`;
+    msg += `   1: 전체 재계산 (모든 행)\n`;
+    msg += `   2: 음수재고만 재계산 (현재 음수인 행만)\n`;
+    msg += `   취소: 아무것도 안 함`;
+    
+    const choice = prompt(msg, '2');
+    if (!choice || choice === '취소') {
+      showToast('취소됨', 'info');
+      return;
+    }
+    
+    if (choice !== '1' && choice !== '2') {
+      showToast('1 또는 2만 입력 가능합니다', 'error');
+      return;
+    }
+    
+    const onlyNegative = choice === '2';
+    
+    // Step 2: 실제 반영
+    showToast('일별수불부 재계산 중... (잠시 대기)', 'info');
+    const result = await api('/sheets/daily-stock/rebuild-from-inbound', 'POST', {
+      date,
+      only_negative: onlyNegative,
+      confirm: true
+    });
+    
+    if (!result.success) {
+      showToast('재계산 실패: ' + (result.error || 'unknown'), 'error');
+      return;
+    }
+    
+    showToast(
+      `✅ 재계산 완료! ${result.updated_rows}개 행 업데이트 (${result.batch_chunks} chunks)`,
+      'success'
+    );
+    
+    // 데이터 리로드
+    setTimeout(() => {
+      if (typeof loadDailyLedger === 'function') {
+        loadDailyLedger();
+      } else {
+        location.reload();
+      }
+    }, 800);
+  } catch (e) {
+    console.error('rebuildFromInbound error:', e);
+    showToast('오류: ' + (e.message || 'unknown'), 'error');
+  }
+}
+
 // 전역 노출
 window.toggleDailyEditMode = toggleDailyEditMode;
 window.saveDailyRow = saveDailyRow;
@@ -7451,6 +7553,7 @@ window.fixDailyItemNames = fixDailyItemNames;
 window.flipDailyNegatives = flipDailyNegatives;
 window.loadSheetRowMapping = loadSheetRowMapping;
 window.recalcCurrentStock = recalcCurrentStock;
+window.rebuildFromInbound = rebuildFromInbound;
 
 // 일별 품목 요약 렌더링
 function renderDailySummary(result, date) {

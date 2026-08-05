@@ -5870,6 +5870,7 @@ sheets.post('/daily-stock/update-row', async (c) => {
       usage_qty?: number;
       current_stock?: number;
       unit?: string;
+      cascade?: boolean;  // ★★★ v3.6.173: true면 다음날 이후 전일재고/현재재고 연쇄 갱신 ★★★
     }>();
     
     const { sheet_row } = body;
@@ -5896,8 +5897,139 @@ sheets.post('/daily-stock/update-row', async (c) => {
       body.unit !== undefined ? body.unit : (before[7] || 'kg')
     ];
     
-    // 쓰기
+    // 쓰기 (수정한 행)
     await service.writeSheet('일별수불부', `A${sheet_row}:H${sheet_row}`, [newRow]);
+    
+    // ★★★ v3.6.173: cascade 갱신 - 다음 날짜부터 마지막까지 순차 재계산 ★★★
+    let cascadeResult: any = null;
+    if (body.cascade === true) {
+      try {
+        const targetDate = String(newRow[0]).slice(0, 10);
+        const targetCode = String(newRow[1] || '').trim();
+        const newCurrentStock = parseFloat(String(newRow[6])) || 0;
+        
+        if (!targetCode) {
+          cascadeResult = { skipped: true, reason: 'item_code 없음' };
+        } else {
+          // 전체 일별수불부 읽기
+          const allData = await service.readSheet('일별수불부', 'A2:H') || [];
+          
+          // 해당 품목코드의 모든 행 추출 (날짜순 정렬)
+          const codeRows: Array<{
+            sheet_row: number;
+            date: string;
+            item_code: string;
+            item_name: string;
+            prev_stock: number;
+            inbound_qty: number;
+            usage_qty: number;
+            current_stock: number;
+            unit: string;
+          }> = [];
+          
+          allData.forEach((row, idx) => {
+            const code = String(row[1] || '').trim();
+            if (code === targetCode) {
+              codeRows.push({
+                sheet_row: idx + 2,
+                date: String(row[0] || '').slice(0, 10),
+                item_code: code,
+                item_name: row[2] || '',
+                prev_stock: parseFloat(row[3]) || 0,
+                inbound_qty: parseFloat(row[4]) || 0,
+                usage_qty: parseFloat(row[5]) || 0,
+                current_stock: parseFloat(row[6]) || 0,
+                unit: row[7] || 'kg'
+              });
+            }
+          });
+          
+          // 날짜순 정렬
+          codeRows.sort((a, b) => a.date.localeCompare(b.date));
+          
+          // 대상 날짜 이후 행들에 cascade 적용
+          const cascadeUpdates: Array<{ sheet_row: number; values: any[]; before_current: number; before_prev: number }> = [];
+          let carryStock = newCurrentStock;  // 현재행의 새 현재재고
+          let started = false;
+          
+          for (const row of codeRows) {
+            if (row.date === targetDate) {
+              started = true;
+              continue;  // 자기 자신은 이미 저장됨
+            }
+            if (!started) continue;
+            if (row.date <= targetDate) continue;  // 안전장치
+            
+            // 새 전일재고 = 이전 행의 새 현재재고
+            const newPrev = carryStock;
+            const newCurrent = newPrev + row.inbound_qty - row.usage_qty;
+            
+            // 변경사항이 있으면 업데이트
+            if (Math.abs(newPrev - row.prev_stock) > 0.0001 || Math.abs(newCurrent - row.current_stock) > 0.0001) {
+              cascadeUpdates.push({
+                sheet_row: row.sheet_row,
+                values: [
+                  row.date,
+                  row.item_code,
+                  row.item_name,
+                  Number(newPrev.toFixed(4)),
+                  Number(row.inbound_qty.toFixed(4)),
+                  Number(row.usage_qty.toFixed(4)),
+                  Number(newCurrent.toFixed(4)),
+                  row.unit
+                ],
+                before_current: row.current_stock,
+                before_prev: row.prev_stock
+              });
+            }
+            
+            carryStock = newCurrent;
+          }
+          
+          // Batch chunked 쓰기 (연속 행 그룹핑)
+          cascadeUpdates.sort((a, b) => a.sheet_row - b.sheet_row);
+          const chunks: Array<{ startRow: number; endRow: number; values: any[][] }> = [];
+          let currentChunk: { startRow: number; endRow: number; values: any[][] } | null = null;
+          
+          for (const item of cascadeUpdates) {
+            if (currentChunk && item.sheet_row === currentChunk.endRow + 1) {
+              currentChunk.endRow = item.sheet_row;
+              currentChunk.values.push(item.values);
+            } else {
+              if (currentChunk) chunks.push(currentChunk);
+              currentChunk = {
+                startRow: item.sheet_row,
+                endRow: item.sheet_row,
+                values: [item.values]
+              };
+            }
+          }
+          if (currentChunk) chunks.push(currentChunk);
+          
+          for (const chunk of chunks) {
+            await service.writeSheet('일별수불부', `A${chunk.startRow}:H${chunk.endRow}`, chunk.values);
+          }
+          
+          cascadeResult = {
+            enabled: true,
+            item_code: targetCode,
+            target_date: targetDate,
+            future_rows_found: codeRows.filter(r => r.date > targetDate).length,
+            updated_rows: cascadeUpdates.length,
+            batch_chunks: chunks.length,
+            updates: cascadeUpdates.slice(0, 20).map(u => ({
+              sheet_row: u.sheet_row,
+              date: u.values[0],
+              prev: `${u.before_prev} → ${u.values[3]}`,
+              current: `${u.before_current} → ${u.values[6]}`
+            }))
+          };
+        }
+      } catch (cascadeErr: any) {
+        console.error('[update-row cascade] error:', cascadeErr);
+        cascadeResult = { error: cascadeErr.message };
+      }
+    }
     
     return c.json({
       success: true,
@@ -5921,10 +6053,140 @@ sheets.post('/daily-stock/update-row', async (c) => {
         usage_qty: newRow[5],
         current_stock: newRow[6],
         unit: newRow[7]
-      }
+      },
+      cascade: cascadeResult
     });
   } catch (error: any) {
     console.error('[daily-stock/update-row] error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// ★★★ v3.6.173: cascade-recalc - 특정 품목의 특정 날짜 이후 모든 행을 순차 재계산 ★★★
+// POST /daily-stock/cascade-recalc
+// body: { item_code, start_date, confirm }
+// 사용: 과거 어느 시점 이후로 시작재고(전일재고)를 다시 흐르게 하고 싶을 때
+sheets.post('/daily-stock/cascade-recalc', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const body = await c.req.json<{
+      item_code?: string;  // 없으면 모든 품목
+      start_date: string;  // 이 날짜 이후를 재계산 (시작일 자체는 유지)
+      confirm: boolean;
+    }>();
+    
+    if (!body.start_date) {
+      return c.json({ success: false, error: 'start_date 필수' }, 400);
+    }
+    if (!body.confirm) {
+      return c.json({ success: false, error: 'confirm: true 필요' }, 400);
+    }
+    
+    const allData = await service.readSheet('일별수불부', 'A2:H') || [];
+    
+    // 품목별로 그룹핑
+    const byCode = new Map<string, Array<any>>();
+    allData.forEach((row, idx) => {
+      const code = String(row[1] || '').trim();
+      if (!code) return;
+      if (body.item_code && code !== body.item_code) return;
+      
+      const dateStr = String(row[0] || '').slice(0, 10);
+      if (!dateStr) return;
+      
+      if (!byCode.has(code)) byCode.set(code, []);
+      byCode.get(code)!.push({
+        sheet_row: idx + 2,
+        date: dateStr,
+        item_code: code,
+        item_name: row[2] || '',
+        prev_stock: parseFloat(row[3]) || 0,
+        inbound_qty: parseFloat(row[4]) || 0,
+        usage_qty: parseFloat(row[5]) || 0,
+        current_stock: parseFloat(row[6]) || 0,
+        unit: row[7] || 'kg'
+      });
+    });
+    
+    const allUpdates: Array<{ sheet_row: number; values: any[] }> = [];
+    const summary: Array<{ item_code: string; updated: number }> = [];
+    
+    for (const [code, rows] of byCode.entries()) {
+      rows.sort((a, b) => a.date.localeCompare(b.date));
+      
+      // start_date의 현재재고를 seed로
+      const startRow = rows.find(r => r.date === body.start_date);
+      if (!startRow) continue;
+      
+      let carryStock = startRow.current_stock;
+      let updatedCount = 0;
+      
+      for (const row of rows) {
+        if (row.date <= body.start_date) continue;
+        
+        const newPrev = carryStock;
+        const newCurrent = newPrev + row.inbound_qty - row.usage_qty;
+        
+        if (Math.abs(newPrev - row.prev_stock) > 0.0001 || Math.abs(newCurrent - row.current_stock) > 0.0001) {
+          allUpdates.push({
+            sheet_row: row.sheet_row,
+            values: [
+              row.date,
+              row.item_code,
+              row.item_name,
+              Number(newPrev.toFixed(4)),
+              Number(row.inbound_qty.toFixed(4)),
+              Number(row.usage_qty.toFixed(4)),
+              Number(newCurrent.toFixed(4)),
+              row.unit
+            ]
+          });
+          updatedCount++;
+        }
+        
+        carryStock = newCurrent;
+      }
+      
+      if (updatedCount > 0) {
+        summary.push({ item_code: code, updated: updatedCount });
+      }
+    }
+    
+    // Batch chunked 쓰기
+    allUpdates.sort((a, b) => a.sheet_row - b.sheet_row);
+    const chunks: Array<{ startRow: number; endRow: number; values: any[][] }> = [];
+    let currentChunk: { startRow: number; endRow: number; values: any[][] } | null = null;
+    
+    for (const item of allUpdates) {
+      if (currentChunk && item.sheet_row === currentChunk.endRow + 1) {
+        currentChunk.endRow = item.sheet_row;
+        currentChunk.values.push(item.values);
+      } else {
+        if (currentChunk) chunks.push(currentChunk);
+        currentChunk = { startRow: item.sheet_row, endRow: item.sheet_row, values: [item.values] };
+      }
+    }
+    if (currentChunk) chunks.push(currentChunk);
+    
+    for (const chunk of chunks) {
+      await service.writeSheet('일별수불부', `A${chunk.startRow}:H${chunk.endRow}`, chunk.values);
+    }
+    
+    return c.json({
+      success: true,
+      start_date: body.start_date,
+      item_code_filter: body.item_code || 'all',
+      total_items_processed: byCode.size,
+      total_rows_updated: allUpdates.length,
+      batch_chunks: chunks.length,
+      items_summary: summary.slice(0, 30)
+    });
+  } catch (error: any) {
+    console.error('[daily-stock/cascade-recalc] error:', error);
     return c.json({ success: false, error: error.message }, 500);
   }
 });

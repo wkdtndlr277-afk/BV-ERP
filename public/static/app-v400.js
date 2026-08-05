@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.172';
-const APP_BUILD = '20260805-2';
+const APP_VERSION = '3.6.173';
+const APP_BUILD = '20260805-3';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -7056,6 +7056,13 @@ function renderSheetsDailyStock(result, date, search, category) {
           <i class="fas fa-sync-alt mr-1"></i>
           원료입고 기준 재계산
         </button>
+        <!-- ★★★ v3.6.173: 이후 날짜 연쇄 재계산 ★★★ -->
+        <button onclick="cascadeRecalcFromDate('${date}')" 
+                class="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-200 border border-blue-300"
+                title="이 날짜 이후 모든 날짜의 전일재고/현재재고를 자동 재계산 (품목 선택 가능)">
+          <i class="fas fa-forward mr-1"></i>
+          이후 날짜 연쇄 재계산
+        </button>
       </div>
     </div>
     
@@ -7151,11 +7158,16 @@ function renderSheetsDailyStock(result, date, search, category) {
                   </td>
                   <td class="p-2 text-center text-gray-500">${item.unit || ''}</td>
                   <td class="p-2 text-center">
-                    <div class="flex gap-1 justify-center">
+                    <div class="flex gap-1 justify-center flex-wrap">
                       <button onclick="saveDailyRow(${rowKey})" 
                               class="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600"
-                              title="이 행 저장">
+                              title="이 행만 저장">
                         <i class="fas fa-save"></i>
+                      </button>
+                      <button onclick="saveDailyRowCascade(${rowKey})" 
+                              class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 font-bold"
+                              title="저장 + 이후 날짜 연쇄 갱신 (다음날부터 마지막까지 자동 재계산)">
+                        <i class="fas fa-forward"></i>+
                       </button>
                       <button onclick="flipRowSigns(${rowKey})" 
                               class="px-2 py-1 bg-purple-500 text-white rounded text-xs hover:bg-purple-600"
@@ -7266,7 +7278,8 @@ async function loadSheetRowMapping(date) {
 }
 
 // 특정 행 저장
-async function saveDailyRow(sheetRow) {
+// ★★★ v3.6.173: cascade 옵션 지원 (다음 날짜 자동 연쇄 갱신) ★★★
+async function saveDailyRow(sheetRow, cascade = false) {
   const nameEl = document.getElementById(`edit-name-${sheetRow}`);
   const prevEl = document.getElementById(`edit-prev-${sheetRow}`);
   const inboundEl = document.getElementById(`edit-inbound-${sheetRow}`);
@@ -7275,7 +7288,7 @@ async function saveDailyRow(sheetRow) {
   
   if (!nameEl) return showToast('행을 찾을 수 없습니다.', 'error');
   
-  showLoading('저장 중...');
+  showLoading(cascade ? '저장 + 이후 날짜 연쇄 갱신 중...' : '저장 중...');
   try {
     const result = await api('/sheets/daily-stock/update-row', 'POST', {
       sheet_row: sheetRow,
@@ -7283,11 +7296,25 @@ async function saveDailyRow(sheetRow) {
       prev_stock: parseFloat(prevEl.value) || 0,
       inbound_qty: parseFloat(inboundEl.value) || 0,
       usage_qty: parseFloat(usageEl.value) || 0,
-      current_stock: parseFloat(curEl.value) || 0
+      current_stock: parseFloat(curEl.value) || 0,
+      cascade: cascade  // ★★★ v3.6.173 ★★★
     });
     hideLoading();
     if (result.success) {
-      showToast(`✅ 행 ${sheetRow} 저장 완료`, 'success');
+      let msg = `✅ 행 ${sheetRow} 저장 완료`;
+      if (cascade && result.cascade && result.cascade.updated_rows !== undefined) {
+        msg += ` (이후 ${result.cascade.updated_rows}개 행 연쇄 갱신, ${result.cascade.future_rows_found}개 후속 행 중)`;
+      }
+      showToast(msg, 'success');
+      
+      // cascade 결과 상세 로그
+      if (cascade && result.cascade) {
+        console.log('[cascade 결과]', result.cascade);
+        if (result.cascade.updates && result.cascade.updates.length > 0) {
+          console.table(result.cascade.updates);
+        }
+      }
+      
       await loadDailyLedger();
     } else {
       showToast('저장 실패: ' + (result.error || ''), 'error');
@@ -7296,6 +7323,28 @@ async function saveDailyRow(sheetRow) {
     hideLoading();
     showToast('저장 실패: ' + (e.message || e), 'error');
   }
+}
+
+// 저장 + 연쇄 갱신 (다음 날짜 자동 재계산)
+async function saveDailyRowCascade(sheetRow) {
+  const curEl = document.getElementById(`edit-cur-${sheetRow}`);
+  const nameEl = document.getElementById(`edit-name-${sheetRow}`);
+  if (!curEl || !nameEl) return showToast('행을 찾을 수 없습니다.', 'error');
+  
+  const itemName = nameEl.value.trim();
+  const newCurrent = parseFloat(curEl.value) || 0;
+  
+  if (!confirm(
+    `⚠️ 연쇄 갱신 확인\n\n` +
+    `이 행(${itemName})을 저장하고,\n` +
+    `이 품목의 다음 날짜부터 마지막 날짜까지\n` +
+    `전일재고/현재재고를 자동으로 다시 계산합니다.\n\n` +
+    `공식: 다음날 전일재고 = 오늘 현재재고 (${newCurrent})\n` +
+    `      다음날 현재재고 = 다음날 전일재고 + 입고 - 사용\n\n` +
+    `계속하시겠습니까?`
+  )) return;
+  
+  await saveDailyRow(sheetRow, true);
 }
 
 // 특정 행의 모든 필드 음수 → 양수
@@ -7544,9 +7593,70 @@ async function rebuildFromInbound(date) {
   }
 }
 
+// ★★★ v3.6.173: 특정 날짜 이후 모든 행 연쇄 재계산 (품목 선택 옵션) ★★★
+async function cascadeRecalcFromDate(startDate) {
+  const itemCode = prompt(
+    `📅 [${startDate}] 이후 날짜 연쇄 재계산\n\n` +
+    `이 날짜의 현재재고를 seed로 삼아,\n` +
+    `이후 날짜의 전일재고/현재재고를 순차적으로 다시 계산합니다.\n\n` +
+    `공식: 다음날 전일재고 = 오늘 현재재고\n` +
+    `      다음날 현재재고 = 다음날 전일재고 + 입고 - 사용\n\n` +
+    `▶ 특정 품목만: 품목코드 입력 (예: R068)\n` +
+    `▶ 전체 품목: 'all' 입력\n` +
+    `▶ 취소: 빈칸`,
+    'all'
+  );
+  
+  if (!itemCode) {
+    showToast('취소됨', 'info');
+    return;
+  }
+  
+  const filterCode = itemCode.trim().toLowerCase() === 'all' ? null : itemCode.trim().toUpperCase();
+  
+  if (!confirm(
+    `⚠️ 최종 확인\n\n` +
+    `시작일: ${startDate}\n` +
+    `대상: ${filterCode || '전체 품목'}\n\n` +
+    `${startDate} 이후 모든 날짜의 전일재고/현재재고가 재계산됩니다.\n` +
+    `이 작업은 되돌릴 수 없습니다.\n\n` +
+    `계속하시겠습니까?`
+  )) return;
+  
+  showLoading('연쇄 재계산 중... (품목 수에 따라 시간 소요)');
+  try {
+    const body = {
+      start_date: startDate,
+      confirm: true
+    };
+    if (filterCode) body.item_code = filterCode;
+    
+    const result = await api('/sheets/daily-stock/cascade-recalc', 'POST', body);
+    hideLoading();
+    
+    if (result.success) {
+      showToast(
+        `✅ 완료: ${result.total_rows_updated}개 행 갱신 (${result.total_items_processed}개 품목, ${result.batch_chunks} chunks)`,
+        'success'
+      );
+      console.log('[cascade-recalc 결과]', result);
+      if (result.items_summary && result.items_summary.length > 0) {
+        console.table(result.items_summary);
+      }
+      await loadDailyLedger();
+    } else {
+      showToast('실패: ' + (result.error || ''), 'error');
+    }
+  } catch (e) {
+    hideLoading();
+    showToast('오류: ' + (e.message || e), 'error');
+  }
+}
+
 // 전역 노출
 window.toggleDailyEditMode = toggleDailyEditMode;
 window.saveDailyRow = saveDailyRow;
+window.saveDailyRowCascade = saveDailyRowCascade;
 window.flipRowSigns = flipRowSigns;
 window.deleteDailyRow = deleteDailyRow;
 window.fixDailyItemNames = fixDailyItemNames;
@@ -7554,6 +7664,7 @@ window.flipDailyNegatives = flipDailyNegatives;
 window.loadSheetRowMapping = loadSheetRowMapping;
 window.recalcCurrentStock = recalcCurrentStock;
 window.rebuildFromInbound = rebuildFromInbound;
+window.cascadeRecalcFromDate = cascadeRecalcFromDate;
 
 // 일별 품목 요약 렌더링
 function renderDailySummary(result, date) {

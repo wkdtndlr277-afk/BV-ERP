@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.170';
-const APP_BUILD = '20260804-2';
+const APP_VERSION = '3.6.171';
+const APP_BUILD = '20260805-1';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -6958,6 +6958,22 @@ function renderSheetsDailyStock(result, date, search, category) {
   // ★ 제외 항목: 정제수(RM184), 마스크(RT1021)
   data = data.filter(d => d.item_code !== 'RM184' && d.item_code !== 'RT1021');
   
+  // ★★★ v3.6.171: 현재재고가 비어있거나 0이면 자동 계산 ★★★
+  // 계산식: current_stock = prev_stock + inbound_qty - usage_qty
+  // (마이너스 재고를 시각적으로 확인 가능하도록)
+  data.forEach(d => {
+    const prev = parseFloat(d.prev_stock) || 0;
+    const inbound = parseFloat(d.inbound_qty) || 0;
+    const usage = parseFloat(d.usage_qty) || 0;
+    const computedStock = prev + inbound - usage;
+    // current_stock이 없거나(null/undefined), 0이면서 계산값이 다르면 계산값 사용
+    if (d.current_stock == null || d.current_stock === '' || 
+        (Number(d.current_stock) === 0 && computedStock !== 0)) {
+      d.current_stock = computedStock;
+      d._auto_computed = true;  // 자동 계산 표시 플래그
+    }
+  });
+  
   // 카테고리 필터링 (원료: R/RM, 부자재: SM, 제품: PR/PD)
   if (category === '원료') {
     data = data.filter(d => d.item_code?.startsWith('R') || d.item_code?.startsWith('RM'));
@@ -6979,12 +6995,12 @@ function renderSheetsDailyStock(result, date, search, category) {
   // item_code 기준 정렬
   data.sort((a, b) => (a.item_code || '').localeCompare(b.item_code || ''));
   
-  // 합계 계산
+  // 합계 계산 (자동계산된 current_stock 포함)
   const summary = {
-    prev_stock: data.reduce((sum, d) => sum + (d.prev_stock || 0), 0),
-    inbound_qty: data.reduce((sum, d) => sum + (d.inbound_qty || 0), 0),
-    usage_qty: data.reduce((sum, d) => sum + (d.usage_qty || 0), 0),
-    current_stock: data.reduce((sum, d) => sum + (d.current_stock || 0), 0)
+    prev_stock: data.reduce((sum, d) => sum + (parseFloat(d.prev_stock) || 0), 0),
+    inbound_qty: data.reduce((sum, d) => sum + (parseFloat(d.inbound_qty) || 0), 0),
+    usage_qty: data.reduce((sum, d) => sum + (parseFloat(d.usage_qty) || 0), 0),
+    current_stock: data.reduce((sum, d) => sum + (parseFloat(d.current_stock) || 0), 0)
   };
   
   if (data.length === 0) {
@@ -7036,11 +7052,23 @@ function renderSheetsDailyStock(result, date, search, category) {
       </div>
     </div>
     
-    <div class="p-3 border-b bg-white flex items-center gap-4 text-sm">
+    <div class="p-3 border-b bg-white flex items-center gap-4 text-sm flex-wrap">
       <span class="text-purple-600"><b>전일재고</b> ${formatNumber(summary.prev_stock)}</span>
       <span class="text-blue-600"><b>입고</b> +${formatNumber(summary.inbound_qty)}</span>
       <span class="text-red-600"><b>사용</b> -${formatNumber(summary.usage_qty)}</span>
       <span class="text-gray-800 font-bold"><b>현재고</b> ${formatNumber(summary.current_stock)}</span>
+      ${(() => {
+        const negCount = data.filter(d => (d.current_stock || 0) < 0).length;
+        const autoCount = data.filter(d => d._auto_computed).length;
+        let badges = '';
+        if (negCount > 0) {
+          badges += `<span class="px-2 py-0.5 bg-red-100 text-red-700 rounded font-bold">⚠️ 음수재고 ${negCount}건</span>`;
+        }
+        if (autoCount > 0) {
+          badges += `<span class="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded" title="시트 현재고 값이 비어있어 전일+입고-사용으로 자동계산됨">🔄 자동계산 ${autoCount}건</span>`;
+        }
+        return badges;
+      })()}
     </div>
     
     ${editMode && !hasRowMapping ? `
@@ -7088,25 +7116,31 @@ function renderSheetsDailyStock(result, date, search, category) {
                     <input type="number" step="0.01" 
                            class="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right ${(item.prev_stock||0) < 0 ? 'bg-red-50 text-red-600' : ''}" 
                            value="${item.prev_stock || 0}" 
-                           id="edit-prev-${rowKey}">
+                           id="edit-prev-${rowKey}"
+                           oninput="recalcCurrentStock(${rowKey})">
                   </td>
                   <td class="p-2">
                     <input type="number" step="0.01" 
                            class="w-24 border border-blue-300 rounded px-2 py-1 text-sm text-right text-blue-600 ${(item.inbound_qty||0) < 0 ? 'bg-red-50' : ''}" 
                            value="${item.inbound_qty || 0}" 
-                           id="edit-inbound-${rowKey}">
+                           id="edit-inbound-${rowKey}"
+                           oninput="recalcCurrentStock(${rowKey})">
                   </td>
                   <td class="p-2">
                     <input type="number" step="0.01" 
                            class="w-24 border border-red-300 rounded px-2 py-1 text-sm text-right text-red-600 ${(item.usage_qty||0) < 0 ? 'bg-red-50' : ''}" 
                            value="${item.usage_qty || 0}" 
-                           id="edit-usage-${rowKey}">
+                           id="edit-usage-${rowKey}"
+                           oninput="recalcCurrentStock(${rowKey})">
                   </td>
                   <td class="p-2">
                     <input type="number" step="0.01" 
-                           class="w-24 border border-gray-500 rounded px-2 py-1 text-sm text-right font-bold ${(item.current_stock||0) < 0 ? 'bg-red-100 text-red-700 border-red-500' : ''}" 
-                           value="${item.current_stock || 0}" 
-                           id="edit-cur-${rowKey}">
+                           class="w-24 border-2 rounded px-2 py-1 text-sm text-right font-bold ${(item.current_stock||0) < 0 ? 'bg-red-100 text-red-700 border-red-500' : (item._auto_computed ? 'bg-yellow-50 border-yellow-400 text-yellow-800' : 'border-gray-500')}" 
+                           value="${(item.current_stock || 0).toFixed(4).replace(/\.?0+$/,'')}" 
+                           id="edit-cur-${rowKey}"
+                           title="${item._auto_computed ? '자동 계산됨 (전일+입고-사용)' : ''}">
+                    ${item._auto_computed ? '<div class="text-xs text-yellow-600 mt-0.5">🔄자동계산</div>' : ''}
+                    ${(item.current_stock || 0) < 0 ? '<div class="text-xs text-red-600 font-bold mt-0.5">⚠️음수재고</div>' : ''}
                   </td>
                   <td class="p-2 text-center text-gray-500">${item.unit || ''}</td>
                   <td class="p-2 text-center">
@@ -7136,8 +7170,10 @@ function renderSheetsDailyStock(result, date, search, category) {
                 ? `<span class="text-yellow-700 bg-yellow-100 px-1 rounded" title="품목명이 코드로 표시됨">⚠️ ${item.item_name}</span>`
                 : (item.item_name || '');
               const stockCell = (item.current_stock || 0) < 0 
-                ? `<span class="text-red-600 font-bold bg-red-50 px-1 rounded">${formatNumber(item.current_stock)}</span>`
-                : `<span class="font-bold">${formatNumber(item.current_stock || 0)}</span>`;
+                ? `<span class="text-red-600 font-bold bg-red-100 px-2 py-0.5 rounded" title="음수 재고">⚠️ ${formatNumber(item.current_stock)}</span>`
+                : item._auto_computed
+                  ? `<span class="font-bold text-yellow-700 bg-yellow-50 px-2 py-0.5 rounded" title="전일+입고-사용으로 자동계산됨">🔄 ${formatNumber(item.current_stock || 0)}</span>`
+                  : `<span class="font-bold">${formatNumber(item.current_stock || 0)}</span>`;
               return `
                 <tr class="border-b hover:bg-gray-50">
                   <td class="p-2 font-mono text-xs">${item.item_code || ''}</td>
@@ -7381,6 +7417,31 @@ async function flipDailyNegatives(date) {
   }
 }
 
+// ★★★ v3.6.171: 편집 모드에서 전일/입고/사용 값 변경 시 현재재고 실시간 재계산 ★★★
+function recalcCurrentStock(rowKey) {
+  const prevEl = document.getElementById(`edit-prev-${rowKey}`);
+  const inbEl = document.getElementById(`edit-inbound-${rowKey}`);
+  const useEl = document.getElementById(`edit-usage-${rowKey}`);
+  const curEl = document.getElementById(`edit-cur-${rowKey}`);
+  if (!prevEl || !inbEl || !useEl || !curEl) return;
+  
+  const prev = parseFloat(prevEl.value) || 0;
+  const inb = parseFloat(inbEl.value) || 0;
+  const use = parseFloat(useEl.value) || 0;
+  const computed = prev + inb - use;
+  
+  // 소수점 4자리로 반올림하고 후행 0 제거
+  curEl.value = Number(computed.toFixed(4));
+  
+  // 음수면 빨간 배경, 아니면 노란(자동계산) 배경
+  curEl.classList.remove('bg-red-100', 'text-red-700', 'border-red-500', 'bg-yellow-50', 'border-yellow-400', 'text-yellow-800', 'border-gray-500');
+  if (computed < 0) {
+    curEl.classList.add('bg-red-100', 'text-red-700', 'border-red-500');
+  } else {
+    curEl.classList.add('bg-yellow-50', 'border-yellow-400', 'text-yellow-800');
+  }
+}
+
 // 전역 노출
 window.toggleDailyEditMode = toggleDailyEditMode;
 window.saveDailyRow = saveDailyRow;
@@ -7389,6 +7450,7 @@ window.deleteDailyRow = deleteDailyRow;
 window.fixDailyItemNames = fixDailyItemNames;
 window.flipDailyNegatives = flipDailyNegatives;
 window.loadSheetRowMapping = loadSheetRowMapping;
+window.recalcCurrentStock = recalcCurrentStock;
 
 // 일별 품목 요약 렌더링
 function renderDailySummary(result, date) {

@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.175';
-const APP_BUILD = '20260805-5';
+const APP_VERSION = '3.6.176';
+const APP_BUILD = '20260805-6';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -7077,6 +7077,13 @@ function renderSheetsDailyStock(result, date, search, category) {
           <i class="fas fa-external-link-alt mr-1"></i>
           시트 원본 확인
         </button>
+        <!-- ★★★ v3.6.176: 수식 재적용 (전일재고/입고량/현재고 모두 수식화) ★★★ -->
+        <button onclick="applyDailyFormulas()" 
+                class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium hover:bg-emerald-200 border border-emerald-300"
+                title="정적 값을 수식으로 재구축 (D=어제G / E=원료입고SUMIFS / G=D+E-F)">
+          <i class="fas fa-function mr-1"></i>
+          수식 재적용
+        </button>
       </div>
     </div>
     
@@ -7974,6 +7981,126 @@ async function showSheetSource(date) {
   }
 }
 
+// ★★★ v3.6.176: 일별수불부 수식 전체 재적용 ★★★
+async function applyDailyFormulas() {
+  // 1단계: 안내 + 옵션 수집
+  const scope = prompt(
+    '📐 일별수불부 수식 재적용\n\n' +
+    '현재 시트가 정적 값(숫자)만 저장되어 있어\n' +
+    '- 값 하나 수정하면 이후 날짜가 안 따라감\n' +
+    '- 원료입고 변경이 자동 반영 안 됨\n\n' +
+    '적용 후:\n' +
+    ' D열(전일재고) = 어제 같은 코드의 G셀 참조 수식\n' +
+    ' E열(입고량)  = 원료입고 SUMIFS 수식\n' +
+    ' G열(현재고)  = D + E - F 수식\n' +
+    ' F열(사용량)  = 유지 (건드리지 않음)\n\n' +
+    '적용 범위 선택:\n' +
+    '  전체 → 빈 값 그대로 Enter\n' +
+    '  특정 기간 → "2026-07-01,2026-08-04" 형식\n' +
+    '  특정 품목 → "code:R102" 또는 "code:RM1014"',
+    ''
+  );
+  if (scope === null) return;
+
+  let startDate, endDate, itemCode;
+  const s = (scope || '').trim();
+  if (s.startsWith('code:')) {
+    itemCode = s.slice(5).trim().toUpperCase();
+  } else if (s.includes(',')) {
+    const parts = s.split(',').map(p => p.trim());
+    startDate = parts[0];
+    endDate = parts[1];
+  }
+
+  const label = itemCode ? `품목 ${itemCode}` :
+                (startDate ? `${startDate} ~ ${endDate || '전체'}` : '전체 기간');
+
+  // 2단계: dry-run 미리보기
+  showToast('미리보기 중... (수식 없는 셀 검사)', 'info');
+  try {
+    const preview = await api('/sheets/daily-stock/apply-formulas', 'POST', {
+      start_date: startDate,
+      end_date: endDate,
+      item_code: itemCode,
+      only_missing: true,
+      keep_usage: true,
+      dry_run: true,
+      confirm: false
+    });
+
+    if (!preview.success) {
+      showToast('미리보기 실패: ' + (preview.error || ''), 'error');
+      return;
+    }
+
+    const st = preview.stats || {};
+    const cells = st.formula_cells_added || {};
+    const totalNewFormulas = (cells.D || 0) + (cells.E || 0) + (cells.G || 0);
+
+    if (preview.will_update_rows === 0) {
+      showToast('✅ 이미 모든 셀에 수식이 있습니다. 재적용 불필요.', 'success');
+      return;
+    }
+
+    // 3단계: 확인 다이얼로그
+    const ok = confirm(
+      `📊 수식 재적용 미리보기 (${label})\n\n` +
+      `대상 품목 수: ${preview.total_items || 0}개\n` +
+      `스캔한 행: ${st.total_rows_scanned || 0}개\n` +
+      `업데이트할 행: ${preview.will_update_rows}개\n\n` +
+      `추가될 수식 셀:\n` +
+      `  D열 (전일재고): ${cells.D || 0}개\n` +
+      `  E열 (입고량):   ${cells.E || 0}개\n` +
+      `  G열 (현재고):   ${cells.G || 0}개\n` +
+      `  합계: ${totalNewFormulas}개 셀\n\n` +
+      `※ 각 코드의 첫 날짜 D열은 정적 값 유지 (참조할 어제가 없음): ${st.first_row_per_code_kept_static || 0}건\n` +
+      `※ F열(사용량)은 건드리지 않습니다.\n\n` +
+      `실제 적용할까요?`
+    );
+    if (!ok) return;
+
+    // 4단계: 실제 적용
+    showToast('수식 적용 중... 잠시 기다려주세요 (30~90초)', 'info');
+    const result = await api('/sheets/daily-stock/apply-formulas', 'POST', {
+      start_date: startDate,
+      end_date: endDate,
+      item_code: itemCode,
+      only_missing: true,
+      keep_usage: true,
+      dry_run: false,
+      confirm: true
+    });
+
+    if (!result.success) {
+      showToast('적용 실패: ' + (result.error || ''), 'error');
+      return;
+    }
+
+    const rs = result.stats || {};
+    const rc = rs.formula_cells_added || {};
+    alert(
+      `✅ 수식 재적용 완료!\n\n` +
+      `총 업데이트 행: ${result.total_rows_updated}개\n` +
+      `배치 청크: ${result.batch_chunks_written}개\n\n` +
+      `추가된 수식:\n` +
+      `  D열: ${rc.D || 0}개\n` +
+      `  E열: ${rc.E || 0}개\n` +
+      `  G열: ${rc.G || 0}개\n\n` +
+      `이제 다음이 자동으로 흐릅니다:\n` +
+      ` ✓ 원료입고 수정 → 입고량/현재고 자동반영\n` +
+      ` ✓ 어제 재고 수정 → 오늘 전일재고 자동반영\n` +
+      ` ✓ 사용량 변경 → 현재고 자동재계산`
+    );
+
+    // 새로고침
+    if (typeof loadDailyStock === 'function') {
+      loadDailyStock(document.getElementById('daily-date')?.value);
+    }
+  } catch (e) {
+    showToast('오류: ' + (e.message || e), 'error');
+  }
+}
+
 // 전역 노출
 window.toggleDailyEditMode = toggleDailyEditMode;
 window.saveDailyRow = saveDailyRow;
@@ -7988,6 +8115,7 @@ window.rebuildFromInbound = rebuildFromInbound;
 window.cascadeRecalcFromDate = cascadeRecalcFromDate;
 window.checkContinuity = checkContinuity;
 window.showSheetSource = showSheetSource;
+window.applyDailyFormulas = applyDailyFormulas;
 
 // 일별 품목 요약 렌더링
 function renderDailySummary(result, date) {

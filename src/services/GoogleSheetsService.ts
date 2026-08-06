@@ -179,7 +179,8 @@ export class GoogleSheetsService {
 
     if (!response.ok) {
       const error = await response.json();
-      console.error('[batchWriteSheet] API 오류:', error);
+      console.error('[batchWriteSheet] API 오류:', JSON.stringify(error).slice(0, 500));
+      throw new Error(`batchWriteSheet 실패: ${JSON.stringify(error).slice(0, 300)}`);
     }
 
     return response.ok;

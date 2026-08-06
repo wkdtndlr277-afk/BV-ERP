@@ -7364,6 +7364,331 @@ sheets.post('/daily-stock/fix-continuity', async (c) => {
   }
 });
 
+// ★★★ v3.6.176: 일별수불부 수식 전체 재구축 ★★★
+// POST /daily-stock/apply-formulas
+// body: { start_date?, end_date?, item_code?, only_missing?, keep_usage?, dry_run, confirm }
+//
+// 목적: 정적 값으로만 저장된 일별수불부에 아래 수식을 일괄 적용하여
+//       사용자가 어떤 행을 수정해도 이후 날짜/현재재고가 자동으로 흐르게 함
+//
+// 수식:
+//   D열 (전일재고) = '=G{어제행}'  (동일 코드의 직전날짜 행 G셀 참조; 최초일이면 정적 값 유지)
+//   E열 (입고량)   = '=IFERROR(SUMIFS('원료입고'!E:E,'원료입고'!B:B,B{n},'원료입고'!A:A,A{n}),0)'
+//   F열 (사용량)   = 유지 (keep_usage=true) 또는 로트매칭 SUMIFS 수식으로 재설정
+//   G열 (현재고)   = '=D{n}+E{n}-F{n}'
+sheets.post('/daily-stock/apply-formulas', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json<{
+      start_date?: string;
+      end_date?: string;
+      item_code?: string;
+      only_missing?: boolean;  // 기본 true - 수식이 없는 셀만 적용
+      keep_usage?: boolean;    // 기본 true - F열(사용량)은 건드리지 않음
+      dry_run?: boolean;
+      confirm: boolean;
+    }>();
+
+    if (!body.confirm && !body.dry_run) {
+      return c.json({ success: false, error: 'confirm: true 또는 dry_run: true 필요' }, 400);
+    }
+
+    const onlyMissing = body.only_missing !== false;  // 기본 true
+    const keepUsage = body.keep_usage !== false;      // 기본 true
+    const isDryRun = body.dry_run === true;
+
+    // 1. 시트 전체 읽기 - values와 formulas 둘 다
+    const values = await service.readSheet('일별수불부', 'A2:H') || [];
+    const formulas = await service.readSheetFormulas('일별수불부', 'A2:H') || [];
+
+    // 2. 코드별 그룹핑 + 날짜 순 정렬 (전일재고 참조용 매핑 생성)
+    interface RowInfo {
+      sheet_row: number;
+      date: string;
+      code: string;
+      name: string;
+      prev_stock: number;
+      inbound_qty: number;
+      usage_qty: number;
+      current_stock: number;
+      unit: string;
+      // 기존 수식 여부
+      hasFormulaD: boolean;
+      hasFormulaE: boolean;
+      hasFormulaF: boolean;
+      hasFormulaG: boolean;
+    }
+
+    const byCode = new Map<string, RowInfo[]>();
+
+    for (let idx = 0; idx < values.length; idx++) {
+      const v = values[idx];
+      const f = formulas[idx] || [];
+      const code = String(v[1] || '').trim();
+      if (!code) continue;
+      if (body.item_code && code !== body.item_code) continue;
+
+      const dateStr = String(v[0] || '').slice(0, 10);
+      if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
+
+      if (body.start_date && dateStr < body.start_date) continue;
+      if (body.end_date && dateStr > body.end_date) continue;
+
+      const fD = String(f[3] || '');
+      const fE = String(f[4] || '');
+      const fF = String(f[5] || '');
+      const fG = String(f[6] || '');
+
+      if (!byCode.has(code)) byCode.set(code, []);
+      byCode.get(code)!.push({
+        sheet_row: idx + 2,
+        date: dateStr,
+        code,
+        name: String(v[2] || ''),
+        prev_stock: parseFloat(v[3]) || 0,
+        inbound_qty: parseFloat(v[4]) || 0,
+        usage_qty: parseFloat(v[5]) || 0,
+        current_stock: parseFloat(v[6]) || 0,
+        unit: String(v[7] || 'kg'),
+        hasFormulaD: fD.startsWith('='),
+        hasFormulaE: fE.startsWith('='),
+        hasFormulaF: fF.startsWith('='),
+        hasFormulaG: fG.startsWith('='),
+      });
+    }
+
+    // 3. 각 코드별로 날짜 순 정렬 후 수식 생성
+    interface Update {
+      sheet_row: number;
+      values: any[];  // D, E, F, G (columns 4~7 → range D:G)
+      touched: { D: boolean; E: boolean; F: boolean; G: boolean };
+      before: any;
+      formula_types: string;  // 'DEFG' 등
+    }
+    const updates: Update[] = [];
+    const stats = {
+      total_rows_scanned: 0,
+      rows_with_updates: 0,
+      formula_cells_added: { D: 0, E: 0, F: 0, G: 0 },
+      first_row_per_code_kept_static: 0,
+    };
+
+    for (const [code, rows] of byCode.entries()) {
+      rows.sort((a, b) => a.date.localeCompare(b.date));
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const prevRow = i > 0 ? rows[i - 1] : null;
+        stats.total_rows_scanned++;
+
+        // D열 수식: 어제 같은 코드의 G셀 참조
+        let newD: any;
+        let touchedD = false;
+        if (!prevRow) {
+          // 첫날 → 기존 값 유지 (정적)
+          newD = row.prev_stock;
+          stats.first_row_per_code_kept_static++;
+        } else {
+          const expectedFormulaD = `=G${prevRow.sheet_row}`;
+          const shouldUpdate = onlyMissing ? !row.hasFormulaD : true;
+          if (shouldUpdate) {
+            newD = expectedFormulaD;
+            touchedD = true;
+            stats.formula_cells_added.D++;
+          } else {
+            newD = row.prev_stock;
+          }
+        }
+
+        // E열 수식: 원료입고 SUMIFS
+        let newE: any;
+        let touchedE = false;
+        const expectedFormulaE = `=IFERROR(SUMIFS('원료입고'!E:E,'원료입고'!B:B,B${row.sheet_row},'원료입고'!A:A,A${row.sheet_row}),0)`;
+        const shouldUpdateE = onlyMissing ? !row.hasFormulaE : true;
+        if (shouldUpdateE) {
+          newE = expectedFormulaE;
+          touchedE = true;
+          stats.formula_cells_added.E++;
+        } else {
+          newE = row.inbound_qty;
+        }
+
+        // F열: 유지 (keep_usage=true) 또는 로트매칭 SUMIFS
+        let newF: any;
+        let touchedF = false;
+        if (keepUsage) {
+          // 기존 값 그대로 (수식이면 수식, 정적이면 정적)
+          newF = row.hasFormulaF ? { formula: true } : row.usage_qty;
+        } else {
+          const expectedFormulaF = `=IFERROR(SUMIFS('로트매칭'!E:E,'로트매칭'!C:C,B${row.sheet_row},'로트매칭'!A:A,A${row.sheet_row}),0)`;
+          const shouldUpdateF = onlyMissing ? !row.hasFormulaF : true;
+          if (shouldUpdateF) {
+            newF = expectedFormulaF;
+            touchedF = true;
+            stats.formula_cells_added.F++;
+          } else {
+            newF = row.usage_qty;
+          }
+        }
+
+        // G열 수식: D + E - F
+        let newG: any;
+        let touchedG = false;
+        const expectedFormulaG = `=D${row.sheet_row}+E${row.sheet_row}-F${row.sheet_row}`;
+        const shouldUpdateG = onlyMissing ? !row.hasFormulaG : true;
+        if (shouldUpdateG) {
+          newG = expectedFormulaG;
+          touchedG = true;
+          stats.formula_cells_added.G++;
+        } else {
+          newG = row.current_stock;
+        }
+
+        // F열 유지 케이스: writeSheetWithFormulas는 undefined를 안 좋아하니
+        // 실제 셀 값을 다시 넣어야 함. 하지만 원본 수식을 잃지 않으려면
+        // F열은 range에서 아예 제외하고 D/E/G만 쓰는 게 안전.
+        // → 그래서 F는 별도 range로 처리하지 않고, D:G 4셀을 한 번에 쓸 때
+        //   F를 기존 값(문자열 그대로)으로 전달.
+        //   * 기존이 수식이면 결과값을 다시 쓰게 되어 수식이 사라짐 → 위험
+        //   * 그래서 아래 로직: F를 안 건드리려면 D:E와 G를 따로 씀.
+
+        if (touchedD || touchedE || touchedF || touchedG) {
+          updates.push({
+            sheet_row: row.sheet_row,
+            values: [newD, newE, newF, newG],  // D, E, F, G
+            touched: { D: touchedD, E: touchedE, F: touchedF, G: touchedG },
+            before: {
+              date: row.date,
+              code: row.code,
+              prev_stock: row.prev_stock,
+              inbound_qty: row.inbound_qty,
+              usage_qty: row.usage_qty,
+              current_stock: row.current_stock,
+              hasFormula: { D: row.hasFormulaD, E: row.hasFormulaE, F: row.hasFormulaF, G: row.hasFormulaG }
+            },
+            formula_types:
+              (touchedD ? 'D' : '') +
+              (touchedE ? 'E' : '') +
+              (touchedF ? 'F' : '') +
+              (touchedG ? 'G' : '')
+          });
+          stats.rows_with_updates++;
+        }
+      }
+    }
+
+    if (isDryRun) {
+      const cellCount = updates.reduce((sum, u) =>
+        sum + (u.touched.D ? 1 : 0) + (u.touched.E ? 1 : 0) + (u.touched.F ? 1 : 0) + (u.touched.G ? 1 : 0), 0);
+      return c.json({
+        success: true,
+        mode: 'dry_run',
+        total_items: byCode.size,
+        stats,
+        will_update_rows: updates.length,
+        will_update_cells: cellCount,
+        sample_updates: updates.slice(0, 5).map(u => ({
+          sheet_row: u.sheet_row,
+          date: u.before.date,
+          code: u.before.code,
+          formula_types_touched: u.formula_types,
+          new_D: u.touched.D ? u.values[0] : '(변경 안함)',
+          new_E: u.touched.E ? u.values[1] : '(변경 안함)',
+          new_G: u.touched.G ? u.values[3] : '(변경 안함)'
+        }))
+      });
+    }
+
+    // 4. 실제 쓰기 - touched된 셀만 개별로 range 생성 (덮어쓰기 방지)
+    // 원리: D, E, F, G 각각을 독립 범위로 다루고, touched된 것만 batch에 추가
+    // 인접한 sheet_row의 같은 컬럼(예: D열 12332,12333)만 병합 → 그 외엔 개별 range
+    updates.sort((a, b) => a.sheet_row - b.sheet_row);
+
+    interface CellUpdate {
+      sheet_row: number;
+      col: 'D' | 'E' | 'F' | 'G';
+      value: any;
+    }
+    const cellUpdates: CellUpdate[] = [];
+    for (const u of updates) {
+      if (u.touched.D) cellUpdates.push({ sheet_row: u.sheet_row, col: 'D', value: u.values[0] });
+      if (u.touched.E) cellUpdates.push({ sheet_row: u.sheet_row, col: 'E', value: u.values[1] });
+      if (u.touched.F) cellUpdates.push({ sheet_row: u.sheet_row, col: 'F', value: u.values[2] });
+      if (u.touched.G) cellUpdates.push({ sheet_row: u.sheet_row, col: 'G', value: u.values[3] });
+    }
+
+    // 같은 컬럼 + 연속 행끼리 묶기
+    cellUpdates.sort((a, b) => a.col.localeCompare(b.col) || a.sheet_row - b.sheet_row);
+    const allBatchUpdates: Array<{ sheetName: string; range: string; values: any[][] }> = [];
+    let curCol: string | null = null;
+    let curStart = 0;
+    let curEnd = 0;
+    let curValues: any[][] = [];
+    for (const cu of cellUpdates) {
+      if (cu.col === curCol && cu.sheet_row === curEnd + 1) {
+        curEnd = cu.sheet_row;
+        curValues.push([cu.value]);
+      } else {
+        if (curCol !== null) {
+          allBatchUpdates.push({
+            sheetName: '일별수불부',
+            range: `${curCol}${curStart}:${curCol}${curEnd}`,
+            values: curValues
+          });
+        }
+        curCol = cu.col;
+        curStart = cu.sheet_row;
+        curEnd = cu.sheet_row;
+        curValues = [[cu.value]];
+      }
+    }
+    if (curCol !== null) {
+      allBatchUpdates.push({
+        sheetName: '일별수불부',
+        range: `${curCol}${curStart}:${curCol}${curEnd}`,
+        values: curValues
+      });
+    }
+
+    // 40개씩 batch — subrequest 한계(50/1000) 회피 + 각 batchUpdate가 확실히 반영되도록
+    const BATCH_SIZE = 40;
+    let httpCalls = 0;
+    const failedBatches: any[] = [];
+    for (let i = 0; i < allBatchUpdates.length; i += BATCH_SIZE) {
+      const slice = allBatchUpdates.slice(i, i + BATCH_SIZE);
+      try {
+        const ok = await service.batchWriteSheet(slice);
+        if (!ok) {
+          failedBatches.push({ batch_index: httpCalls, sample_ranges: slice.slice(0, 3).map(s => s.range) });
+        }
+      } catch (e: any) {
+        failedBatches.push({ batch_index: httpCalls, error: e.message, sample_ranges: slice.slice(0, 3).map(s => s.range) });
+      }
+      httpCalls++;
+    }
+
+    return c.json({
+      success: true,
+      total_items: byCode.size,
+      stats,
+      total_rows_updated: updates.length,
+      total_ranges: allBatchUpdates.length,
+      http_batch_calls: httpCalls,
+      failed_batches: failedBatches,
+      keep_usage: keepUsage,
+      only_missing: onlyMissing,
+      note: '이제 D/E/G 셀이 수식이 되어, 원료입고 수정 또는 어제 재고 수정 시 자동으로 흐릅니다.'
+    });
+  } catch (error: any) {
+    console.error('[daily-stock/apply-formulas] error:', error);
+    return c.json({ success: false, error: error.message, stack: error.stack?.slice(0, 500) }, 500);
+  }
+});
+
 export default sheets;
 
 // ★★★ v3.6.45: 일별수불부 수식 날짜형식 통일 (SUMPRODUCT 방식) ★★★

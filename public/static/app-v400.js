@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.176';
-const APP_BUILD = '20260805-6';
+const APP_VERSION = '3.6.177';
+const APP_BUILD = '20260805-7';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -6952,27 +6952,12 @@ function renderSheetsDailyStock(result, date, search, category) {
   
   if (!contentEl) return;
   
-  // ★★★ v3.5.64: 구글시트 데이터 그대로 사용 (SSOT) - 재계산 금지 ★★★
-  // 구글시트의 current_stock은 수식으로 이미 계산됨
+  // ★★★ v3.6.177: 구글시트 SSOT - ERP에서 재고 재계산 절대 금지 ★★★
+  // 모든 값(D 전일재고 / E 입고 / F 사용 / G 현재고)은 구글시트 수식이 계산한 결과 그대로 사용
+  // ERP는 표시(read-only rendering)만 담당
   
   // ★ 제외 항목: 정제수(RM184), 마스크(RT1021)
   data = data.filter(d => d.item_code !== 'RM184' && d.item_code !== 'RT1021');
-  
-  // ★★★ v3.6.171: 현재재고가 비어있거나 0이면 자동 계산 ★★★
-  // 계산식: current_stock = prev_stock + inbound_qty - usage_qty
-  // (마이너스 재고를 시각적으로 확인 가능하도록)
-  data.forEach(d => {
-    const prev = parseFloat(d.prev_stock) || 0;
-    const inbound = parseFloat(d.inbound_qty) || 0;
-    const usage = parseFloat(d.usage_qty) || 0;
-    const computedStock = prev + inbound - usage;
-    // current_stock이 없거나(null/undefined), 0이면서 계산값이 다르면 계산값 사용
-    if (d.current_stock == null || d.current_stock === '' || 
-        (Number(d.current_stock) === 0 && computedStock !== 0)) {
-      d.current_stock = computedStock;
-      d._auto_computed = true;  // 자동 계산 표시 플래그
-    }
-  });
   
   // 카테고리 필터링 (원료: R/RM, 부자재: SM, 제품: PR/PD)
   if (category === '원료') {
@@ -7037,54 +7022,41 @@ function renderSheetsDailyStock(result, date, search, category) {
           <i class="fas fa-${editMode ? 'check' : 'edit'} mr-1"></i>
           ${editMode ? '편집 완료' : '수동 정정 모드'}
         </button>
+        <!-- v3.6.177: ERP 재계산 기능 제거 - 모든 계산은 구글시트 수식이 담당 -->
         <button onclick="fixDailyItemNames('${date}')" 
                 class="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-200"
-                title="품목명이 코드로 표시된 행을 원료마스터에서 자동 복구">
+                title="품목명이 코드로 표시된 행을 원료마스터에서 자동 복구 (재고 계산 아님)">
           <i class="fas fa-wand-magic-sparkles mr-1"></i>
           이름 자동복구
         </button>
-        <button onclick="flipDailyNegatives('${date}')" 
-                class="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200"
-                title="마이너스로 표시된 재고를 플러스로 일괄 전환">
-          <i class="fas fa-exchange-alt mr-1"></i>
-          음수→양수 일괄
-        </button>
-        <!-- ★★★ v3.6.172: 원료입고 기반 재계산 ★★★ -->
-        <button onclick="rebuildFromInbound('${date}')" 
-                class="px-3 py-1.5 bg-green-100 text-green-700 rounded-lg text-sm font-medium hover:bg-green-200 border border-green-300"
-                title="구글시트 원료입고를 수정한 후 이 버튼을 누르면 일별수불부가 자동 재계산됩니다">
-          <i class="fas fa-sync-alt mr-1"></i>
-          원료입고 기준 재계산
-        </button>
-        <!-- ★★★ v3.6.173: 이후 날짜 연쇄 재계산 ★★★ -->
-        <button onclick="cascadeRecalcFromDate('${date}')" 
-                class="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-200 border border-blue-300"
-                title="이 날짜 이후 모든 날짜의 전일재고/현재재고를 자동 재계산 (품목 선택 가능)">
-          <i class="fas fa-forward mr-1"></i>
-          이후 날짜 연쇄 재계산
-        </button>
-        <!-- ★★★ v3.6.174: 연속성 진단 및 자동수정 ★★★ -->
-        <button onclick="checkContinuity('${date}')" 
-                class="px-3 py-1.5 bg-orange-100 text-orange-700 rounded-lg text-sm font-medium hover:bg-orange-200 border border-orange-300"
-                title="이 날짜와 앞뒤 날짜의 연속성 검사 (이전 현재고 vs 이날 전일재고 불일치 감지)">
-          <i class="fas fa-search-plus mr-1"></i>
-          연속성 진단
-        </button>
-        <!-- ★★★ v3.6.175: 시트 원본과 비교 ★★★ -->
         <button onclick="showSheetSource('${date}')" 
                 class="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 border border-gray-400"
                 title="ERP가 실제 참조 중인 구글시트 URL 및 raw 데이터 확인">
           <i class="fas fa-external-link-alt mr-1"></i>
           시트 원본 확인
         </button>
-        <!-- ★★★ v3.6.176: 수식 재적용 (전일재고/입고량/현재고 모두 수식화) ★★★ -->
         <button onclick="applyDailyFormulas()" 
                 class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium hover:bg-emerald-200 border border-emerald-300"
-                title="정적 값을 수식으로 재구축 (D=어제G / E=원료입고SUMIFS / G=D+E-F)">
+                title="새로 추가된 행/셀에 재고 수식 세팅 (D=어제G / E=원료입고SUMIFS / G=D+E-F)">
           <i class="fas fa-function mr-1"></i>
-          수식 재적용
+          수식 세팅
         </button>
+        <a href="https://docs.google.com/spreadsheets/d/1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU/edit#gid=0" 
+           target="_blank"
+           class="px-3 py-1.5 bg-teal-100 text-teal-700 rounded-lg text-sm font-medium hover:bg-teal-200 border border-teal-300"
+           title="구글시트 일별수불부에서 직접 편집 (수식 자동 반영)">
+          <i class="fas fa-external-link-square-alt mr-1"></i>
+          구글시트 열기
+        </a>
       </div>
+    </div>
+    
+    <!-- 안내: 재고 계산은 구글시트 -->
+    <div class="p-2 bg-blue-50 border-b text-xs text-blue-800">
+      <i class="fas fa-info-circle mr-1"></i>
+      <b>SSOT 모드</b>: 이 화면의 재고 값은 <b>구글시트 수식이 계산한 결과</b>를 그대로 보여줍니다.
+      값을 수정하시려면 <b>구글시트에서 직접</b> 편집하시거나 아래 개별 셀 편집 기능을 사용하세요.
+      (원료입고/사용량 변경 시 구글시트 수식이 자동으로 현재고를 재계산합니다.)
     </div>
     
     <div class="p-3 border-b bg-white flex items-center gap-4 text-sm flex-wrap">
@@ -7093,16 +7065,10 @@ function renderSheetsDailyStock(result, date, search, category) {
       <span class="text-red-600"><b>사용</b> -${formatNumber(summary.usage_qty)}</span>
       <span class="text-gray-800 font-bold"><b>현재고</b> ${formatNumber(summary.current_stock)}</span>
       ${(() => {
-        const negCount = data.filter(d => (d.current_stock || 0) < 0).length;
-        const autoCount = data.filter(d => d._auto_computed).length;
-        let badges = '';
-        if (negCount > 0) {
-          badges += `<span class="px-2 py-0.5 bg-red-100 text-red-700 rounded font-bold">⚠️ 음수재고 ${negCount}건</span>`;
-        }
-        if (autoCount > 0) {
-          badges += `<span class="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded" title="시트 현재고 값이 비어있어 전일+입고-사용으로 자동계산됨">🔄 자동계산 ${autoCount}건</span>`;
-        }
-        return badges;
+        const negCount = data.filter(d => (parseFloat(d.current_stock) || 0) < 0).length;
+        return negCount > 0
+          ? `<span class="px-2 py-0.5 bg-red-100 text-red-700 rounded font-bold">⚠️ 음수재고 ${negCount}건</span>`
+          : '';
       })()}
     </div>
     
@@ -7148,33 +7114,39 @@ function renderSheetsDailyStock(result, date, search, category) {
                     ${nameLooksLikeCode ? '<span class="text-xs text-yellow-600 ml-1">⚠️코드=이름</span>' : ''}
                   </td>
                   <td class="p-2">
-                    <input type="number" step="0.01" 
-                           class="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right ${(item.prev_stock||0) < 0 ? 'bg-red-50 text-red-600' : ''}" 
-                           value="${item.prev_stock || 0}" 
-                           id="edit-prev-${rowKey}"
-                           oninput="recalcCurrentStock(${rowKey})">
+                    <div class="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right bg-gray-100 ${(item.prev_stock||0) < 0 ? 'text-red-600' : 'text-gray-800'}"
+                         id="edit-prev-${rowKey}"
+                         data-value="${item.prev_stock || 0}"
+                         title="전일재고 = 어제 현재고 (구글시트 수식 D=G어제행; 편집 불가)">
+                      ${formatNumber(item.prev_stock || 0)}
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5">🔒 시트 수식</div>
                   </td>
                   <td class="p-2">
-                    <input type="number" step="0.01" 
-                           class="w-24 border border-blue-300 rounded px-2 py-1 text-sm text-right text-blue-600 ${(item.inbound_qty||0) < 0 ? 'bg-red-50' : ''}" 
-                           value="${item.inbound_qty || 0}" 
-                           id="edit-inbound-${rowKey}"
-                           oninput="recalcCurrentStock(${rowKey})">
+                    <div class="w-24 border border-blue-200 rounded px-2 py-1 text-sm text-right bg-blue-50 text-blue-600"
+                         id="edit-inbound-${rowKey}"
+                         data-value="${item.inbound_qty || 0}"
+                         title="입고량 = SUMIFS(원료입고 시트) (구글시트 수식; 편집 불가)">
+                      ${formatNumber(item.inbound_qty || 0)}
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5">🔒 시트 수식</div>
                   </td>
                   <td class="p-2">
                     <input type="number" step="0.01" 
                            class="w-24 border border-red-300 rounded px-2 py-1 text-sm text-right text-red-600 ${(item.usage_qty||0) < 0 ? 'bg-red-50' : ''}" 
                            value="${item.usage_qty || 0}" 
                            id="edit-usage-${rowKey}"
-                           oninput="recalcCurrentStock(${rowKey})">
+                           title="사용량 (수동 편집 가능 — 유일한 정적 입력 필드)">
+                    <div class="text-xs text-green-600 mt-0.5">✏️ 편집 가능</div>
                   </td>
                   <td class="p-2">
-                    <input type="number" step="0.01" 
-                           class="w-24 border-2 rounded px-2 py-1 text-sm text-right font-bold ${(item.current_stock||0) < 0 ? 'bg-red-100 text-red-700 border-red-500' : (item._auto_computed ? 'bg-yellow-50 border-yellow-400 text-yellow-800' : 'border-gray-500')}" 
-                           value="${(item.current_stock || 0).toFixed(4).replace(/\.?0+$/,'')}" 
-                           id="edit-cur-${rowKey}"
-                           title="${item._auto_computed ? '자동 계산됨 (전일+입고-사용)' : ''}">
-                    ${item._auto_computed ? '<div class="text-xs text-yellow-600 mt-0.5">🔄자동계산</div>' : ''}
+                    <div class="w-24 border border-gray-300 rounded px-2 py-1 text-sm text-right font-bold bg-gray-100 ${(item.current_stock||0) < 0 ? 'text-red-700' : 'text-gray-800'}"
+                         id="edit-cur-${rowKey}"
+                         data-value="${item.current_stock || 0}"
+                         title="현재고 = 전일재고 + 입고 - 사용 (구글시트 수식 G=D+E-F; 편집 불가)">
+                      ${formatNumber(item.current_stock || 0)}
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5">🔒 시트 수식</div>
                     ${(item.current_stock || 0) < 0 ? '<div class="text-xs text-red-600 font-bold mt-0.5">⚠️음수재고</div>' : ''}
                   </td>
                   <td class="p-2 text-center text-gray-500">${item.unit || ''}</td>
@@ -7182,18 +7154,8 @@ function renderSheetsDailyStock(result, date, search, category) {
                     <div class="flex gap-1 justify-center flex-wrap">
                       <button onclick="saveDailyRow(${rowKey})" 
                               class="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600"
-                              title="이 행만 저장">
+                              title="이 행 저장 (D/E/F만 씀; G는 구글시트 수식이 자동 재계산). 저장 후 시트 새로고침 필요">
                         <i class="fas fa-save"></i>
-                      </button>
-                      <button onclick="saveDailyRowCascade(${rowKey})" 
-                              class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 font-bold"
-                              title="저장 + 이후 날짜 연쇄 갱신 (다음날부터 마지막까지 자동 재계산)">
-                        <i class="fas fa-forward"></i>+
-                      </button>
-                      <button onclick="flipRowSigns(${rowKey})" 
-                              class="px-2 py-1 bg-purple-500 text-white rounded text-xs hover:bg-purple-600"
-                              title="이 행의 모든 음수를 양수로">
-                        ±
                       </button>
                       <button onclick="deleteDailyRow(${rowKey})" 
                               class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
@@ -7210,10 +7172,8 @@ function renderSheetsDailyStock(result, date, search, category) {
                 ? `<span class="text-yellow-700 bg-yellow-100 px-1 rounded" title="품목명이 코드로 표시됨">⚠️ ${item.item_name}</span>`
                 : (item.item_name || '');
               const stockCell = (item.current_stock || 0) < 0 
-                ? `<span class="text-red-600 font-bold bg-red-100 px-2 py-0.5 rounded" title="음수 재고">⚠️ ${formatNumber(item.current_stock)}</span>`
-                : item._auto_computed
-                  ? `<span class="font-bold text-yellow-700 bg-yellow-50 px-2 py-0.5 rounded" title="전일+입고-사용으로 자동계산됨">🔄 ${formatNumber(item.current_stock || 0)}</span>`
-                  : `<span class="font-bold">${formatNumber(item.current_stock || 0)}</span>`;
+                ? `<span class="text-red-600 font-bold bg-red-100 px-2 py-0.5 rounded" title="음수 재고 (구글시트 수식 결과)">⚠️ ${formatNumber(item.current_stock)}</span>`
+                : `<span class="font-bold">${formatNumber(item.current_stock || 0)}</span>`;
               return `
                 <tr class="border-b hover:bg-gray-50">
                   <td class="p-2 font-mono text-xs">${item.item_code || ''}</td>
@@ -7299,43 +7259,25 @@ async function loadSheetRowMapping(date) {
 }
 
 // 특정 행 저장
-// ★★★ v3.6.173: cascade 옵션 지원 (다음 날짜 자동 연쇄 갱신) ★★★
-async function saveDailyRow(sheetRow, cascade = false) {
+// v3.6.177 SSOT: D/E/G열은 구글시트 수식이 자동 계산 → 이름과 사용량(F)만 저장
+async function saveDailyRow(sheetRow) {
   const nameEl = document.getElementById(`edit-name-${sheetRow}`);
-  const prevEl = document.getElementById(`edit-prev-${sheetRow}`);
-  const inboundEl = document.getElementById(`edit-inbound-${sheetRow}`);
   const usageEl = document.getElementById(`edit-usage-${sheetRow}`);
-  const curEl = document.getElementById(`edit-cur-${sheetRow}`);
   
   if (!nameEl) return showToast('행을 찾을 수 없습니다.', 'error');
   
-  showLoading(cascade ? '저장 + 이후 날짜 연쇄 갱신 중...' : '저장 중...');
+  showLoading('저장 중... (전일/입고/현재고는 시트 수식 자동)');
   try {
+    // 수식 걸린 D/E/G열은 보내지 않음 → 구글시트 수식 유지
     const result = await api('/sheets/daily-stock/update-row', 'POST', {
       sheet_row: sheetRow,
       item_name: nameEl.value.trim(),
-      prev_stock: parseFloat(prevEl.value) || 0,
-      inbound_qty: parseFloat(inboundEl.value) || 0,
       usage_qty: parseFloat(usageEl.value) || 0,
-      current_stock: parseFloat(curEl.value) || 0,
-      cascade: cascade  // ★★★ v3.6.173 ★★★
+      skip_current_stock: true  // ★ 서버측에서 D/E/G열 안 건드리도록
     });
     hideLoading();
     if (result.success) {
-      let msg = `✅ 행 ${sheetRow} 저장 완료`;
-      if (cascade && result.cascade && result.cascade.updated_rows !== undefined) {
-        msg += ` (이후 ${result.cascade.updated_rows}개 행 연쇄 갱신, ${result.cascade.future_rows_found}개 후속 행 중)`;
-      }
-      showToast(msg, 'success');
-      
-      // cascade 결과 상세 로그
-      if (cascade && result.cascade) {
-        console.log('[cascade 결과]', result.cascade);
-        if (result.cascade.updates && result.cascade.updates.length > 0) {
-          console.table(result.cascade.updates);
-        }
-      }
-      
+      showToast(`✅ 행 ${sheetRow} 저장 완료 (수식 셀은 자동 재계산)`, 'success');
       await loadDailyLedger();
     } else {
       showToast('저장 실패: ' + (result.error || ''), 'error');
@@ -7346,52 +7288,14 @@ async function saveDailyRow(sheetRow, cascade = false) {
   }
 }
 
-// 저장 + 연쇄 갱신 (다음 날짜 자동 재계산)
-async function saveDailyRowCascade(sheetRow) {
-  const curEl = document.getElementById(`edit-cur-${sheetRow}`);
-  const nameEl = document.getElementById(`edit-name-${sheetRow}`);
-  if (!curEl || !nameEl) return showToast('행을 찾을 수 없습니다.', 'error');
-  
-  const itemName = nameEl.value.trim();
-  const newCurrent = parseFloat(curEl.value) || 0;
-  
-  if (!confirm(
-    `⚠️ 연쇄 갱신 확인\n\n` +
-    `이 행(${itemName})을 저장하고,\n` +
-    `이 품목의 다음 날짜부터 마지막 날짜까지\n` +
-    `전일재고/현재재고를 자동으로 다시 계산합니다.\n\n` +
-    `공식: 다음날 전일재고 = 오늘 현재재고 (${newCurrent})\n` +
-    `      다음날 현재재고 = 다음날 전일재고 + 입고 - 사용\n\n` +
-    `계속하시겠습니까?`
-  )) return;
-  
-  await saveDailyRow(sheetRow, true);
+// v3.6.177 SSOT: 연쇄 갱신은 구글시트 수식이 담당 (no-op stub)
+async function saveDailyRowCascade(_sheetRow) {
+  showToast('SSOT 모드: 연쇄 갱신은 구글시트 수식이 자동 처리합니다', 'info');
 }
 
-// 특정 행의 모든 필드 음수 → 양수
-async function flipRowSigns(sheetRow) {
-  if (!confirm(`행 ${sheetRow}의 음수 값을 모두 양수로 바꿀까요?`)) return;
-  
-  showLoading('부호 변경 중...');
-  try {
-    // 각 필드별로 flip-sign 호출
-    const fields = ['prev_stock', 'inbound_qty', 'usage_qty', 'current_stock'];
-    let changed = 0;
-    for (const field of fields) {
-      const result = await api('/sheets/daily-stock/flip-sign', 'POST', {
-        sheet_rows: [sheetRow],
-        field,
-        only_negative: true
-      });
-      if (result.success) changed += result.changed_count || 0;
-    }
-    hideLoading();
-    showToast(`✅ 행 ${sheetRow}: ${changed}개 값 변경`, 'success');
-    await loadDailyLedger();
-  } catch (e) {
-    hideLoading();
-    showToast('실패: ' + (e.message || e), 'error');
-  }
+// v3.6.177 SSOT: 음수→양수 변환은 원본 데이터 수정 아니므로 제거 (no-op stub)
+async function flipRowSigns(_sheetRow) {
+  showToast('SSOT 모드: 부호 변경 기능이 제거되었습니다. 구글시트에서 직접 수정하세요', 'info');
 }
 
 // 특정 행 삭제
@@ -7446,388 +7350,35 @@ async function fixDailyItemNames(date) {
   }
 }
 
-// 음수 → 양수 일괄 전환 (해당 날짜 전체)
-async function flipDailyNegatives(date) {
-  const fieldNames = { prev_stock: '전일재고', inbound_qty: '입고', usage_qty: '사용', current_stock: '현재고' };
-  const choice = prompt(
-    `${date}의 음수 값을 양수로 일괄 변환합니다.\n` +
-    '어떤 필드를 변경할까요?\n' +
-    '1: 전일재고\n2: 입고\n3: 사용\n4: 현재고\n5: 모두\n\n(1~5 입력, 취소는 Cancel)',
-    '4'
-  );
-  if (!choice) return;
-  
-  const fields = choice === '5' 
-    ? ['prev_stock', 'inbound_qty', 'usage_qty', 'current_stock']
-    : choice === '1' ? ['prev_stock']
-    : choice === '2' ? ['inbound_qty']
-    : choice === '3' ? ['usage_qty']
-    : choice === '4' ? ['current_stock']
-    : null;
-  
-  if (!fields) {
-    showToast('잘못된 선택입니다.', 'error');
-    return;
-  }
-  
-  showLoading('부호 변환 중...');
-  try {
-    let totalChanged = 0;
-    const details = [];
-    for (const field of fields) {
-      const result = await api('/sheets/daily-stock/flip-sign', 'POST', {
-        date,
-        field,
-        only_negative: true
-      });
-      if (result.success) {
-        totalChanged += result.changed_count || 0;
-        details.push(`${fieldNames[field]}: ${result.changed_count}개`);
-      }
-    }
-    hideLoading();
-    showToast(`✅ ${date} 음수→양수: 총 ${totalChanged}개 변경 (${details.join(', ')})`, 'success');
-    await loadDailyLedger();
-  } catch (e) {
-    hideLoading();
-    showToast('변환 실패: ' + (e.message || e), 'error');
-  }
+// v3.6.177 SSOT: 음수→양수 일괄 변환 제거 (no-op stub)
+// 음수 재고는 데이터 문제(입고 누락, 사용 과다)이므로 원본에서 해결해야 함
+async function flipDailyNegatives(_date) {
+  showToast('SSOT 모드: 음수 재고는 원료입고 데이터를 보완하여 해결하세요', 'info');
 }
 
 // ★★★ v3.6.171: 편집 모드에서 전일/입고/사용 값 변경 시 현재재고 실시간 재계산 ★★★
-function recalcCurrentStock(rowKey) {
-  const prevEl = document.getElementById(`edit-prev-${rowKey}`);
-  const inbEl = document.getElementById(`edit-inbound-${rowKey}`);
-  const useEl = document.getElementById(`edit-usage-${rowKey}`);
-  const curEl = document.getElementById(`edit-cur-${rowKey}`);
-  if (!prevEl || !inbEl || !useEl || !curEl) return;
-  
-  const prev = parseFloat(prevEl.value) || 0;
-  const inb = parseFloat(inbEl.value) || 0;
-  const use = parseFloat(useEl.value) || 0;
-  const computed = prev + inb - use;
-  
-  // 소수점 4자리로 반올림하고 후행 0 제거
-  curEl.value = Number(computed.toFixed(4));
-  
-  // 음수면 빨간 배경, 아니면 노란(자동계산) 배경
-  curEl.classList.remove('bg-red-100', 'text-red-700', 'border-red-500', 'bg-yellow-50', 'border-yellow-400', 'text-yellow-800', 'border-gray-500');
-  if (computed < 0) {
-    curEl.classList.add('bg-red-100', 'text-red-700', 'border-red-500');
-  } else {
-    curEl.classList.add('bg-yellow-50', 'border-yellow-400', 'text-yellow-800');
-  }
+// v3.6.177 no-op: 현재고는 구글시트 수식이 자동 계산
+// 이전 버전과의 호환을 위해 함수는 유지하되 실제 계산은 하지 않음
+function recalcCurrentStock(_rowKey) {
+  /* SSOT: 재고 계산은 구글시트 수식이 담당 */
 }
 
-// ★★★ v3.6.172: 원료입고 기반 일별수불부 재계산 ★★★
-async function rebuildFromInbound(date) {
-  try {
-    // Step 1: 미리보기
-    showToast('원료입고 데이터 조회 중...', 'info');
-    const preview = await api(`/sheets/daily-stock/rebuild-preview?date=${date}`, 'GET');
-    
-    if (!preview.success) {
-      showToast('미리보기 실패: ' + (preview.error || 'unknown'), 'error');
-      return;
-    }
-    
-    const summary = preview.summary;
-    const inboundInfo = preview.inbound_summary;
-    
-    // 미리보기 정보 요약
-    let msg = `📊 [${date}] 원료입고 기준 재계산 미리보기\n\n`;
-    msg += `▶ 원료입고 시트 기록:\n`;
-    msg += `   - 매칭된 입고 행: ${inboundInfo.inbound_rows_matched}건\n`;
-    msg += `   - 입고 품목 수: ${inboundInfo.unique_items_with_inbound}개\n\n`;
-    msg += `▶ 일별수불부 상태:\n`;
-    msg += `   - 총 행: ${summary.total_rows}개\n`;
-    msg += `   - 변경될 행: ${summary.will_change}개\n`;
-    msg += `   - 현재 음수재고: ${summary.currently_negative}건\n`;
-    msg += `   - 재계산 후 음수 해소: ${summary.will_fix_negative}건 ✅\n`;
-    msg += `   - 재계산 후에도 음수: ${summary.still_negative_after_rebuild}건 ⚠️\n\n`;
-    
-    if (summary.will_change === 0) {
-      msg += `변경사항 없음. 이미 원료입고 기준으로 계산된 상태입니다.`;
-      alert(msg);
-      return;
-    }
-    
-    // 변경 예시 5건 미리 보여주기
-    if (preview.changes && preview.changes.length > 0) {
-      msg += `📋 변경 예시 (최대 5건):\n`;
-      preview.changes.slice(0, 5).forEach(c => {
-        msg += `\n  ${c.item_code} (${c.item_name}):\n`;
-        msg += `    전일: ${c.before.prev_stock} → ${c.after.prev_stock}\n`;
-        msg += `    입고: ${c.before.inbound_qty} → ${c.after.inbound_qty}\n`;
-        msg += `    현재고: ${c.before.current_stock} → ${c.after.current_stock}${c.will_fix_negative ? ' ✅음수해소' : c.still_negative ? ' ⚠️여전히 음수' : ''}`;
-      });
-      msg += `\n\n`;
-    }
-    
-    msg += `❓ 어떻게 반영할까요?\n`;
-    msg += `   1: 전체 재계산 (모든 행)\n`;
-    msg += `   2: 음수재고만 재계산 (현재 음수인 행만)\n`;
-    msg += `   취소: 아무것도 안 함`;
-    
-    const choice = prompt(msg, '2');
-    if (!choice || choice === '취소') {
-      showToast('취소됨', 'info');
-      return;
-    }
-    
-    if (choice !== '1' && choice !== '2') {
-      showToast('1 또는 2만 입력 가능합니다', 'error');
-      return;
-    }
-    
-    const onlyNegative = choice === '2';
-    
-    // Step 2: 실제 반영
-    showToast('일별수불부 재계산 중... (잠시 대기)', 'info');
-    const result = await api('/sheets/daily-stock/rebuild-from-inbound', 'POST', {
-      date,
-      only_negative: onlyNegative,
-      confirm: true
-    });
-    
-    if (!result.success) {
-      showToast('재계산 실패: ' + (result.error || 'unknown'), 'error');
-      return;
-    }
-    
-    showToast(
-      `✅ 재계산 완료! ${result.updated_rows}개 행 업데이트 (${result.batch_chunks} chunks)`,
-      'success'
-    );
-    
-    // 데이터 리로드
-    setTimeout(() => {
-      if (typeof loadDailyLedger === 'function') {
-        loadDailyLedger();
-      } else {
-        location.reload();
-      }
-    }, 800);
-  } catch (e) {
-    console.error('rebuildFromInbound error:', e);
-    showToast('오류: ' + (e.message || 'unknown'), 'error');
-  }
+// v3.6.177 SSOT: 원료입고 기반 재계산 제거 (no-op stub)
+// 구글시트 E열 수식(SUMIFS)이 원료입고 시트와 자동 연동됨
+async function rebuildFromInbound(_date) {
+  showToast('SSOT 모드: 입고량은 구글시트 SUMIFS 수식이 원료입고 시트와 자동 연동합니다', 'info');
 }
 
-// ★★★ v3.6.173: 특정 날짜 이후 모든 행 연쇄 재계산 (품목 선택 옵션) ★★★
-async function cascadeRecalcFromDate(startDate) {
-  const itemCode = prompt(
-    `📅 [${startDate}] 이후 날짜 연쇄 재계산\n\n` +
-    `이 날짜의 현재재고를 seed로 삼아,\n` +
-    `이후 날짜의 전일재고/현재재고를 순차적으로 다시 계산합니다.\n\n` +
-    `공식: 다음날 전일재고 = 오늘 현재재고\n` +
-    `      다음날 현재재고 = 다음날 전일재고 + 입고 - 사용\n\n` +
-    `▶ 특정 품목만: 품목코드 입력 (예: R068)\n` +
-    `▶ 전체 품목: 'all' 입력\n` +
-    `▶ 취소: 빈칸`,
-    'all'
-  );
-  
-  if (!itemCode) {
-    showToast('취소됨', 'info');
-    return;
-  }
-  
-  const filterCode = itemCode.trim().toLowerCase() === 'all' ? null : itemCode.trim().toUpperCase();
-  
-  if (!confirm(
-    `⚠️ 최종 확인\n\n` +
-    `시작일: ${startDate}\n` +
-    `대상: ${filterCode || '전체 품목'}\n\n` +
-    `${startDate} 이후 모든 날짜의 전일재고/현재재고가 재계산됩니다.\n` +
-    `이 작업은 되돌릴 수 없습니다.\n\n` +
-    `계속하시겠습니까?`
-  )) return;
-  
-  showLoading('연쇄 재계산 중... (품목 수에 따라 시간 소요)');
-  try {
-    const body = {
-      start_date: startDate,
-      confirm: true
-    };
-    if (filterCode) body.item_code = filterCode;
-    
-    const result = await api('/sheets/daily-stock/cascade-recalc', 'POST', body);
-    hideLoading();
-    
-    if (result.success) {
-      showToast(
-        `✅ 완료: ${result.total_rows_updated}개 행 갱신 (${result.total_items_processed}개 품목, ${result.batch_chunks} chunks)`,
-        'success'
-      );
-      console.log('[cascade-recalc 결과]', result);
-      if (result.items_summary && result.items_summary.length > 0) {
-        console.table(result.items_summary);
-      }
-      await loadDailyLedger();
-    } else {
-      showToast('실패: ' + (result.error || ''), 'error');
-    }
-  } catch (e) {
-    hideLoading();
-    showToast('오류: ' + (e.message || e), 'error');
-  }
+// v3.6.177 SSOT: 연쇄 재계산 제거 (no-op stub)
+// D열 수식(=G{어제행})이 자동으로 연쇄 처리함
+async function cascadeRecalcFromDate(_startDate) {
+  showToast('SSOT 모드: 연쇄 계산은 구글시트 수식(D=G어제행, G=D+E-F)이 자동 처리합니다', 'info');
 }
 
-// ★★★ v3.6.174: 연속성 진단 (이전날 현재고 vs 이 날 전일재고 비교) ★★★
-async function checkContinuity(centerDate) {
-  // 검사 범위: 앞뒤 3일씩
-  const d = new Date(centerDate + 'T00:00:00');
-  const startD = new Date(d); startD.setDate(startD.getDate() - 3);
-  const endD = new Date(d); endD.setDate(endD.getDate() + 3);
-  const fmt = dt => dt.toISOString().split('T')[0];
-  const startDate = fmt(startD);
-  const endDate = fmt(endD);
-  
-  const range = prompt(
-    `🔍 연속성 진단\n\n` +
-    `검사할 날짜 범위 (기본: ${centerDate} 앞뒤 3일)\n\n` +
-    `▶ 그대로 진행: 확인 클릭\n` +
-    `▶ 전 기간 검사: 'all' 입력\n` +
-    `▶ 사용자 지정: 'YYYY-MM-DD ~ YYYY-MM-DD' 입력\n` +
-    `▶ 취소: 빈칸`,
-    `${startDate} ~ ${endDate}`
-  );
-  if (!range) return;
-  
-  let qStart = startDate, qEnd = endDate;
-  if (range.trim().toLowerCase() === 'all') {
-    qStart = ''; qEnd = '';
-  } else if (range.includes('~')) {
-    const parts = range.split('~').map(s => s.trim());
-    if (parts.length === 2) {
-      qStart = parts[0]; qEnd = parts[1];
-    }
-  }
-  
-  showLoading('연속성 검사 중...');
-  try {
-    const qs = new URLSearchParams();
-    if (qStart) qs.set('start_date', qStart);
-    if (qEnd) qs.set('end_date', qEnd);
-    const result = await api(`/sheets/daily-stock/continuity-check?${qs.toString()}`, 'GET');
-    hideLoading();
-    
-    if (!result.success) {
-      showToast('진단 실패: ' + (result.error || ''), 'error');
-      return;
-    }
-    
-    const t = result.totals;
-    const ds = result.date_summary || [];
-    
-    let msg = `📊 연속성 진단 결과 (${qStart || '전체'} ~ ${qEnd || '전체'})\n\n`;
-    msg += `▶ 검사 품목: ${t.items_scanned}개\n`;
-    msg += `▶ 불연속(이전 현재고 ≠ 이날 전일재고): ${t.discontinuities}건 ⚠️\n`;
-    msg += `▶ 계산오차(전일+입고-사용 ≠ 현재고): ${t.current_compute_errors}건 ⚠️\n\n`;
-    
-    if (ds.length > 0) {
-      msg += `📅 날짜별 불연속 개수:\n`;
-      ds.slice(0, 20).forEach(x => {
-        msg += `  ${x.date}: ${x.discontinuity_count}건\n`;
-      });
-      msg += `\n`;
-    }
-    
-    if (result.discontinuities && result.discontinuities.length > 0) {
-      msg += `📋 상위 불연속 예시 (최대 10건):\n`;
-      result.discontinuities.slice(0, 10).forEach(x => {
-        msg += `  ${x.date} ${x.item_code}(${x.item_name}):\n`;
-        msg += `    ${x.prev_date} 현재고 ${x.expected_prev_stock} vs 이날 전일재고 ${x.actual_prev_stock} (차이 ${x.diff})\n`;
-      });
-      msg += `\n`;
-    }
-    
-    if (t.discontinuities === 0 && t.current_compute_errors === 0) {
-      msg += `✅ 완벽합니다! 문제 없음.`;
-      alert(msg);
-      return;
-    }
-    
-    msg += `❓ 자동 수정할까요?\n`;
-    msg += `   1: 전일재고 + 현재고 둘 다 (권장)\n`;
-    msg += `   2: 전일재고만 (이전 현재고를 그대로 반영)\n`;
-    msg += `   3: 현재고만 (전일+입고-사용 공식)\n`;
-    msg += `   4: 상세 결과를 콘솔로 확인 (수정 안함)\n`;
-    msg += `   취소: 아무것도 안 함`;
-    
-    const choice = prompt(msg, '1');
-    if (!choice) return;
-    
-    if (choice === '4') {
-      console.group('[연속성 진단 상세 결과]');
-      console.log('요약:', result.totals);
-      console.log('날짜별:', result.date_summary);
-      console.log('불연속:');
-      console.table(result.discontinuities);
-      console.log('계산오차:');
-      console.table(result.current_compute_errors);
-      console.groupEnd();
-      showToast('브라우저 개발자 도구(F12) 콘솔을 확인하세요', 'info');
-      return;
-    }
-    
-    const modeMap = { '1': 'both', '2': 'prev_from_previous_current', '3': 'current_from_formula' };
-    const mode = modeMap[choice];
-    if (!mode) {
-      showToast('취소됨', 'info');
-      return;
-    }
-    
-    // 시작일 결정
-    let fixStart = qStart;
-    if (!fixStart) {
-      // 전체 검사인 경우, 가장 이른 불연속 날짜 사용
-      if (result.discontinuities && result.discontinuities.length > 0) {
-        fixStart = result.discontinuities[0].date;
-      } else if (result.current_compute_errors && result.current_compute_errors.length > 0) {
-        fixStart = result.current_compute_errors[0].date;
-      }
-    }
-    
-    if (!fixStart) {
-      showToast('수정 시작일을 결정할 수 없습니다', 'error');
-      return;
-    }
-    
-    if (!confirm(
-      `⚠️ 최종 확인\n\n` +
-      `시작일: ${fixStart}${qEnd ? ` ~ ${qEnd}` : ' 이후'}\n` +
-      `모드: ${mode}\n\n` +
-      `이 범위의 모든 품목의 전일재고/현재고가 재계산됩니다.\n` +
-      `되돌릴 수 없습니다. 계속하시겠습니까?`
-    )) return;
-    
-    showLoading('자동 수정 중...');
-    const fixBody = {
-      start_date: fixStart,
-      mode,
-      confirm: true
-    };
-    if (qEnd) fixBody.end_date = qEnd;
-    
-    const fixResult = await api('/sheets/daily-stock/fix-continuity', 'POST', fixBody);
-    hideLoading();
-    
-    if (fixResult.success) {
-      showToast(
-        `✅ 완료: ${fixResult.updated_rows}개 행 수정 (${fixResult.items_processed}개 품목, ${fixResult.batch_chunks} chunks)`,
-        'success'
-      );
-      console.log('[fix-continuity 결과]', fixResult);
-      await loadDailyLedger();
-    } else {
-      showToast('수정 실패: ' + (fixResult.error || ''), 'error');
-    }
-  } catch (e) {
-    hideLoading();
-    showToast('오류: ' + (e.message || e), 'error');
-  }
+// v3.6.177 SSOT: 연속성 진단/수정 제거 (no-op stub)
+// 구글시트 수식(D=G어제행)이 걸려있으면 불연속 자체가 발생하지 않음
+async function checkContinuity(_centerDate) {
+  showToast('SSOT 모드: 구글시트 수식(D=G어제행)이 걸려있으면 불연속이 발생하지 않습니다. "수식 세팅" 버튼을 사용하세요', 'info');
 }
 
 // ★★★ v3.6.175: 시트 원본 URL 및 raw 데이터 확인 ★★★

@@ -5871,6 +5871,7 @@ sheets.post('/daily-stock/update-row', async (c) => {
       current_stock?: number;
       unit?: string;
       cascade?: boolean;  // ★★★ v3.6.173: true면 다음날 이후 전일재고/현재재고 연쇄 갱신 ★★★
+      skip_current_stock?: boolean;  // ★★★ v3.6.177 SSOT: true면 D/G열(수식) 덮어쓰지 않음 ★★★
     }>();
     
     const { sheet_row } = body;
@@ -5885,20 +5886,60 @@ sheets.post('/daily-stock/update-row', async (c) => {
     }
     const before = currentRow[0];
     
-    // 새 값 (지정된 필드만 교체)
+    // ★★★ v3.6.177 SSOT: skip_current_stock=true면 D/G열(수식) 보호 ★★★
+    // D(전일재고)=G{어제행}, G(현재재고)=D+E-F 수식이 걸려있음
+    // → 이 열을 정적 값으로 덮어쓰면 수식이 파괴됨
+    // → 컬럼별로 개별 write하여 수식 걸린 열은 건드리지 않음
+    const skipCurrentStock = body.skip_current_stock === true;
+    
+    if (skipCurrentStock) {
+      // A/B/C/F/H만 개별 write (D/E/G는 수식이므로 보호)
+      // E열(입고)도 SUMIFS 수식이므로 보호 대상
+      const cellUpdates: Array<{ range: string; value: any }> = [];
+      
+      if (body.item_code !== undefined) {
+        cellUpdates.push({ range: `일별수불부!B${sheet_row}`, value: body.item_code });
+      }
+      if (body.item_name !== undefined) {
+        cellUpdates.push({ range: `일별수불부!C${sheet_row}`, value: body.item_name });
+      }
+      if (body.usage_qty !== undefined) {
+        cellUpdates.push({ range: `일별수불부!F${sheet_row}`, value: body.usage_qty });
+      }
+      if (body.unit !== undefined) {
+        cellUpdates.push({ range: `일별수불부!H${sheet_row}`, value: body.unit });
+      }
+      
+      // 개별 셀 업데이트 (수식 보호)
+      for (const upd of cellUpdates) {
+        await service.writeSheet('일별수불부', upd.range.replace('일별수불부!', ''), [[upd.value]]);
+      }
+    } else {
+      // 레거시 경로: 전체 행 덮어쓰기 (수식 파괴됨 — 비권장)
+      const newRow = [
+        before[0],  // A: date (변경 안 함)
+        body.item_code !== undefined ? body.item_code : (before[1] || ''),
+        body.item_name !== undefined ? body.item_name : (before[2] || ''),
+        body.prev_stock !== undefined ? body.prev_stock : (parseFloat(before[3]) || 0),
+        body.inbound_qty !== undefined ? body.inbound_qty : (parseFloat(before[4]) || 0),
+        body.usage_qty !== undefined ? body.usage_qty : (parseFloat(before[5]) || 0),
+        body.current_stock !== undefined ? body.current_stock : (parseFloat(before[6]) || 0),
+        body.unit !== undefined ? body.unit : (before[7] || 'kg')
+      ];
+      await service.writeSheet('일별수불부', `A${sheet_row}:H${sheet_row}`, [newRow]);
+    }
+    
+    // 응답용 newRow (skip_current_stock 여부와 무관하게 개념적으로 새 값)
     const newRow = [
-      before[0],  // A: date (변경 안 함)
+      before[0],
       body.item_code !== undefined ? body.item_code : (before[1] || ''),
       body.item_name !== undefined ? body.item_name : (before[2] || ''),
-      body.prev_stock !== undefined ? body.prev_stock : (parseFloat(before[3]) || 0),
-      body.inbound_qty !== undefined ? body.inbound_qty : (parseFloat(before[4]) || 0),
+      skipCurrentStock ? (parseFloat(before[3]) || 0) : (body.prev_stock !== undefined ? body.prev_stock : (parseFloat(before[3]) || 0)),
+      skipCurrentStock ? (parseFloat(before[4]) || 0) : (body.inbound_qty !== undefined ? body.inbound_qty : (parseFloat(before[4]) || 0)),
       body.usage_qty !== undefined ? body.usage_qty : (parseFloat(before[5]) || 0),
-      body.current_stock !== undefined ? body.current_stock : (parseFloat(before[6]) || 0),
+      skipCurrentStock ? (parseFloat(before[6]) || 0) : (body.current_stock !== undefined ? body.current_stock : (parseFloat(before[6]) || 0)),
       body.unit !== undefined ? body.unit : (before[7] || 'kg')
     ];
-    
-    // 쓰기 (수정한 행)
-    await service.writeSheet('일별수불부', `A${sheet_row}:H${sheet_row}`, [newRow]);
     
     // ★★★ v3.6.173: cascade 갱신 - 다음 날짜부터 마지막까지 순차 재계산 ★★★
     let cascadeResult: any = null;

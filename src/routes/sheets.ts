@@ -7466,6 +7466,9 @@ sheets.post('/daily-stock/apply-formulas', async (c) => {
 
     const byCode = new Map<string, RowInfo[]>();
 
+    // ★★★ v3.6.178 CRITICAL FIX: start_date/end_date 필터는 여기서 적용하면 안됨!
+    // 그러면 필터 범위 첫 날짜의 D열이 "첫날"로 오인되어 수식이 안 걸림.
+    // → 전체 스캔은 항상 완전하게, 필터는 update 대상 결정 시에만 적용
     for (let idx = 0; idx < values.length; idx++) {
       const v = values[idx];
       const f = formulas[idx] || [];
@@ -7476,8 +7479,9 @@ sheets.post('/daily-stock/apply-formulas', async (c) => {
       const dateStr = String(v[0] || '').slice(0, 10);
       if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) continue;
 
-      if (body.start_date && dateStr < body.start_date) continue;
-      if (body.end_date && dateStr > body.end_date) continue;
+      // ⚠️ 여기서 날짜 필터 X — 전체 이력을 살펴야 어제 참조가 올바름
+      // if (body.start_date && dateStr < body.start_date) continue;  ← 제거
+      // if (body.end_date && dateStr > body.end_date) continue;      ← 제거
 
       const fD = String(f[3] || '');
       const fE = String(f[4] || '');
@@ -7526,13 +7530,22 @@ sheets.post('/daily-stock/apply-formulas', async (c) => {
         const prevRow = i > 0 ? rows[i - 1] : null;
         stats.total_rows_scanned++;
 
+        // ★★★ v3.6.178: 날짜 필터는 여기서 적용 (전체 이력은 이미 스캔됨)
+        // 필터 범위 밖이면 어떤 수식도 안 씀
+        const isOutOfRange =
+          (body.start_date && row.date < body.start_date) ||
+          (body.end_date && row.date > body.end_date);
+
         // D열 수식: 어제 같은 코드의 G셀 참조
         let newD: any;
         let touchedD = false;
         if (!prevRow) {
-          // 첫날 → 기존 값 유지 (정적)
+          // 진짜 첫날 (품목 최초 등장) → 기존 값 유지 (정적)
           newD = row.prev_stock;
           stats.first_row_per_code_kept_static++;
+        } else if (isOutOfRange) {
+          // 필터 범위 밖 → 건드리지 않음
+          newD = row.prev_stock;
         } else {
           const expectedFormulaD = `=G${prevRow.sheet_row}`;
           const shouldUpdate = onlyMissing ? !row.hasFormulaD : true;
@@ -7548,20 +7561,24 @@ sheets.post('/daily-stock/apply-formulas', async (c) => {
         // E열 수식: 원료입고 SUMIFS
         let newE: any;
         let touchedE = false;
-        const expectedFormulaE = `=IFERROR(SUMIFS('원료입고'!E:E,'원료입고'!B:B,B${row.sheet_row},'원료입고'!A:A,A${row.sheet_row}),0)`;
-        const shouldUpdateE = onlyMissing ? !row.hasFormulaE : true;
-        if (shouldUpdateE) {
-          newE = expectedFormulaE;
-          touchedE = true;
-          stats.formula_cells_added.E++;
-        } else {
+        if (isOutOfRange) {
           newE = row.inbound_qty;
+        } else {
+          const expectedFormulaE = `=IFERROR(SUMIFS('원료입고'!E:E,'원료입고'!B:B,B${row.sheet_row},'원료입고'!A:A,A${row.sheet_row}),0)`;
+          const shouldUpdateE = onlyMissing ? !row.hasFormulaE : true;
+          if (shouldUpdateE) {
+            newE = expectedFormulaE;
+            touchedE = true;
+            stats.formula_cells_added.E++;
+          } else {
+            newE = row.inbound_qty;
+          }
         }
 
         // F열: 유지 (keep_usage=true) 또는 로트매칭 SUMIFS
         let newF: any;
         let touchedF = false;
-        if (keepUsage) {
+        if (keepUsage || isOutOfRange) {
           // 기존 값 그대로 (수식이면 수식, 정적이면 정적)
           newF = row.hasFormulaF ? { formula: true } : row.usage_qty;
         } else {
@@ -7579,14 +7596,18 @@ sheets.post('/daily-stock/apply-formulas', async (c) => {
         // G열 수식: D + E - F
         let newG: any;
         let touchedG = false;
-        const expectedFormulaG = `=D${row.sheet_row}+E${row.sheet_row}-F${row.sheet_row}`;
-        const shouldUpdateG = onlyMissing ? !row.hasFormulaG : true;
-        if (shouldUpdateG) {
-          newG = expectedFormulaG;
-          touchedG = true;
-          stats.formula_cells_added.G++;
-        } else {
+        if (isOutOfRange) {
           newG = row.current_stock;
+        } else {
+          const expectedFormulaG = `=D${row.sheet_row}+E${row.sheet_row}-F${row.sheet_row}`;
+          const shouldUpdateG = onlyMissing ? !row.hasFormulaG : true;
+          if (shouldUpdateG) {
+            newG = expectedFormulaG;
+            touchedG = true;
+            stats.formula_cells_added.G++;
+          } else {
+            newG = row.current_stock;
+          }
         }
 
         // F열 유지 케이스: writeSheetWithFormulas는 undefined를 안 좋아하니

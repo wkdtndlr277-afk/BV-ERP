@@ -6558,6 +6558,181 @@ sheets.post('/daily-stock/delete-row', async (c) => {
   }
 });
 
+// ★★★ v3.6.181: 특정 품목 코드의 모든 행 일괄 정리 ★★★
+// ERP에서 품목이 삭제되었지만 구글시트 일별수불부에는 여전히 남아있는 경우 사용
+//
+// GET  /daily-stock/scan-item?item_code=RM1030 : 해당 코드가 남아있는 행 스캔 (미리보기)
+// POST /daily-stock/delete-item-all : 모든 행 일괄 비우기 (confirm 필수)
+sheets.get('/daily-stock/scan-item', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const itemCode = c.req.query('item_code');
+    if (!itemCode) {
+      return c.json({ success: false, error: 'item_code 파라미터가 필요합니다.' }, 400);
+    }
+
+    const data = await service.readSheet('일별수불부', 'A2:H') || [];
+    const matches: Array<{
+      sheet_row: number;
+      date: any;
+      item_code: string;
+      item_name: string;
+      prev_stock: number;
+      inbound_qty: number;
+      usage_qty: number;
+      current_stock: number;
+      unit: string;
+    }> = [];
+
+    data.forEach((row: any[], idx: number) => {
+      const code = (row[1]?.toString().trim()) || '';
+      if (code === itemCode) {
+        let rowDate = row[0];
+        if (typeof rowDate === 'number' || /^\d+$/.test(rowDate)) {
+          const excelDate = parseInt(rowDate);
+          const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+          rowDate = jsDate.toISOString().split('T')[0];
+        } else if (typeof rowDate === 'string') {
+          rowDate = rowDate.replace(/^'/, '');
+        }
+        matches.push({
+          sheet_row: idx + 2,
+          date: rowDate,
+          item_code: code,
+          item_name: (row[2]?.toString().trim()) || '',
+          prev_stock: parseFloat(row[3]) || 0,
+          inbound_qty: parseFloat(row[4]) || 0,
+          usage_qty: parseFloat(row[5]) || 0,
+          current_stock: parseFloat(row[6]) || 0,
+          unit: row[7] || 'kg'
+        });
+      }
+    });
+
+    // 사용량/입고가 있는 행이 있으면 경고 (그냥 삭제하면 안 됨)
+    const hasActivity = matches.some(m => m.inbound_qty > 0 || m.usage_qty > 0);
+
+    return c.json({
+      success: true,
+      item_code: itemCode,
+      count: matches.length,
+      rows: matches,
+      has_activity: hasActivity,
+      warning: hasActivity
+        ? '입고/사용 이력이 있는 행이 포함되어 있습니다. 삭제 전 검토가 필요합니다.'
+        : '모든 행이 이월(활동 없음) 데이터입니다. 안전하게 삭제 가능합니다.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// POST /daily-stock/delete-item-all
+// body: { item_code: string, confirm: boolean, allow_activity?: boolean }
+sheets.post('/daily-stock/delete-item-all', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json<{
+      item_code: string;
+      confirm: boolean;
+      allow_activity?: boolean;
+    }>();
+
+    if (!body.item_code) {
+      return c.json({ success: false, error: 'item_code가 필요합니다.' }, 400);
+    }
+    if (!body.confirm) {
+      return c.json({ success: false, error: 'confirm: true 를 함께 보내주세요.' }, 400);
+    }
+
+    // 1. 전체 데이터 읽기
+    const data = await service.readSheet('일별수불부', 'A2:H') || [];
+
+    // 2. 해당 item_code 행 찾기
+    const targets: Array<{ sheet_row: number; row: any[] }> = [];
+    data.forEach((row: any[], idx: number) => {
+      const code = (row[1]?.toString().trim()) || '';
+      if (code === body.item_code) {
+        targets.push({ sheet_row: idx + 2, row });
+      }
+    });
+
+    if (targets.length === 0) {
+      return c.json({
+        success: true,
+        item_code: body.item_code,
+        deleted_count: 0,
+        message: `${body.item_code}에 해당하는 행이 없습니다.`
+      });
+    }
+
+    // 3. 활동(입고/사용) 있는 행 검사
+    const activityRows = targets.filter(t => {
+      const inbound = parseFloat(t.row[4]) || 0;
+      const usage = parseFloat(t.row[5]) || 0;
+      return inbound > 0 || usage > 0;
+    });
+
+    if (activityRows.length > 0 && !body.allow_activity) {
+      return c.json({
+        success: false,
+        error: `입고 또는 사용 이력이 있는 행 ${activityRows.length}개가 포함되어 있습니다. 그래도 삭제하려면 allow_activity: true를 함께 보내주세요.`,
+        activity_rows: activityRows.map(t => ({
+          sheet_row: t.sheet_row,
+          date: t.row[0],
+          inbound_qty: t.row[4],
+          usage_qty: t.row[5]
+        }))
+      }, 400);
+    }
+
+    // 4. batchWriteSheet로 한 번에 비우기
+    const batchUpdates = targets.map(t => ({
+      sheetName: '일별수불부',
+      range: `A${t.sheet_row}:H${t.sheet_row}`,
+      values: [['', '', '', '', '', '', '', '']]
+    }));
+
+    const batchSuccess = await service.batchWriteSheet(batchUpdates);
+
+    // 5. 삭제된 행 요약
+    const beforeSummary = targets.map(t => {
+      let d = t.row[0];
+      if (typeof d === 'string') d = d.replace(/^'/, '');
+      return {
+        sheet_row: t.sheet_row,
+        date: d,
+        item_name: t.row[2],
+        prev_stock: parseFloat(t.row[3]) || 0,
+        inbound_qty: parseFloat(t.row[4]) || 0,
+        usage_qty: parseFloat(t.row[5]) || 0,
+        current_stock: parseFloat(t.row[6]) || 0
+      };
+    });
+
+    return c.json({
+      success: batchSuccess,
+      item_code: body.item_code,
+      deleted_count: targets.length,
+      activity_rows_included: activityRows.length,
+      http_batch_calls: 1,
+      before: beforeSummary,
+      note: '행 값을 모두 비웠습니다. 물리적 행 제거는 아니지만 화면에서 사라집니다.'
+    });
+  } catch (error: any) {
+    console.error('[delete-item-all] error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.6.172: 원료입고 기반 일별수불부 재계산 ★★★
 // GET /daily-stock/rebuild-preview?date=YYYY-MM-DD&item_code=옵션
 // 원료입고 시트 + 현재 사용량 데이터로 재고를 재계산하여 미리보기

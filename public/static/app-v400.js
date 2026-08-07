@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.178';
-const APP_BUILD = '20260805-8';
+const APP_VERSION = '3.6.179';
+const APP_BUILD = '20260807-1';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -15142,12 +15142,26 @@ async function editAdminMaster(itemCode) {
     showModal('품목 정보 수정', `
       <form id="edit-master-form" class="space-y-4">
         <input type="hidden" id="edit-master-code-original" value="${item.item_code}">
-        
+
         <div class="grid grid-cols-2 gap-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">품목코드</label>
-            <input type="text" value="${item.item_code}" disabled
-                   class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500">
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              품목코드
+              <span class="text-xs text-gray-500 ml-1">(자동 부여됨)</span>
+            </label>
+            <div class="flex gap-2">
+              <input type="text" id="edit-master-code" value="${item.item_code}" readonly
+                     class="flex-1 px-3 py-2 border rounded-lg bg-gray-100 text-gray-500 font-mono">
+              <button type="button" onclick="openChangeItemCodeModal('${item.item_code}', '${(item.item_name || '').replace(/'/g, "\\'")}', '${item.category}')"
+                      class="px-3 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm whitespace-nowrap" title="품목코드 변경">
+                <i class="fas fa-exchange-alt mr-1"></i>코드 변경
+              </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">
+              <i class="fas fa-info-circle mr-1"></i>
+              접두어가 실제 구분과 맞지 않을 때 "코드 변경" 버튼 사용
+              <span class="text-gray-400">(예: RM→SM: 원료→부자재)</span>
+            </p>
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">품목명 <span class="text-red-500">*</span></label>
@@ -15264,6 +15278,181 @@ async function deleteAdminMaster(itemCode, itemName) {
     
   } catch (e) {
     showToast(e.response?.data?.error || '삭제에 실패했습니다', 'error');
+  }
+}
+
+// ★★★ v3.6.179: 품목코드 변경 모달 ★★★
+// 자동 부여된 코드가 실제 분류와 맞지 않을 때 (예: RM1014가 실제 부자재)
+async function openChangeItemCodeModal(oldCode, itemName, category) {
+  // 접두어 규칙 안내
+  const prefixGuide = {
+    '원료': 'RM (예: RM100, RM1014)',
+    '부자재': 'SM (예: SM014, SM100)',
+    '제품': 'PD/PR (예: PD001)'
+  };
+  const suggestedPrefix = category === '부자재' ? 'SM' : (category === '제품' ? 'PD' : 'RM');
+
+  // 현재 관련 데이터 건수 조회
+  let relatedInfo = '<div class="text-sm text-gray-500"><i class="fas fa-spinner fa-spin mr-1"></i>관련 데이터 조회 중...</div>';
+
+  showModal(`품목코드 변경: ${oldCode}`, `
+    <div class="space-y-4">
+      <div class="bg-orange-50 border border-orange-200 rounded-lg p-4">
+        <div class="flex items-start">
+          <i class="fas fa-exclamation-triangle text-orange-600 mr-2 mt-1"></i>
+          <div class="text-sm text-gray-700">
+            <p class="font-bold mb-1">주의: 품목코드 변경 시 모든 관련 데이터의 코드가 함께 업데이트됩니다.</p>
+            <p class="text-xs">입고/출고/BOM/생산/바코드/재고 이력 등 모든 참조가 새 코드로 변경되며, 되돌리려면 다시 코드 변경을 수행해야 합니다.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">기존 코드</label>
+          <input type="text" value="${oldCode}" readonly
+                 class="w-full px-3 py-2 border rounded-lg bg-gray-100 text-gray-500 font-mono">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            새 코드 <span class="text-red-500">*</span>
+          </label>
+          <input type="text" id="change-code-new" value="${suggestedPrefix}"
+                 class="w-full px-3 py-2 border rounded-lg font-mono uppercase"
+                 placeholder="${suggestedPrefix}100"
+                 maxlength="20"
+                 oninput="this.value=this.value.toUpperCase()">
+        </div>
+      </div>
+
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs">
+        <p class="font-medium text-blue-900 mb-1"><i class="fas fa-info-circle mr-1"></i>접두어 규칙</p>
+        <ul class="text-blue-800 space-y-0.5 ml-4">
+          <li>• <b>원료</b>: ${prefixGuide['원료']}</li>
+          <li>• <b>부자재</b>: ${prefixGuide['부자재']}</li>
+          <li>• <b>제품</b>: ${prefixGuide['제품']}</li>
+        </ul>
+        <p class="text-gray-600 mt-2">현재 분류: <b class="text-blue-900">${category}</b> → 권장 접두어: <b class="font-mono">${suggestedPrefix}</b></p>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">품목명</label>
+        <input type="text" value="${itemName}" readonly
+               class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-gray-700">
+      </div>
+
+      <div id="change-code-related-info" class="border rounded-lg p-3 bg-gray-50 max-h-48 overflow-y-auto">
+        ${relatedInfo}
+      </div>
+
+      <div class="flex justify-end space-x-3 pt-4 border-t">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+          취소
+        </button>
+        <button type="button" id="change-code-submit" onclick="executeChangeItemCode('${oldCode}')"
+                class="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700">
+          <i class="fas fa-exchange-alt mr-1"></i>코드 변경 실행
+        </button>
+      </div>
+    </div>
+  `);
+
+  // 관련 데이터 건수 비동기 로드
+  try {
+    const res = await api(`/master/${encodeURIComponent(oldCode)}/related-count`);
+    if (res.success) {
+      const rel = res.related || {};
+      const total = res.total || 0;
+      const nonZero = Object.entries(rel).filter(([k, v]) => v > 0);
+      const info = document.getElementById('change-code-related-info');
+      if (info) {
+        if (nonZero.length === 0) {
+          info.innerHTML = `
+            <div class="text-sm text-green-700">
+              <i class="fas fa-check-circle mr-1"></i>
+              연결된 참조 데이터가 없습니다. 안전하게 변경 가능합니다.
+            </div>`;
+        } else {
+          info.innerHTML = `
+            <div class="text-sm">
+              <p class="font-medium text-gray-800 mb-2">
+                <i class="fas fa-database mr-1"></i>연결된 참조 데이터 (총 ${total}건)
+              </p>
+              <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                ${nonZero.map(([k, v]) => `
+                  <div class="flex justify-between">
+                    <span class="text-gray-600 font-mono">${k}</span>
+                    <span class="font-medium text-gray-800">${v}건</span>
+                  </div>
+                `).join('')}
+              </div>
+              <p class="text-xs text-gray-500 mt-2">
+                <i class="fas fa-info-circle mr-1"></i>
+                코드 변경 시 위 모든 참조도 새 코드로 업데이트됩니다.
+              </p>
+            </div>`;
+        }
+      }
+    }
+  } catch (e) {
+    const info = document.getElementById('change-code-related-info');
+    if (info) {
+      info.innerHTML = '<div class="text-xs text-red-500">관련 데이터 조회 실패 (변경은 여전히 가능)</div>';
+    }
+  }
+}
+
+// 실제 코드 변경 실행
+async function executeChangeItemCode(oldCode) {
+  const newCodeInput = document.getElementById('change-code-new');
+  const newCode = (newCodeInput?.value || '').trim().toUpperCase();
+
+  if (!newCode) {
+    showToast('새 품목코드를 입력해주세요', 'error');
+    newCodeInput?.focus();
+    return;
+  }
+  if (newCode === oldCode) {
+    showToast('기존 코드와 동일합니다', 'error');
+    return;
+  }
+  if (!/^[A-Z][A-Z0-9]{1,19}$/.test(newCode)) {
+    showToast('품목코드는 대문자로 시작하는 영숫자 2~20자여야 합니다', 'error');
+    newCodeInput?.focus();
+    return;
+  }
+
+  const confirmMsg = `품목코드를 다음과 같이 변경합니다:\n\n  ${oldCode}  →  ${newCode}\n\n` +
+                     `이 작업은 모든 관련 테이블(입고/출고/BOM/생산 등)의 참조를 함께 업데이트하며,\n` +
+                     `되돌리려면 다시 코드 변경을 수행해야 합니다.\n\n계속하시겠습니까?`;
+  if (!confirm(confirmMsg)) return;
+
+  // 버튼 로딩 처리
+  const btn = document.getElementById('change-code-submit');
+  const originalText = btn?.innerHTML;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>변경 중...';
+  }
+
+  try {
+    const res = await api(`/master/${encodeURIComponent(oldCode)}/change-code`, 'PUT', {
+      new_code: newCode,
+      confirm: true
+    });
+
+    if (res.success) {
+      showToast(`품목코드 변경 완료: ${oldCode} → ${newCode} (${res.total_rows_updated || 0}개 참조 업데이트)`, 'success');
+      closeModal();
+      // 목록 새로고침
+      loadAdminMaster();
+    } else {
+      showToast(res.error || '코드 변경에 실패했습니다', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = originalText; }
+    }
+  } catch (e) {
+    showToast(e.response?.data?.error || e.message || '코드 변경에 실패했습니다', 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = originalText; }
   }
 }
 
@@ -16742,6 +16931,9 @@ window.loadAdminMaster = loadAdminMaster;
 window.editAdminMaster = editAdminMaster;
 window.saveAdminMaster = saveAdminMaster;
 window.deleteAdminMaster = deleteAdminMaster;
+// v3.6.179: 품목코드 변경
+window.openChangeItemCodeModal = openChangeItemCodeModal;
+window.executeChangeItemCode = executeChangeItemCode;
 
 // 제품 재고 등록 함수들
 window.addQuickStockItem = addQuickStockItem;

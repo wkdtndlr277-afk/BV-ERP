@@ -319,6 +319,258 @@ masterRoutes.put('/:item_code', async (c) => {
   }
 });
 
+// ★★★ v3.6.179: 품목코드 변경 (관리자 전용) ★★★
+// 자동 부여된 코드가 실제 분류와 맞지 않을 때 (예: RM1014가 실제 부자재) 사용
+// 모든 관련 테이블의 item_code / product_code를 함께 업데이트하여 무결성 유지
+//
+// GET /:item_code/related-count : 관련 데이터 건수 조회 (사전 확인용)
+masterRoutes.get('/:item_code/related-count', async (c) => {
+  const item_code = c.req.param('item_code');
+
+  // 헬퍼: 테이블 존재 여부 확인 후 COUNT
+  const safeCount = async (table: string, column: string, value: string): Promise<number> => {
+    try {
+      const exists = await c.env.DB.prepare(
+        `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+      ).bind(table).first();
+      if (!exists) return 0;
+      const r = await c.env.DB.prepare(
+        `SELECT COUNT(*) as count FROM ${table} WHERE ${column} = ?`
+      ).bind(value).first<{count: number}>();
+      return r?.count || 0;
+    } catch { return 0; }
+  };
+
+  const [
+    m, s, tx, ib, bomA, bomB, prod, pm, prodTx, prodUsage,
+    barcodeAdj, barcodeMap, bomV, inspNums, matCosts, openAdj,
+    prodItems, semiItems, semiLots, semiTx, stockAudit,
+    prodOutbound, frozen, frozenTx, orders, prodCat, prodCosts,
+    prodRouting, prodBarcodes, prodBatch, shipments, workStd, prodInb
+  ] = await Promise.all([
+    safeCount('master', 'item_code', item_code),
+    safeCount('supplies', 'item_code', item_code),
+    safeCount('transactions', 'item_code', item_code),
+    safeCount('inbound', 'item_code', item_code),
+    safeCount('bom', 'item_code', item_code),
+    safeCount('bom', 'product_code', item_code),
+    safeCount('production', 'product_code', item_code),
+    safeCount('production_materials', 'item_code', item_code),
+    safeCount('production_transactions', 'item_code', item_code),
+    safeCount('production_usage', 'item_code', item_code),
+    safeCount('barcode_adjustments', 'item_code', item_code),
+    safeCount('barcode_mapping', 'item_code', item_code),
+    safeCount('bom_versioned', 'item_code', item_code),
+    safeCount('inspection_numbers', 'item_code', item_code),
+    safeCount('material_costs', 'item_code', item_code),
+    safeCount('opening_stock_adjustments', 'item_code', item_code),
+    safeCount('production_items', 'item_code', item_code),
+    safeCount('semi_finished_items', 'item_code', item_code),
+    safeCount('semi_finished_lots', 'item_code', item_code),
+    safeCount('semi_finished_transactions', 'item_code', item_code),
+    safeCount('stock_audit_log', 'item_code', item_code),
+    safeCount('product_outbound', 'product_code', item_code),
+    safeCount('frozen_stock', 'product_code', item_code),
+    safeCount('frozen_stock_transactions', 'product_code', item_code),
+    safeCount('orders', 'product_code', item_code),
+    safeCount('product_catalog', 'product_code', item_code),
+    safeCount('product_costs', 'product_code', item_code),
+    safeCount('product_process_routing', 'product_code', item_code),
+    safeCount('production_barcodes', 'product_code', item_code),
+    safeCount('production_batch', 'product_code', item_code),
+    safeCount('shipments', 'product_code', item_code),
+    safeCount('work_standards', 'product_code', item_code),
+    safeCount('production_inbound', 'item_code', item_code)
+  ]);
+
+  const related = {
+    master: m,
+    supplies: s,
+    transactions: tx,
+    inbound: ib,
+    bom_as_material: bomA,
+    bom_as_product: bomB,
+    production: prod,
+    production_materials: pm,
+    production_transactions: prodTx,
+    production_usage: prodUsage,
+    barcode_adjustments: barcodeAdj,
+    barcode_mapping: barcodeMap,
+    bom_versioned: bomV,
+    inspection_numbers: inspNums,
+    material_costs: matCosts,
+    opening_stock_adjustments: openAdj,
+    production_items: prodItems,
+    semi_finished_items: semiItems,
+    semi_finished_lots: semiLots,
+    semi_finished_transactions: semiTx,
+    stock_audit_log: stockAudit,
+    product_outbound: prodOutbound,
+    frozen_stock: frozen,
+    frozen_stock_transactions: frozenTx,
+    orders: orders,
+    product_catalog: prodCat,
+    product_costs: prodCosts,
+    product_process_routing: prodRouting,
+    production_barcodes: prodBarcodes,
+    production_batch: prodBatch,
+    shipments: shipments,
+    work_standards: workStd,
+    production_inbound: prodInb
+  };
+
+  const total = Object.values(related).reduce((a, b) => a + b, 0);
+
+  return c.json({ success: true, item_code, total, related });
+});
+
+// PUT /:item_code/change-code : 품목코드 변경 (관련 데이터 연동 업데이트)
+// body: { new_code: string, confirm: true }
+masterRoutes.put('/:item_code/change-code', async (c) => {
+  const old_code = c.req.param('item_code');
+  const body = await c.req.json<{ new_code: string; confirm?: boolean }>();
+  const new_code = (body.new_code || '').trim();
+
+  // 1. 입력 검증
+  if (!new_code) {
+    return c.json({ success: false, error: '새 품목코드를 입력해주세요.' }, 400);
+  }
+  if (new_code === old_code) {
+    return c.json({ success: false, error: '기존 코드와 동일합니다.' }, 400);
+  }
+  // 코드 형식: 영문 대문자로 시작, 영숫자 조합 (2~20자)
+  if (!/^[A-Z][A-Z0-9]{1,19}$/.test(new_code)) {
+    return c.json({
+      success: false,
+      error: '품목코드는 대문자로 시작하는 영숫자 2~20자여야 합니다. (예: RM100, SM014, PD001)'
+    }, 400);
+  }
+
+  try {
+    // 2. 기존 품목 조회 (master or supplies)
+    const masterItem = await c.env.DB.prepare(
+      'SELECT * FROM master WHERE item_code = ?'
+    ).bind(old_code).first<any>();
+
+    let suppliesItem: any = null;
+    try {
+      suppliesItem = await c.env.DB.prepare(
+        'SELECT * FROM supplies WHERE item_code = ?'
+      ).bind(old_code).first<any>();
+    } catch { /* supplies 테이블 없을 수 있음 */ }
+
+    const existingItem = masterItem || suppliesItem;
+    if (!existingItem) {
+      return c.json({ success: false, error: '변경할 품목을 찾을 수 없습니다.' }, 404);
+    }
+
+    // 3. 새 코드 중복 확인 (master + supplies)
+    const dupMaster = await c.env.DB.prepare(
+      'SELECT item_code FROM master WHERE item_code = ?'
+    ).bind(new_code).first();
+    let dupSupplies: any = null;
+    try {
+      dupSupplies = await c.env.DB.prepare(
+        'SELECT item_code FROM supplies WHERE item_code = ?'
+      ).bind(new_code).first();
+    } catch { /* ignore */ }
+
+    if (dupMaster || dupSupplies) {
+      return c.json({
+        success: false,
+        error: `새 코드 "${new_code}"는 이미 사용 중입니다.`
+      }, 400);
+    }
+
+    // 4. 관련 테이블 일괄 업데이트
+    // 헬퍼: 테이블 존재 + 컬럼 존재 시에만 UPDATE
+    const safeUpdate = async (table: string, column: string): Promise<number> => {
+      try {
+        const exists = await c.env.DB.prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name=?`
+        ).bind(table).first();
+        if (!exists) return 0;
+        // 컬럼 존재 확인
+        const cols = await c.env.DB.prepare(`PRAGMA table_info(${table})`).all<{name: string}>();
+        const hasColumn = (cols.results || []).some((r: any) => r.name === column);
+        if (!hasColumn) return 0;
+        const r = await c.env.DB.prepare(
+          `UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`
+        ).bind(new_code, old_code).run();
+        return (r.meta?.changes as number) || 0;
+      } catch (e: any) {
+        console.error(`safeUpdate ${table}.${column} failed:`, e.message);
+        return 0;
+      }
+    };
+
+    // item_code 컬럼을 가진 테이블들
+    const itemCodeTables = [
+      'transactions', 'inbound', 'bom', 'production_materials',
+      'production_transactions', 'production_usage', 'barcode_adjustments',
+      'barcode_mapping', 'bom_versioned', 'inspection_numbers',
+      'material_costs', 'opening_stock_adjustments', 'production_items',
+      'semi_finished_items', 'semi_finished_lots', 'semi_finished_transactions',
+      'stock_audit_log', 'production_inbound'
+    ];
+    // product_code 컬럼을 가진 테이블들 (제품/원료 모두 참조 가능)
+    const productCodeTables = [
+      'bom', 'bom_versioned', 'production', 'product_outbound',
+      'frozen_stock', 'frozen_stock_transactions', 'orders',
+      'product_catalog', 'product_costs', 'product_process_routing',
+      'production_barcodes', 'production_batch', 'shipments', 'work_standards'
+    ];
+
+    const updateResults: Record<string, number> = {};
+
+    for (const t of itemCodeTables) {
+      updateResults[`${t}.item_code`] = await safeUpdate(t, 'item_code');
+    }
+    for (const t of productCodeTables) {
+      updateResults[`${t}.product_code`] = await safeUpdate(t, 'product_code');
+    }
+
+    // 5. 마지막으로 master / supplies 자체의 item_code 변경
+    if (masterItem) {
+      await c.env.DB.prepare(
+        'UPDATE master SET item_code = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?'
+      ).bind(new_code, old_code).run();
+      updateResults['master.item_code'] = 1;
+    }
+    if (suppliesItem) {
+      await c.env.DB.prepare(
+        'UPDATE supplies SET item_code = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?'
+      ).bind(new_code, old_code).run();
+      updateResults['supplies.item_code'] = 1;
+    }
+
+    // 6. 감사 로그 (선택적)
+    try {
+      await c.env.DB.prepare(`
+        INSERT INTO stock_audit_log (item_code, action, memo, created_at)
+        VALUES (?, 'code_change', ?, CURRENT_TIMESTAMP)
+      `).bind(new_code, `품목코드 변경: ${old_code} → ${new_code}`).run();
+    } catch { /* audit_log 테이블 없거나 스키마 다를 수 있음 */ }
+
+    const totalUpdated = Object.values(updateResults).reduce((a, b) => a + b, 0);
+
+    return c.json({
+      success: true,
+      message: `품목코드가 변경되었습니다: ${old_code} → ${new_code}`,
+      old_code,
+      new_code,
+      total_rows_updated: totalUpdated,
+      updates: updateResults
+    });
+  } catch (error: any) {
+    console.error('Change item_code error:', error);
+    return c.json({
+      success: false,
+      error: `품목코드 변경 실패: ${error.message}`
+    }, 500);
+  }
+});
+
 // 품목 삭제 (관련 데이터 연동 삭제)
 masterRoutes.delete('/:item_code', async (c) => {
   const item_code = c.req.param('item_code');

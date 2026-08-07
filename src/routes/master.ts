@@ -438,11 +438,12 @@ masterRoutes.put('/:item_code/change-code', async (c) => {
   if (new_code === old_code) {
     return c.json({ success: false, error: '기존 코드와 동일합니다.' }, 400);
   }
-  // 코드 형식: 영문 대문자로 시작, 영숫자 조합 (2~20자)
-  if (!/^[A-Z][A-Z0-9]{1,19}$/.test(new_code)) {
+  // v3.6.182: 코드 형식 엄격화 - 접두어(영문 대문자 2~4자) + 번호(숫자 2~10자리)
+  // 예전 정규식 ^[A-Z][A-Z0-9]{1,19}$는 'SM' 같이 번호 없는 코드도 통과되어 오작동 유발
+  if (!/^[A-Z]{2,4}\d{2,10}$/.test(new_code)) {
     return c.json({
       success: false,
-      error: '품목코드는 대문자로 시작하는 영숫자 2~20자여야 합니다. (예: RM100, SM014, PD001)'
+      error: '품목코드는 접두어(영문 대문자 2~4자) + 번호(숫자 2~10자리)여야 합니다. (예: RM100, SM014, PD001)'
     }, 400);
   }
 

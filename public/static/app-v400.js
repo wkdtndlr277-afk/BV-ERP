@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.180';
-const APP_BUILD = '20260807-2';
+const APP_VERSION = '3.6.182';
+const APP_BUILD = '20260807-3';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -15560,8 +15560,9 @@ async function executeChangeItemCode(oldCode) {
     showToast('기존 코드와 동일합니다', 'error');
     return;
   }
-  if (!/^[A-Z][A-Z0-9]{1,19}$/.test(newCode)) {
-    showToast('품목코드는 대문자로 시작하는 영숫자 2~20자여야 합니다', 'error');
+  // v3.6.182: 백엔드와 동일하게 접두어(2~4자) + 번호(2자리 이상) 검증
+  if (!/^[A-Z]{2,4}\d{2,10}$/.test(newCode)) {
+    showToast('품목코드는 접두어(영문 2~4자) + 번호(숫자 2자리 이상)여야 합니다 (예: RM100, SM014)', 'error');
     return;
   }
 

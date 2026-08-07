@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.179';
-const APP_BUILD = '20260807-1';
+const APP_VERSION = '3.6.180';
+const APP_BUILD = '20260807-2';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -15283,17 +15283,9 @@ async function deleteAdminMaster(itemCode, itemName) {
 
 // ★★★ v3.6.179: 품목코드 변경 모달 ★★★
 // 자동 부여된 코드가 실제 분류와 맞지 않을 때 (예: RM1014가 실제 부자재)
+// v3.6.180: 접두어/번호 분리 입력 + 사용중 코드 안내 (사용자가 번호 직접 부여)
 async function openChangeItemCodeModal(oldCode, itemName, category) {
-  // 접두어 규칙 안내
-  const prefixGuide = {
-    '원료': 'RM (예: RM100, RM1014)',
-    '부자재': 'SM (예: SM014, SM100)',
-    '제품': 'PD/PR (예: PD001)'
-  };
   const suggestedPrefix = category === '부자재' ? 'SM' : (category === '제품' ? 'PD' : 'RM');
-
-  // 현재 관련 데이터 건수 조회
-  let relatedInfo = '<div class="text-sm text-gray-500"><i class="fas fa-spinner fa-spin mr-1"></i>관련 데이터 조회 중...</div>';
 
   showModal(`품목코드 변경: ${oldCode}`, `
     <div class="space-y-4">
@@ -15307,6 +15299,12 @@ async function openChangeItemCodeModal(oldCode, itemName, category) {
         </div>
       </div>
 
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">품목명</label>
+        <input type="text" value="${itemName}" readonly
+               class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-gray-700">
+      </div>
+
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">기존 코드</label>
@@ -15317,32 +15315,39 @@ async function openChangeItemCodeModal(oldCode, itemName, category) {
           <label class="block text-sm font-medium text-gray-700 mb-1">
             새 코드 <span class="text-red-500">*</span>
           </label>
-          <input type="text" id="change-code-new" value="${suggestedPrefix}"
-                 class="w-full px-3 py-2 border rounded-lg font-mono uppercase"
-                 placeholder="${suggestedPrefix}100"
-                 maxlength="20"
-                 oninput="this.value=this.value.toUpperCase()">
+          <div class="flex gap-1">
+            <input type="text" id="change-code-prefix" value="${suggestedPrefix}"
+                   class="w-16 px-2 py-2 border rounded-lg font-mono uppercase text-center bg-blue-50"
+                   maxlength="4"
+                   oninput="this.value=this.value.toUpperCase().replace(/[^A-Z]/g,''); updateNewCodePreview();">
+            <input type="text" id="change-code-number" value=""
+                   class="flex-1 px-3 py-2 border rounded-lg font-mono"
+                   placeholder="번호 입력 (예: 100, 1030)"
+                   maxlength="16"
+                   oninput="this.value=this.value.replace(/[^0-9]/g,''); updateNewCodePreview();">
+          </div>
+          <p id="change-code-preview" class="text-xs text-gray-600 mt-1 font-mono">
+            → 새 코드: <b class="text-blue-600">${suggestedPrefix}...</b>
+          </p>
         </div>
       </div>
 
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs">
         <p class="font-medium text-blue-900 mb-1"><i class="fas fa-info-circle mr-1"></i>접두어 규칙</p>
-        <ul class="text-blue-800 space-y-0.5 ml-4">
-          <li>• <b>원료</b>: ${prefixGuide['원료']}</li>
-          <li>• <b>부자재</b>: ${prefixGuide['부자재']}</li>
-          <li>• <b>제품</b>: ${prefixGuide['제품']}</li>
-        </ul>
+        <div class="grid grid-cols-3 gap-2 text-blue-800">
+          <div><b>원료</b>: RM</div>
+          <div><b>부자재</b>: SM</div>
+          <div><b>제품</b>: PD / PR</div>
+        </div>
         <p class="text-gray-600 mt-2">현재 분류: <b class="text-blue-900">${category}</b> → 권장 접두어: <b class="font-mono">${suggestedPrefix}</b></p>
       </div>
 
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">품목명</label>
-        <input type="text" value="${itemName}" readonly
-               class="w-full px-3 py-2 border rounded-lg bg-gray-50 text-gray-700">
+      <div id="change-code-used-numbers" class="border rounded-lg p-3 bg-gray-50 text-xs">
+        <div class="text-gray-500"><i class="fas fa-spinner fa-spin mr-1"></i>${suggestedPrefix} 접두어 사용 중인 번호 조회 중...</div>
       </div>
 
-      <div id="change-code-related-info" class="border rounded-lg p-3 bg-gray-50 max-h-48 overflow-y-auto">
-        ${relatedInfo}
+      <div id="change-code-related-info" class="border rounded-lg p-3 bg-gray-50 max-h-40 overflow-y-auto">
+        <div class="text-sm text-gray-500"><i class="fas fa-spinner fa-spin mr-1"></i>관련 데이터 조회 중...</div>
       </div>
 
       <div class="flex justify-end space-x-3 pt-4 border-t">
@@ -15357,7 +15362,15 @@ async function openChangeItemCodeModal(oldCode, itemName, category) {
     </div>
   `);
 
-  // 관련 데이터 건수 비동기 로드
+  // 미리보기 초기화
+  updateNewCodePreview();
+
+  // 번호 입력 필드에 포커스
+  setTimeout(() => document.getElementById('change-code-number')?.focus(), 100);
+
+  // 병렬로 (1) 사용 중인 번호 목록, (2) 관련 데이터 건수 조회
+  loadUsedCodesForPrefix(suggestedPrefix);
+
   try {
     const res = await api(`/master/${encodeURIComponent(oldCode)}/related-count`);
     if (res.success) {
@@ -15402,14 +15415,145 @@ async function openChangeItemCodeModal(oldCode, itemName, category) {
   }
 }
 
+// v3.6.180: 새 코드 미리보기 실시간 업데이트
+function updateNewCodePreview() {
+  const prefixEl = document.getElementById('change-code-prefix');
+  const numberEl = document.getElementById('change-code-number');
+  const previewEl = document.getElementById('change-code-preview');
+  if (!prefixEl || !numberEl || !previewEl) return;
+
+  const prefix = (prefixEl.value || '').toUpperCase().replace(/[^A-Z]/g, '');
+  const number = (numberEl.value || '').replace(/[^0-9]/g, '');
+  const combined = prefix + number;
+
+  if (!prefix) {
+    previewEl.innerHTML = `→ <span class="text-red-500">접두어를 입력하세요</span>`;
+  } else if (!number) {
+    previewEl.innerHTML = `→ 새 코드: <b class="text-gray-400">${prefix}?</b> <span class="text-red-500">(번호 입력 필요)</span>`;
+  } else {
+    previewEl.innerHTML = `→ 새 코드: <b class="text-blue-600 text-base">${combined}</b>`;
+  }
+
+  // 접두어가 바뀌면 사용 중 번호 목록 다시 로드 (디바운스)
+  if (prefixEl.dataset.lastPrefix !== prefix && prefix.length >= 2) {
+    prefixEl.dataset.lastPrefix = prefix;
+    loadUsedCodesForPrefix(prefix);
+  }
+}
+
+// v3.6.180: 접두어별 사용 중인 코드 조회 및 다음 사용 가능한 번호 제안
+async function loadUsedCodesForPrefix(prefix) {
+  const container = document.getElementById('change-code-used-numbers');
+  if (!container) return;
+  container.innerHTML = `<div class="text-gray-500"><i class="fas fa-spinner fa-spin mr-1"></i>${prefix} 접두어 조회 중...</div>`;
+
+  try {
+    const res = await api('/master');
+    const items = res.data || [];
+    // prefix로 시작하고 뒤에 숫자만 있는 코드 필터
+    const pattern = new RegExp(`^${prefix}(\\d+)$`);
+    const usedNumbers = items
+      .map(i => {
+        const m = pattern.exec(i.item_code || '');
+        return m ? { num: parseInt(m[1], 10), code: i.item_code, name: i.item_name, category: i.category } : null;
+      })
+      .filter(x => x !== null)
+      .sort((a, b) => a.num - b.num);
+
+    const nums = usedNumbers.map(x => x.num);
+    // 다음 사용 가능한 번호 3개 제안 (사용 중이 아닌 가장 낮은 번호부터)
+    const suggestions = [];
+    const maxNum = nums.length > 0 ? Math.max(...nums) : 0;
+    // (1) 빈 슬롯 찾기
+    const numSet = new Set(nums);
+    let n = 1;
+    while (suggestions.length < 3 && n <= maxNum + 5) {
+      if (!numSet.has(n)) suggestions.push(n);
+      n++;
+    }
+
+    // 사용중 번호를 range 형태로 압축 표시 (예: 1-10, 12, 14-16)
+    const compactRanges = (arr) => {
+      if (arr.length === 0) return '';
+      const ranges = [];
+      let start = arr[0], prev = arr[0];
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i] === prev + 1) {
+          prev = arr[i];
+        } else {
+          ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
+          start = arr[i];
+          prev = arr[i];
+        }
+      }
+      ranges.push(start === prev ? `${start}` : `${start}-${prev}`);
+      return ranges.join(', ');
+    };
+
+    container.innerHTML = `
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="font-medium text-gray-800">
+            <i class="fas fa-list-ol mr-1"></i>${prefix} 접두어 사용 현황
+          </span>
+          <span class="text-gray-500">${usedNumbers.length}개 사용 중</span>
+        </div>
+        ${suggestions.length > 0 ? `
+          <div>
+            <span class="text-gray-600">권장 번호 (클릭하여 사용):</span>
+            ${suggestions.map(n => `
+              <button type="button" onclick="fillNumber(${n})"
+                      class="ml-1 px-2 py-0.5 bg-green-100 hover:bg-green-200 text-green-800 rounded font-mono text-xs">
+                ${n}
+              </button>
+            `).join('')}
+          </div>
+        ` : ''}
+        ${nums.length > 0 ? `
+          <details class="text-gray-600">
+            <summary class="cursor-pointer hover:text-gray-800">
+              사용 중인 번호 보기 (${prefix}${nums[0]} ~ ${prefix}${nums[nums.length - 1]})
+            </summary>
+            <div class="mt-1 p-2 bg-white rounded font-mono text-xs text-gray-700 max-h-24 overflow-y-auto">
+              ${compactRanges(nums)}
+            </div>
+          </details>
+        ` : `
+          <div class="text-gray-500">아직 ${prefix} 접두어를 사용하는 품목이 없습니다.</div>
+        `}
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = `<div class="text-red-500">사용 중 코드 조회 실패</div>`;
+  }
+}
+
+// 권장 번호 버튼 클릭 시 번호 입력란에 자동 입력
+function fillNumber(n) {
+  const numberEl = document.getElementById('change-code-number');
+  if (numberEl) {
+    numberEl.value = String(n);
+    updateNewCodePreview();
+    numberEl.focus();
+  }
+}
+
 // 실제 코드 변경 실행
 async function executeChangeItemCode(oldCode) {
-  const newCodeInput = document.getElementById('change-code-new');
-  const newCode = (newCodeInput?.value || '').trim().toUpperCase();
+  const prefixEl = document.getElementById('change-code-prefix');
+  const numberEl = document.getElementById('change-code-number');
+  const prefix = (prefixEl?.value || '').trim().toUpperCase().replace(/[^A-Z]/g, '');
+  const number = (numberEl?.value || '').trim().replace(/[^0-9]/g, '');
+  const newCode = prefix + number;
 
-  if (!newCode) {
-    showToast('새 품목코드를 입력해주세요', 'error');
-    newCodeInput?.focus();
+  if (!prefix) {
+    showToast('접두어를 입력해주세요 (예: RM, SM, PD)', 'error');
+    prefixEl?.focus();
+    return;
+  }
+  if (!number) {
+    showToast('번호를 입력해주세요', 'error');
+    numberEl?.focus();
     return;
   }
   if (newCode === oldCode) {
@@ -15418,7 +15562,6 @@ async function executeChangeItemCode(oldCode) {
   }
   if (!/^[A-Z][A-Z0-9]{1,19}$/.test(newCode)) {
     showToast('품목코드는 대문자로 시작하는 영숫자 2~20자여야 합니다', 'error');
-    newCodeInput?.focus();
     return;
   }
 
@@ -16934,6 +17077,10 @@ window.deleteAdminMaster = deleteAdminMaster;
 // v3.6.179: 품목코드 변경
 window.openChangeItemCodeModal = openChangeItemCodeModal;
 window.executeChangeItemCode = executeChangeItemCode;
+// v3.6.180: 접두어/번호 분리 입력 헬퍼
+window.updateNewCodePreview = updateNewCodePreview;
+window.loadUsedCodesForPrefix = loadUsedCodesForPrefix;
+window.fillNumber = fillNumber;
 
 // 제품 재고 등록 함수들
 window.addQuickStockItem = addQuickStockItem;

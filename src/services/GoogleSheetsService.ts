@@ -1531,9 +1531,9 @@ export class GoogleSheetsService {
   // ★ v3.5.77: 일별수불부 날짜 추가 (연속성 보장)
   // ★★★ v3.6.15: APPEND 방식으로 완전 재작성 - 기존 데이터 보존 ★★★
   // 버그 수정: 전체 클리어/재작성 시 기존 날짜가 손상되는 문제 해결
-  async addDailyStockDate(targetDate: string): Promise<{ date: string; prev_date: string; new_rows: number; total_rows: number }> {
+  async addDailyStockDate(targetDate: string): Promise<{ date: string; prev_date: string; new_rows: number; total_rows: number; write_success?: boolean; write_error?: string }> {
     const cleanDate = targetDate.replace(/^'/, '');
-    console.log(`[addDailyStockDate v3.6.21] ========== 시작: ${cleanDate} ==========`);
+    console.log(`[addDailyStockDate v3.6.50] ========== 시작: ${cleanDate} ==========`);
     
     // 1. 기존 일별수불부 데이터 읽기
     // ★★★ v3.6.21: 읽기 범위 확장 (5000 → 50000) ★★★
@@ -1699,23 +1699,85 @@ export class GoogleSheetsService {
       ]);
     }
     
-    // ★★★ 7. 수식 포함 - 특정 위치에 직접 쓰기 (공란 방지) ★★★
-    // v3.6.49: append 대신 write로 변경 - 공란 생성 버그 수정
+    // ★★★ 7. v3.6.50: append 방식으로 변경 - writeSheet의 startRowNum 오차 문제 해결 ★★★
+    // 문제: existingData.length + 2로 계산한 startRowNum이 실제 시트의 마지막 행과 다를 수 있음
+    // 해결: appendSheetWithFormulas는 Google Sheets가 자동으로 마지막 빈 행을 찾아 append
+    let writeSuccess = false;
+    let writeError: string | undefined = undefined;
+    
     if (newRows.length > 0) {
-      const writeRange = `A${startRowNum}:H${startRowNum + newRows.length - 1}`;
-      await this.writeSheetWithFormulas('일별수불부', writeRange, newRows);
-      console.log(`[addDailyStockDate v3.6.49] ${newRows.length}건 WRITE 완료 (범위: ${writeRange})`);
+      // rowNum 재계산 필요: append 시 실제 위치를 알 수 없으므로 수식에서 상대 참조 대신 절대 참조 사용
+      // 하지만 SUMIFS는 셀 참조가 필요하므로, 실제 append 후 반환값으로 rowNum 재계산 후 update 필요
+      // 방법: 먼저 값만 append → 반환된 range로 실제 rowNum 확인 → 수식 재적용
+      
+      // Step 1: 임시 값으로 append (rowNum을 알기 위해)
+      const placeholderRows = newRows.map(r => [r[0], r[1], r[2], r[3], 0, 0, 0, r[7]]);
+      const appendResult = await this.appendSheetWithFormulas('일별수불부', placeholderRows);
+      
+      if (!appendResult.success) {
+        writeError = appendResult.error || 'Append 실패';
+        console.error(`[addDailyStockDate v3.6.50] ❌ Append 실패:`, writeError);
+      } else {
+        // Step 2: 반환된 updatedRange 파싱해서 실제 시작 행 번호 확인
+        const updatedRange = appendResult.updates?.updates?.updatedRange || appendResult.updates?.updatedRange || '';
+        console.log(`[addDailyStockDate v3.6.50] Append 완료, updatedRange: ${updatedRange}`);
+        
+        // "일별수불부!A12539:H12729" 형식에서 시작 행 번호 추출
+        const rangeMatch = updatedRange.match(/[A-Z]+(\d+):/);
+        if (rangeMatch) {
+          const actualStartRow = parseInt(rangeMatch[1], 10);
+          console.log(`[addDailyStockDate v3.6.50] 실제 시작 행: ${actualStartRow} (예상: ${startRowNum})`);
+          
+          // Step 3: 정확한 rowNum으로 수식 재생성
+          const correctedRows: any[][] = [];
+          for (let i = 0; i < sortedCodes.length; i++) {
+            const code = sortedCodes[i];
+            const { name, unit } = prevStockMap[code];
+            const rowNum = actualStartRow + i;
+            const prevStock = prevStockMap[code]?.current || 0;
+            
+            correctedRows.push([
+              `'${cleanDate}`,
+              code,
+              name,
+              prevStock,
+              `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
+              `=IFERROR(SUMIFS(로트매칭!E:E,로트매칭!C:C,B${rowNum},로트매칭!A:A,A${rowNum}),0)`,
+              `=D${rowNum}+E${rowNum}-F${rowNum}`,
+              unit
+            ]);
+          }
+          
+          // Step 4: 정확한 위치에 수식으로 덮어쓰기
+          const correctRange = `A${actualStartRow}:H${actualStartRow + correctedRows.length - 1}`;
+          const writeResult = await this.writeSheetWithFormulas('일별수불부', correctRange, correctedRows);
+          
+          if (writeResult.success) {
+            writeSuccess = true;
+            console.log(`[addDailyStockDate v3.6.50] ✅ 수식 적용 완료 (범위: ${correctRange})`);
+          } else {
+            writeError = writeResult.error || 'Write 실패';
+            console.error(`[addDailyStockDate v3.6.50] ❌ 수식 적용 실패:`, writeError);
+          }
+        } else {
+          writeError = `updatedRange 파싱 실패: ${updatedRange}`;
+          console.error(`[addDailyStockDate v3.6.50] ❌ ${writeError}`);
+        }
+      }
     } else {
-      console.warn(`[addDailyStockDate v3.6.49] 경고: 새 행이 0건 - prevStockMap 크기: ${Object.keys(prevStockMap).length}`);
+      console.warn(`[addDailyStockDate v3.6.50] 경고: 새 행이 0건 - prevStockMap 크기: ${Object.keys(prevStockMap).length}`);
+      writeError = 'prevStockMap이 비어있어 새 행을 생성할 수 없음';
     }
     
-    console.log(`[addDailyStockDate v3.6.43] ========== 완료: ${cleanDate}, 기존 ${existingData.length}행 + 신규 ${newRows.length}행 ==========`);
+    console.log(`[addDailyStockDate v3.6.50] ========== 완료: ${cleanDate}, 기존 ${existingData.length}행 + 신규 ${newRows.length}행, write_success=${writeSuccess} ==========`);
     
     return {
       date: cleanDate,
       prev_date: prevDate,
-      new_rows: newRows.length,
-      total_rows: existingData.length + newRows.length
+      new_rows: writeSuccess ? newRows.length : 0,
+      total_rows: existingData.length + (writeSuccess ? newRows.length : 0),
+      write_success: writeSuccess,
+      write_error: writeError
     };
   }
 }

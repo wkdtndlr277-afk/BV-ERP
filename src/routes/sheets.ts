@@ -1053,7 +1053,8 @@ sheets.post('/rebuild-daily-stock', async (c) => {
     const { start_date, end_date, force = false } = body;
     
     // 1. 생산실적 시트에서 날짜 목록 가져오기
-    const productionData = await service.readSheet('생산실적', 'A2:A5000');
+    // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
+    const productionData = await service.readSheet('생산실적', 'A2:A50000');
     const uniqueDates = new Set<string>();
     
     for (const row of productionData) {
@@ -1110,18 +1111,26 @@ sheets.post('/rebuild-daily-stock', async (c) => {
       console.log(`[rebuild-daily-stock] 기존 ${existingData.length}행 중 ${existingData.length - remainingData.length}행 삭제, ${remainingData.length}행 유지 (정렬됨)`);
     }
     
-    // 2. 각 날짜별로 일별수불부 생성
+    // 2. 각 날짜별로 일별수불부 + 부자재수불부 생성 (v3.6.53)
     const results: any[] = [];
     for (const date of sortedDates) {
       try {
         const result = await service.addDailyStockDate(date);
+        // ★★★ v3.6.53: 부자재수불부도 함께 재생성 ★★★
+        let subResult: any = null;
+        try {
+          subResult = await service.addSubsidiaryStockDate(date);
+        } catch (subErr: any) {
+          console.error(`[rebuild-daily-stock] ${date} 부자재수불부 실패:`, subErr.message);
+        }
         results.push({
           date,
           status: 'success',
           new_rows: result.new_rows,
-          total_rows: result.total_rows
+          total_rows: result.total_rows,
+          subsidiary_new_rows: subResult?.new_rows || 0
         });
-        console.log(`[rebuild-daily-stock] ${date} 완료: ${result.new_rows}행 추가`);
+        console.log(`[rebuild-daily-stock] ${date} 완료: 일별 ${result.new_rows}행 + 부자재 ${subResult?.new_rows || 0}행`);
       } catch (err: any) {
         results.push({
           date,
@@ -1965,7 +1974,8 @@ sheets.get('/v2/output/material-usage', async (c) => {
     
     // ★★★ v3.6.51: 반제품(SF) 사용현황 분리 추출 ★★★
     // BOM마스터에서 SF 원료 사용량 계산 (생산실적 × BOM 배합비)
-    const productionData = await service.readSheet('생산실적', 'A2:H5000');
+    // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
+    const productionData = await service.readSheet('생산실적', 'A2:H50000');
     const bomData = await service.readSheet('BOM마스터', 'A2:F2000');
     
     // BOM에서 SF 원료만 추출
@@ -2104,24 +2114,28 @@ sheets.post('/v2/shipment/generate', async (c) => {
     const shipmentDate = prodDateObj.toISOString().split('T')[0];
 
     // 3. 출고일지 시트 헤더 확인/생성
+    // ★★★ v3.6.53: 박스수량 컬럼 추가 (11열로 확장) - E:수량, F:박스수량, G:단위, ... ★★★
     const shipmentHeaders = [
-      '출고일', '생산일', '제품코드', '제품명', '수량', '단위', 
+      '출고일', '생산일', '제품코드', '제품명', '수량', '박스수량', '단위', 
       '채널', '생산LOT', '출고상태', '비고'
     ];
     
     // 기존 출고일지 데이터 확인
     let existingData: any[][] = [];
     try {
-      existingData = await service.readSheet('출고일지', 'A2:J');
+      existingData = await service.readSheet('출고일지', 'A2:K');
     } catch (e) {
       // 시트가 없으면 헤더 생성
-      await service.writeSheet('출고일지', 'A1:J1', [shipmentHeaders]);
+      await service.writeSheet('출고일지', 'A1:K1', [shipmentHeaders]);
     }
 
     // 4. 이미 생성된 출고건 확인 (중복 방지)
+    // ★ v3.6.53: 박스수량 컬럼 추가로 인해 생산LOT는 H → I열로 이동
     const existingShipments = new Set<string>();
     for (const row of existingData) {
-      const key = `${row[0]}|${row[2]}|${row[7]}`; // 출고일|제품코드|생산LOT
+      // 마이그레이션 안전: H(구 LOT) 또는 I(신 LOT) 둘 다 체크
+      const lot = row[8] || row[7] || '';
+      const key = `${row[0]}|${row[2]}|${lot}`; // 출고일|제품코드|생산LOT
       existingShipments.add(key);
     }
 
@@ -2133,6 +2147,21 @@ sheets.post('/v2/shipment/generate', async (c) => {
       const name = row[1]?.toString() || '';
       if (code && name && !productNameMap.has(code)) {
         productNameMap.set(code, name);
+      }
+    }
+
+    // ★★★ v3.6.53: BOM에서 제품별 첫 번째 SM 부자재의 입수량 조회 (박스수량 계산용) ★★★
+    // 로직: 여러 SM 부자재가 있어도 첫 번째(외박스로 간주)의 입수량 기준
+    // 향후 요구에 따라 다중 부자재 표시로 확장 가능
+    const bomData = await service.readSheet('BOM마스터', 'A2:H10000');
+    const firstSmPackQtyMap = new Map<string, number>();
+    for (const row of bomData || []) {
+      const productCode = row[0]?.toString().trim() || '';
+      const materialCode = row[2]?.toString().trim() || '';
+      const packQty = parseFloat(row[7]?.toString() || '0') || 0;
+      if (!materialCode.startsWith('SM') || packQty <= 0) continue;
+      if (!firstSmPackQtyMap.has(productCode)) {
+        firstSmPackQtyMap.set(productCode, packQty);
       }
     }
 
@@ -2150,6 +2179,11 @@ sheets.post('/v2/shipment/generate', async (c) => {
 
       // ★ 제품명: 생산실적에 없으면 제품마스터에서 조회
       const productName = prod.product_name || productNameMap.get(prod.product_code) || '';
+      
+      // ★★★ v3.6.53: 박스수량 계산 = ceil(생산수량 / 입수량) ★★★
+      const qty = prod.quantity || 0;
+      const packQty = firstSmPackQtyMap.get(prod.product_code) || 0;
+      const boxCount = (packQty > 0) ? Math.ceil(qty / packQty) : '';
 
       shipmentRows.push([
         `'${shipmentDate}`,         // A: 출고일 (생산일+1)
@@ -2157,11 +2191,12 @@ sheets.post('/v2/shipment/generate', async (c) => {
         prod.product_code,          // C: 제품코드
         productName,                // D: 제품명 (마스터에서 조회)
         prod.quantity,              // E: 수량
-        'EA',                       // F: 단위
-        prod.channel || '',         // G: 채널
-        prod.lot_number || '',      // H: 생산LOT
-        '출고예정',                 // I: 출고상태
-        `${production_date} 생산분` // J: 비고
+        boxCount,                   // F: 박스수량 (v3.6.53 신규)
+        'EA',                       // G: 단위
+        prod.channel || '',         // H: 채널
+        prod.lot_number || '',      // I: 생산LOT
+        '출고예정',                 // J: 출고상태
+        `${production_date} 생산분` // K: 비고
       ]);
     }
 
@@ -2215,14 +2250,17 @@ sheets.post('/v2/shipment/confirm', async (c) => {
     }
 
     // 1. 출고일지에서 해당 날짜의 '출고예정' 건 조회
-    const shipmentData = await service.readSheet('출고일지', 'A2:J');
+    // ★★★ v3.6.53: 박스수량 컬럼 추가로 A2:J → A2:K 확장. status는 I(8) → J(9)로 이동. channel은 G(6) → H(7)로 이동 ★★★
+    const shipmentData = await service.readSheet('출고일지', 'A2:K');
     
     const pendingShipments: any[] = [];
     const pendingRowIndices: number[] = [];
     
     shipmentData.forEach((row, idx) => {
       let rowDate = row[0]?.toString().replace(/^'/, '');
-      const status = row[8];
+      // ★★★ v3.6.53: 신규 11열 구조에서 status는 J열(row[9]) ★★★
+      //   구 10열 구조에서 저장된 데이터는 status가 I열(row[8])이었음 → 하위호환
+      const status = row[9] || row[8];  // 신 J열 우선, 구 I열 fallback
       
       if (rowDate === shipment_date && status === '출고예정') {
         pendingShipments.push({
@@ -2230,7 +2268,9 @@ sheets.post('/v2/shipment/confirm', async (c) => {
           product_code: row[2],
           product_name: row[3],
           quantity: parseFloat(row[4]) || 0,
-          channel: row[6]
+          // 신 구조: H열=채널(row[7]), 구 구조: G열=채널(row[6])
+          //   구별: 신 구조는 F열(row[5])이 숫자(박스수량)이거나 빈값이고 G열(row[6])이 'EA' 단위
+          channel: (row[6] === 'EA' || row[6] === 'ea') ? row[7] : row[6]
         });
         pendingRowIndices.push(idx + 2);
       }
@@ -2300,10 +2340,11 @@ sheets.post('/v2/shipment/confirm', async (c) => {
     }
 
     // 3. 출고일지 상태 업데이트 (출고예정 → 출고완료) - 배치에 추가
+    // ★★★ v3.6.53: 박스수량 컬럼 추가로 status는 I열 → J열로 이동 ★★★
     for (const rowIdx of pendingRowIndices) {
       batchUpdates.push({
         sheetName: '출고일지',
-        range: `I${rowIdx}`,
+        range: `J${rowIdx}`,  // 신 J열 (구 I열)
         values: [['출고완료']]
       });
     }
@@ -2372,7 +2413,20 @@ sheets.get('/v2/shipment/list', async (c) => {
 
     // ★ 생산실적 시트에서 직접 조회 (SSOT - Single Source of Truth)
     // 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
-    const productionData = await service.readSheet('생산실적', 'A2:H');
+    const productionData = await service.readSheet('생산실적', 'A2:H50000');
+    
+    // ★★★ v3.6.53: BOM에서 제품별 첫 번째 SM 부자재의 입수량 조회 (박스수량 계산용) ★★★
+    const bomData = await service.readSheet('BOM마스터', 'A2:H10000');
+    const firstSmPackQtyMap = new Map<string, number>();
+    for (const row of bomData || []) {
+      const productCode = row[0]?.toString().trim() || '';
+      const materialCode = row[2]?.toString().trim() || '';
+      const packQty = parseFloat(row[7]?.toString() || '0') || 0;
+      if (!materialCode.startsWith('SM') || packQty <= 0) continue;
+      if (!firstSmPackQtyMap.has(productCode)) {
+        firstSmPackQtyMap.set(productCode, packQty);
+      }
+    }
     
     // ★ 제품코드별 순번 카운터 (LOT 형식: 20260601-PR253-001)
     const lotCounters: Record<string, number> = {};
@@ -2408,13 +2462,20 @@ sheets.get('/v2/shipment/list', async (c) => {
                               || orderNameMap.get(productCode) 
                               || '';
         
+        // ★★★ v3.6.53: 박스수량 계산 = ceil(생산수량 / 입수량) ★★★
+        const qty = parseFloat(row[3]) || 0;
+        const packQty = firstSmPackQtyMap.get(productCode) || 0;
+        const boxCount = (packQty > 0) ? Math.ceil(qty / packQty) : null;
+        
         return {
           shipment_date: shipmentDate,  // 출고일 (조회 기준일)
           production_date: prodDate,     // 생산일
           product_code: productCode,
           product_name: row[2]?.toString() || '',
           order_product_name: orderProductName,  // ★★★ v3.6.139: 발주상품명 추가 ★★★
-          quantity: parseFloat(row[3]) || 0,
+          quantity: qty,
+          box_count: boxCount,           // ★★★ v3.6.53: 박스수량 추가 ★★★
+          pack_qty: packQty || null,     // ★★★ v3.6.53: 입수량 (참고용) ★★★
           unit: 'EA',
           lot_number: lotNumber,
           channel: channel,
@@ -5219,7 +5280,7 @@ sheets.get('/debug/daily-stock-calc', async (c) => {
       const code = row[2]?.toString() || '';
       const usage = parseFloat(row[4]?.toString() || '0') || 0;
       
-      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184' || code === 'RM1054') continue;
+      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184' || code === 'RM1054' || code === 'RM1014') continue;
       
       usageMap[code] = (usageMap[code] || 0) + usage;
     }
@@ -5287,7 +5348,8 @@ sheets.post('/delete-test-production-data', async (c) => {
     const dryRun = body.dry_run !== false;  // 기본값: true (시뮬레이션)
 
     // 1. 생산실적 데이터 읽기
-    const data = await service.readSheet('생산실적', 'A2:H5000');
+    // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
+    const data = await service.readSheet('생산실적', 'A2:H50000');
     
     // 2. 테스트 데이터 식별 (제품명이 "테스트" 또는 빈값이고 수량이 1인 것)
     const testRows: { row: number; data: any[] }[] = [];
@@ -5341,7 +5403,8 @@ sheets.post('/delete-test-production-data', async (c) => {
     }
 
     // 3. 실제 삭제 실행: 기존 데이터 클리어 후 정상 데이터만 다시 쓰기
-    await service.clearRange('생산실적', 'A2:H5000');
+    // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
+    await service.clearRange('생산실적', 'A2:H50000');
     if (keepRows.length > 0) {
       await service.writeSheet('생산실적', 'A2', keepRows);
     }
@@ -5508,7 +5571,7 @@ sheets.post('/repair-daily-stock-formulas', async (c) => {
   }
 });
 
-// ★★★ v3.6.37: 일별수불부에서 제외 대상 코드(RT, SF, SM, RM184, RM1054) 삭제 API ★★★
+// ★★★ v3.6.51: 일별수불부에서 제외 대상 코드(RT, SF, SM, RM184, RM1054, RM1014) 삭제 API ★★★
 sheets.post('/cleanup-excluded-codes', async (c) => {
   try {
     const service = getSheetService(c);
@@ -5543,8 +5606,8 @@ sheets.post('/cleanup-excluded-codes', async (c) => {
         // 빈 행 제외
         if (!code && !date) return false;
         
-        // 제외 대상: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재)
-        if (code.startsWith('RT') || code.startsWith('SF') || code.startsWith('SM') || code === 'RM184' || code === 'RM1054') {
+        // 제외 대상: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재), RM1014(미등록)
+        if (code.startsWith('RT') || code.startsWith('SF') || code.startsWith('SM') || code === 'RM184' || code === 'RM1054' || code === 'RM1014') {
           excludedRows.push({ date, code, name });
           return false;
         }
@@ -5604,13 +5667,46 @@ sheets.post('/cleanup-excluded-codes', async (c) => {
       }
     });
     
-    // 4. 클리어 후 정제된 데이터 쓰기
-    await service.clearRange('일별수불부', 'A2:H50000');
-    if (cleanedData.length > 0) {
-      await service.writeSheet('일별수불부', 'A2', cleanedData);
+    // 4. ★★★ v3.6.51: 수식 보존 방식으로 삭제 ★★★
+    //   기존 방식(clear + writeSheet)은 다른 날짜의 수식을 값으로 파괴하는 버그가 있었음.
+    //   해결: 원본 rawData(필터 전) 기준으로 인덱스를 찾아 그 행만 개별 clear.
+    //   ⚠️ existingData는 filter로 걸러진 배열이라 인덱스가 실제 시트 행과 어긋남 - rawData 사용!
+    const excludedRowNumbers: number[] = [];
+    for (let i = 0; i < (rawData || []).length; i++) {
+      const row = (rawData as any[])[i];
+      if (!row || !Array.isArray(row)) continue;
+      const code = String(row[1] || '').trim();
+      if (code.startsWith('RT') || code.startsWith('SF') || code.startsWith('SM') || 
+          code === 'RM184' || code === 'RM1054' || code === 'RM1014') {
+        excludedRowNumbers.push(i + 2);  // A2가 첫 행 (인덱스 0 → 행 2)
+      }
     }
     
-    console.log(`[cleanup-excluded-codes v3.6.37] ${excludedRows.length}개 행 삭제 완료`);
+    // 연속된 행을 range로 묶어서 batch clear
+    let clearedRanges = 0;
+    if (excludedRowNumbers.length > 0) {
+      const ranges: string[] = [];
+      let start = excludedRowNumbers[0];
+      let prev = start;
+      for (let i = 1; i < excludedRowNumbers.length; i++) {
+        if (excludedRowNumbers[i] === prev + 1) {
+          prev = excludedRowNumbers[i];
+        } else {
+          ranges.push(start === prev ? `A${start}:H${start}` : `A${start}:H${prev}`);
+          start = excludedRowNumbers[i];
+          prev = start;
+        }
+      }
+      ranges.push(start === prev ? `A${start}:H${start}` : `A${start}:H${prev}`);
+      
+      console.log(`[cleanup-excluded-codes v3.6.51] ${excludedRowNumbers.length}개 대상 행, ${ranges.length}개 range로 clear`);
+      for (const range of ranges) {
+        await service.clearRange('일별수불부', range);
+        clearedRanges++;
+      }
+    }
+    
+    console.log(`[cleanup-excluded-codes v3.6.51] ${excludedRows.length}개 행 삭제 완료 (수식 보존)`);
     
     return c.json({
       success: true,
@@ -5799,6 +5895,238 @@ sheets.post('/sync-active-materials', async (c) => {
 // - 품목명 자동복구 (코드가 이름 자리에 들어간 경우)
 // - 부호 뒤집기 (마이너스 → 플러스)
 // ═══════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════
+// ★★★ v3.6.53: 부자재(SM) 시스템 부트스트랩 ★★★
+// - BOM마스터에 G(포장단위), H(입수량) 헤더 추가
+// - 부자재수불부 시트 생성 (없으면) + 헤더 설정
+// - 부자재수불부의 D/E/F/G열 수식 구조 (일별수불부와 동일)
+// ═══════════════════════════════════════════════════════════════
+sheets.get('/subsidiary/diagnose', async (c) => {
+  const service = getSheetService(c);
+  if (!service) return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  
+  try {
+    // 1. BOM마스터 헤더 조회 (A1:H1)
+    const bomHeader = await service.readSheet('BOM마스터', 'A1:H1');
+    const bomCols = bomHeader?.[0] || [];
+    
+    // 2. 부자재수불부 시트 존재 여부 & 헤더
+    let subExists = false;
+    let subHeader: any[] = [];
+    let subRowCount = 0;
+    try {
+      const subH = await service.readSheet('부자재수불부', 'A1:H1');
+      if (subH && subH.length > 0) {
+        subExists = true;
+        subHeader = subH[0];
+        const allRows = await service.readSheet('부자재수불부', 'A2:A');
+        subRowCount = allRows?.length || 0;
+      }
+    } catch (e) { /* 시트 없음 */ }
+    
+    // 3. BOM에 등록된 SM 코드 목록 (부자재)
+    const bomFull = await service.readSheet('BOM마스터', 'A2:H10000');
+    const smCodes = new Set<string>();
+    const smBomRows: any[] = [];
+    for (const row of bomFull || []) {
+      const code = String(row[2] || '').trim();
+      if (code.startsWith('SM')) {
+        smCodes.add(code);
+        smBomRows.push({
+          제품코드: row[0], 제품명: row[1], 부자재코드: code, 부자재명: row[3],
+          수량: row[4], 단위: row[5], 포장단위: row[6] || '(없음)', 입수량: row[7] || '(없음)'
+        });
+      }
+    }
+    
+    return c.json({
+      success: true,
+      diagnose: {
+        BOM마스터: {
+          header_length: bomCols.length,
+          columns: bomCols,
+          has_G_H: bomCols.length >= 8,
+          note: bomCols.length < 8 ? '⚠️ G/H열 헤더가 없음 - bootstrap 필요' : '✅ 8열 구조'
+        },
+        부자재수불부: {
+          exists: subExists,
+          header: subHeader,
+          row_count: subRowCount,
+          note: !subExists ? '⚠️ 시트 없음 - bootstrap 필요' : '✅ 존재'
+        },
+        BOM_SM_등록현황: {
+          unique_sm_codes: smCodes.size,
+          sm_bom_rows: smBomRows.length,
+          samples: smBomRows.slice(0, 5)
+        }
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// POST /subsidiary/rebuild - 부자재수불부 재생성 (특정 날짜 또는 전체)
+// body: { date?: "YYYY-MM-DD", start_date?, end_date? }
+sheets.post('/subsidiary/rebuild', async (c) => {
+  const service = getSheetService(c);
+  if (!service) return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { date, start_date, end_date } = body;
+    
+    let targetDates: string[] = [];
+    
+    if (date) {
+      targetDates = [date];
+    } else {
+      // 생산실적 시트에서 날짜 목록 추출
+      const productionData = await service.readSheet('생산실적', 'A2:A50000');
+      const uniqueDates = new Set<string>();
+      for (const row of productionData || []) {
+        const d = String(row[0] || '').trim().replace(/^'/, '');
+        if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+          if (start_date && d < start_date) continue;
+          if (end_date && d > end_date) continue;
+          uniqueDates.add(d);
+        }
+      }
+      targetDates = Array.from(uniqueDates).sort();
+    }
+    
+    if (targetDates.length === 0) {
+      return c.json({ success: false, error: '재생성할 날짜가 없습니다.' }, 400);
+    }
+    
+    const results: any[] = [];
+    for (const d of targetDates) {
+      try {
+        const r = await service.addSubsidiaryStockDate(d);
+        results.push({ date: d, status: 'success', new_rows: r.new_rows, write_success: r.write_success, write_error: r.write_error });
+      } catch (err: any) {
+        results.push({ date: d, status: 'error', error: err.message });
+      }
+    }
+    
+    return c.json({
+      success: true,
+      dates_processed: targetDates.length,
+      results
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// POST /subsidiary/bootstrap - 부자재 시스템 초기 설정 (헤더 확장 + 시트 생성)
+sheets.post('/subsidiary/bootstrap', async (c) => {
+  const service = getSheetService(c);
+  if (!service) return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  
+  const actions: string[] = [];
+  
+  try {
+    // 1. BOM마스터 헤더 확장 (G1, H1)
+    const bomHeader = await service.readSheet('BOM마스터', 'A1:H1');
+    const currentCols = bomHeader?.[0] || [];
+    if (currentCols.length < 8 || !currentCols[6] || !currentCols[7]) {
+      // G1, H1 헤더 추가
+      await service.writeSheet('BOM마스터', 'G1', [['포장단위', '입수량']]);
+      actions.push('BOM마스터 G1/H1 헤더 추가 (포장단위, 입수량)');
+    } else {
+      actions.push('BOM마스터 헤더 이미 8열 (스킵)');
+    }
+    
+    // 2. 부자재수불부 시트 생성
+    const created = await service.createSheetIfNotExists('부자재수불부');
+    if (created) {
+      actions.push('부자재수불부 시트 존재 확인/생성 완료');
+    }
+    
+    // 3. 부자재수불부 헤더 확인 및 설정
+    const subHeaderRaw = await service.readSheet('부자재수불부', 'A1:H1').catch(() => [[]]);
+    const subCols = subHeaderRaw?.[0] || [];
+    if (subCols.length < 8) {
+      await service.writeSheet('부자재수불부', 'A1', [[
+        '일자', '부자재코드', '부자재명', '전일재고', '입고량', '사용량', '현재재고', '단위'
+      ]]);
+      actions.push('부자재수불부 헤더 설정 (8열)');
+    } else {
+      actions.push('부자재수불부 헤더 이미 존재 (스킵)');
+    }
+    
+    return c.json({
+      success: true,
+      actions,
+      note: 'BOM 등록 시 G열=포장단위(예:박스), H열=입수량(예:12) 입력. SM* 코드가 부자재로 인식됨.'
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message, actions_completed: actions }, 500);
+  }
+});
+
+// ★★★ v3.6.52: 생산실적 시트 진단 엔드포인트 ★★★
+// GET /production/diagnose - 생산실적 시트의 총 행 수 및 날짜별 분포
+sheets.get('/production/diagnose', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    // 여러 범위로 시도하여 실제 데이터 크기 확인
+    const dataFull = await service.readSheet('생산실적', 'A2:H50000');
+    const dataLimited = await service.readSheet('생산실적', 'A2:H10000');
+    
+    // 날짜별 카운트 (전체 데이터)
+    const dateCountFull: Record<string, number> = {};
+    const dateCountLimited: Record<string, number> = {};
+    
+    for (const row of dataFull || []) {
+      const d = String(row[0] || '').trim().replace(/^'/, '');
+      if (d) {
+        dateCountFull[d] = (dateCountFull[d] || 0) + 1;
+      }
+    }
+    for (const row of dataLimited || []) {
+      const d = String(row[0] || '').trim().replace(/^'/, '');
+      if (d) {
+        dateCountLimited[d] = (dateCountLimited[d] || 0) + 1;
+      }
+    }
+    
+    // 첫 행 / 마지막 행 샘플
+    const firstRow = dataFull && dataFull.length > 0 ? dataFull[0] : null;
+    const lastRow = dataFull && dataFull.length > 0 ? dataFull[dataFull.length - 1] : null;
+    const row9999 = dataFull && dataFull.length > 9998 ? dataFull[9998] : null;
+    const row10000 = dataFull && dataFull.length > 9999 ? dataFull[9999] : null;
+    const row10001 = dataFull && dataFull.length > 10000 ? dataFull[10000] : null;
+    
+    // 최근 15일 날짜 정렬
+    const sortedDates = Object.keys(dateCountFull).sort();
+    const recent = sortedDates.slice(-15);
+    
+    return c.json({
+      success: true,
+      diagnose: {
+        total_rows_A2H50000: dataFull?.length || 0,
+        total_rows_A2H10000: dataLimited?.length || 0,
+        limited_hits_10k_cap: (dataLimited?.length || 0) >= 9999,
+        recent_dates_full: recent.map(d => ({ date: d, count: dateCountFull[d] })),
+        recent_dates_limited: recent.map(d => ({ date: d, count: dateCountLimited[d] || 0 })),
+        first_row: firstRow,
+        last_row_full: lastRow,
+        row_at_index_9998_A2: row9999,
+        row_at_index_9999_A2: row10000,
+        row_at_index_10000_A2: row10001,
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
 
 // GET /daily-stock/list-rows?date=YYYY-MM-DD - 특정 날짜의 모든 행 (행번호 포함)
 sheets.get('/daily-stock/list-rows', async (c) => {

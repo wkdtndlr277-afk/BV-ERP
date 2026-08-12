@@ -214,7 +214,8 @@ dashboardRoutes.get('/', async (c) => {
       
       // 생산실적 시트에서 데이터 조회
       // 컬럼: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
-      const productionData = await service.readSheet('생산실적', 'A2:H10000');
+      // ★★★ v3.6.52: A2:H10000 → A2:H50000 (실측 11,275행, 10000 제한에 걸려 8/2~8/8이 안 보이던 버그 수정) ★★★
+      const productionData = await service.readSheet('생산실적', 'A2:H50000');
       
       // 날짜 계산
       const todayStr = today;

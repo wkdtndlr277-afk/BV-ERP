@@ -269,6 +269,7 @@ export class GoogleSheetsService {
         'BOM마스터',
         '생산실적',
         '일별수불부',
+        '부자재수불부',  // ★ v3.6.53: 부자재(SM*) 전용 수불부
         '로트매칭',
         '출고일지',
         '제품재고',
@@ -313,9 +314,12 @@ export class GoogleSheetsService {
       const headers: Record<string, string[]> = {
         '원료입고': ['입고일자', '원료코드', '원료명', '로트번호', '입고량', '단위', '공급업체', '유통기한', '잔량'],
         '발주서': ['발주일자', '제품코드', '제품명', '주문수량', '납기일', '채널', '비고', '상태'],
-        'BOM마스터': ['제품코드', '제품명', '원료코드', '원료명', '배합비(kg)', '단위'],
+        // v3.6.53: BOM마스터 8열 확장 (G:포장단위, H:입수량 추가) - 부자재(SM*) 관리용
+        'BOM마스터': ['제품코드', '제품명', '원료코드', '원료명', '배합비(kg)', '단위', '포장단위', '입수량'],
         '생산실적': ['생산일자', '제품코드', '제품명', '생산수량', '제품로트', '채널', '비고', '등록시간'],
         '일별수불부': ['일자', '원료코드', '원료명', '전일재고', '입고량', '사용량', '현재고', '단위'],
+        // v3.6.53: 부자재수불부 - 일별수불부와 동일한 8열 구조 (SM* 코드만 포함)
+        '부자재수불부': ['일자', '부자재코드', '부자재명', '전일재고', '입고량', '사용량', '현재재고', '단위'],
         '로트매칭': ['생산일자', '제품로트', '원료코드', '원료명', '사용량', '원료로트', '유통기한'],
         '제품마스터': ['제품코드', '제품명', '바코드', '발주상품명', '판매채널', '소비기한(일)', '박스수량', '등록일']
       };
@@ -373,6 +377,7 @@ export class GoogleSheetsService {
   }
 
   // BOM 데이터 동기화 (ERP → 시트)
+  // v3.6.53: 8열 확장 (G:포장단위, H:입수량) - 부자재(SM*) 지원
   async syncBomData(bomData: any[]): Promise<boolean> {
     const rows = bomData.map(item => [
       item.product_code,
@@ -380,7 +385,9 @@ export class GoogleSheetsService {
       item.item_code,
       item.item_name,
       item.quantity,
-      item.unit || 'kg'
+      item.unit || 'kg',
+      item.package_unit || '',    // G열: 포장단위 (박스/봉투/PET 등, 원료는 비어있음)
+      item.pack_qty || ''         // H열: 입수량 (1박스당 개수, 원료는 비어있음)
     ]);
 
     if (rows.length > 0) {
@@ -1294,7 +1301,8 @@ export class GoogleSheetsService {
     console.log(`[updateLotMatching] 소비기한 검증 기준일: ${today}`);
     
     // 4. 생산실적 데이터 읽기
-    const productionData = await this.readSheet('생산실적', 'A2:H5000');
+    // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
+    const productionData = await this.readSheet('생산실적', 'A2:H50000');
     
     // 5. BOM 데이터 읽기
     // ★★★ v3.5.88: 'BOM마스터' 시트명 수정 (이전 'BOM'은 잘못된 이름) ★★★
@@ -1546,39 +1554,52 @@ export class GoogleSheetsService {
     });
     
     if (existingDateRows.length > 0) {
-      console.log(`[addDailyStockDate v3.6.21] 이미 ${cleanDate} 데이터 ${existingDateRows.length}건 있음 - 삭제 후 재생성`);
+      console.log(`[addDailyStockDate v3.6.51] 이미 ${cleanDate} 데이터 ${existingDateRows.length}건 있음 - 해당 날짜 행만 삭제 (다른 날짜 수식 보존)`);
       
-      // ★★★ v3.6.37: 해당 날짜 제외 + RT(자재), SF(반제품), SM(반제품), RM184, RM1054 제외 ★★★
-      const remainingData = existingData.filter(row => {
-        const rowDate = row[0]?.toString().replace(/^'/, '') || '';
-        const code = row[1]?.toString() || '';
-        // 해당 날짜 제외
-        if (rowDate === cleanDate) return false;
-        // ★★★ v3.6.37: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재) 제외 ★★★
-        if (code.startsWith('RT') || code.startsWith('SF') || code.startsWith('SM') || code === 'RM184' || code === 'RM1054') return false;
-        return true;
-      });
-      
-      // 날짜 + 품목코드 순 정렬
-      remainingData.sort((a, b) => {
-        const dateA = a[0]?.toString().replace(/^'/, '') || '';
-        const dateB = b[0]?.toString().replace(/^'/, '') || '';
-        if (dateA !== dateB) return dateA.localeCompare(dateB);
-        const codeA = a[1]?.toString() || '';
-        const codeB = b[1]?.toString() || '';
-        return codeA.localeCompare(codeB);
-      });
-      
-      // 클리어 후 남은 데이터 쓰기
-      await this.clearRange('일별수불부', 'A2:H50000');
-      if (remainingData.length > 0) {
-        await this.writeSheet('일별수불부', 'A2', remainingData);
+      // ★★★ v3.6.51 핵심 수정: 다른 날짜의 수식을 절대 건드리지 않기 위해 
+      //   해당 날짜 행의 실제 시트 rowNumber를 찾아 개별적으로 clear.
+      //   기존 로직(전체 clear + remainingData 재write)은 수식을 값으로 파괴하는 버그가 있었음. ★★★
+      const targetRowNumbers: number[] = [];
+      for (let i = 0; i < existingData.length; i++) {
+        const rowDate = existingData[i][0]?.toString().replace(/^'/, '') || '';
+        if (rowDate === cleanDate) {
+          targetRowNumbers.push(i + 2);  // A2가 첫 데이터 행이므로 +2
+        }
       }
       
-      // existingData를 remainingData로 업데이트 (아래 로직에서 사용)
-      existingData.length = 0;
-      existingData.push(...remainingData);
-      console.log(`[addDailyStockDate v3.6.21] ${cleanDate} 데이터 삭제 완료, ${remainingData.length}행 유지`);
+      if (targetRowNumbers.length > 0) {
+        // 연속된 행 번호를 묶어서 range 형태로 clear (batch clear로 최적화)
+        const ranges: string[] = [];
+        let start = targetRowNumbers[0];
+        let prev = start;
+        for (let i = 1; i < targetRowNumbers.length; i++) {
+          if (targetRowNumbers[i] === prev + 1) {
+            prev = targetRowNumbers[i];
+          } else {
+            ranges.push(start === prev ? `A${start}:H${start}` : `A${start}:H${prev}`);
+            start = targetRowNumbers[i];
+            prev = start;
+          }
+        }
+        ranges.push(start === prev ? `A${start}:H${start}` : `A${start}:H${prev}`);
+        
+        console.log(`[addDailyStockDate v3.6.51] ${cleanDate} 대상 행 ${targetRowNumbers.length}개, ${ranges.length}개 range로 clear`);
+        for (const range of ranges) {
+          await this.clearRange('일별수불부', range);
+        }
+      }
+      
+      // existingData에서 해당 날짜 제거 (아래 로직에서 사용)
+      // ⚠️ 물리적 행 번호(빈 행 포함)를 유지하기 위해 요소를 삭제하지 않고 
+      //    빈 값으로 채워서 자리를 유지 (append 시 실제 rowNum과 일치시키기 위함)
+      for (let i = existingData.length - 1; i >= 0; i--) {
+        const rowDate = existingData[i][0]?.toString().replace(/^'/, '') || '';
+        if (rowDate === cleanDate) {
+          // 요소 삭제 대신 빈 배열로 마크 (뒤에서 append 위치 계산에 영향 없도록)
+          existingData[i] = ['', '', '', '', '', '', '', ''];
+        }
+      }
+      console.log(`[addDailyStockDate v3.6.51] ${cleanDate} 데이터 clear 완료 (다른 날짜 수식은 그대로 보존됨)`);
     }
     
     // 3. 전날 날짜 계산
@@ -1607,8 +1628,8 @@ export class GoogleSheetsService {
         const name = row[1]?.toString() || '';
         const unit = row[4]?.toString() || 'kg';
         
-        // ★★★ v3.6.17: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재) 제외 ★★★
-        if (code && !code.startsWith('SF') && !code.startsWith('SM') && !code.startsWith('RT') && code !== 'RM184' && code !== 'RM1054') {
+        // ★★★ v3.6.51: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재), RM1014(미등록) 제외 ★★★
+        if (code && !code.startsWith('SF') && !code.startsWith('SM') && !code.startsWith('RT') && code !== 'RM184' && code !== 'RM1054' && code !== 'RM1014') {
           if (!uniqueItems.has(code)) {
             uniqueItems.set(code, { name, unit });
           }
@@ -1627,8 +1648,8 @@ export class GoogleSheetsService {
         const name = row[2]?.toString() || '';
         const current = parseFloat(row[6]?.toString() || '0') || 0;
         const unit = row[7]?.toString() || 'kg';
-        // ★★★ v3.6.17: RT(자재), RM1054(부자재) 제외 ★★★
-        if (code.startsWith('RT') || code === 'RM1054') continue;
+        // ★★★ v3.6.51: RT(자재), RM1054(부자재), RM1014(미등록) 제외 ★★★
+        if (code.startsWith('RT') || code === 'RM1054' || code === 'RM1014') continue;
         prevStockMap[code] = { name, current, unit };
       }
       console.log(`[addDailyStockDate v3.6.16] 전일(${prevDate}) 데이터에서 ${Object.keys(prevStockMap).length}개 품목 조회 (RT 제외)`);
@@ -1643,8 +1664,8 @@ export class GoogleSheetsService {
       
       const code = row[1]?.toString() || '';
       const qty = parseFloat(row[4]?.toString() || '0') || 0;
-      // ★★★ v3.6.17: RT(자재), SF(반제품), SM(반제품), RM184(정제수), RM1054(부자재) 제외 ★★★
-      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184' || code === 'RM1054') continue;
+      // ★★★ v3.6.51: RT, SF, SM, RM184, RM1054, RM1014(미등록) 제외 ★★★
+      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184' || code === 'RM1054' || code === 'RM1014') continue;
       
       inboundMap[code] = (inboundMap[code] || 0) + qty;
     }
@@ -1659,8 +1680,8 @@ export class GoogleSheetsService {
       const code = row[2]?.toString() || '';  // C열: 원료코드
       const usage = parseFloat(row[4]?.toString() || '0') || 0;  // E열: 사용량
       
-      // 제외 품목
-      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184' || code === 'RM1054') continue;
+      // 제외 품목 (v3.6.51: RM1014 미등록 추가)
+      if (code.startsWith('SF') || code.startsWith('SM') || code.startsWith('RT') || code === 'RM184' || code === 'RM1054' || code === 'RM1014') continue;
       
       usageMap[code] = (usageMap[code] || 0) + usage;
     }
@@ -1770,6 +1791,259 @@ export class GoogleSheetsService {
     }
     
     console.log(`[addDailyStockDate v3.6.50] ========== 완료: ${cleanDate}, 기존 ${existingData.length}행 + 신규 ${newRows.length}행, write_success=${writeSuccess} ==========`);
+    
+    return {
+      date: cleanDate,
+      prev_date: prevDate,
+      new_rows: writeSuccess ? newRows.length : 0,
+      total_rows: existingData.length + (writeSuccess ? newRows.length : 0),
+      write_success: writeSuccess,
+      write_error: writeError
+    };
+  }
+  
+  // ═══════════════════════════════════════════════════════════════
+  // ★★★ v3.6.53: 부자재수불부 날짜 추가 (SM* 부자재 전용) ★★★
+  // - 일별수불부의 addDailyStockDate와 동일한 구조
+  // - 사용량 계산: 생산실적 × BOM 입수량 (ceil 처리)
+  //   원료는 로트매칭 시트에서 SUMIFS로 가져오지만, 
+  //   부자재는 로트매칭에 없으므로 실시간 계산해서 값으로 저장
+  // - 컬럼: A:일자 B:부자재코드 C:부자재명 D:전일재고(값) E:입고량(SUMIFS수식) 
+  //         F:사용량(값,ceil계산) G:현재재고(=D+E-F 수식) H:단위(박스)
+  // ═══════════════════════════════════════════════════════════════
+  async addSubsidiaryStockDate(targetDate: string): Promise<{ date: string; prev_date: string; new_rows: number; total_rows: number; write_success?: boolean; write_error?: string }> {
+    const cleanDate = targetDate.replace(/^'/, '');
+    console.log(`[addSubsidiaryStockDate v3.6.53] ========== 시작: ${cleanDate} ==========`);
+    
+    // 1. 기존 부자재수불부 데이터 읽기
+    const existingData = await this.readSheet('부자재수불부', 'A2:H50000').catch(() => []);
+    
+    // 2. 해당 날짜 데이터가 있으면 해당 행만 개별 clear (다른 날짜 수식 보존)
+    const existingDateRows = existingData.filter(row => {
+      const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+      return rowDate === cleanDate;
+    });
+    
+    if (existingDateRows.length > 0) {
+      console.log(`[addSubsidiaryStockDate] 이미 ${cleanDate} 데이터 ${existingDateRows.length}건 있음 - 개별 clear`);
+      const targetRowNumbers: number[] = [];
+      for (let i = 0; i < existingData.length; i++) {
+        const rowDate = existingData[i][0]?.toString().replace(/^'/, '') || '';
+        if (rowDate === cleanDate) {
+          targetRowNumbers.push(i + 2);
+        }
+      }
+      
+      if (targetRowNumbers.length > 0) {
+        const ranges: string[] = [];
+        let start = targetRowNumbers[0];
+        let prev = start;
+        for (let i = 1; i < targetRowNumbers.length; i++) {
+          if (targetRowNumbers[i] === prev + 1) {
+            prev = targetRowNumbers[i];
+          } else {
+            ranges.push(start === prev ? `A${start}:H${start}` : `A${start}:H${prev}`);
+            start = targetRowNumbers[i];
+            prev = start;
+          }
+        }
+        ranges.push(start === prev ? `A${start}:H${start}` : `A${start}:H${prev}`);
+        
+        for (const range of ranges) {
+          await this.clearRange('부자재수불부', range);
+        }
+      }
+      
+      for (let i = existingData.length - 1; i >= 0; i--) {
+        const rowDate = existingData[i][0]?.toString().replace(/^'/, '') || '';
+        if (rowDate === cleanDate) {
+          existingData[i] = ['', '', '', '', '', '', '', ''];
+        }
+      }
+    }
+    
+    // 3. 전날 날짜 계산
+    const dateParts = cleanDate.split('-').map(Number);
+    const prevDateObj = new Date(dateParts[0], dateParts[1] - 1, dateParts[2] - 1);
+    const prevDate = prevDateObj.toISOString().split('T')[0];
+    
+    // 4. BOM 마스터에서 모든 SM 부자재 목록 조회 (원료명, 포장단위 획득)
+    const bomData = await this.readSheet('BOM마스터', 'A2:H10000');
+    const smMasterMap: Record<string, { name: string; package_unit: string; pack_qty: number }> = {};
+    for (const row of bomData || []) {
+      const code = row[2]?.toString().trim() || '';  // C: 부자재코드
+      if (!code.startsWith('SM')) continue;
+      
+      const name = row[3]?.toString().trim() || '';  // D: 부자재명
+      const packageUnit = row[6]?.toString().trim() || '박스';  // G: 포장단위
+      const packQty = parseFloat(row[7]?.toString() || '0') || 0;  // H: 입수량
+      
+      if (!smMasterMap[code]) {
+        smMasterMap[code] = { name, package_unit: packageUnit, pack_qty: packQty };
+      }
+    }
+    console.log(`[addSubsidiaryStockDate] BOM에서 SM 부자재 ${Object.keys(smMasterMap).length}개 발견`);
+    
+    // 5. 전일 데이터에서 부자재 현재재고 조회
+    const prevDayData = existingData.filter(row => {
+      const rowDate = row[0]?.toString().replace(/^'/, '') || '';
+      return rowDate === prevDate;
+    });
+    
+    const prevStockMap: Record<string, { name: string; current: number; unit: string }> = {};
+    
+    if (prevDayData.length === 0) {
+      console.warn(`[addSubsidiaryStockDate] 전일(${prevDate}) 데이터 없음 - BOM의 SM 부자재로 초기화 (재고 0)`);
+      for (const [code, info] of Object.entries(smMasterMap)) {
+        prevStockMap[code] = { name: info.name, current: 0, unit: info.package_unit };
+      }
+    } else {
+      for (const row of prevDayData) {
+        const code = row[1]?.toString().trim() || '';
+        if (!code.startsWith('SM')) continue;  // SM만
+        const name = row[2]?.toString() || '';
+        const current = parseFloat(row[6]?.toString() || '0') || 0;
+        const unit = row[7]?.toString() || '박스';
+        prevStockMap[code] = { name, current, unit };
+      }
+      
+      // BOM에 새로 추가된 SM이 있으면 전일재고 0으로 추가
+      for (const [code, info] of Object.entries(smMasterMap)) {
+        if (!prevStockMap[code]) {
+          prevStockMap[code] = { name: info.name, current: 0, unit: info.package_unit };
+        }
+      }
+      console.log(`[addSubsidiaryStockDate] 전일(${prevDate}) 데이터에서 ${Object.keys(prevStockMap).length}개 부자재 조회`);
+    }
+    
+    // 6. 당일 부자재 사용량 계산: 생산실적 × BOM 입수량 (ceil)
+    // BOM 구조 재순회: 제품코드별 SM 부자재 매핑
+    const productBomSm: Record<string, Array<{ code: string; pack_qty: number }>> = {};
+    for (const row of bomData || []) {
+      const productCode = row[0]?.toString().trim() || '';
+      const materialCode = row[2]?.toString().trim() || '';
+      const packQty = parseFloat(row[7]?.toString() || '0') || 0;
+      if (!materialCode.startsWith('SM') || packQty <= 0) continue;
+      
+      if (!productBomSm[productCode]) productBomSm[productCode] = [];
+      productBomSm[productCode].push({ code: materialCode, pack_qty: packQty });
+    }
+    
+    // 생산실적에서 해당 날짜의 제품별 생산개수 집계
+    const productionData = await this.readSheet('생산실적', 'A2:H50000');
+    const productionByProduct: Record<string, number> = {};
+    for (const row of productionData || []) {
+      const prodDate = row[0]?.toString().replace(/^'/, '') || '';
+      if (prodDate !== cleanDate) continue;
+      const productCode = row[1]?.toString().trim() || '';
+      const qty = parseFloat(row[3]?.toString() || '0') || 0;
+      if (!productCode || qty <= 0) continue;
+      productionByProduct[productCode] = (productionByProduct[productCode] || 0) + qty;
+    }
+    
+    // 부자재별 사용 박스수 계산 (ceil per 제품)
+    // ⚠️ 여러 제품이 같은 SM을 쓸 수 있음 → 각 제품별로 ceil 후 합산
+    //    (예: 제품A 25개/입수12 = 3박스, 제품B 10개/입수12 = 1박스, 합 4박스)
+    const usageMap: Record<string, number> = {};
+    for (const [productCode, prodQty] of Object.entries(productionByProduct)) {
+      const smList = productBomSm[productCode] || [];
+      for (const sm of smList) {
+        if (sm.pack_qty <= 0) continue;
+        const boxes = Math.ceil(prodQty / sm.pack_qty);
+        usageMap[sm.code] = (usageMap[sm.code] || 0) + boxes;
+      }
+    }
+    console.log(`[addSubsidiaryStockDate] ${cleanDate} 부자재 사용량 집계: ${Object.keys(usageMap).length}개 부자재, 총 ${Object.values(usageMap).reduce((a,b) => a+b, 0)}박스`);
+    
+    // 7. 새 날짜 행 생성 - 부자재코드 순 정렬
+    const sortedCodes = Object.keys(prevStockMap).sort();
+    if (sortedCodes.length === 0) {
+      console.warn(`[addSubsidiaryStockDate] 경고: BOM에 등록된 SM 부자재가 없음`);
+      return {
+        date: cleanDate, prev_date: prevDate,
+        new_rows: 0, total_rows: existingData.length,
+        write_success: true,
+        write_error: 'BOM에 등록된 SM 부자재가 없음 (사용자가 BOM에 부자재 등록 필요)'
+      };
+    }
+    
+    const startRowNum = existingData.length + 2;
+    const newRows: any[][] = [];
+    
+    for (let i = 0; i < sortedCodes.length; i++) {
+      const code = sortedCodes[i];
+      const { name, unit } = prevStockMap[code];
+      const rowNum = startRowNum + i;
+      const prevStock = prevStockMap[code]?.current || 0;
+      const todayUsage = usageMap[code] || 0;
+      
+      newRows.push([
+        `'${cleanDate}`,   // A: 날짜
+        code,              // B: 부자재코드
+        name,              // C: 부자재명
+        prevStock,         // D: 전일재고 (값)
+        // E: 입고량 - 원료입고 시트에서 해당 날짜 SM 입고량 SUMIFS
+        `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
+        // F: 사용량 - 생산실적 × BOM 입수량으로 계산한 값 (ceil 처리됨)
+        todayUsage,
+        // G: 현재재고 = D + E - F (수식)
+        `=D${rowNum}+E${rowNum}-F${rowNum}`,
+        unit               // H: 단위 (박스)
+      ]);
+    }
+    
+    // 8. Append 방식으로 쓰기 (일별수불부와 동일 패턴)
+    let writeSuccess = false;
+    let writeError: string | undefined = undefined;
+    
+    if (newRows.length > 0) {
+      const placeholderRows = newRows.map(r => [r[0], r[1], r[2], r[3], 0, r[5], 0, r[7]]);
+      const appendResult = await this.appendSheetWithFormulas('부자재수불부', placeholderRows);
+      
+      if (!appendResult.success) {
+        writeError = appendResult.error || 'Append 실패';
+      } else {
+        const updatedRange = appendResult.updates?.updates?.updatedRange || appendResult.updates?.updatedRange || '';
+        const rangeMatch = updatedRange.match(/[A-Z]+(\d+):/);
+        if (rangeMatch) {
+          const actualStartRow = parseInt(rangeMatch[1], 10);
+          
+          const correctedRows: any[][] = [];
+          for (let i = 0; i < sortedCodes.length; i++) {
+            const code = sortedCodes[i];
+            const { name, unit } = prevStockMap[code];
+            const rowNum = actualStartRow + i;
+            const prevStock = prevStockMap[code]?.current || 0;
+            const todayUsage = usageMap[code] || 0;
+            
+            correctedRows.push([
+              `'${cleanDate}`,
+              code,
+              name,
+              prevStock,
+              `=IFERROR(SUMIFS(원료입고!E:E,원료입고!B:B,B${rowNum},원료입고!A:A,A${rowNum}),0)`,
+              todayUsage,
+              `=D${rowNum}+E${rowNum}-F${rowNum}`,
+              unit
+            ]);
+          }
+          
+          const correctRange = `A${actualStartRow}:H${actualStartRow + correctedRows.length - 1}`;
+          const writeResult = await this.writeSheetWithFormulas('부자재수불부', correctRange, correctedRows);
+          
+          if (writeResult.success) {
+            writeSuccess = true;
+            console.log(`[addSubsidiaryStockDate] ✅ ${cleanDate} 수식 적용 완료 (범위: ${correctRange})`);
+          } else {
+            writeError = writeResult.error || 'Write 실패';
+          }
+        } else {
+          writeError = `updatedRange 파싱 실패: ${updatedRange}`;
+        }
+      }
+    }
+    
+    console.log(`[addSubsidiaryStockDate] ========== 완료: ${cleanDate}, 신규 ${newRows.length}행, write_success=${writeSuccess} ==========`);
     
     return {
       date: cleanDate,

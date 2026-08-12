@@ -5061,6 +5061,16 @@ productionRoutes.post('/simple', async (c) => {
         console.error('[production/simple] 일별수불부 실패:', stockError.message);
         autoUpdateError = (autoUpdateError ? autoUpdateError + ' / ' : '') + `일별수불부 실패: ${stockError.message}`;
       }
+      
+      // ★★★ v3.6.53: 부자재수불부 자동 추가 (SM* 부자재 전용) ★★★
+      try {
+        console.log(`[production/simple] 부자재수불부 추가 시작: ${prod_date}`);
+        const subResult = await service.addSubsidiaryStockDate(prod_date);
+        console.log(`[production/simple] 부자재수불부 완료: ${subResult?.new_rows || 0}행`);
+      } catch (subError: any) {
+        console.error('[production/simple] 부자재수불부 실패:', subError.message);
+        autoUpdateError = (autoUpdateError ? autoUpdateError + ' / ' : '') + `부자재수불부 실패: ${subError.message}`;
+      }
     } else {
       console.warn(`[production/simple] 자동 갱신 건너뜀: service 없음`);
       autoUpdateError = 'Google Sheets 서비스 없음';
@@ -5077,7 +5087,7 @@ productionRoutes.post('/simple', async (c) => {
       daily_stock: dailyStockResult ? { success: true, rows: dailyStockResult.new_rows } : { success: false, error: autoUpdateError },
       auto_update_error: autoUpdateError,
       message: `${items.length}건 생산 등록 완료${lotMatchingResult ? ' + LOT매칭' : ''}${dailyStockResult ? ' + 일별수불부' : ''}`,
-      note: autoUpdateError ? `자동 갱신 오류: ${autoUpdateError}` : '생산 등록 시 LOT 매칭과 일별수불부가 자동으로 갱신됩니다.'
+      note: autoUpdateError ? `자동 갱신 오류: ${autoUpdateError}` : '생산 등록 시 LOT 매칭, 일별수불부, 부자재수불부가 자동으로 갱신됩니다.'
     });
     
   } catch (error: any) {
@@ -5189,6 +5199,16 @@ productionRoutes.post('/simple-batch', async (c) => {
       } catch (stockError: any) {
         console.error('[production/simple-batch] 일별수불부 실패:', stockError.message, stockError.stack);
         autoUpdateError = (autoUpdateError ? autoUpdateError + ' / ' : '') + `일별수불부 실패: ${stockError.message}`;
+      }
+      
+      // ★★★ v3.6.53: 부자재수불부 자동 추가 (SM* 부자재 전용) ★★★
+      try {
+        console.log(`[production/simple-batch] 부자재수불부 추가 시작: ${actualProdDate}`);
+        const subResult = await service.addSubsidiaryStockDate(actualProdDate);
+        console.log(`[production/simple-batch] 부자재수불부 완료: ${subResult?.new_rows || 0}행`);
+      } catch (subError: any) {
+        console.error('[production/simple-batch] 부자재수불부 실패:', subError.message);
+        autoUpdateError = (autoUpdateError ? autoUpdateError + ' / ' : '') + `부자재수불부 실패: ${subError.message}`;
       }
     } else {
       console.warn(`[production/simple-batch] 자동 갱신 건너뜀: service=${!!service}`);

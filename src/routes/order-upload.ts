@@ -1641,6 +1641,16 @@ orderUpload.post('/complete-production', async (c) => {
       autoUpdateError = `일별수불부 실패: ${stockError.message}`;
     }
     
+    // ★★★ v3.6.53: 부자재수불부 자동 추가 ★★★
+    try {
+      console.log(`[complete-production] 부자재수불부 생성 시작: ${production_date}`);
+      const subResult = await service.addSubsidiaryStockDate(production_date);
+      console.log(`[complete-production] 부자재수불부 완료: ${subResult?.new_rows || 0}행`);
+    } catch (subError: any) {
+      console.error('[complete-production] 부자재수불부 실패:', subError.message);
+      autoUpdateError = (autoUpdateError ? autoUpdateError + ' / ' : '') + `부자재수불부 실패: ${subError.message}`;
+    }
+    
     return c.json({
       success: true,
       production_date,

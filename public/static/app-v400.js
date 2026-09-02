@@ -25689,6 +25689,49 @@ async function printDailyReportById(reportId) {
         '</tr></thead><tbody>' + materialRows + '</tbody></table>';
     }
     
+    // ★ v3.6.64: 신규 - 수율 현황 섹션 (yield_summary가 있을 때만 표시)
+    // 제품별로 따로 계량한 경우 -> production_materials 기준으로 직접 계산된 값
+    // 믹싱 배치(반죽 공유)에서 나온 경우 -> 배치 전체 수율을 산출 비율대로 배분한 값
+    let yieldSection = '';
+    const yieldSummary = report.yield_summary;
+    if (yieldSummary && (yieldSummary.total_input_kg > 0 || yieldSummary.total_output_kg > 0)) {
+      let yieldRows = '';
+      items.forEach((item) => {
+        if (!item.yield) return;
+        const y = item.yield;
+        const batchTag = y.is_shared_batch ? ' <span style="color:#888;">(배치배분)</span>' : '';
+        yieldRows += '<tr>' +
+          '<td class="text-center">' + (item.production_code || '-') + '</td>' +
+          '<td>' + (item.production_name || item.production_code || '-') + batchTag + '</td>' +
+          '<td class="text-right">' + (y.input_kg !== null ? y.input_kg + 'kg' : '-') + '</td>' +
+          '<td class="text-right">' + y.output_kg + 'kg</td>' +
+          '<td class="text-right">' + (y.discard_kg > 0 ? y.discard_kg + 'kg' : '-') + '</td>' +
+          '<td class="text-right" style="font-weight:bold;">' + (y.yield_pct !== null ? y.yield_pct + '%' : '-') + '</td>' +
+          '</tr>';
+      });
+      if (yieldRows) {
+        yieldSection = '<div class="section-title">3. 수율 현황</div>' +
+          '<table><thead><tr>' +
+          '<th style="width:10%">제품코드</th>' +
+          '<th>제품명</th>' +
+          '<th style="width:14%">투입중량</th>' +
+          '<th style="width:14%">산출중량</th>' +
+          '<th style="width:12%">폐기중량</th>' +
+          '<th style="width:10%">수율</th>' +
+          '</tr></thead><tbody>' + yieldRows +
+          '<tr style="background:#f0f0f0; font-weight:bold;">' +
+          '<td colspan="2" class="text-center">합 계</td>' +
+          '<td class="text-right">' + yieldSummary.total_input_kg + 'kg</td>' +
+          '<td class="text-right">' + yieldSummary.total_output_kg + 'kg</td>' +
+          '<td class="text-right">' + yieldSummary.total_discard_kg + 'kg</td>' +
+          '<td class="text-right">' + (yieldSummary.yield_pct !== null ? yieldSummary.yield_pct + '%' : '-') + '</td>' +
+          '</tr></tbody></table>' +
+          (yieldSummary.items_missing_data > 0
+            ? '<div style="font-size:7pt; color:#888; margin-top:-6px; margin-bottom:8px;">* ' + yieldSummary.items_missing_data + '건은 표준중량 미등록 또는 투입기록 없음으로 수율 계산에서 제외됨</div>'
+            : '');
+      }
+    }
+    
     // 인쇄용 HTML 생성 (생산등록 > 생산일보 조회와 동일한 HACCP 양식)
     const printHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
       '<title>생산일보 - ' + (report.report_no || reportId) + '</title>' +
@@ -25741,10 +25784,12 @@ async function printDailyReportById(reportId) {
       '<td colspan="2"></td></tr>' +
       '</tbody></table>' +
       materialSection +
+      yieldSection +
       '<div class="summary-box"><div class="summary-row">' +
       '<span><b>총 생산건수:</b> ' + items.length + '건</span>' +
       '<span><b>총 생산수량:</b> ' + formatNumber(totalQty) + '개</span>' +
       '<span><b>사용원재료:</b> ' + materials.length + '종</span>' +
+      (yieldSummary && yieldSummary.yield_pct !== null ? '<span><b>전체 수율:</b> ' + yieldSummary.yield_pct + '%</span>' : '') +
       '</div></div>' +
       // 이상 여부 및 비고란 추가
       '<div style="margin-top:15px; border:1px solid #333; padding:10px;">' +

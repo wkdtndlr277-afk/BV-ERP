@@ -880,6 +880,85 @@ dailyReport.get('/reports/:id', async (c) => {
       // LOT 조회 실패해도 계속 진행
     }
     
+    // ★ 신규: 수율 계산 (원료 얼마나 넣었고, 얼마나 나왔고, 수율이 얼마인지)
+    // 제품별로 따로 계량한 경우 -> production_materials 기준으로 직접 계산
+    // 믹싱 배치(반죽 공유)에서 나온 경우 -> 배치 전체 산출 비율대로 배분된 값 사용
+    let reportYield = { total_input_kg: 0, total_output_kg: 0, total_discard_kg: 0, yield_pct: null as number | null, items_missing_data: 0 }
+    try {
+      for (const item of itemsList) {
+        if (!item.production_code) continue
+        const prod = await c.env.DB.prepare(`
+          SELECT p.id, p.quantity, p.mixing_batch_id, pi.standard_weight
+          FROM production p
+          LEFT JOIN production_items pi ON p.product_code = pi.production_code
+          WHERE p.product_code = ? AND p.prod_date = ?
+          ${item.lot_number ? 'AND p.lot_number = ?' : ''}
+          LIMIT 1
+        `).bind(...(item.lot_number ? [item.production_code, reportDate, item.lot_number] : [item.production_code, reportDate])).first<any>()
+
+        if (!prod || prod.standard_weight === null || prod.standard_weight === undefined) {
+          item.yield = null
+          reportYield.items_missing_data++
+          continue
+        }
+
+        const outputKg = (prod.quantity * prod.standard_weight) / 1000
+        const discardRow = await c.env.DB.prepare(
+          'SELECT COALESCE(SUM(discard_qty),0) as qty FROM production_discard WHERE production_id = ?'
+        ).bind(prod.id).first<any>()
+        const discardKg = ((discardRow?.qty || 0) * prod.standard_weight) / 1000
+
+        let inputKg: number | null = null
+        if (prod.mixing_batch_id) {
+          // 믹싱 배치 소속: 배치 전체 산출 대비 이 제품의 비중만큼 원료를 배분
+          const batchMaterials = await c.env.DB.prepare(
+            'SELECT COALESCE(SUM(actual_qty),0) as qty FROM mixing_batch_materials WHERE batch_id = ?'
+          ).bind(prod.mixing_batch_id).first<any>()
+          const batchProducts = await c.env.DB.prepare(`
+            SELECT p2.quantity, pi2.standard_weight
+            FROM production p2 LEFT JOIN production_items pi2 ON p2.product_code = pi2.production_code
+            WHERE p2.mixing_batch_id = ?
+          `).bind(prod.mixing_batch_id).all()
+          const batchTotalOutputKg = (batchProducts.results as any[]).reduce((s, r) =>
+            s + (r.standard_weight ? (r.quantity * r.standard_weight) / 1000 : 0), 0)
+          inputKg = batchTotalOutputKg > 0
+            ? (outputKg / batchTotalOutputKg) * (batchMaterials?.qty || 0)
+            : null
+        } else {
+          const inputRow = await c.env.DB.prepare(
+            'SELECT COALESCE(SUM(actual_qty),0) as qty FROM production_materials WHERE production_id = ?'
+          ).bind(prod.id).first<any>()
+          inputKg = inputRow?.qty || 0
+        }
+
+        const itemYieldPct = (inputKg && inputKg > 0) ? Math.round((outputKg / inputKg) * 1000) / 10 : null
+        item.yield = {
+          input_kg: inputKg !== null ? Math.round(inputKg * 1000) / 1000 : null,
+          output_kg: Math.round(outputKg * 1000) / 1000,
+          discard_kg: Math.round(discardKg * 1000) / 1000,
+          yield_pct: itemYieldPct,
+          is_shared_batch: !!prod.mixing_batch_id
+        }
+
+        if (inputKg !== null) {
+          reportYield.total_input_kg += inputKg
+          reportYield.total_output_kg += outputKg
+          reportYield.total_discard_kg += discardKg
+        } else {
+          reportYield.items_missing_data++
+        }
+      }
+      reportYield.total_input_kg = Math.round(reportYield.total_input_kg * 1000) / 1000
+      reportYield.total_output_kg = Math.round(reportYield.total_output_kg * 1000) / 1000
+      reportYield.total_discard_kg = Math.round(reportYield.total_discard_kg * 1000) / 1000
+      reportYield.yield_pct = reportYield.total_input_kg > 0
+        ? Math.round((reportYield.total_output_kg / reportYield.total_input_kg) * 1000) / 10
+        : null
+    } catch (yieldError) {
+      console.error('수율 계산 오류:', yieldError)
+      // 수율 계산 실패해도 나머지 생산일보는 그대로 반환
+    }
+    
     // 6. 최종 응답 반환
     return c.json({
       success: true,
@@ -887,7 +966,8 @@ dailyReport.get('/reports/:id', async (c) => {
         ...report,
         items: itemsList,
         materials: savedMaterials,
-        materials_summary
+        materials_summary,
+        yield_summary: reportYield
       }
     })
     

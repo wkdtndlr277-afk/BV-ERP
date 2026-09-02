@@ -54,7 +54,7 @@ yieldRoutes.get('/production/:id', async (c) => {
     const id = c.req.param('id')
 
     const production = await c.env.DB.prepare(`
-      SELECT p.id, p.prod_date, p.product_code, p.quantity, p.lot_number,
+      SELECT p.id, p.prod_date, p.product_code, p.quantity, p.lot_number, p.mixing_batch_id,
              pi.production_name, pi.standard_weight
       FROM production p
       LEFT JOIN production_items pi ON p.product_code = pi.production_code
@@ -63,6 +63,25 @@ yieldRoutes.get('/production/:id', async (c) => {
 
     if (!production) {
       return c.json({ success: false, error: '존재하지 않는 생산 기록입니다.' }, 404)
+    }
+
+    // ★ 이 생산 건이 "여러 제품으로 나눠 성형한 믹싱 배치"에서 나온 것이면,
+    //   제품 단독으로는 실제 투입량을 알 수 없으므로 배치 기준 배분값을 안내
+    if (production.mixing_batch_id) {
+      return c.json({
+        success: true,
+        data: {
+          production_id: production.id,
+          product_code: production.product_code,
+          production_name: production.production_name,
+          is_shared_batch: true,
+          mixing_batch_id: production.mixing_batch_id,
+          note: '이 제품은 여러 제품으로 나눠 성형된 믹싱 배치에서 나왔습니다. ' +
+                '개별 제품만의 투입량은 실측이 불가능하므로, ' +
+                `GET /api/yield/batch/${production.mixing_batch_id} 에서 배치 전체 수율과 ` +
+                '이 제품에 배분된 몫을 함께 확인해주세요.'
+        }
+      })
     }
 
     const inputResult = await c.env.DB.prepare(
@@ -245,6 +264,142 @@ yieldRoutes.post('/standard-weight/apply', async (c) => {
     }
 
     return c.json({ success: true, message: `${updated}개 제품의 표준중량이 등록되었습니다.`, count: updated })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// =====================================================================
+// 믹싱 배치(반죽 단위) 수율 관리 — 큰 반죽 하나를 여러 제품으로 나눠 성형하는 경우
+// =====================================================================
+
+// ===== 믹싱 배치 생성 (원료 투입 기록 포함) =====
+yieldRoutes.post('/batch', async (c) => {
+  try {
+    const { batch_lot_number, dough_name, mix_date, materials, notes, created_by } = await c.req.json()
+
+    if (!batch_lot_number || !materials || !Array.isArray(materials) || materials.length === 0) {
+      return c.json({ success: false, error: 'batch_lot_number와 materials(원료 목록)는 필수입니다.' }, 400)
+    }
+
+    const date = mix_date || new Date().toISOString().split('T')[0]
+
+    const batchResult = await c.env.DB.prepare(`
+      INSERT INTO mixing_batch (batch_lot_number, dough_name, mix_date, notes, created_by)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(batch_lot_number, dough_name || null, date, notes || null, created_by || null).run()
+
+    const batchId = batchResult.meta.last_row_id
+
+    const inserts = materials.map((m: any) =>
+      c.env.DB.prepare(`
+        INSERT INTO mixing_batch_materials (batch_id, item_code, lot_number, actual_qty)
+        VALUES (?, ?, ?, ?)
+      `).bind(batchId, m.item_code, m.lot_number || null, m.actual_qty)
+    )
+    await c.env.DB.batch(inserts)
+
+    return c.json({ success: true, message: '믹싱 배치가 등록되었습니다.', batch_id: batchId })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ===== 생산 건을 믹싱 배치에 연결 (이 배치에서 나온 제품 중 하나) =====
+yieldRoutes.post('/batch/:batchId/link-production', async (c) => {
+  try {
+    const batchId = c.req.param('batchId')
+    const { production_id } = await c.req.json()
+
+    if (!production_id) {
+      return c.json({ success: false, error: 'production_id는 필수입니다.' }, 400)
+    }
+
+    const batch = await c.env.DB.prepare('SELECT id FROM mixing_batch WHERE id = ?').bind(batchId).first()
+    if (!batch) {
+      return c.json({ success: false, error: '존재하지 않는 믹싱 배치입니다.' }, 404)
+    }
+
+    await c.env.DB.prepare('UPDATE production SET mixing_batch_id = ? WHERE id = ?').bind(batchId, production_id).run()
+
+    return c.json({ success: true, message: '생산 건이 배치에 연결되었습니다.' })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ===== 믹싱 배치 전체 수율 (여기서 나온 모든 제품을 합쳐서 계산) =====
+yieldRoutes.get('/batch/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+
+    const batch = await c.env.DB.prepare('SELECT * FROM mixing_batch WHERE id = ?').bind(id).first<any>()
+    if (!batch) {
+      return c.json({ success: false, error: '존재하지 않는 믹싱 배치입니다.' }, 404)
+    }
+
+    const materialsResult = await c.env.DB.prepare(
+      'SELECT item_code, lot_number, actual_qty FROM mixing_batch_materials WHERE batch_id = ?'
+    ).bind(id).all()
+    const totalInputKg = (materialsResult.results as any[]).reduce((s, m) => s + (m.actual_qty || 0), 0)
+
+    // 이 배치에서 나온 모든 생산 건(제품) 조회
+    const productsResult = await c.env.DB.prepare(`
+      SELECT p.id, p.product_code, pi.production_name, pi.standard_weight, p.quantity,
+             COALESCE((SELECT SUM(discard_qty) FROM production_discard WHERE production_id = p.id), 0) as discard_qty
+      FROM production p
+      LEFT JOIN production_items pi ON p.product_code = pi.production_code
+      WHERE p.mixing_batch_id = ?
+    `).bind(id).all()
+
+    const products = (productsResult.results as any[]).map(p => {
+      const hasWeight = p.standard_weight !== null && p.standard_weight !== undefined
+      const outputKg = hasWeight ? (p.quantity * p.standard_weight) / 1000 : null
+      const discardKg = hasWeight ? (p.discard_qty * p.standard_weight) / 1000 : null
+      return {
+        production_id: p.id, product_code: p.product_code, production_name: p.production_name,
+        quantity: p.quantity, discard_qty: p.discard_qty,
+        output_kg: outputKg !== null ? Math.round(outputKg * 1000) / 1000 : null,
+        discard_kg: discardKg !== null ? Math.round(discardKg * 1000) / 1000 : null,
+        has_standard_weight: hasWeight
+      }
+    })
+
+    const totalOutputKg = products.reduce((s, p) => s + (p.output_kg || 0), 0)
+    const totalDiscardKg = products.reduce((s, p) => s + (p.discard_kg || 0), 0)
+    const missingWeightCount = products.filter(p => !p.has_standard_weight).length
+
+    const batchYieldPct = totalInputKg > 0
+      ? Math.round((totalOutputKg / totalInputKg) * 1000) / 10
+      : null
+
+    // 배치 수율을 각 제품에 산출 중량 비율대로 배분 (pro-rata)
+    // -> "이 제품 하나만의 수율"이 아니라, 배치 전체 수율을 이 제품 몫만큼 나눠 보여주는 값
+    const productsWithAllocation = products.map(p => ({
+      ...p,
+      allocated_input_kg: (totalOutputKg > 0 && p.output_kg !== null)
+        ? Math.round((p.output_kg / totalOutputKg) * totalInputKg * 1000) / 1000
+        : null
+    }))
+
+    return c.json({
+      success: true,
+      data: {
+        batch_id: batch.id,
+        batch_lot_number: batch.batch_lot_number,
+        dough_name: batch.dough_name,
+        mix_date: batch.mix_date,
+        materials: materialsResult.results,
+        total_input_kg: Math.round(totalInputKg * 1000) / 1000,
+        total_output_kg: Math.round(totalOutputKg * 1000) / 1000,
+        total_discard_kg: Math.round(totalDiscardKg * 1000) / 1000,
+        batch_yield_pct: batchYieldPct,
+        products: productsWithAllocation,
+        note: missingWeightCount > 0
+          ? `${missingWeightCount}개 제품은 표준중량 미등록으로 수율 계산에서 제외됨`
+          : null
+      }
+    })
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500)
   }

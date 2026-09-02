@@ -1297,6 +1297,9 @@ function renderPage(page) {
     case 'shaping-master': renderShapingMaster(); break;
     case 'shaping-routing': renderShapingRouting(); break;
     case 'barcode-master-process': renderBarcodeMasterProcess(); break;
+    case 'equipment': renderEquipment(); break;
+    case 'packaging-bom': renderPackagingBOM(); break;
+    case 'yield-report': renderYieldReport(); break;
     default: renderDashboard();
   }
 }
@@ -58336,3 +58339,569 @@ window.showAddBarcodeModal = showAddBarcodeModal;
 window.saveBarcodeItem = saveBarcodeItem;
 window.editBarcodeDetail = editBarcodeDetail;
 window.deleteBarcodeItem = deleteBarcodeItem;
+
+// ============================================================
+// v3.6.64 신규: 비품 관리 / 포장재 BOM / 수율 리포트
+// ============================================================
+
+// ========== 비품 관리 ==========
+async function renderEquipment() {
+  const content = document.getElementById('page-content');
+  const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
+  content.innerHTML = '<div class="text-center py-20"><i class="fas fa-spinner fa-spin text-4xl text-purple-500"></i><p class="mt-4 text-gray-600">비품 목록 로딩 중...</p></div>';
+  
+  try {
+    const res = await axios.get('/api/equipment/items');
+    if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
+    
+    const items = res.data.data || [];
+    
+    content.innerHTML = `
+      <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+          <i class="fas fa-tshirt text-purple-500"></i> 비품 관리
+        </h2>
+        <p class="text-gray-500 text-sm mt-1">위생복/위생화/장갑/모자 등 비품 재고와 지급 이력을 관리합니다.</p>
+      </div>
+      
+      <div class="bg-white rounded-lg shadow p-4 mb-6">
+        <div class="flex gap-3 flex-wrap">
+          <button onclick="showEquipmentInboundModal()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+            <i class="fas fa-plus"></i> 입고 등록
+          </button>
+          <button onclick="showEquipmentIssueModal()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+            <i class="fas fa-hand-holding"></i> 지급 등록
+          </button>
+          <button onclick="showEquipmentAddItemModal()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+            <i class="fas fa-tag"></i> 품목 추가
+          </button>
+          <button onclick="loadEquipmentTransactions()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+            <i class="fas fa-history"></i> 거래 이력
+          </button>
+        </div>
+      </div>
+      
+      <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="px-6 py-4 border-b bg-gray-50">
+          <h3 class="font-semibold text-gray-800">품목별 재고 (${items.length}종)</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">품목코드</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">품목명</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">분류</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">단위</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">단가</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">총 재고</th>
+                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">사이즈 수</th>
+                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">상세</th>
+              </tr>
+            </thead>
+            <tbody id="equipment-tbody" class="divide-y divide-gray-200">
+              ${items.length === 0 ? '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">등록된 비품이 없습니다.</td></tr>' :
+                items.map(item => `
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 text-sm font-mono text-gray-700">${item.item_code}</td>
+                    <td class="px-4 py-3 text-sm font-medium text-gray-900">${item.item_name}</td>
+                    <td class="px-4 py-3 text-sm"><span class="px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-700">${item.category || '-'}</span></td>
+                    <td class="px-4 py-3 text-sm text-gray-600">${item.unit || 'EA'}</td>
+                    <td class="px-4 py-3 text-sm text-right text-gray-700">${(item.unit_price || 0).toLocaleString()}원</td>
+                    <td class="px-4 py-3 text-sm text-right font-semibold ${item.total_stock > 0 ? 'text-green-600' : 'text-gray-400'}">${(item.total_stock || 0).toLocaleString()}</td>
+                    <td class="px-4 py-3 text-sm text-center text-gray-600">${item.size_variant_count || 0}</td>
+                    <td class="px-4 py-3 text-center">
+                      <button onclick="showEquipmentSizeDetail('${item.item_code}','${item.item_name}')" class="text-blue-500 hover:text-blue-700 text-sm"><i class="fas fa-list"></i></button>
+                    </td>
+                  </tr>
+                `).join('')
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    content.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-6 text-center"><i class="fas fa-exclamation-triangle text-red-500 text-3xl mb-3"></i><p class="text-red-700 font-medium">비품 목록 로딩 실패</p><p class="text-red-600 text-sm mt-2">${error.message || error}</p></div>`;
+  }
+}
+
+async function showEquipmentSizeDetail(itemCode, itemName) {
+  try {
+    const res = await axios.get('/api/equipment/stock?item_code=' + encodeURIComponent(itemCode));
+    const stocks = res.data.data || [];
+    const html = `
+      <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl m-4">
+          <div class="px-6 py-4 border-b flex justify-between items-center">
+            <h3 class="text-lg font-bold">${itemName} - 사이즈별 재고</h3>
+            <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="p-6">
+            ${stocks.length === 0 ? '<p class="text-center text-gray-500 py-8">등록된 사이즈가 없습니다.</p>' : `
+              <table class="w-full">
+                <thead class="bg-gray-100"><tr>
+                  <th class="px-3 py-2 text-left text-xs">사이즈</th>
+                  <th class="px-3 py-2 text-right text-xs">현재 재고</th>
+                  <th class="px-3 py-2 text-right text-xs">안전 재고</th>
+                </tr></thead>
+                <tbody class="divide-y">
+                  ${stocks.map(s => `<tr>
+                    <td class="px-3 py-2">${s.size || '(공통)'}</td>
+                    <td class="px-3 py-2 text-right font-semibold ${s.current_stock <= s.safety_stock ? 'text-red-600' : 'text-green-600'}">${s.current_stock}</td>
+                    <td class="px-3 py-2 text-right text-gray-600">${s.safety_stock}</td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            `}
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+  } catch (e) {
+    alert('사이즈별 재고 조회 실패: ' + e.message);
+  }
+}
+
+function showEquipmentInboundModal() {
+  showEquipmentTxnModal('입고');
+}
+
+function showEquipmentIssueModal() {
+  showEquipmentTxnModal('지급');
+}
+
+async function showEquipmentTxnModal(txnType) {
+  try {
+    const res = await axios.get('/api/equipment/items');
+    const items = res.data.data || [];
+    if (items.length === 0) { alert('먼저 비품 품목을 등록해주세요.'); return; }
+    
+    const today = new Date().toISOString().slice(0, 10);
+    const html = `
+      <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md m-4">
+          <div class="px-6 py-4 border-b flex justify-between items-center">
+            <h3 class="text-lg font-bold">비품 ${txnType} 등록</h3>
+            <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="p-6 space-y-4">
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">${txnType}일자</label><input type="date" id="eq-txn-date" value="${today}" class="w-full border rounded-lg px-3 py-2"></div>
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">품목</label>
+              <select id="eq-txn-item" class="w-full border rounded-lg px-3 py-2">
+                ${items.map(i => '<option value="' + i.item_code + '">' + i.item_code + ' - ' + i.item_name + '</option>').join('')}
+              </select>
+            </div>
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">사이즈 (없으면 비워둠)</label><input type="text" id="eq-txn-size" placeholder="M, L, 245 등" class="w-full border rounded-lg px-3 py-2"></div>
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">수량</label><input type="number" id="eq-txn-qty" min="1" value="1" class="w-full border rounded-lg px-3 py-2"></div>
+            ${txnType === '입고' ? '<div><label class="block text-sm font-medium text-gray-700 mb-1">단가 (원)</label><input type="number" id="eq-txn-price" min="0" value="0" class="w-full border rounded-lg px-3 py-2"></div>' : ''}
+            ${txnType === '지급' ? '<div><label class="block text-sm font-medium text-gray-700 mb-1">지급 대상자</label><input type="text" id="eq-txn-issued-to" placeholder="이름" class="w-full border rounded-lg px-3 py-2"></div>' : ''}
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">메모</label><textarea id="eq-txn-memo" rows="2" class="w-full border rounded-lg px-3 py-2"></textarea></div>
+          </div>
+          <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+            <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+            <button onclick="submitEquipmentTxn('${txnType}')" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">저장</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+  } catch (e) {
+    alert('모달 로딩 실패: ' + e.message);
+  }
+}
+
+async function submitEquipmentTxn(txnType) {
+  const payload = {
+    trans_date: document.getElementById('eq-txn-date').value,
+    item_code: document.getElementById('eq-txn-item').value,
+    size: document.getElementById('eq-txn-size').value || '',
+    trans_type: txnType,
+    quantity: parseFloat(document.getElementById('eq-txn-qty').value),
+    memo: document.getElementById('eq-txn-memo').value || ''
+  };
+  if (txnType === '입고') payload.unit_price = parseFloat(document.getElementById('eq-txn-price').value) || 0;
+  if (txnType === '지급') payload.issued_to = document.getElementById('eq-txn-issued-to').value || '';
+  
+  try {
+    const res = await axios.post('/api/equipment/transaction', payload);
+    if (res.data.success) {
+      alert(txnType + ' 등록 완료');
+      document.querySelector('.fixed.inset-0').remove();
+      renderEquipment();
+    } else {
+      alert('저장 실패: ' + (res.data.error || '알 수 없음'));
+    }
+  } catch (e) {
+    alert('저장 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+function showEquipmentAddItemModal() {
+  const html = `
+    <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-md m-4">
+        <div class="px-6 py-4 border-b flex justify-between items-center">
+          <h3 class="text-lg font-bold">비품 품목 추가</h3>
+          <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="p-6 space-y-4">
+          <div><label class="block text-sm font-medium text-gray-700 mb-1">품목코드 *</label><input type="text" id="eq-new-code" placeholder="EQ011" class="w-full border rounded-lg px-3 py-2"></div>
+          <div><label class="block text-sm font-medium text-gray-700 mb-1">품목명 *</label><input type="text" id="eq-new-name" class="w-full border rounded-lg px-3 py-2"></div>
+          <div><label class="block text-sm font-medium text-gray-700 mb-1">분류</label>
+            <select id="eq-new-category" class="w-full border rounded-lg px-3 py-2">
+              <option value="의류">의류</option>
+              <option value="신발">신발</option>
+              <option value="장갑">장갑</option>
+              <option value="모자">모자</option>
+              <option value="방문객용">방문객용</option>
+              <option value="기타">기타</option>
+            </select>
+          </div>
+          <div><label class="block text-sm font-medium text-gray-700 mb-1">단위</label><input type="text" id="eq-new-unit" value="EA" class="w-full border rounded-lg px-3 py-2"></div>
+        </div>
+        <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+          <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+          <button onclick="submitNewEquipmentItem()" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg">저장</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+async function submitNewEquipmentItem() {
+  const payload = {
+    item_code: document.getElementById('eq-new-code').value.trim(),
+    item_name: document.getElementById('eq-new-name').value.trim(),
+    category: document.getElementById('eq-new-category').value,
+    unit: document.getElementById('eq-new-unit').value.trim() || 'EA'
+  };
+  if (!payload.item_code || !payload.item_name) { alert('품목코드와 품목명은 필수입니다.'); return; }
+  
+  try {
+    const res = await axios.post('/api/equipment/items', payload);
+    if (res.data.success) {
+      alert('품목 추가 완료');
+      document.querySelector('.fixed.inset-0').remove();
+      renderEquipment();
+    } else {
+      alert('저장 실패: ' + (res.data.error || '알 수 없음'));
+    }
+  } catch (e) {
+    alert('저장 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+async function loadEquipmentTransactions() {
+  try {
+    const res = await axios.get('/api/equipment/transactions');
+    const txns = res.data.data || [];
+    const html = `
+      <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl m-4 max-h-[90vh] flex flex-col">
+          <div class="px-6 py-4 border-b flex justify-between items-center">
+            <h3 class="text-lg font-bold">비품 거래 이력 (${txns.length}건)</h3>
+            <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="p-6 overflow-auto flex-1">
+            ${txns.length === 0 ? '<p class="text-center text-gray-500 py-8">거래 이력이 없습니다.</p>' : `
+              <table class="w-full text-sm">
+                <thead class="bg-gray-100 sticky top-0"><tr>
+                  <th class="px-3 py-2 text-left">일자</th>
+                  <th class="px-3 py-2 text-left">유형</th>
+                  <th class="px-3 py-2 text-left">품목</th>
+                  <th class="px-3 py-2 text-left">사이즈</th>
+                  <th class="px-3 py-2 text-right">수량</th>
+                  <th class="px-3 py-2 text-right">단가</th>
+                  <th class="px-3 py-2 text-left">대상자</th>
+                  <th class="px-3 py-2 text-left">메모</th>
+                </tr></thead>
+                <tbody class="divide-y">
+                  ${txns.map(t => `<tr>
+                    <td class="px-3 py-2">${t.trans_date}</td>
+                    <td class="px-3 py-2"><span class="px-2 py-0.5 rounded text-xs ${t.trans_type === '입고' ? 'bg-blue-100 text-blue-700' : t.trans_type === '지급' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}">${t.trans_type}</span></td>
+                    <td class="px-3 py-2">${t.item_code} - ${t.item_name || ''}</td>
+                    <td class="px-3 py-2">${t.size || '-'}</td>
+                    <td class="px-3 py-2 text-right font-semibold">${t.quantity}</td>
+                    <td class="px-3 py-2 text-right">${(t.unit_price || 0).toLocaleString()}</td>
+                    <td class="px-3 py-2">${t.issued_to || '-'}</td>
+                    <td class="px-3 py-2 text-gray-500">${t.memo || ''}</td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            `}
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+  } catch (e) {
+    alert('거래 이력 조회 실패: ' + e.message);
+  }
+}
+
+// ========== 포장재 BOM ==========
+async function renderPackagingBOM() {
+  const content = document.getElementById('page-content');
+  const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
+  content.innerHTML = '<div class="text-center py-20"><i class="fas fa-spinner fa-spin text-4xl text-purple-500"></i><p class="mt-4 text-gray-600">포장재 BOM 로딩 중...</p></div>';
+  
+  try {
+    const res = await axios.get('/api/packaging/list');
+    if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
+    
+    const list = res.data.data || [];
+    
+    content.innerHTML = `
+      <div class="mb-6">
+        <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+          <i class="fas fa-box text-purple-500"></i> 포장재 BOM
+        </h2>
+        <p class="text-gray-500 text-sm mt-1">제품별 포장재(박스 등) 연결 정보. 출고 시 자동으로 재고에서 차감됩니다.</p>
+      </div>
+      
+      <div class="bg-white rounded-lg shadow p-4 mb-6">
+        <button onclick="showPackagingAddModal()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+          <i class="fas fa-plus"></i> 포장재 연결 추가
+        </button>
+      </div>
+      
+      <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="px-6 py-4 border-b bg-gray-50">
+          <h3 class="font-semibold text-gray-800">등록된 포장재 매핑 (${list.length}건)</h3>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">제품코드</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">제품명</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">포장재코드</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">포장재명</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">입수량 (개/박스)</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">메모</th>
+                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">삭제</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+              ${list.length === 0 ? '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">등록된 포장재 매핑이 없습니다.</td></tr>' :
+                list.map(row => `
+                  <tr class="hover:bg-gray-50">
+                    <td class="px-4 py-3 text-sm font-mono">${row.production_code}</td>
+                    <td class="px-4 py-3 text-sm">${row.production_name || '-'}</td>
+                    <td class="px-4 py-3 text-sm font-mono">${row.supply_code}</td>
+                    <td class="px-4 py-3 text-sm">${row.supply_name || '-'}</td>
+                    <td class="px-4 py-3 text-sm text-right font-semibold">${row.pack_qty}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500">${row.memo || ''}</td>
+                    <td class="px-4 py-3 text-center">
+                      <button onclick="deletePackagingBOM(${row.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
+                    </td>
+                  </tr>
+                `).join('')
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (error) {
+    content.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-6 text-center"><i class="fas fa-exclamation-triangle text-red-500 text-3xl mb-3"></i><p class="text-red-700 font-medium">포장재 BOM 로딩 실패</p><p class="text-red-600 text-sm mt-2">${error.message || error}</p></div>`;
+  }
+}
+
+async function showPackagingAddModal() {
+  try {
+    // 제품 목록 + 부자재(포장재) 목록 로드
+    const [prodRes, supRes] = await Promise.all([
+      axios.get('/api/production/items'),
+      axios.get('/api/supplies')
+    ]);
+    const products = prodRes.data.data || prodRes.data.items || [];
+    const supplies = supRes.data.data || supRes.data.items || [];
+    
+    const html = `
+      <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md m-4">
+          <div class="px-6 py-4 border-b flex justify-between items-center">
+            <h3 class="text-lg font-bold">포장재 연결 추가</h3>
+            <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="p-6 space-y-4">
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">제품 *</label>
+              <select id="pkg-product" class="w-full border rounded-lg px-3 py-2">
+                <option value="">-- 선택 --</option>
+                ${products.map(p => '<option value="' + (p.production_code || p.code) + '">' + (p.production_code || p.code) + ' - ' + (p.production_name || p.name) + '</option>').join('')}
+              </select>
+            </div>
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">포장재 (부자재) *</label>
+              <select id="pkg-supply" class="w-full border rounded-lg px-3 py-2">
+                <option value="">-- 선택 --</option>
+                ${supplies.map(s => '<option value="' + (s.item_code || s.code) + '">' + (s.item_code || s.code) + ' - ' + (s.item_name || s.name) + '</option>').join('')}
+              </select>
+            </div>
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">입수량 (개/박스) *</label><input type="number" id="pkg-qty" min="1" value="20" class="w-full border rounded-lg px-3 py-2"><p class="text-xs text-gray-500 mt-1">예: 20이면 20개 출고할 때마다 포장재 1개 차감</p></div>
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">메모</label><input type="text" id="pkg-memo" class="w-full border rounded-lg px-3 py-2"></div>
+          </div>
+          <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+            <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+            <button onclick="submitPackagingBOM()" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg">저장</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+  } catch (e) {
+    alert('모달 로딩 실패: ' + e.message);
+  }
+}
+
+async function submitPackagingBOM() {
+  const payload = {
+    production_code: document.getElementById('pkg-product').value,
+    supply_code: document.getElementById('pkg-supply').value,
+    pack_qty: parseFloat(document.getElementById('pkg-qty').value),
+    memo: document.getElementById('pkg-memo').value || ''
+  };
+  if (!payload.production_code || !payload.supply_code || !payload.pack_qty) { alert('제품, 포장재, 입수량은 필수입니다.'); return; }
+  
+  try {
+    const res = await axios.post('/api/packaging/upsert', payload);
+    if (res.data.success) {
+      alert('저장 완료');
+      document.querySelector('.fixed.inset-0').remove();
+      renderPackagingBOM();
+    } else {
+      alert('저장 실패: ' + (res.data.error || '알 수 없음'));
+    }
+  } catch (e) {
+    alert('저장 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+async function deletePackagingBOM(id) {
+  if (!confirm('이 포장재 연결을 삭제하시겠습니까?')) return;
+  try {
+    const res = await axios.delete('/api/packaging/' + id);
+    if (res.data.success) {
+      renderPackagingBOM();
+    } else {
+      alert('삭제 실패: ' + (res.data.error || '알 수 없음'));
+    }
+  } catch (e) {
+    alert('삭제 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+// ========== 수율 리포트 ==========
+async function renderYieldReport() {
+  const content = document.getElementById('page-content');
+  const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
+  
+  const today = new Date().toISOString().slice(0, 10);
+  const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  
+  content.innerHTML = `
+    <div class="mb-6">
+      <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+        <i class="fas fa-percentage text-purple-500"></i> 수율 리포트
+      </h2>
+      <p class="text-gray-500 text-sm mt-1">기간별 생산 수율 (산출중량 ÷ 투입중량 × 100)</p>
+    </div>
+    
+    <div class="bg-white rounded-lg shadow p-4 mb-6">
+      <div class="flex gap-3 items-end flex-wrap">
+        <div><label class="block text-xs text-gray-600 mb-1">시작일</label><input type="date" id="yield-start" value="${weekAgo}" class="border rounded-lg px-3 py-2"></div>
+        <div><label class="block text-xs text-gray-600 mb-1">종료일</label><input type="date" id="yield-end" value="${today}" class="border rounded-lg px-3 py-2"></div>
+        <button onclick="loadYieldReport()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg font-medium">
+          <i class="fas fa-search mr-1"></i> 조회
+        </button>
+      </div>
+    </div>
+    
+    <div id="yield-report-content">
+      <p class="text-center text-gray-500 py-8">조회 버튼을 눌러주세요.</p>
+    </div>
+  `;
+  
+  if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
+  loadYieldReport();
+}
+
+async function loadYieldReport() {
+  const start = document.getElementById('yield-start').value;
+  const end = document.getElementById('yield-end').value;
+  const box = document.getElementById('yield-report-content');
+  box.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-2xl text-purple-500"></i></div>';
+  
+  try {
+    const res = await axios.get('/api/yield/report?start_date=' + start + '&end_date=' + end);
+    const summary = res.data.summary || {};
+    const data = res.data.data || [];
+    
+    box.innerHTML = `
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-lg shadow p-4"><p class="text-xs text-gray-500">총 배치 수</p><p class="text-2xl font-bold text-gray-800 mt-1">${summary.total_batches || 0}건</p></div>
+        <div class="bg-white rounded-lg shadow p-4"><p class="text-xs text-gray-500">수율 계산 가능</p><p class="text-2xl font-bold text-green-600 mt-1">${summary.batches_with_yield_data || 0}건</p></div>
+        <div class="bg-white rounded-lg shadow p-4"><p class="text-xs text-gray-500">표준중량 누락</p><p class="text-2xl font-bold text-orange-500 mt-1">${summary.batches_missing_standard_weight || 0}건</p></div>
+        <div class="bg-white rounded-lg shadow p-4"><p class="text-xs text-gray-500">평균 수율</p><p class="text-2xl font-bold text-purple-600 mt-1">${summary.average_yield_pct !== null ? summary.average_yield_pct + '%' : '-'}</p></div>
+      </div>
+      
+      <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="px-6 py-4 border-b bg-gray-50"><h3 class="font-semibold text-gray-800">배치별 상세 (${data.length}건)</h3></div>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead class="bg-gray-100"><tr>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">생산일</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">제품</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">투입(kg)</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">산출(kg)</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">폐기(kg)</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">수율(%)</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">비고</th>
+            </tr></thead>
+            <tbody class="divide-y divide-gray-200">
+              ${data.length === 0 ? '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">조회된 데이터가 없습니다.</td></tr>' :
+                data.map(row => {
+                  const pct = row.yield_pct;
+                  const pctColor = pct === null ? 'text-gray-400' : pct >= 90 ? 'text-green-600' : pct >= 80 ? 'text-yellow-600' : 'text-red-600';
+                  return `
+                    <tr class="hover:bg-gray-50">
+                      <td class="px-4 py-3 text-sm">${row.production_date || '-'}</td>
+                      <td class="px-4 py-3 text-sm">${row.production_code || ''} <span class="text-gray-500">${row.production_name || ''}</span></td>
+                      <td class="px-4 py-3 text-sm text-right">${(row.input_kg || 0).toFixed(2)}</td>
+                      <td class="px-4 py-3 text-sm text-right">${(row.output_kg || 0).toFixed(2)}</td>
+                      <td class="px-4 py-3 text-sm text-right text-red-500">${(row.discard_kg || 0).toFixed(2)}</td>
+                      <td class="px-4 py-3 text-sm text-right font-bold ${pctColor}">${pct !== null ? pct.toFixed(1) + '%' : '-'}</td>
+                      <td class="px-4 py-3 text-xs text-gray-500">${row.note || ''}</td>
+                    </tr>
+                  `;
+                }).join('')
+              }
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    box.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-6 text-center"><p class="text-red-700">수율 리포트 조회 실패: ${e.message}</p></div>`;
+  }
+}
+
+// 전역 함수 등록
+window.renderEquipment = renderEquipment;
+window.showEquipmentSizeDetail = showEquipmentSizeDetail;
+window.showEquipmentInboundModal = showEquipmentInboundModal;
+window.showEquipmentIssueModal = showEquipmentIssueModal;
+window.showEquipmentTxnModal = showEquipmentTxnModal;
+window.submitEquipmentTxn = submitEquipmentTxn;
+window.showEquipmentAddItemModal = showEquipmentAddItemModal;
+window.submitNewEquipmentItem = submitNewEquipmentItem;
+window.loadEquipmentTransactions = loadEquipmentTransactions;
+window.renderPackagingBOM = renderPackagingBOM;
+window.showPackagingAddModal = showPackagingAddModal;
+window.submitPackagingBOM = submitPackagingBOM;
+window.deletePackagingBOM = deletePackagingBOM;
+window.renderYieldReport = renderYieldReport;
+window.loadYieldReport = loadYieldReport;

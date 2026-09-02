@@ -742,6 +742,12 @@ app.get('/*', (c) => {
                     <span>생산일보</span>
                 </a>
                 
+                <a href="#yield-report" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="yield-report">
+                    <i class="fas fa-percentage w-5 text-purple-500"></i>
+                    <span>수율 리포트</span>
+                    <span class="ml-auto text-xs bg-purple-500 text-white px-2 py-0.5 rounded">NEW</span>
+                </a>
+                
                 <!-- ========== 원료 관리 ========== -->
                 <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-gray-400 uppercase tracking-wider px-4">🧪 원료 관리</p>
@@ -817,12 +823,6 @@ app.get('/*', (c) => {
                 <a href="#packaging-bom" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="packaging-bom">
                     <i class="fas fa-box w-5 text-purple-500"></i>
                     <span>포장재 BOM</span>
-                    <span class="ml-auto text-xs bg-purple-500 text-white px-2 py-0.5 rounded">NEW</span>
-                </a>
-                
-                <a href="#yield-report" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="yield-report">
-                    <i class="fas fa-percentage w-5 text-purple-500"></i>
-                    <span>수율 리포트</span>
                     <span class="ml-auto text-xs bg-purple-500 text-white px-2 py-0.5 rounded">NEW</span>
                 </a>
                 

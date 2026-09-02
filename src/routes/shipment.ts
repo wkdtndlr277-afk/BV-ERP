@@ -101,12 +101,34 @@ shipmentRoutes.post('/register', async (c) => {
     
     if (!product_code || !quantity) return c.json({ success: false, error: '제품코드, 수량 필수' }, 400);
     
+    const date = shipment_date || new Date().toISOString().split('T')[0];
+
     const result = await c.env.DB.prepare(`
       INSERT INTO shipments (shipment_date, order_id, production_lot, channel, product_code, product_name, quantity, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(shipment_date || new Date().toISOString().split('T')[0], order_id, production_lot, channel, product_code, product_name, quantity, status).run();
+    `).bind(date, order_id ?? null, production_lot ?? null, channel ?? null, product_code, product_name ?? null, quantity, status).run();
+
+    // 포장재(박스 등) 자동 차감: 이 제품에 연결된 포장재가 있으면
+    // 입수량 기준으로 필요한 박스 수를 계산해서 재고에서 차감하고 이력을 남긴다.
+    const packagingLinks = await c.env.DB.prepare(`
+      SELECT supply_code, pack_qty FROM production_packaging WHERE production_code = ?
+    `).bind(product_code).all();
+
+    const packagingDeducted: any[] = [];
+    for (const link of (packagingLinks.results as any[]) || []) {
+      const neededQty = Math.ceil(quantity / link.pack_qty);
+      await c.env.DB.batch([
+        c.env.DB.prepare('UPDATE supplies SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?')
+          .bind(neededQty, link.supply_code),
+        c.env.DB.prepare(`
+          INSERT INTO supply_transactions (trans_date, item_code, trans_type, quantity, reference_type, reference_id, memo)
+          VALUES (?, ?, '사용', ?, 'shipment', ?, ?)
+        `).bind(date, link.supply_code, neededQty, result.meta.last_row_id, `출고 ${quantity}개 -> 포장재 ${neededQty}개 차감`)
+      ]);
+      packagingDeducted.push({ supply_code: link.supply_code, deducted_qty: neededQty });
+    }
     
-    return c.json({ success: true, id: result.meta.last_row_id });
+    return c.json({ success: true, id: result.meta.last_row_id, packaging_deducted: packagingDeducted });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }

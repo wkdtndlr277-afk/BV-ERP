@@ -33,165 +33,125 @@ barcodeRoutes.get('/scan', async (c) => {
     let source = '';
     let mappedBarcode: any = null;
     
-    // 0. barcode_mapping 테이블에서 먼저 검색 (업체별 바코드)
-    try {
-      const mappingResult = await c.env.DB.prepare(`
-        SELECT * FROM barcode_mapping WHERE barcode = ? AND is_active = 1
-      `).bind(barcode).first();
-      
-      if (mappingResult) {
-        mappedBarcode = mappingResult;
-        // 매핑된 item_code로 품목 조회
-        const masterResult = await c.env.DB.prepare(`
-          SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
-                 pack_unit, pack_unit_name
-          FROM master WHERE item_code = ?
-        `).bind(mappingResult.item_code).first();
-        
-        if (masterResult) {
-          item = {
-            ...masterResult,
-            // 매핑 테이블의 pack_unit이 있으면 우선 사용
-            pack_unit: mappingResult.pack_unit || masterResult.pack_unit,
-            pack_unit_name: mappingResult.pack_unit_name || masterResult.pack_unit_name,
-            mapped_supplier: mappingResult.supplier,
-            mapped_barcode: mappingResult.barcode
-          };
-          source = 'barcode_mapping';
-        } else {
-          // supplies 테이블에서 검색
-          const suppliesResult = await c.env.DB.prepare(`
+    // 0~4a. 정확 매칭 조회는 서로 독립적이므로 순차 대기 대신 동시에 실행
+    // (기존: 최대 5번의 DB 왕복을 하나씩 기다림 -> 병렬 실행으로 왕복 1회 수준으로 단축)
+    const mappingLookup = (async () => {
+      try {
+        const mappingResult = await c.env.DB.prepare(`
+          SELECT * FROM barcode_mapping WHERE barcode = ? AND is_active = 1
+        `).bind(barcode).first();
+        if (!mappingResult) return null;
+
+        const [masterResult, suppliesResult] = await Promise.all([
+          c.env.DB.prepare(`
+            SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
+                   pack_unit, pack_unit_name
+            FROM master WHERE item_code = ?
+          `).bind(mappingResult.item_code).first(),
+          c.env.DB.prepare(`
             SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
                    pack_unit, pack_unit_name
             FROM supplies WHERE item_code = ?
-          `).bind(mappingResult.item_code).first();
-          
-          if (suppliesResult) {
-            item = {
-              ...suppliesResult,
-              pack_unit: mappingResult.pack_unit || suppliesResult.pack_unit,
-              pack_unit_name: mappingResult.pack_unit_name || suppliesResult.pack_unit_name,
-              mapped_supplier: mappingResult.supplier,
-              mapped_barcode: mappingResult.barcode
-            };
-            source = 'barcode_mapping';
-          }
-        }
-      }
-    } catch (e) {
-      // barcode_mapping 테이블이 없을 수 있음
-      console.log('barcode_mapping table not found:', e);
-    }
-    
-    // 1. production_barcodes 테이블에서 바코드 검색
-    if (!item) {
-      try {
-        const barcodeResult = await c.env.DB.prepare(`
-          SELECT pb.*, pi.production_name as item_name, pi.production_code as item_code,
-                 '제품' as category, COALESCE(pi.unit, 'EA') as unit, pi.current_stock
-          FROM production_barcodes pb
-          JOIN production_items pi ON pb.production_code = pi.production_code
-          WHERE pb.barcode = ?
-        `).bind(barcode).first();
-        
-        if (barcodeResult) {
-          item = barcodeResult;
-          source = 'production_barcodes';
-        }
+          `).bind(mappingResult.item_code).first()
+        ]);
+        const base = masterResult || suppliesResult;
+        if (!base) return null;
+        return {
+          item: {
+            ...base,
+            pack_unit: mappingResult.pack_unit || (base as any).pack_unit,
+            pack_unit_name: mappingResult.pack_unit_name || (base as any).pack_unit_name,
+            mapped_supplier: mappingResult.supplier,
+            mapped_barcode: mappingResult.barcode
+          },
+          mappedBarcode: mappingResult,
+          source: 'barcode_mapping'
+        };
       } catch (e) {
-        console.log('production_barcodes table not found or error:', e);
+        // barcode_mapping 테이블이 없을 수 있음
+        console.log('barcode_mapping table not found:', e);
+        return null;
       }
-    }
-    
+    })();
+
+    const productionBarcodeLookup = c.env.DB.prepare(`
+      SELECT pb.*, pi.production_name as item_name, pi.production_code as item_code,
+             '제품' as category, COALESCE(pi.unit, 'EA') as unit, pi.current_stock
+      FROM production_barcodes pb
+      JOIN production_items pi ON pb.production_code = pi.production_code
+      WHERE pb.barcode = ?
+    `).bind(barcode).first().catch((e: any) => {
+      console.log('production_barcodes table not found or error:', e);
+      return null;
+    });
+
     // ★★★ v3.6.169: 정확 매칭 우선, LIKE 부분매칭은 fallback ★★★
-    // 문제: master WHERE item_name LIKE '%60%' 때문에 이름에 "60"이 포함된 다른 품목이 매칭됨
-    // 해결: 먼저 모든 테이블에서 barcode / item_code 정확 매칭으로 찾고,
-    //       그래도 없으면 마지막에 LIKE 검색 fallback
-    
-    // 2a. master 테이블에서 정확 매칭 (barcode 또는 item_code)
-    if (!item) {
-      const masterResult = await c.env.DB.prepare(`
-        SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
-               pack_unit, pack_unit_name
-        FROM master
-        WHERE barcode = ? OR item_code = ?
-      `).bind(barcode, barcode).first();
-      
-      if (masterResult) {
-        item = masterResult;
-        source = 'master';
-      }
+    const masterLookup = c.env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
+             pack_unit, pack_unit_name
+      FROM master
+      WHERE barcode = ? OR item_code = ?
+    `).bind(barcode, barcode).first();
+
+    const suppliesLookup = c.env.DB.prepare(`
+      SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
+             pack_unit, pack_unit_name
+      FROM supplies
+      WHERE barcode = ? OR item_code = ?
+    `).bind(barcode, barcode).first();
+
+    const productLookup = c.env.DB.prepare(`
+      SELECT production_code as item_code, 
+             COALESCE(alias1, production_name) as item_name,
+             '제품' as category, 
+             COALESCE(unit, 'EA') as unit, 
+             current_stock
+      FROM production_items
+      WHERE production_code = ?
+    `).bind(barcode).first();
+
+    const [mappingOutcome, barcodeResult, masterResult, suppliesResult, productResult] = await Promise.all([
+      mappingLookup, productionBarcodeLookup, masterLookup, suppliesLookup, productLookup
+    ]);
+
+    // 우선순위는 기존과 동일: barcode_mapping > production_barcodes > master > supplies > production_items
+    if (mappingOutcome) {
+      item = mappingOutcome.item;
+      mappedBarcode = mappingOutcome.mappedBarcode;
+      source = mappingOutcome.source;
+    } else if (barcodeResult) {
+      item = barcodeResult;
+      source = 'production_barcodes';
+    } else if (masterResult) {
+      item = masterResult;
+      source = 'master';
+    } else if (suppliesResult) {
+      item = suppliesResult;
+      source = 'supplies';
+    } else if (productResult) {
+      item = productResult;
+      source = 'production_items';
     }
     
-    // 3a. supplies 테이블에서 정확 매칭
-    if (!item) {
-      const suppliesResult = await c.env.DB.prepare(`
-        SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
-               pack_unit, pack_unit_name
-        FROM supplies
-        WHERE barcode = ? OR item_code = ?
-      `).bind(barcode, barcode).first();
-      
-      if (suppliesResult) {
-        item = suppliesResult;
-        source = 'supplies';
-      }
-    }
-    
-    // 4a. production_items 테이블에서 정확 매칭 (제품)
-    if (!item) {
-      const productResult = await c.env.DB.prepare(`
-        SELECT production_code as item_code, 
-               COALESCE(alias1, production_name) as item_name,
-               '제품' as category, 
-               COALESCE(unit, 'EA') as unit, 
-               current_stock
-        FROM production_items
-        WHERE production_code = ?
-      `).bind(barcode).first();
-      
-      if (productResult) {
-        item = productResult;
-        source = 'production_items';
-      }
-    }
-    
-    // 5. Fallback: 정확 매칭이 없을 때만 LIKE 부분매칭 시도
+    // 5. Fallback: 정확 매칭이 없을 때만 LIKE 부분매칭 시도 (마찬가지로 병렬 실행)
     //    단, 4자리 이상의 검색어에서만 (짧으면 오매칭 위험 높음)
     if (!item && barcode.length >= 4) {
-      // master에서 이름 부분매칭
-      const masterFuzzy = await c.env.DB.prepare(`
-        SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
-               pack_unit, pack_unit_name
-        FROM master
-        WHERE item_name LIKE ?
-        LIMIT 1
-      `).bind(`%${barcode}%`).first();
-      
-      if (masterFuzzy) {
-        item = masterFuzzy;
-        source = 'master_fuzzy';
-      }
-      
-      // supplies 이름 부분매칭
-      if (!item) {
-        const suppliesFuzzy = await c.env.DB.prepare(`
+      const [masterFuzzy, suppliesFuzzy, productFuzzy] = await Promise.all([
+        c.env.DB.prepare(`
+          SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
+                 pack_unit, pack_unit_name
+          FROM master
+          WHERE item_name LIKE ?
+          LIMIT 1
+        `).bind(`%${barcode}%`).first(),
+        c.env.DB.prepare(`
           SELECT item_code, item_name, category, unit, current_stock, safety_stock, expiry_days, barcode,
                  pack_unit, pack_unit_name
           FROM supplies
           WHERE item_name LIKE ?
           LIMIT 1
-        `).bind(`%${barcode}%`).first();
-        
-        if (suppliesFuzzy) {
-          item = suppliesFuzzy;
-          source = 'supplies_fuzzy';
-        }
-      }
-      
-      // production_items 이름 부분매칭
-      if (!item) {
-        const productFuzzy = await c.env.DB.prepare(`
+        `).bind(`%${barcode}%`).first(),
+        c.env.DB.prepare(`
           SELECT production_code as item_code, 
                  COALESCE(alias1, production_name) as item_name,
                  '제품' as category, 
@@ -200,12 +160,19 @@ barcodeRoutes.get('/scan', async (c) => {
           FROM production_items
           WHERE production_name LIKE ? OR alias1 LIKE ?
           LIMIT 1
-        `).bind(`%${barcode}%`, `%${barcode}%`).first();
-        
-        if (productFuzzy) {
-          item = productFuzzy;
-          source = 'production_items_fuzzy';
-        }
+        `).bind(`%${barcode}%`, `%${barcode}%`).first()
+      ]);
+      
+      // 우선순위 동일: master_fuzzy > supplies_fuzzy > production_items_fuzzy
+      if (masterFuzzy) {
+        item = masterFuzzy;
+        source = 'master_fuzzy';
+      } else if (suppliesFuzzy) {
+        item = suppliesFuzzy;
+        source = 'supplies_fuzzy';
+      } else if (productFuzzy) {
+        item = productFuzzy;
+        source = 'production_items_fuzzy';
       }
     }
     

@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>본비반트 HACCP ERP 시스템 인수인계 문서</title>
+<style>
+  @page {
+    size: A4;
+    margin: 20mm 15mm;
+    @bottom-center {
+      content: "본비반트 HACCP ERP 인수인계 문서 - " counter(page) " / " counter(pages);
+      font-size: 9pt;
+      color: #666;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Malgun Gothic', 'Nanum Gothic', 'AppleGothic', sans-serif;
+    font-size: 10pt;
+    line-height: 1.6;
+    color: #222;
+    margin: 0;
+    padding: 0;
+  }
+  h1 {
+    font-size: 22pt;
+    color: #1a3a6c;
+    border-bottom: 3px solid #1a3a6c;
+    padding-bottom: 8px;
+    margin-top: 30px;
+    page-break-before: always;
+  }
+  h1:first-of-type { page-break-before: avoid; }
+  h2 {
+    font-size: 15pt;
+    color: #2c5aa0;
+    border-left: 5px solid #2c5aa0;
+    padding-left: 10px;
+    margin-top: 25px;
+    page-break-after: avoid;
+  }
+  h3 {
+    font-size: 12pt;
+    color: #333;
+    margin-top: 20px;
+    page-break-after: avoid;
+  }
+  h4 {
+    font-size: 11pt;
+    color: #444;
+    margin-top: 15px;
+    page-break-after: avoid;
+  }
+  p, li { font-size: 10pt; }
+  code {
+    background: #f4f4f4;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 9pt;
+    color: #c7254e;
+  }
+  pre {
+    background: #2d2d2d;
+    color: #f8f8f2;
+    padding: 12px;
+    border-radius: 5px;
+    overflow-x: auto;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 8.5pt;
+    line-height: 1.4;
+    page-break-inside: avoid;
+  }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 9pt;
+    page-break-inside: avoid;
+  }
+  th, td {
+    border: 1px solid #ccc;
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: #2c5aa0;
+    color: #fff;
+    font-weight: bold;
+  }
+  tr:nth-child(even) { background: #f8f9fa; }
+  .cover {
+    text-align: center;
+    padding: 80px 30px;
+    page-break-after: always;
+  }
+  .cover h1 {
+    font-size: 30pt;
+    border: none;
+    padding: 0;
+    margin: 20px 0;
+  }
+  .cover .subtitle {
+    font-size: 14pt;
+    color: #666;
+    margin-bottom: 40px;
+  }
+  .cover .meta {
+    margin-top: 60px;
+    font-size: 11pt;
+    color: #555;
+    line-height: 2;
+  }
+  .cover .badge {
+    display: inline-block;
+    padding: 6px 16px;
+    background: #1a3a6c;
+    color: white;
+    border-radius: 20px;
+    font-size: 11pt;
+    margin: 5px;
+  }
+  .alert {
+    padding: 12px 15px;
+    border-radius: 5px;
+    margin: 15px 0;
+    page-break-inside: avoid;
+  }
+  .alert-info { background: #e7f3ff; border-left: 4px solid #2196F3; }
+  .alert-warning { background: #fff8e1; border-left: 4px solid #ffc107; }
+  .alert-danger { background: #ffebee; border-left: 4px solid #f44336; }
+  .alert-success { background: #e8f5e9; border-left: 4px solid #4caf50; }
+  .toc {
+    background: #f8f9fa;
+    padding: 20px;
+    border-radius: 5px;
+    margin: 20px 0;
+  }
+  .toc ul { list-style: none; padding-left: 0; }
+  .toc ul ul { padding-left: 20px; }
+  .toc li { margin: 5px 0; }
+  ul, ol { margin: 8px 0; padding-left: 25px; }
+  li { margin: 3px 0; }
+  .highlight { background: #fff3cd; padding: 2px 4px; font-weight: bold; }
+  .arch-diagram {
+    background: #f8f9fa;
+    border: 2px solid #2c5aa0;
+    padding: 20px;
+    border-radius: 8px;
+    text-align: center;
+    font-family: 'Consolas', monospace;
+    font-size: 9pt;
+    white-space: pre;
+    line-height: 1.4;
+    page-break-inside: avoid;
+  }
+  .kv-table td:first-child {
+    background: #f0f4f8;
+    font-weight: bold;
+    width: 30%;
+  }
+</style>
+</head>
+<body>
+
+<!-- ========== 표지 ========== -->
+<div class="cover">
+  <div style="font-size: 60pt; margin-bottom: 20px;">🏭</div>
+  <h1>본비반트 HACCP ERP<br>시스템 인수인계 문서</h1>
+  <div class="subtitle">Bonvivant HACCP ERP System<br>Handover Documentation</div>
+
+  <div style="margin: 40px 0;">
+    <span class="badge">Cloudflare Pages</span>
+    <span class="badge">Hono Framework</span>
+    <span class="badge">Google Sheets SSOT</span>
+    <span class="badge">D1 SQLite</span>
+  </div>
+
+  <div class="meta">
+    <div><strong>프로젝트명:</strong> haccp-erp / bv-erp</div>
+    <div><strong>현재 버전:</strong> v3.6.50 (2026-08-11 기준)</div>
+    <div><strong>문서 작성일:</strong> 2026-08-11</div>
+    <div><strong>배포 URL:</strong> https://bv-erp.pages.dev</div>
+  </div>
+</div>
+
+<!-- ========== 목차 ========== -->
+<h1 style="page-break-before: avoid;">📑 목차</h1>
+<div class="toc">
+<ul>
+  <li><strong>1. 시스템 개요</strong>
+    <ul>
+      <li>1.1 프로젝트 소개</li>
+      <li>1.2 주요 기능</li>
+      <li>1.3 사용자 및 이해관계자</li>
+    </ul>
+  </li>
+  <li><strong>2. 시스템 아키텍처</strong>
+    <ul>
+      <li>2.1 이중 레이어 구조</li>
+      <li>2.2 데이터 흐름도</li>
+      <li>2.3 인프라 구성</li>
+    </ul>
+  </li>
+  <li><strong>3. 기술 스택</strong>
+    <ul>
+      <li>3.1 백엔드/프론트엔드</li>
+      <li>3.2 데이터베이스 및 외부 서비스</li>
+    </ul>
+  </li>
+  <li><strong>4. Google Sheets 구조 (SSOT)</strong>
+    <ul>
+      <li>4.1 시트 ID 및 접근 정보</li>
+      <li>4.2 주요 시트별 컬럼 구조</li>
+      <li>4.3 SUMIFS 수식 로직</li>
+    </ul>
+  </li>
+  <li><strong>5. 환경변수 및 인증</strong>
+    <ul>
+      <li>5.1 Cloudflare Secrets</li>
+      <li>5.2 Google Service Account 발급</li>
+    </ul>
+  </li>
+  <li><strong>6. 프로젝트 파일 구조</strong>
+    <ul>
+      <li>6.1 디렉토리 트리</li>
+      <li>6.2 주요 라우트 및 서비스</li>
+    </ul>
+  </li>
+  <li><strong>7. 배포 절차</strong>
+    <ul>
+      <li>7.1 빌드 및 배포 명령어</li>
+      <li>7.2 배포 URL 히스토리</li>
+    </ul>
+  </li>
+  <li><strong>8. 최근 버그 수정 (v3.6.50)</strong>
+    <ul>
+      <li>8.1 원료 사용량 누락 이슈</li>
+      <li>8.2 근본 원인 및 수정 내역</li>
+    </ul>
+  </li>
+  <li><strong>9. 계정 이관 절차</strong>
+    <ul>
+      <li>9.1 이관 시나리오 3가지</li>
+      <li>9.2 시나리오 1 (권장) 상세</li>
+    </ul>
+  </li>
+  <li><strong>10. 트러블슈팅 가이드</strong></li>
+  <li><strong>11. 부록: 명령어 치트시트</strong></li>
+</ul>
+</div>
+
+<!-- ========== 1. 시스템 개요 ========== -->
+<h1>1. 시스템 개요</h1>
+
+<h2>1.1 프로젝트 소개</h2>
+<p><strong>본비반트 HACCP ERP</strong>는 베이커리 생산 관리 및 HACCP(식품안전관리인증기준) 준수를 위한 통합 ERP 시스템입니다. Cloudflare 엣지 네트워크 상에서 운영되어 빠른 응답 속도와 안정성을 보장하며, Google Sheets를 <strong>SSOT(Single Source of Truth)</strong>로 활용하여 관리자가 직접 데이터를 확인·수정할 수 있는 하이브리드 구조입니다.</p>
+
+<table class="kv-table">
+  <tr><td>프로젝트명 (Git/Cloudflare)</td><td>haccp-erp / bv-erp</td></tr>
+  <tr><td>현재 버전</td><td>v3.6.50</td></tr>
+  <tr><td>배포 플랫폼</td><td>Cloudflare Pages (Edge Runtime)</td></tr>
+  <tr><td>주 데이터 저장소</td><td>Google Sheets (Sheet ID: 1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU)</td></tr>
+  <tr><td>보조 데이터 저장소</td><td>Cloudflare D1 (SQLite) - haccp-erp-production</td></tr>
+  <tr><td>운영 도메인</td><td>https://bv-erp.pages.dev</td></tr>
+</table>
+
+<h2>1.2 주요 기능</h2>
+<ul>
+  <li><strong>생산 관리</strong>: 일별 생산실적 등록, 로트(LOT) 관리, BOM 기반 원료 소요량 자동 계산</li>
+  <li><strong>재고 관리</strong>: 일별수불부 자동 생성, 원료 입고/사용/재고 실시간 추적</li>
+  <li><strong>바코드 시스템</strong>: 생산 바코드 자동 발급 및 스캔 이력 관리</li>
+  <li><strong>HACCP 관리</strong>: 공정 품질 검사, 미생물 검사, KPI 표준 관리</li>
+  <li><strong>원가 관리</strong>: 상세 원가 계산, 재료비 트래킹</li>
+  <li><strong>발주/입고</strong>: 주문 업로드, 입고 처리, 원료마스터 관리</li>
+  <li><strong>일일 보고서</strong>: 자동 집계 및 대시보드 시각화</li>
+</ul>
+
+<h2>1.3 사용자 및 이해관계자</h2>
+<ul>
+  <li><strong>관리자 (super_admin)</strong>: 시스템 전체 관리, 사용자 권한 설정</li>
+  <li><strong>생산 담당자</strong>: 일일 생산실적 등록, 로트 관리</li>
+  <li><strong>품질관리자</strong>: HACCP 검사 기록, 미생물 검사 결과 입력</li>
+  <li><strong>대표이사 (인수 예정)</strong>: 계정 이관 후 최종 소유자</li>
+</ul>
+
+<!-- ========== 2. 시스템 아키텍처 ========== -->
+<h1>2. 시스템 아키텍처</h1>
+
+<h2>2.1 이중 레이어 구조 (Dual-Layer Architecture)</h2>
+<p>이 시스템은 두 개의 독립적이면서도 상호 연결된 데이터 레이어로 구성됩니다.</p>
+
+<div class="arch-diagram">
+┌─────────────────────────────────────────────────────────────┐
+│                    사용자 (웹 브라우저)                       │
+│                  https://bv-erp.pages.dev                    │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ HTTPS
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Cloudflare Pages (Edge Runtime)                │
+│                  Hono Framework (TypeScript)                │
+│                                                              │
+│   ┌────────────────────┐      ┌───────────────────────┐    │
+│   │  Frontend (Static) │      │  API Routes (/api/*)  │    │
+│   │  - HTML/CSS/JS     │      │  - production.ts      │    │
+│   │  - Tailwind (CDN)  │      │  - sheets.ts          │    │
+│   │  - Chart.js (CDN)  │      │  - barcode.ts         │    │
+│   └────────────────────┘      │  - admin.ts 등        │    │
+│                                └──────────┬────────────┘    │
+└───────────────────────────────────────────┼─────────────────┘
+                                            │
+                    ┌───────────────────────┼───────────────────────┐
+                    ▼                       ▼                       ▼
+        ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+        │  Google Sheets   │    │   Cloudflare D1  │    │  Cloudflare KV   │
+        │      (SSOT)      │    │  (SQLite/Barcode)│    │   (Session 등)   │
+        │                  │    │                  │    │                  │
+        │  - 일별수불부     │    │  - production_   │    │                  │
+        │  - 로트매칭       │    │    barcode       │    │                  │
+        │  - 생산실적       │    │  - users         │    │                  │
+        │  - BOM마스터      │    │  - process_      │    │                  │
+        │  - 원료마스터     │    │    quality       │    │                  │
+        │  - 원료입고       │    │  - ...           │    │                  │
+        │  ...             │    │                  │    │                  │
+        └──────────────────┘    └──────────────────┘    └──────────────────┘
+              ▲
+              │ (Service Account 인증)
+              │
+        ┌─────┴──────────┐
+        │  관리자 직접   │
+        │  수정 가능      │
+        └────────────────┘
+</div>
+
+<h2>2.2 데이터 흐름도 (생산 등록 예시)</h2>
+<div class="arch-diagram">
+[1] 사용자: 생산실적 입력
+       │
+       ▼
+[2] POST /api/production/simple
+       │
+       ├──▶ [3] 생산실적 시트에 행 추가
+       │
+       ├──▶ [4] rebuildLotMatchingForDates() 호출
+       │        └─▶ 로트매칭 시트 재구성 (BOM 기반)
+       │
+       └──▶ [5] addDailyStockDate(prod_date) 호출  ⭐ v3.6.50 수정 지점
+                │
+                ├─▶ [5-1] 일별수불부에 placeholder 행 append
+                ├─▶ [5-2] updatedRange 파싱하여 실제 행 번호 획득
+                └─▶ [5-3] 정확한 행 번호로 SUMIFS 수식 write
+                        └─▶ 로트매칭 시트의 사용량 자동 집계
+</div>
+
+<h2>2.3 인프라 구성</h2>
+<table>
+  <tr><th>레이어</th><th>서비스</th><th>용도</th></tr>
+  <tr><td>엣지 컴퓨팅</td><td>Cloudflare Workers/Pages</td><td>백엔드 API 및 정적 자산 서빙</td></tr>
+  <tr><td>주 데이터 저장소</td><td>Google Sheets API v4</td><td>재고, 생산, 원료 정보 (SSOT)</td></tr>
+  <tr><td>관계형 DB</td><td>Cloudflare D1</td><td>바코드, HACCP 검사, 사용자 등</td></tr>
+  <tr><td>KV 저장소</td><td>Cloudflare KV</td><td>세션/캐시 (선택적)</td></tr>
+  <tr><td>인증</td><td>Google Service Account</td><td>Sheets API 접근용 JWT 인증</td></tr>
+  <tr><td>DNS/CDN</td><td>Cloudflare</td><td>전세계 엣지 라우팅</td></tr>
+</table>
+
+<!-- ========== 3. 기술 스택 ========== -->
+<h1>3. 기술 스택</h1>
+
+<h2>3.1 백엔드 / 프론트엔드</h2>
+<table>
+  <tr><th>구분</th><th>기술</th><th>버전</th><th>비고</th></tr>
+  <tr><td>런타임</td><td>Cloudflare Workers (V8 Isolates)</td><td>-</td><td>Node.js 아님, Web APIs 기반</td></tr>
+  <tr><td>웹 프레임워크</td><td>Hono</td><td>^4.0.0</td><td>초경량 엣지 프레임워크</td></tr>
+  <tr><td>언어</td><td>TypeScript</td><td>^5.0.0</td><td>strict 모드</td></tr>
+  <tr><td>빌드 도구</td><td>Vite + @hono/vite-cloudflare-pages</td><td>^5.0.0</td><td>dist/ 로 번들링</td></tr>
+  <tr><td>CLI 도구</td><td>Wrangler</td><td>^3.78.0</td><td>Cloudflare 배포/관리</td></tr>
+  <tr><td>프론트엔드 UI</td><td>Tailwind CSS (CDN)</td><td>-</td><td>런타임 CDN 로드</td></tr>
+  <tr><td>차트</td><td>Chart.js (CDN)</td><td>-</td><td>대시보드 시각화</td></tr>
+  <tr><td>HTTP 클라이언트</td><td>Axios (CDN)</td><td>1.6.0</td><td>프론트엔드 API 호출</td></tr>
+  <tr><td>아이콘</td><td>Font Awesome (CDN)</td><td>6.4.0</td><td>-</td></tr>
+</table>
+
+<h2>3.2 데이터베이스 및 외부 서비스</h2>
+<table>
+  <tr><th>서비스</th><th>바인딩명</th><th>ID/이름</th><th>용도</th></tr>
+  <tr><td>Cloudflare D1</td><td>DB</td><td>haccp-erp-production<br>(596dc841-d436-4555-a774-5aa647455162)</td><td>바코드, 사용자, 품질검사</td></tr>
+  <tr><td>Google Sheets</td><td>-</td><td>1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU</td><td>재고/생산 SSOT</td></tr>
+</table>
+
+<!-- ========== 4. Google Sheets 구조 ========== -->
+<h1>4. Google Sheets 구조 (SSOT)</h1>
+
+<div class="alert alert-danger">
+<strong>⚠️ 매우 중요:</strong> Google Sheets는 이 시스템의 <span class="highlight">Single Source of Truth (SSOT)</span>입니다.
+Sheet ID(<code>1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU</code>) 또는 시트 이름/컬럼 구조가 변경되면 시스템 전체가 동작하지 않습니다.
+</div>
+
+<h2>4.1 시트 ID 및 접근 정보</h2>
+<table class="kv-table">
+  <tr><td>Sheet ID</td><td><code>1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU</code></td></tr>
+  <tr><td>Sheet URL</td><td>https://docs.google.com/spreadsheets/d/1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU/edit</td></tr>
+  <tr><td>인증 방식</td><td>Google Service Account (JWT)</td></tr>
+  <tr><td>API 스코프</td><td>https://www.googleapis.com/auth/spreadsheets</td></tr>
+  <tr><td>관리자 접근</td><td>Sheet를 서비스 계정 이메일과 <strong>편집자</strong>로 공유해야 함</td></tr>
+</table>
+
+<h2>4.2 주요 시트별 컬럼 구조</h2>
+
+<h3>4.2.1 일별수불부 (핵심 시트)</h3>
+<p>일자별 원료 수불(입고/사용/재고) 현황을 관리하는 핵심 시트입니다.</p>
+<table>
+  <tr><th>컬럼</th><th>필드명</th><th>설명</th></tr>
+  <tr><td>A</td><td>일자</td><td>YYYY-MM-DD 형식</td></tr>
+  <tr><td>B</td><td>품목코드</td><td>원료 코드</td></tr>
+  <tr><td>C</td><td>품목명</td><td>원료명</td></tr>
+  <tr><td>D</td><td>단위</td><td>kg, g, EA 등</td></tr>
+  <tr><td>E</td><td>이월/입고</td><td>전일 잔량 + 당일 입고량</td></tr>
+  <tr><td>F</td><td>사용량 (SUMIFS)</td><td><strong>로트매칭에서 자동 집계</strong></td></tr>
+  <tr><td>G</td><td>재고</td><td>E - F</td></tr>
+  <tr><td>H</td><td>비고</td><td>메모</td></tr>
+</table>
+
+<h3>4.2.2 로트매칭</h3>
+<p>생산실적을 BOM에 따라 원료별로 분해한 상세 사용 내역입니다.</p>
+<ul>
+  <li>생산일자, LOT번호, 제품코드, 제품명, 생산수량</li>
+  <li>원료코드, 원료명, BOM비율, 사용량, 단위</li>
+</ul>
+
+<h3>4.2.3 생산실적</h3>
+<p>일별 제품 생산 실적을 기록합니다. 사용자가 직접 입력합니다.</p>
+<ul>
+  <li>생산일자, LOT번호, 제품코드, 제품명, 생산수량, 담당자, 비고</li>
+</ul>
+
+<h3>4.2.4 BOM마스터</h3>
+<p>제품별 원료 구성 비율(Bill of Materials)을 정의합니다.</p>
+<ul>
+  <li>제품코드, 제품명, 원료코드, 원료명, 사용량, 단위, 비율</li>
+</ul>
+
+<h3>4.2.5 원료마스터 / 원료입고</h3>
+<ul>
+  <li><strong>원료마스터</strong>: 원료코드, 원료명, 규격, 단위, 공급사, 단가</li>
+  <li><strong>원료입고</strong>: 입고일자, 원료코드, 원료명, 입고량, 단위, 공급사, LOT</li>
+</ul>
+
+<h2>4.3 SUMIFS 수식 로직</h2>
+<p>일별수불부의 <strong>F열(사용량)</strong>은 로트매칭 시트에서 자동으로 집계됩니다.</p>
+<pre><code>=SUMIFS(로트매칭!I:I,        // 합계 대상: 로트매칭 사용량 열
+        로트매칭!A:A, $A{row}, // 조건 1: 일자 일치
+        로트매칭!F:F, $B{row}) // 조건 2: 원료코드 일치</code></pre>
+
+<div class="alert alert-warning">
+<strong>💡 v3.6.50 수정 관련:</strong>
+이 수식이 <code>addDailyStockDate</code> 함수에서 <span class="highlight">잘못된 행 번호(<code>$A{row}</code>의 <code>{row}</code>)</span>로 생성되어 원료 사용량이 표시되지 않는 버그가 있었습니다.
+자세한 내용은 <strong>8장: 최근 버그 수정</strong> 참조.
+</div>
+
+<!-- ========== 5. 환경변수 및 인증 ========== -->
+<h1>5. 환경변수 및 인증</h1>
+
+<h2>5.1 Cloudflare Secrets (필수 환경변수)</h2>
+<p>다음 3개의 환경변수는 반드시 Cloudflare Pages에 등록되어 있어야 시스템이 정상 동작합니다.</p>
+
+<table>
+  <tr><th>변수명</th><th>값 예시</th><th>설명</th></tr>
+  <tr>
+    <td><code>GOOGLE_CLIENT_EMAIL</code></td>
+    <td><code>xxx@yyy.iam.gserviceaccount.com</code></td>
+    <td>Google Service Account 이메일</td>
+  </tr>
+  <tr>
+    <td><code>GOOGLE_PRIVATE_KEY</code></td>
+    <td><code>-----BEGIN PRIVATE KEY-----\n...</code></td>
+    <td>Service Account Private Key (개행 포함)</td>
+  </tr>
+  <tr>
+    <td><code>GOOGLE_SHEET_ID</code></td>
+    <td><code>1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU</code></td>
+    <td>대상 Google Sheet ID</td>
+  </tr>
+</table>
+
+<h3>환경변수 설정 명령어</h3>
+<pre><code># Cloudflare Pages 배포 후 환경변수 설정
+cd /home/user/webapp
+
+# 개별 설정
+npx wrangler pages secret put GOOGLE_CLIENT_EMAIL --project-name bv-erp
+npx wrangler pages secret put GOOGLE_PRIVATE_KEY --project-name bv-erp
+npx wrangler pages secret put GOOGLE_SHEET_ID --project-name bv-erp
+
+# 확인
+npx wrangler pages secret list --project-name bv-erp</code></pre>
+
+<h2>5.2 Google Service Account 발급 절차</h2>
+<ol>
+  <li><a href="https://console.cloud.google.com/">Google Cloud Console</a> 접속</li>
+  <li>새 프로젝트 생성 (또는 기존 프로젝트 선택)</li>
+  <li><strong>API 및 서비스 → 라이브러리</strong>에서 <code>Google Sheets API</code> 사용 설정</li>
+  <li><strong>IAM 및 관리자 → 서비스 계정</strong> 생성
+    <ul>
+      <li>이름: <code>erp-sheets-service</code></li>
+      <li>역할: <code>편집자</code></li>
+    </ul>
+  </li>
+  <li>생성된 서비스 계정 → <strong>키 관리 → 키 추가 → 새 키 만들기 (JSON)</strong></li>
+  <li>다운로드된 JSON 파일에서 <code>client_email</code>, <code>private_key</code> 값 추출</li>
+  <li><strong>중요</strong>: Google Sheet를 열어 <code>client_email</code> 주소를 <strong>편집자</strong>로 공유 추가</li>
+</ol>
+
+<div class="alert alert-info">
+<strong>💡 Tip:</strong> <code>private_key</code>는 <code>\n</code> 개행 문자가 포함된 매우 긴 문자열입니다. Cloudflare Secret에 등록 시 그대로 붙여넣으면 자동으로 처리됩니다.
+</div>
+
+<!-- ========== 6. 프로젝트 파일 구조 ========== -->
+<h1>6. 프로젝트 파일 구조</h1>
+
+<h2>6.1 디렉토리 트리</h2>
+<pre><code>/home/user/webapp/
+├── src/
+│   ├── index.tsx                # 앱 진입점 (Hono 앱 정의)
+│   ├── routes/                  # API 라우트 (기능별 분리)
+│   │   ├── admin.ts             (351KB) 관리자 기능
+│   │   ├── sheets.ts            (357KB) Google Sheets 연동 API ⭐
+│   │   ├── production.ts        (206KB) 생산실적 API ⭐
+│   │   ├── barcode.ts           (110KB) 바코드 관리
+│   │   ├── order-upload.ts      (103KB) 주문 업로드
+│   │   ├── daily-report.ts      (71KB)  일일 보고서
+│   │   ├── inbound.ts           (45KB)  입고 처리
+│   │   ├── dashboard.ts         (43KB)  대시보드
+│   │   ├── bom.ts               (42KB)  BOM 관리
+│   │   └── master.ts            (32KB)  마스터 데이터
+│   ├── services/                # 비즈니스 로직
+│   │   ├── GoogleSheetsService.ts (70KB) ⭐ 핵심 서비스
+│   │   ├── ProductionService.ts
+│   │   ├── InventoryService.ts
+│   │   ├── DataValidator.ts
+│   │   └── SheetArchitecture.ts
+│   ├── types/                   # TypeScript 타입 정의
+│   └── utils/                   # 유틸리티 함수
+├── public/
+│   └── static/                  # 정적 자산 (JS, CSS, 이미지)
+│       ├── app-v400.js          # 프론트엔드 최신 버전
+│       └── ...
+├── migrations/                  # D1 SQLite 마이그레이션
+│   ├── 0001_initial_schema.sql
+│   ├── 0002_admin_system.sql
+│   ├── ... (총 15+ 파일)
+│   └── 0015_production_items.sql
+├── docs/                        # 기존 문서
+├── scripts/                     # 빌드/배포 스크립트
+├── tests/                       # 테스트 파일
+├── google-apps-script/          # 구글 앱스 스크립트
+├── package.json                 # 의존성 (name=haccp-erp, v3.5.5)
+├── wrangler.jsonc               # Cloudflare 설정
+├── vite.config.ts               # Vite 빌드 설정
+├── tsconfig.json                # TypeScript 설정
+└── ecosystem.config.cjs         # PM2 로컬 실행 설정</code></pre>
+
+<h2>6.2 주요 라우트 및 서비스</h2>
+
+<h3>6.2.1 핵심 API 엔드포인트</h3>
+<table>
+  <tr><th>Method</th><th>Path</th><th>설명</th><th>파일</th></tr>
+  <tr><td>POST</td><td>/api/production/simple</td><td>생산실적 등록 (수불부 자동 갱신 트리거)</td><td>production.ts:5040</td></tr>
+  <tr><td>POST</td><td>/api/sheets/add-daily-stock-date</td><td>특정일자 수불부 행 추가 ⭐</td><td>sheets.ts</td></tr>
+  <tr><td>POST</td><td>/api/sheets/delete-by-date</td><td>날짜별 데이터 일괄 삭제</td><td>sheets.ts:3046</td></tr>
+  <tr><td>GET</td><td>/api/sheets/daily-stock/list-rows</td><td>수불부 행 조회 (날짜 필터)</td><td>sheets.ts:5804</td></tr>
+  <tr><td>GET</td><td>/api/sheets/material-usage</td><td>원료 사용량 집계</td><td>sheets.ts:1848</td></tr>
+</table>
+
+<h3>6.2.2 GoogleSheetsService.ts 핵심 메서드</h3>
+<table>
+  <tr><th>메서드</th><th>용도</th></tr>
+  <tr><td><code>addDailyStockDate(targetDate)</code></td><td>일별수불부 신규 행 추가 ⭐ v3.6.50 수정</td></tr>
+  <tr><td><code>rebuildLotMatchingForDates(dates)</code></td><td>로트매칭 시트 재구성</td></tr>
+  <tr><td><code>setupDailyStockWithFormulas(date, items)</code></td><td>수불부 초기 세팅 (수식 포함)</td></tr>
+  <tr><td><code>appendSheetWithFormulas(sheet, rows)</code></td><td>수식 포함 행 추가</td></tr>
+  <tr><td><code>writeSheetWithFormulas(sheet, range, rows)</code></td><td>지정 범위에 수식 쓰기</td></tr>
+  <tr><td><code>readSheet(sheet, range)</code></td><td>시트 데이터 읽기</td></tr>
+</table>
+
+<!-- ========== 7. 배포 절차 ========== -->
+<h1>7. 배포 절차</h1>
+
+<h2>7.1 빌드 및 배포 명령어</h2>
+
+<h3>7.1.1 로컬 개발 (선택적)</h3>
+<pre><code>cd /home/user/webapp
+
+# 의존성 설치
+npm install
+
+# 빌드
+npm run build
+
+# PM2로 로컬 실행 (샌드박스 환경)
+pm2 start ecosystem.config.cjs
+
+# 접속 테스트
+curl http://localhost:3000</code></pre>
+
+<h3>7.1.2 프로덕션 배포 (Cloudflare Pages)</h3>
+<pre><code># 1. 빌드
+cd /home/user/webapp
+npm run build
+
+# 2. Cloudflare API 토큰 설정 (최초 1회)
+export CLOUDFLARE_API_TOKEN=&lt;your_token&gt;
+
+# 3. 배포 (프로젝트명 주의: bv-erp)
+npx wrangler pages deploy dist --project-name bv-erp --branch main
+
+# 4. 배포 URL 확인
+# 출력: https://xxxxxxxx.bv-erp.pages.dev
+#      https://bv-erp.pages.dev (프로덕션 도메인)</code></pre>
+
+<div class="alert alert-danger">
+<strong>⚠️ 주의:</strong> 프로젝트명은 <code>bv-erp</code>입니다. <code>haccp-erp</code>로 배포하면 별도의 프로젝트가 생성되어 기존 도메인과 연결되지 않습니다.
+</div>
+
+<h3>7.1.3 D1 마이그레이션 (필요 시)</h3>
+<pre><code># 로컬 마이그레이션
+npx wrangler d1 migrations apply haccp-erp-production --local
+
+# 프로덕션 마이그레이션
+npx wrangler d1 migrations apply haccp-erp-production
+
+# D1 콘솔 (프로덕션 조회)
+npx wrangler d1 execute haccp-erp-production --command="SELECT * FROM users LIMIT 5"</code></pre>
+
+<h2>7.2 배포 URL 히스토리 (본 세션)</h2>
+<table>
+  <tr><th>버전</th><th>URL</th><th>상태</th><th>비고</th></tr>
+  <tr><td>v3.6.182</td><td>https://8f1907cd.bv-erp.pages.dev</td><td>superseded</td><td>이전 세션 배포</td></tr>
+  <tr><td>v3.6.50</td><td>https://e71eb83a.haccp-erp.pages.dev</td><td>superseded</td><td>❌ 잘못된 프로젝트명</td></tr>
+  <tr><td>v3.6.50</td><td>https://35502f9a.haccp-erp.pages.dev</td><td>superseded</td><td>❌ 잘못된 프로젝트명</td></tr>
+  <tr><td>v3.6.50</td><td>https://54803e3c.bv-erp.pages.dev</td><td><strong>✅ current-live</strong></td><td>최종 정상 배포</td></tr>
+</table>
+
+<!-- ========== 8. 최근 버그 수정 ========== -->
+<h1>8. 최근 버그 수정 (v3.6.50)</h1>
+
+<h2>8.1 원료 사용량 누락 이슈</h2>
+
+<h3>증상</h3>
+<ul>
+  <li>생산실적을 등록해도 <strong>일별수불부의 F열(사용량)이 0으로 표시</strong>됨</li>
+  <li>로트매칭 시트에는 원료 사용 내역이 정상 기록됨</li>
+  <li><code>addDailyStockDate</code> API 호출 시 <code>{success: true, new_rows: 191}</code>로 응답하지만 실제로는 시트에 데이터가 <strong>기록되지 않음</strong></li>
+  <li>8/8~8/11 사이에 팬텀 데이터 788행이 잔존</li>
+</ul>
+
+<h2>8.2 근본 원인 및 수정 내역</h2>
+
+<h3>근본 원인</h3>
+<div class="alert alert-danger">
+<strong>Silent Write Failure</strong>: <code>writeSheetWithFormulas</code>가 호출되었으나 결과값이 검증되지 않고 무조건 성공으로 처리됨.
+또한 <code>startRowNum = existingData.length + 2</code> 계산 로직이 시트의 실제 마지막 행과 <strong>어긋나서</strong> SUMIFS 수식의 행 번호 참조가 잘못 생성됨.
+</div>
+
+<h3>수정 내역 (v3.6.50)</h3>
+<p><strong>파일</strong>: <code>src/services/GoogleSheetsService.ts</code> (Line 1534-1720)</p>
+<p><strong>수정 방식</strong>: 3단계 append → parse → rewrite 패턴 적용</p>
+
+<pre><code>// [1단계] placeholder 값으로 append (실제 행 번호 획득 목적)
+const placeholderRows = newRows.map(r =&gt;
+  [r[0], r[1], r[2], r[3], 0, 0, 0, r[7]]
+);
+const appendResult = await this.appendSheetWithFormulas(
+  '일별수불부', placeholderRows
+);
+
+// [2단계] updatedRange를 파싱하여 실제 시작 행 번호 획득
+const updatedRange = appendResult.updates?.updates?.updatedRange || '';
+const rangeMatch = updatedRange.match(/[A-Z]+(\d+):/);
+
+if (rangeMatch) {
+  const actualStartRow = parseInt(rangeMatch[1], 10);
+
+  // [3단계] 올바른 행 번호로 SUMIFS 수식 재생성
+  const correctedRows = newRows.map((r, i) =&gt; {
+    const rowNum = actualStartRow + i;
+    return [
+      r[0], r[1], r[2], r[3],
+      r[4],  // E열: 이월/입고
+      `=SUMIFS(로트매칭!I:I,로트매칭!A:A,$A${rowNum},로트매칭!F:F,$B${rowNum})`,
+      `=E${rowNum}-F${rowNum}`,
+      r[7]
+    ];
+  });
+
+  // [4단계] 정확한 범위에 재작성
+  const correctRange = `A${actualStartRow}:H${actualStartRow + correctedRows.length - 1}`;
+  const writeResult = await this.writeSheetWithFormulas(
+    '일별수불부', correctRange, correctedRows
+  );
+
+  // ✅ write_success/write_error 반환값 추가
+  return {
+    success: true,
+    write_success: writeResult.success,
+    write_error: writeResult.error,
+    new_rows: correctedRows.length,
+    total_rows: existingData.length + correctedRows.length
+  };
+}</code></pre>
+
+<h3>검증 결과</h3>
+<div class="alert alert-success">
+✅ <strong>검증 성공</strong>: 2026-08-05 자 191행 정상 기록 확인<br>
+✅ <code>GET /api/sheets/daily-stock/list-rows?date=2026-08-05</code>: 191행 조회됨<br>
+✅ <code>write_success: true, total_rows: 12539</code> 응답 확인<br>
+✅ 팬텀 데이터 788행 (8/8~8/11) 정상 삭제 완료<br>
+✅ Git commit: <code>1167653</code>
+</div>
+
+<!-- ========== 9. 계정 이관 절차 ========== -->
+<h1>9. 계정 이관 절차</h1>
+
+<h2>9.1 이관 시나리오 3가지</h2>
+
+<table>
+  <tr><th>시나리오</th><th>설명</th><th>AI 유지보수</th><th>권장도</th></tr>
+  <tr>
+    <td><strong>1. 하이브리드 (권장)</strong></td>
+    <td>Cloudflare/Gmail은 대표이사, GitHub은 AI/개발자 유지</td>
+    <td>✅ 가능</td>
+    <td>⭐⭐⭐</td>
+  </tr>
+  <tr>
+    <td>2. 완전 이관</td>
+    <td>모든 계정 대표이사에게 이관</td>
+    <td>❌ 매번 접근 요청 필요</td>
+    <td>⭐</td>
+  </tr>
+  <tr>
+    <td>3. 위임 유지</td>
+    <td>현 상태 유지, 대표이사는 조회만</td>
+    <td>✅ 가능</td>
+    <td>⭐⭐</td>
+  </tr>
+</table>
+
+<h2>9.2 시나리오 1 (하이브리드) 상세 절차</h2>
+
+<h3>Phase 1: 대표이사 계정 준비 (사전 작업)</h3>
+<ol>
+  <li>대표이사 <strong>Gmail 계정</strong> 준비 (또는 회사 대표 계정)</li>
+  <li><strong>Cloudflare 계정</strong> 신규 가입 (해당 Gmail로)</li>
+  <li>결제 정보 등록 (필요 시 유료 플랜 대비)</li>
+</ol>
+
+<h3>Phase 2: Google Cloud / Sheets 이관</h3>
+<ol>
+  <li>기존 Google Cloud 프로젝트 → <strong>IAM에서 대표이사 계정 추가</strong> (역할: 소유자)</li>
+  <li>Google Sheet 소유권 이전:
+    <ul>
+      <li>Sheet 열기 → 공유 → 대표이사 이메일 추가 (편집자)</li>
+      <li>대표이사 이메일 → 소유자로 변경</li>
+    </ul>
+  </li>
+  <li>기존 Service Account 유지 (Sheet ID 변경 불필요)</li>
+</ol>
+
+<h3>Phase 3: Cloudflare Pages 이관</h3>
+<ol>
+  <li>대표이사 Cloudflare 계정에서 신규 프로젝트 <code>bv-erp</code> 생성</li>
+  <li>대표이사 계정에서 <strong>Cloudflare API Token 발급</strong> (권한: Pages Edit, D1 Edit)</li>
+  <li>AI/개발자에게 API Token 공유</li>
+  <li>재배포:
+    <pre><code>export CLOUDFLARE_API_TOKEN=&lt;new_token&gt;
+npx wrangler pages deploy dist --project-name bv-erp --branch main</code></pre>
+  </li>
+  <li>환경변수 재등록 (GOOGLE_CLIENT_EMAIL 등)</li>
+  <li>D1 데이터베이스 마이그레이션 (신규 계정에서 생성 후 export/import)</li>
+  <li>커스텀 도메인 연결 (필요 시)</li>
+</ol>
+
+<h3>Phase 4: 검증</h3>
+<ul>
+  <li>새 URL 접속 테스트</li>
+  <li>Google Sheets 연동 정상 확인 (일별수불부 조회)</li>
+  <li>생산실적 등록 → 수불부 자동 갱신 확인</li>
+  <li>기존 URL은 최소 30일간 유지 (병행 운영)</li>
+</ul>
+
+<div class="alert alert-warning">
+<strong>⚠️ 이관 시 유의사항:</strong>
+<ul>
+  <li>D1 데이터베이스는 계정별로 격리되어 있어 <strong>수동 export/import</strong> 필요</li>
+  <li>D1 export는 API Token에 <code>D1: Read</code> 권한이 있어야 함</li>
+  <li>이관 중 <strong>이중 배포 상태</strong>가 발생할 수 있으니 반드시 사용자에게 새 URL 안내 후 구 URL 폐기</li>
+</ul>
+</div>
+
+<!-- ========== 10. 트러블슈팅 ========== -->
+<h1>10. 트러블슈팅 가이드</h1>
+
+<h3>Q1. 생산실적 등록 후 원료 사용량이 0으로 표시됨</h3>
+<p><strong>원인 후보</strong>:</p>
+<ul>
+  <li>BOM 미등록 (해당 제품코드가 BOM마스터에 없음)</li>
+  <li>로트매칭 시트 재구성 실패</li>
+  <li>수불부 F열 SUMIFS 수식이 잘못된 행 번호로 생성됨 (v3.6.50 이전 버그)</li>
+</ul>
+<p><strong>해결</strong>:</p>
+<pre><code># 1. 최신 버전 확인 (v3.6.50 이상)
+git log --oneline -5
+
+# 2. 수불부 재생성
+POST /api/sheets/add-daily-stock-date {"date": "2026-08-05"}
+
+# 3. write_success: true 확인</code></pre>
+
+<h3>Q2. Google Sheets API 에러 (401 Unauthorized)</h3>
+<p><strong>원인</strong>: Service Account 인증 실패 또는 Sheet 공유 권한 없음</p>
+<p><strong>해결</strong>:</p>
+<ul>
+  <li>Cloudflare Secret 재확인: <code>npx wrangler pages secret list --project-name bv-erp</code></li>
+  <li>Google Sheet 공유 목록에 Service Account 이메일이 <strong>편집자</strong>로 있는지 확인</li>
+  <li><code>GOOGLE_PRIVATE_KEY</code>의 <code>\n</code> 개행이 온전한지 확인</li>
+</ul>
+
+<h3>Q3. 배포 후 사이트가 뜨지 않음</h3>
+<ul>
+  <li>프로젝트명 확인: 반드시 <code>bv-erp</code></li>
+  <li>빌드 결과 확인: <code>ls dist/_worker.js</code> (약 1.2MB)</li>
+  <li>Cloudflare 대시보드에서 배포 로그 확인</li>
+</ul>
+
+<h3>Q4. D1 마이그레이션 실패</h3>
+<ul>
+  <li>API Token 권한 확인 (D1: Edit 필요)</li>
+  <li>중복 마이그레이션 이름 확인 (0001~0015 유일해야 함)</li>
+  <li>로컬 우선 테스트: <code>--local</code> 플래그 사용</li>
+</ul>
+
+<h3>Q5. 8월 이후 D1 데이터가 없음</h3>
+<div class="alert alert-warning">
+<strong>알려진 이슈</strong>: 2026년 6월 10일 이후 D1 데이터 기록이 중단된 상태입니다.
+바코드, 품질검사 등 D1 기반 기능이 영향받을 수 있으며, 근본 원인 조사가 <strong>보류</strong> 상태입니다.
+Google Sheets 기반 기능(생산/수불부)은 정상 동작합니다.
+</div>
+
+<!-- ========== 11. 부록 ========== -->
+<h1>11. 부록: 명령어 치트시트</h1>
+
+<h2>일상 운영 명령어</h2>
+<pre><code># 프로젝트 이동
+cd /home/user/webapp
+
+# 최신 코드 pull
+git pull origin main
+
+# 빌드
+npm run build
+
+# 배포
+npx wrangler pages deploy dist --project-name bv-erp --branch main
+
+# 배포 로그 확인
+npx wrangler pages deployment list --project-name bv-erp
+
+# 환경변수 목록
+npx wrangler pages secret list --project-name bv-erp
+
+# D1 조회
+npx wrangler d1 execute haccp-erp-production --command="SELECT COUNT(*) FROM production_barcode"</code></pre>
+
+<h2>긴급 데이터 정리</h2>
+<pre><code># 특정 날짜 데이터 삭제 (수불부, 로트매칭, 생산실적)
+curl -X POST https://bv-erp.pages.dev/api/sheets/delete-by-date \
+  -H "Content-Type: application/json" \
+  -d '{"date": "2026-08-05"}'
+
+# 특정 날짜 수불부 재생성
+curl -X POST https://bv-erp.pages.dev/api/sheets/add-daily-stock-date \
+  -H "Content-Type: application/json" \
+  -d '{"date": "2026-08-05"}'
+
+# 수불부 행 조회
+curl "https://bv-erp.pages.dev/api/sheets/daily-stock/list-rows?date=2026-08-05"</code></pre>
+
+<h2>Git 워크플로우</h2>
+<pre><code># 상태 확인
+git status
+git log --oneline -10
+
+# 변경사항 커밋
+git add .
+git commit -m "fix: 이슈 설명"
+
+# 원격 저장소 반영 (setup_github_environment 선행 필요)
+git push origin main</code></pre>
+
+<h2>주요 URL 및 ID 요약</h2>
+<table class="kv-table">
+  <tr><td>운영 도메인</td><td>https://bv-erp.pages.dev</td></tr>
+  <tr><td>최신 배포 (v3.6.50)</td><td>https://54803e3c.bv-erp.pages.dev</td></tr>
+  <tr><td>Google Sheet</td><td>https://docs.google.com/spreadsheets/d/1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU/edit</td></tr>
+  <tr><td>Google Sheet ID</td><td>1aEvc4673J0wZoPuojwgrxVu7qhkR5VuymmlKPdHpNfU</td></tr>
+  <tr><td>Cloudflare Project</td><td>bv-erp</td></tr>
+  <tr><td>D1 Database Name</td><td>haccp-erp-production</td></tr>
+  <tr><td>D1 Database ID</td><td>596dc841-d436-4555-a774-5aa647455162</td></tr>
+  <tr><td>Latest Git Commit</td><td>1167653 (fix: v3.6.50 addDailyStockDate 실제 write 실패 버그 수정)</td></tr>
+</table>
+
+<!-- ========== 마무리 ========== -->
+<h1>📌 인수인계 체크리스트</h1>
+
+<div class="alert alert-info">
+계정 이관 진행 시 아래 체크리스트를 순서대로 확인하세요.
+</div>
+
+<h3>사전 준비</h3>
+<ul>
+  <li>☐ 대표이사 Gmail 계정 준비 완료</li>
+  <li>☐ 대표이사 Cloudflare 계정 가입 완료</li>
+  <li>☐ 결제 정보 등록 완료</li>
+  <li>☐ 본 인수인계 PDF 문서 대표이사 전달 완료</li>
+</ul>
+
+<h3>Google 이관</h3>
+<ul>
+  <li>☐ Google Cloud 프로젝트에 대표이사 계정 소유자 추가</li>
+  <li>☐ Google Sheet 소유권 대표이사로 이전</li>
+  <li>☐ Service Account 이메일 편집자 권한 유지 확인</li>
+</ul>
+
+<h3>Cloudflare 이관</h3>
+<ul>
+  <li>☐ 대표이사 계정에서 <code>bv-erp</code> 프로젝트 생성</li>
+  <li>☐ Cloudflare API Token 발급 (Pages Edit, D1 Edit 권한)</li>
+  <li>☐ 환경변수 3종 등록 (GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY, GOOGLE_SHEET_ID)</li>
+  <li>☐ 재빌드 및 재배포 완료</li>
+  <li>☐ D1 데이터 이관 (export/import)</li>
+</ul>
+
+<h3>검증</h3>
+<ul>
+  <li>☐ 새 URL 접속 정상 확인</li>
+  <li>☐ 로그인 정상 동작</li>
+  <li>☐ 생산실적 등록 → 수불부 자동 갱신 확인</li>
+  <li>☐ 원료 사용량 표시 확인 (v3.6.50 버그 미재발)</li>
+  <li>☐ 30일 병행 운영 후 구 URL 폐기</li>
+</ul>
+
+<div style="margin-top: 60px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: center;">
+  <h3 style="border: none; margin: 0;">🏭 본비반트 HACCP ERP</h3>
+  <p style="color: #666; margin: 10px 0;">본 문서는 2026-08-11 기준 시스템 상태를 반영합니다.</p>
+  <p style="color: #666; margin: 5px 0;">최신 버전: v3.6.50 | 문서 버전: 1.0</p>
+</div>
+
+</body>
+</html>

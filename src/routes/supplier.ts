@@ -333,18 +333,22 @@ supplierRoutes.delete('/:supplier_code', async (c) => {
 
 // 거래처 통계
 supplierRoutes.get('/stats/summary', async (c) => {
-  const total = await c.env.DB.prepare('SELECT COUNT(*) as count FROM suppliers').first<{count: number}>();
-  const haccp = await c.env.DB.prepare('SELECT COUNT(*) as count FROM suppliers WHERE haccp_certified = 1').first<{count: number}>();
-  const imported = await c.env.DB.prepare('SELECT COUNT(*) as count FROM suppliers WHERE is_imported = 1').first<{count: number}>();
-  
-  return c.json({
-    success: true,
-    data: {
-      total: total?.count || 0,
-      haccp_certified: haccp?.count || 0,
-      imported: imported?.count || 0
-    }
-  });
+  try {
+    const total = await c.env.DB.prepare('SELECT COUNT(*) as count FROM suppliers').first<{count: number}>();
+    const haccp = await c.env.DB.prepare('SELECT COUNT(*) as count FROM suppliers WHERE haccp_certified = 1').first<{count: number}>();
+    const imported = await c.env.DB.prepare('SELECT COUNT(*) as count FROM suppliers WHERE is_imported = 1').first<{count: number}>();
+    
+    return c.json({
+      success: true,
+      data: {
+        total: total?.count || 0,
+        haccp_certified: haccp?.count || 0,
+        imported: imported?.count || 0
+      }
+    });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
 });
 
 // ==================== 거래처-원료 관계 API ====================

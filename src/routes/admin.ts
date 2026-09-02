@@ -3691,20 +3691,20 @@ admin.get('/system/logs', async (c) => {
     }
     
     if (startDate) {
-      query += ' AND DATE(created_at) >= ?'
-      countQuery += ' AND DATE(created_at) >= ?'
+      query += ' AND DATE(action_date) >= ?'
+      countQuery += ' AND DATE(action_date) >= ?'
       params.push(startDate)
       countParams.push(startDate)
     }
     
     if (endDate) {
-      query += ' AND DATE(created_at) <= ?'
-      countQuery += ' AND DATE(created_at) <= ?'
+      query += ' AND DATE(action_date) <= ?'
+      countQuery += ' AND DATE(action_date) <= ?'
       params.push(endDate)
       countParams.push(endDate)
     }
     
-    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+    query += ' ORDER BY action_date DESC LIMIT ? OFFSET ?'
     params.push(limit, offset)
     
     const data = await env.DB.prepare(query).bind(...params).all()
@@ -3732,15 +3732,15 @@ admin.get('/system/logs/stats', async (c) => {
   try {
     // 오늘 활동 수
     const todayCount = await env.DB.prepare(`
-      SELECT COUNT(*) as count FROM admin_logs WHERE DATE(created_at) = DATE('now')
+      SELECT COUNT(*) as count FROM admin_logs WHERE DATE(action_date) = DATE('now')
     `).first()
     
     // 최근 7일 일별 활동 수
     const weeklyStats = await env.DB.prepare(`
-      SELECT DATE(created_at) as date, COUNT(*) as count
+      SELECT DATE(action_date) as date, COUNT(*) as count
       FROM admin_logs
-      WHERE created_at >= DATE('now', '-7 days')
-      GROUP BY DATE(created_at)
+      WHERE action_date >= DATE('now', '-7 days')
+      GROUP BY DATE(action_date)
       ORDER BY date DESC
     `).all()
     
@@ -5914,7 +5914,9 @@ admin.get('/self-healing/check', async (c) => {
     const negativeStocks = await env.DB.prepare(`
       SELECT item_code, item_name, current_stock FROM master WHERE current_stock < 0
       UNION ALL
-      SELECT item_code, item_name || ' (LOT)', remain_qty FROM inbound WHERE remain_qty < 0
+      SELECT i.item_code, COALESCE(m.item_name, i.item_code) || ' (LOT)', i.remain_qty
+      FROM inbound i LEFT JOIN master m ON m.item_code = i.item_code
+      WHERE i.remain_qty < 0
     `).all<any>()
     
     if (negativeStocks.results && negativeStocks.results.length > 0) {

@@ -353,7 +353,7 @@ semiFinished.get('/transactions', async (c) => {
   
   try {
     let query = `
-      SELECT t.*, l.lot_number, s.item_name
+      SELECT t.*, l.lot_no, s.item_name
       FROM semi_finished_transactions t
       JOIN semi_finished_lots l ON t.lot_id = l.id
       JOIN semi_finished_items s ON t.item_code = s.item_code

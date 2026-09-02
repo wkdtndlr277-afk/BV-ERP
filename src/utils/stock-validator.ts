@@ -82,8 +82,9 @@ export async function getVerifiedStock(
   // 2. 마스터 정보 조회
   let masterInfo;
   if (isSF) {
+    // semi_finished_items에는 별도 마스터 재고 컬럼이 없음 (LOT 합계만 사용)
     masterInfo = await db.prepare(`
-      SELECT item_code, item_name, current_stock, unit
+      SELECT item_code, item_name, unit
       FROM semi_finished_items WHERE item_code = ?
     `).bind(itemCode).first<any>();
   } else {
@@ -93,7 +94,7 @@ export async function getVerifiedStock(
     `).bind(itemCode).first<any>();
   }
   
-  const masterStock = masterInfo?.current_stock || 0;
+  const masterStock = isSF ? lotStock : (masterInfo?.current_stock || 0);
   
   // LOT에 없으면 마스터 사용
   if (source === 'not_found' && masterStock > 0) {
@@ -181,7 +182,7 @@ export async function getBulkVerifiedStock(
     `).bind(...sfCodes).all<{ item_code: string; total: number }>();
     
     const sfData = await db.prepare(`
-      SELECT item_code, item_name, current_stock, unit
+      SELECT item_code, item_name, unit
       FROM semi_finished_items WHERE item_code IN (${placeholders})
     `).bind(...sfCodes).all<any>();
     
@@ -191,7 +192,7 @@ export async function getBulkVerifiedStock(
     for (const code of sfCodes) {
       const lotStock = lotMap.get(code) || 0;
       const sf = sfMap.get(code);
-      const masterStock = sf?.current_stock || 0;
+      const masterStock = lotStock; // SF 재고는 항상 LOT 합계 = 마스터값 (별도 컬럼 없음)
       const difference = Math.abs(lotStock - masterStock);
       
       results.set(code, {
@@ -232,15 +233,15 @@ export async function validateAllStock(
     GROUP BY m.item_code
   `).all<any>();
   
-  // 2. SF 원료 검증
+  // 2. SF 원료 검증 (별도 마스터 재고 컬럼 없음 -> LOT 합계를 그대로 사용, 항상 일치)
   const sfCheck = await db.prepare(`
     SELECT 
       sf.item_code,
       sf.item_name,
-      sf.current_stock as master_stock,
+      COALESCE(SUM(sfl.remain_qty), 0) as master_stock,
       sf.unit,
       COALESCE(SUM(sfl.remain_qty), 0) as lot_stock,
-      ABS(sf.current_stock - COALESCE(SUM(sfl.remain_qty), 0)) as difference
+      0 as difference
     FROM semi_finished_items sf
     LEFT JOIN semi_finished_lots sfl ON sf.item_code = sfl.item_code AND sfl.remain_qty > 0
     WHERE sf.is_active = 1

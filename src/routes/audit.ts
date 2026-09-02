@@ -108,18 +108,21 @@ auditRoutes.get('/product-consistency', async (c) => {
  */
 auditRoutes.get('/semifinished-consistency', async (c) => {
   try {
+    // 참고: semi_finished_items에는 별도의 "마스터 재고" 컬럼이 없고, 재고는 항상
+    // semi_finished_lots의 remain_qty 합계로만 계산되는 구조입니다 (원료와 동일 설계).
+    // 따라서 여기서는 음수 LOT 잔량(데이터 오류 신호)을 정합성 문제로 검사합니다.
     const result = await c.env.DB.prepare(`
       SELECT 
         sf.item_code,
         sf.item_name,
-        sf.current_stock as master_stock,
+        COALESCE(SUM(sfl.remain_qty), 0) as master_stock,
         COALESCE(SUM(sfl.remain_qty), 0) as lot_sum,
-        sf.current_stock - COALESCE(SUM(sfl.remain_qty), 0) as difference
+        0 as difference
       FROM semi_finished_items sf
       LEFT JOIN semi_finished_lots sfl ON sf.item_code = sfl.item_code
-      GROUP BY sf.item_code, sf.item_name, sf.current_stock
-      HAVING ABS(sf.current_stock - COALESCE(SUM(sfl.remain_qty), 0)) > 0.001
-      ORDER BY ABS(difference) DESC
+      GROUP BY sf.item_code, sf.item_name
+      HAVING COALESCE(SUM(sfl.remain_qty), 0) < 0
+      ORDER BY lot_sum ASC
     `).all<{
       item_code: string;
       item_name: string;

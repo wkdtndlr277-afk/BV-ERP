@@ -116,7 +116,7 @@ stockRoutes.get('/all/summary', async (c) => {
         sf.unit,
         0 as safety_stock,
         COALESCE(SUM(sfl.remain_qty), 0) as lot_stock,
-        sf.current_stock as master_stock,
+        COALESCE(SUM(sfl.remain_qty), 0) as master_stock,
         CASE 
           WHEN COALESCE(SUM(sfl.remain_qty), 0) = 0 THEN 'OUT'
           ELSE 'OK'

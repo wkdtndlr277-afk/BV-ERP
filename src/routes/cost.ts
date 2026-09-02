@@ -144,26 +144,26 @@ app.get('/product/:productCode', async (c) => {
   try {
     const productCode = c.req.param('productCode');
     
-    // 제품 정보 (master 또는 production_items에서 조회)
-    let product = await c.env.DB.prepare(`
-      SELECT item_code, item_name, unit FROM master WHERE item_code = ? AND category = '제품'
-    `).bind(productCode).first();
-    
+    // 제품 정보 (production_items를 우선 조회 - 실제 BOM 데이터가 있는 최신 시스템,
+    // master/bom은 구버전 호환용 미러 테이블이라 없으면 그쪽으로 폴백)
+    let product: any = null;
     let isProductionCode = false;
-    if (!product && productCode.startsWith('PR')) {
-      // production_items에서 조회
-      const productionItem = await c.env.DB.prepare(`
-        SELECT production_code, production_name FROM production_items WHERE production_code = ?
-      `).bind(productCode).first<any>();
-      
-      if (productionItem) {
-        isProductionCode = true;
-        product = {
-          item_code: productionItem.production_code,
-          item_name: productionItem.production_name,
-          unit: 'ea'
-        };
-      }
+    
+    const productionItem = await c.env.DB.prepare(`
+      SELECT production_code, production_name FROM production_items WHERE production_code = ?
+    `).bind(productCode).first<any>();
+    
+    if (productionItem) {
+      isProductionCode = true;
+      product = {
+        item_code: productionItem.production_code,
+        item_name: productionItem.production_name,
+        unit: 'ea'
+      };
+    } else {
+      product = await c.env.DB.prepare(`
+        SELECT item_code, item_name, unit FROM master WHERE item_code = ? AND category = '제품'
+      `).bind(productCode).first();
     }
     
     if (!product) {
@@ -398,10 +398,10 @@ app.post('/simulate', async (c) => {
     
     for (const change of changes) {
       const products = await c.env.DB.prepare(`
-        SELECT DISTINCT b.product_code, m.item_name as product_name
-        FROM bom b
-        JOIN master m ON b.product_code = m.item_code
-        WHERE b.item_code = ?
+        SELECT DISTINCT b.production_code as product_code, m.production_name as product_name
+        FROM production_bom b
+        JOIN production_items m ON b.production_code = m.production_code
+        WHERE b.material_code = ?
       `).bind(change.item_code).all();
       
       for (const p of products.results as any[]) {
@@ -427,13 +427,13 @@ app.post('/simulate', async (c) => {
             ELSE b.quantity * COALESCE(mc.cost_per_unit, 0)
           END
         ) as total
-        FROM bom b
+        FROM production_bom b
         LEFT JOIN (
           SELECT mc1.* FROM material_costs mc1
           INNER JOIN (SELECT item_code, MAX(effective_date) as max_date FROM material_costs GROUP BY item_code) mc2 
           ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
-        ) mc ON b.item_code = mc.item_code
-        WHERE b.product_code = ?
+        ) mc ON b.material_code = mc.item_code
+        WHERE b.production_code = ?
       `).bind(productCode).first();
       
       productInfo.current_cost = Math.round((currentResult?.total as number || 0) * 100) / 100;
@@ -442,14 +442,14 @@ app.post('/simulate', async (c) => {
       const changeMap = new Map(changes.map((ch: any) => [ch.item_code, ch.new_cost]));
       
       const bomItems = await c.env.DB.prepare(`
-        SELECT b.item_code, b.quantity, b.unit as bom_unit, mc.cost_per_unit, mc.unit as cost_unit
-        FROM bom b
+        SELECT b.material_code as item_code, b.quantity, b.unit as bom_unit, mc.cost_per_unit, mc.unit as cost_unit
+        FROM production_bom b
         LEFT JOIN (
           SELECT mc1.* FROM material_costs mc1
           INNER JOIN (SELECT item_code, MAX(effective_date) as max_date FROM material_costs GROUP BY item_code) mc2 
           ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
-        ) mc ON b.item_code = mc.item_code
-        WHERE b.product_code = ?
+        ) mc ON b.material_code = mc.item_code
+        WHERE b.production_code = ?
       `).bind(productCode).all();
       
       let newTotal = 0;
@@ -718,7 +718,7 @@ app.post('/sheets/from-bom/:productCode', async (c) => {
     
     // 제품 정보
     const product = await c.env.DB.prepare(`
-      SELECT item_code, item_name FROM master WHERE item_code = ? AND category = '제품'
+      SELECT production_code as item_code, production_name as item_name FROM production_items WHERE production_code = ?
     `).bind(productCode).first();
     
     if (!product) {
@@ -728,13 +728,13 @@ app.post('/sheets/from-bom/:productCode', async (c) => {
     // BOM 및 원가 조회
     const bomResult = await c.env.DB.prepare(`
       SELECT 
-        b.item_code,
-        m.item_name,
+        b.material_code as item_code,
+        COALESCE(m.item_name, b.material_name) as item_name,
         b.quantity as weight,
         b.unit,
         mc.cost_per_unit as unit_price
-      FROM bom b
-      JOIN master m ON b.item_code = m.item_code
+      FROM production_bom b
+      LEFT JOIN master m ON b.material_code = m.item_code
       LEFT JOIN (
         SELECT mc1.*
         FROM material_costs mc1
@@ -743,9 +743,9 @@ app.post('/sheets/from-bom/:productCode', async (c) => {
           FROM material_costs
           GROUP BY item_code
         ) mc2 ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
-      ) mc ON b.item_code = mc.item_code
-      WHERE b.product_code = ?
-      ORDER BY b.sort_order
+      ) mc ON b.material_code = mc.item_code
+      WHERE b.production_code = ?
+      ORDER BY b.id
     `).bind(productCode).all();
     
     // 원재료 목록 생성
@@ -1005,20 +1005,20 @@ app.get('/stats', async (c) => {
     
     // BOM 있는 제품 수
     const productsWithBom = await c.env.DB.prepare(`
-      SELECT COUNT(DISTINCT product_code) as count FROM bom
+      SELECT COUNT(DISTINCT production_code) as count FROM production_bom
     `).first();
     
     // 원가 계산 완료 제품 수 (모든 원료에 단가가 있는 제품)
     const completeProducts = await c.env.DB.prepare(`
       SELECT COUNT(*) as count FROM (
-        SELECT b.product_code
-        FROM bom b
+        SELECT b.production_code
+        FROM production_bom b
         LEFT JOIN (
           SELECT mc1.item_code FROM material_costs mc1
           INNER JOIN (SELECT item_code, MAX(effective_date) as max_date FROM material_costs GROUP BY item_code) mc2 
           ON mc1.item_code = mc2.item_code AND mc1.effective_date = mc2.max_date
-        ) mc ON b.item_code = mc.item_code
-        GROUP BY b.product_code
+        ) mc ON b.material_code = mc.item_code
+        GROUP BY b.production_code
         HAVING SUM(CASE WHEN mc.item_code IS NULL THEN 1 ELSE 0 END) = 0
       )
     `).first();

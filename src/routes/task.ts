@@ -990,7 +990,6 @@ app.get('/daily-reports-range', async (c) => {
         r.id,
         r.reporter_name,
         r.summary,
-        r.remarks,
         (SELECT COUNT(*) FROM daily_work_items WHERE report_id = r.id) as item_count
       FROM task_departments d
       CROSS JOIN (

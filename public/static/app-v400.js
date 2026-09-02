@@ -58714,12 +58714,14 @@ async function renderPackagingBOM() {
 async function showPackagingAddModal() {
   try {
     // 제품 목록 + 부자재(포장재) 목록 로드
-    const [prodRes, supRes] = await Promise.all([
-      axios.get('/api/production/items'),
-      axios.get('/api/supplies')
+    // - 제품: /api/admin/production-items (production_items 테이블)
+    // - 부자재: /api/master 에서 category === '부자재' 필터
+    const [prodRes, masterRes] = await Promise.all([
+      axios.get('/api/admin/production-items'),
+      axios.get('/api/master')
     ]);
-    const products = prodRes.data.data || prodRes.data.items || [];
-    const supplies = supRes.data.data || supRes.data.items || [];
+    const products = (prodRes.data.data || prodRes.data.items || []).filter(p => p.is_active !== 0);
+    const supplies = (masterRes.data.data || []).filter(m => m.category === '부자재');
     
     const html = `
       <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
@@ -58729,16 +58731,16 @@ async function showPackagingAddModal() {
             <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
           </div>
           <div class="p-6 space-y-4">
-            <div><label class="block text-sm font-medium text-gray-700 mb-1">제품 *</label>
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">제품 * <span class="text-xs text-gray-400">(${products.length}개)</span></label>
               <select id="pkg-product" class="w-full border rounded-lg px-3 py-2">
                 <option value="">-- 선택 --</option>
-                ${products.map(p => '<option value="' + (p.production_code || p.code) + '">' + (p.production_code || p.code) + ' - ' + (p.production_name || p.name) + '</option>').join('')}
+                ${products.map(p => '<option value="' + p.production_code + '">' + p.production_code + ' - ' + p.production_name + '</option>').join('')}
               </select>
             </div>
-            <div><label class="block text-sm font-medium text-gray-700 mb-1">포장재 (부자재) *</label>
+            <div><label class="block text-sm font-medium text-gray-700 mb-1">포장재 (부자재) * <span class="text-xs text-gray-400">(${supplies.length}개)</span></label>
               <select id="pkg-supply" class="w-full border rounded-lg px-3 py-2">
                 <option value="">-- 선택 --</option>
-                ${supplies.map(s => '<option value="' + (s.item_code || s.code) + '">' + (s.item_code || s.code) + ' - ' + (s.item_name || s.name) + '</option>').join('')}
+                ${supplies.map(s => '<option value="' + s.item_code + '">' + s.item_code + ' - ' + s.item_name + '</option>').join('')}
               </select>
             </div>
             <div><label class="block text-sm font-medium text-gray-700 mb-1">입수량 (개/박스) *</label><input type="number" id="pkg-qty" min="1" value="20" class="w-full border rounded-lg px-3 py-2"><p class="text-xs text-gray-500 mt-1">예: 20이면 20개 출고할 때마다 포장재 1개 차감</p></div>

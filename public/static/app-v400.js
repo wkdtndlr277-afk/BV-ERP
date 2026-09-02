@@ -58819,7 +58819,11 @@ async function renderYieldReport() {
         <button onclick="loadYieldReport()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg font-medium">
           <i class="fas fa-search mr-1"></i> 조회
         </button>
+        <button onclick="showStandardWeightSuggestModal()" class="ml-auto bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg font-medium" title="제품명에서 자동으로 표준중량(g)을 추정해서 일괄 등록">
+          <i class="fas fa-magic mr-1"></i> 표준중량 자동 채우기
+        </button>
       </div>
+      <p class="text-xs text-gray-500 mt-2"><i class="fas fa-info-circle mr-1 text-blue-500"></i> 수율 계산은 <b>표준중량(g)</b>이 등록된 제품만 표시됩니다. 제품명에 "500g" 등이 있으면 자동 채우기로 일괄 등록할 수 있어요.</p>
     </div>
     
     <div id="yield-report-content">
@@ -58891,6 +58895,167 @@ async function loadYieldReport() {
   }
 }
 
+// ========== 표준중량 자동 채우기 ==========
+async function showStandardWeightSuggestModal() {
+  // 로딩 모달 먼저
+  const loadingHtml = `
+    <div id="stdw-loading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div class="bg-white rounded-xl p-6 shadow-2xl flex items-center gap-3">
+        <i class="fas fa-spinner fa-spin text-2xl text-amber-500"></i>
+        <p class="text-gray-700 font-medium">제품명에서 표준중량 추정 중...</p>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', loadingHtml);
+  
+  try {
+    const res = await axios.get('/api/yield/standard-weight/suggest');
+    document.getElementById('stdw-loading')?.remove();
+    
+    const items = res.data.data || [];
+    if (items.length === 0) {
+      alert('추정 대상 제품이 없습니다. (모든 제품에 표준중량이 이미 등록되어 있거나, 표준중량이 필요 없는 세트 상품일 수 있음)');
+      return;
+    }
+    
+    const highCount = items.filter(i => i.confidence === 'high').length;
+    const lowCount = items.filter(i => i.confidence === 'low').length;
+    
+    const rows = items.map((it, idx) => {
+      const isHigh = it.confidence === 'high';
+      const bgColor = isHigh ? 'bg-green-50' : 'bg-yellow-50';
+      const badge = isHigh 
+        ? '<span class="text-xs px-2 py-0.5 rounded bg-green-100 text-green-700">확실</span>'
+        : '<span class="text-xs px-2 py-0.5 rounded bg-yellow-100 text-yellow-700">확인필요</span>';
+      const weightValue = it.suggested_weight_g || '';
+      const checked = isHigh ? 'checked' : ''; // high는 기본 체크, low는 체크 해제
+      return `
+        <tr class="${bgColor} border-b">
+          <td class="px-3 py-2 text-center"><input type="checkbox" class="stdw-check" data-idx="${idx}" data-code="${it.production_code}" ${checked}></td>
+          <td class="px-3 py-2 text-sm font-mono">${it.production_code}</td>
+          <td class="px-3 py-2 text-sm">${it.production_name}</td>
+          <td class="px-3 py-2 text-center">${badge}</td>
+          <td class="px-3 py-2 text-right"><input type="number" id="stdw-w-${idx}" value="${weightValue}" min="1" class="border rounded px-2 py-1 w-24 text-right"></td>
+        </tr>
+      `;
+    }).join('');
+    
+    const html = `
+      <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onclick="if(event.target===this)this.remove()">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+          <div class="px-6 py-4 border-b flex justify-between items-center">
+            <div>
+              <h3 class="text-lg font-bold flex items-center gap-2"><i class="fas fa-magic text-amber-500"></i> 표준중량 자동 채우기</h3>
+              <p class="text-sm text-gray-500 mt-1">전체 <b class="text-gray-700">${items.length}개</b> 중 <b class="text-green-600">${highCount}개 확실</b>, <b class="text-yellow-600">${lowCount}개 확인필요</b></p>
+            </div>
+            <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+          </div>
+          
+          <div class="px-6 py-3 bg-gray-50 border-b flex items-center gap-3 flex-wrap">
+            <button onclick="toggleStdwChecks(true)" class="text-xs px-3 py-1.5 bg-white border rounded hover:bg-gray-100"><i class="fas fa-check-square mr-1"></i> 전체 선택</button>
+            <button onclick="toggleStdwChecks(false)" class="text-xs px-3 py-1.5 bg-white border rounded hover:bg-gray-100"><i class="far fa-square mr-1"></i> 전체 해제</button>
+            <button onclick="toggleStdwChecksByConfidence('high')" class="text-xs px-3 py-1.5 bg-green-50 border border-green-300 text-green-700 rounded hover:bg-green-100">확실만 선택 (${highCount})</button>
+            <button onclick="toggleStdwChecksByConfidence('low')" class="text-xs px-3 py-1.5 bg-yellow-50 border border-yellow-300 text-yellow-700 rounded hover:bg-yellow-100">확인필요만 선택 (${lowCount})</button>
+            <span class="ml-auto text-sm text-gray-600">선택됨: <b id="stdw-selected-count" class="text-purple-600">${highCount}</b>개</span>
+          </div>
+          
+          <div class="flex-1 overflow-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-100 sticky top-0">
+                <tr>
+                  <th class="px-3 py-2 text-center w-12">선택</th>
+                  <th class="px-3 py-2 text-left w-24">코드</th>
+                  <th class="px-3 py-2 text-left">제품명</th>
+                  <th class="px-3 py-2 text-center w-24">신뢰도</th>
+                  <th class="px-3 py-2 text-right w-32">표준중량(g)</th>
+                </tr>
+              </thead>
+              <tbody id="stdw-tbody">
+                ${rows}
+              </tbody>
+            </table>
+          </div>
+          
+          <div class="px-6 py-4 border-t bg-gray-50 flex justify-between items-center">
+            <p class="text-xs text-gray-500"><i class="fas fa-info-circle mr-1"></i> 값을 직접 수정하거나 체크 해제할 수 있어요. 선택된 항목만 저장됩니다.</p>
+            <div class="flex gap-3">
+              <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+              <button onclick="applyStandardWeights()" class="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-medium"><i class="fas fa-save mr-1"></i> 선택 항목 저장</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+    
+    // 체크 카운트 갱신
+    document.querySelectorAll('.stdw-check').forEach(cb => {
+      cb.addEventListener('change', updateStdwSelectedCount);
+    });
+  } catch (e) {
+    document.getElementById('stdw-loading')?.remove();
+    alert('추정 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+function updateStdwSelectedCount() {
+  const cnt = document.querySelectorAll('.stdw-check:checked').length;
+  const el = document.getElementById('stdw-selected-count');
+  if (el) el.textContent = cnt;
+}
+
+function toggleStdwChecks(checkAll) {
+  document.querySelectorAll('.stdw-check').forEach(cb => { cb.checked = checkAll; });
+  updateStdwSelectedCount();
+}
+
+function toggleStdwChecksByConfidence(confidence) {
+  document.querySelectorAll('.stdw-check').forEach(cb => {
+    const row = cb.closest('tr');
+    const badge = row?.querySelector('span.rounded');
+    const isHigh = badge?.textContent.trim() === '확실';
+    cb.checked = (confidence === 'high' && isHigh) || (confidence === 'low' && !isHigh);
+  });
+  updateStdwSelectedCount();
+}
+
+async function applyStandardWeights() {
+  const checks = document.querySelectorAll('.stdw-check:checked');
+  if (checks.length === 0) {
+    alert('선택된 항목이 없습니다.');
+    return;
+  }
+  
+  const items = [];
+  checks.forEach(cb => {
+    const idx = cb.dataset.idx;
+    const code = cb.dataset.code;
+    const weight = parseFloat(document.getElementById('stdw-w-' + idx)?.value);
+    if (code && weight > 0) items.push({ production_code: code, standard_weight: weight });
+  });
+  
+  if (items.length === 0) {
+    alert('저장할 항목이 없습니다. (중량 값이 비어있거나 0인 경우)');
+    return;
+  }
+  
+  if (!confirm(items.length + '개 제품의 표준중량을 저장합니다. 진행할까요?')) return;
+  
+  try {
+    const res = await axios.post('/api/yield/standard-weight/apply', { items });
+    if (res.data.success) {
+      alert(res.data.message || (items.length + '개 저장 완료'));
+      document.querySelector('.fixed.inset-0')?.remove();
+      // 수율 리포트 자동 재조회
+      if (typeof loadYieldReport === 'function') loadYieldReport();
+    } else {
+      alert('저장 실패: ' + (res.data.error || '알 수 없음'));
+    }
+  } catch (e) {
+    alert('저장 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
 // 전역 함수 등록
 window.renderEquipment = renderEquipment;
 window.showEquipmentSizeDetail = showEquipmentSizeDetail;
@@ -58907,3 +59072,8 @@ window.submitPackagingBOM = submitPackagingBOM;
 window.deletePackagingBOM = deletePackagingBOM;
 window.renderYieldReport = renderYieldReport;
 window.loadYieldReport = loadYieldReport;
+window.showStandardWeightSuggestModal = showStandardWeightSuggestModal;
+window.updateStdwSelectedCount = updateStdwSelectedCount;
+window.toggleStdwChecks = toggleStdwChecks;
+window.toggleStdwChecksByConfidence = toggleStdwChecksByConfidence;
+window.applyStandardWeights = applyStandardWeights;

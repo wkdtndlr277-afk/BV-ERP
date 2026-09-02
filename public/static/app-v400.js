@@ -342,7 +342,9 @@ async function handleLogin(e) {
       // 초기 데이터 로드
       await loadMasterData();
       await loadAlertCount();
-      renderDashboard();
+      // ★★★ v3.6.63: navigateTo를 거쳐서 렌더 시퀀스 초기화 후 대시보드 표시 ★★★
+      // (직접 renderDashboard() 호출 시 렌더 토큰이 발급되기 전이라 경쟁 발생 가능)
+      navigateTo('dashboard');
       
       // 알림 시스템 시작 (로그인 후)
       if (window.TaskNotification && typeof window.TaskNotification.init === 'function') {
@@ -1224,9 +1226,30 @@ window.addEventListener('popstate', function(event) {
   renderPage(hash);
 });
 
+// ★★★ v3.6.63: 렌더링 경쟁 방지 시스템 ★★★
+// renderPage()가 호출될 때마다 시퀀스 번호를 증가시킴.
+// 각 페이지 렌더러의 await가 끝난 뒤 innerHTML을 덮어쓰기 전에
+// 이 값이 그대로인지(=그 사이 다른 페이지로 이동하지 않았는지) 확인해야 함.
+// 사용자가 "몇 번 눌러야 사이드메뉴에 들어가진다"고 리포트한 증상의 근본 원인:
+// 로그인 직후 renderDashboard()의 3개 API await 중에 사이드메뉴 클릭 →
+// 다른 페이지가 렌더링되지만, 뒤늦게 완료된 renderDashboard()가
+// 다시 innerHTML을 대시보드로 덮어써서 사용자 클릭이 무효화되던 문제.
+let __renderSeq = 0;
+function beginRender() {
+  return ++__renderSeq;
+}
+function isRenderCurrent(token) {
+  return token === __renderSeq;
+}
+// 전역 노출 (렌더러들이 어디서 호출되든 접근 가능)
+window.beginRender = beginRender;
+window.isRenderCurrent = isRenderCurrent;
+
 // Page Renderers
 function renderPage(page) {
   const content = document.getElementById('page-content');
+  // 새 렌더 시작 - 시퀀스 증가 → 이전 렌더의 늦은 await 완료를 무효화
+  beginRender();
   content.innerHTML = '<div class="flex items-center justify-center h-64"><i class="fas fa-spinner fa-spin text-4xl text-blue-500"></i></div>';
   
   switch(page) {
@@ -1282,6 +1305,8 @@ function renderPage(page) {
 // ★★★ v3.6.75: 대시보드 시각화 개선 - 신호등 시스템, A등급 우선 배치, 요약 카드, 라인 차트 ★★★
 async function renderDashboard() {
   const content = document.getElementById('page-content');
+  // ★★★ v3.6.63: 렌더 토큰 발급 (경쟁 상태 방지) ★★★
+  const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
   
   try {
     // ★★★ v3.6.92: 대시보드 데이터 + 안전재고 현황 + 오늘 원료 사용내역 동시 로드 ★★★
@@ -1291,6 +1316,10 @@ async function renderDashboard() {
       api('/dashboard/safety-stock-status?lead_days=3&days=30'),
       api(`/barcode/today-transactions?date=${today}`)
     ]);
+    // await 완료 시점에 사용자가 이미 다른 페이지로 이동했다면 렌더 중단
+    if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) {
+      return;
+    }
     const data = result.data;
     const safetyData = safetyStockResult.success ? safetyStockResult : { summary: {}, items: [] };
     const todayUsageData = todayUsageResult.success ? (todayUsageResult.data || []) : [];
@@ -3149,12 +3178,16 @@ function showInspectionPrintPrompt(inboundData) {
 async function renderInbound() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
+  // ★ v3.6.63: 렌더 경쟁 방지 토큰
+  const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
   
   // 마스터 데이터가 없으면 새로 로드
   if (!state.masterItems || state.masterItems.length === 0) {
     console.log('renderInbound: 마스터 데이터 로드 필요');
     await loadMasterData();
   }
+  // await 후 렌더 유효성 재확인
+  if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
   
   // Store master items for search
   window.inboundMasterItems = state.masterItems;
@@ -5233,9 +5266,13 @@ function updateUsageSummary() {
 async function renderOutbound() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
+  // ★ v3.6.63: 렌더 경쟁 방지 토큰
+  const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
   
   try {
     const result = await api('/outbound/available');
+    // await 후 렌더 유효성 재확인
+    if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
     const items = result.data || [];
     
     const supplierOptions = state.suppliers
@@ -12188,12 +12225,16 @@ async function deleteMaster(itemCode) {
 // Supplier Management - with search, filter, print
 async function renderSuppliers() {
   const content = document.getElementById('page-content');
+  // ★ v3.6.63: 렌더 경쟁 방지 토큰
+  const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
   
   try {
     // DB 마이그레이션 (새 컬럼 추가) - 한 번만 실행
     try { await api('/suppliers/migrate'); } catch(e) {}
     
     const result = await api('/suppliers');
+    // await 후 렌더 유효성 재확인
+    if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
     const suppliers = result.data || [];
     
     // 전역 저장
@@ -16045,6 +16086,8 @@ let doughMasterData = [];
 async function renderProcessQuality() {
   const content = document.getElementById('page-content');
   const today = formatDate(new Date());
+  // ★ v3.6.63: 렌더 경쟁 방지 토큰
+  const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
   
   // 반죽 마스터 로드
   try {
@@ -16053,6 +16096,8 @@ async function renderProcessQuality() {
   } catch (e) {
     doughMasterData = [];
   }
+  // await 후 렌더 유효성 재확인
+  if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
   
   content.innerHTML = `
     <div class="space-y-6">
@@ -17075,13 +17120,11 @@ async function initializeApp() {
   await loadMasterData();
   await loadAlertCount();
   
-  // ★★★ v3.6.97: 처음 접속 시 항상 대시보드 표시 ★★★
-  // 해시가 있어도 무시하고 대시보드로 시작
+  // ★★★ v3.6.63: 처음 접속 시 대시보드 표시 (navigateTo 경유로 렌더 시퀀스 초기화) ★★★
   // 단, 위 데이터 로딩(await) 도중 사용자가 이미 다른 메뉴를 클릭했다면
-  // 그 클릭 결과를 덮어쓰지 않는다 (버그 수정: 클릭 후 대시보드로 튕기던 현상)
+  // 그 클릭 결과를 덮어쓰지 않는다.
   if (!userNavigatedDuringInit) {
-    window.location.hash = 'dashboard';
-    renderDashboard();
+    navigateTo('dashboard');
   }
 }
 
@@ -26811,6 +26854,8 @@ let bomData = [];
 
 async function renderBOM() {
   const content = document.getElementById('page-content');
+  // ★ v3.6.63: 렌더 경쟁 방지 토큰
+  const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
   
   // 제품 목록 (master 테이블 + production_items 테이블 통합)
   const masterProducts = state.masterItems.filter(item => item.category === '제품');
@@ -26829,6 +26874,8 @@ async function renderBOM() {
   } catch (e) {
     console.log('production_items 로드 실패:', e);
   }
+  // await 후 렌더 유효성 재확인
+  if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
   
   // 통합 (중복 제거)
   const allProducts = [...masterProducts];

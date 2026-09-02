@@ -89,8 +89,9 @@ app.post('/login', async (c) => {
   }
   
   // 세션 생성
+  // ★ v3.6.54: 자동 로그아웃 제거 - 세션 만료 시간을 10년으로 연장 (실질적으로 로그아웃 전까지 유지)
   const sessionToken = generateSessionToken()
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24시간
+  const expiresAt = new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000).toISOString() // 10년
   
   // 기존 세션 삭제
   await c.env.DB.prepare(`DELETE FROM Sessions WHERE user_id = ?`).bind(user.id).run()
@@ -151,6 +152,13 @@ app.get('/me', async (c) => {
   if (!session) {
     return c.json({ success: false, error: '세션이 만료되었습니다. 다시 로그인해주세요.' }, 401)
   }
+  
+  // ★ v3.6.54: 자동 로그아웃 제거 - 세션 접근 시 만료 시간을 10년으로 자동 연장
+  // 기존 24시간 세션도 이 API 호출 시점부터 10년 연장됨
+  const newExpiresAt = new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000).toISOString()
+  await c.env.DB.prepare(`
+    UPDATE Sessions SET expires_at = ? WHERE session_token = ?
+  `).bind(newExpiresAt, token).run()
   
   return c.json({
     success: true,

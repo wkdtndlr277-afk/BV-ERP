@@ -1813,7 +1813,32 @@ export class GoogleSheetsService {
   // ═══════════════════════════════════════════════════════════════
   async addSubsidiaryStockDate(targetDate: string): Promise<{ date: string; prev_date: string; new_rows: number; total_rows: number; write_success?: boolean; write_error?: string }> {
     const cleanDate = targetDate.replace(/^'/, '');
-    console.log(`[addSubsidiaryStockDate v3.6.53] ========== 시작: ${cleanDate} ==========`);
+    console.log(`[addSubsidiaryStockDate v3.6.55] ========== 시작: ${cleanDate} ==========`);
+    
+    // ★★★ v3.6.55: EARLY EXIT - BOM에 SM 부자재가 없으면 즉시 종료 (503 방지) ★★★
+    // BOM만 먼저 가볍게 읽어서 SM 코드 존재 여부만 확인
+    // BOM에 SM 코드가 0개면 부자재수불부에 쓸 내용이 없으므로 모든 무거운 작업을 건너뜀
+    try {
+      const bomCheck = await this.readSheet('BOM마스터', 'C2:C10000').catch(() => []);
+      const hasSmCode = (bomCheck || []).some((row: any) => {
+        const code = row[0]?.toString().trim() || '';
+        return code.startsWith('SM');
+      });
+      
+      if (!hasSmCode) {
+        console.log(`[addSubsidiaryStockDate v3.6.55] ⏭️ BOM에 SM 부자재 없음 - 즉시 종료 (subrequest 절약)`);
+        return {
+          date: cleanDate,
+          prev_date: '',
+          new_rows: 0,
+          total_rows: 0,
+          write_success: true,
+          write_error: 'BOM에 SM 부자재 없음 - 건너뜀 (early exit)'
+        };
+      }
+    } catch (checkError: any) {
+      console.warn(`[addSubsidiaryStockDate] BOM 사전 체크 실패, 계속 진행: ${checkError.message}`);
+    }
     
     // 1. 기존 부자재수불부 데이터 읽기
     const existingData = await this.readSheet('부자재수불부', 'A2:H50000').catch(() => []);

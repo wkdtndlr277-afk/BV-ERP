@@ -8823,6 +8823,232 @@ sheets.post('/delete-lot-matching-date', async (c) => {
   }
 });
 
+// ★★★ v3.6.54: 특정 날짜 생산 데이터 통합 삭제 (생산실적/로트매칭/일별수불부/부자재수불부) ★★★
+// POST /api/sheets/production/delete-date
+// body: { dates: ["2026-08-09"], dry_run?: boolean }
+sheets.post('/production/delete-date', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    const body = await c.req.json();
+    const targetDates = body.dates;
+    const dryRun = body.dry_run === true;
+
+    if (!targetDates || !Array.isArray(targetDates) || targetDates.length === 0) {
+      return c.json({ success: false, error: 'dates 배열 필수 (예: ["2026-08-09"])' }, 400);
+    }
+
+    const cleanDates = targetDates.map((d: string) => d.replace(/^'/, '').trim());
+    console.log(`[production/delete-date] 삭제 대상 날짜: ${cleanDates.join(', ')} / dry_run=${dryRun}`);
+
+    const result: any = {
+      dates: cleanDates,
+      dry_run: dryRun,
+      sheets: {}
+    };
+
+    // 날짜 정규화 헬퍼 (엑셀 날짜 숫자 → YYYY-MM-DD)
+    const normalizeDate = (raw: string): string => {
+      let rowDate = raw?.toString().replace(/^'/, '').trim() || '';
+      if (/^\d{5}$/.test(rowDate)) {
+        const excelDate = parseInt(rowDate);
+        const jsDate = new Date((excelDate - 25569) * 86400 * 1000);
+        rowDate = jsDate.toISOString().split('T')[0];
+      }
+      return rowDate;
+    };
+
+    // ────────────────────────────────────────────────────
+    // 1. 생산실적 시트 (A: 생산일자, A2:H50000)
+    // ────────────────────────────────────────────────────
+    try {
+      const prodData = await service.readSheet('생산실적', 'A2:H50000');
+      const prodDeleted: Record<string, number> = {};
+      cleanDates.forEach((d: string) => prodDeleted[d] = 0);
+
+      const prodRemaining = prodData.filter((row: any[]) => {
+        const rowDate = normalizeDate(row[0]);
+        if (cleanDates.includes(rowDate)) {
+          prodDeleted[rowDate]++;
+          return false;
+        }
+        return true;
+      });
+
+      const prodTotalDeleted = prodData.length - prodRemaining.length;
+      result.sheets['생산실적'] = {
+        original_rows: prodData.length,
+        deleted_counts: prodDeleted,
+        total_deleted: prodTotalDeleted,
+        remaining_rows: prodRemaining.length
+      };
+
+      if (!dryRun && prodTotalDeleted > 0) {
+        await service.clearRange('생산실적', 'A2:H50000');
+        if (prodRemaining.length > 0) {
+          // 500행 배치로 쪼개서 쓰기 (대용량 대응)
+          const BATCH = 5000;
+          for (let i = 0; i < prodRemaining.length; i += BATCH) {
+            const slice = prodRemaining.slice(i, i + BATCH);
+            const startRow = 2 + i;
+            const endRow = startRow + slice.length - 1;
+            await service.writeSheet('생산실적', `A${startRow}:H${endRow}`, slice);
+          }
+        }
+        result.sheets['생산실적'].write_success = true;
+      }
+    } catch (e: any) {
+      result.sheets['생산실적'] = { error: e.message };
+    }
+
+    // ────────────────────────────────────────────────────
+    // 2. 로트매칭 시트 (A: 생산일자, A2:G50000)
+    // ────────────────────────────────────────────────────
+    try {
+      const lotData = await service.readSheet('로트매칭', 'A2:G50000');
+      const lotDeleted: Record<string, number> = {};
+      cleanDates.forEach((d: string) => lotDeleted[d] = 0);
+
+      const lotRemaining = lotData.filter((row: any[]) => {
+        const rowDate = normalizeDate(row[0]);
+        if (cleanDates.includes(rowDate)) {
+          lotDeleted[rowDate]++;
+          return false;
+        }
+        return true;
+      });
+
+      const lotTotalDeleted = lotData.length - lotRemaining.length;
+      result.sheets['로트매칭'] = {
+        original_rows: lotData.length,
+        deleted_counts: lotDeleted,
+        total_deleted: lotTotalDeleted,
+        remaining_rows: lotRemaining.length
+      };
+
+      if (!dryRun && lotTotalDeleted > 0) {
+        await service.clearRange('로트매칭', 'A2:G50000');
+        if (lotRemaining.length > 0) {
+          const BATCH = 5000;
+          for (let i = 0; i < lotRemaining.length; i += BATCH) {
+            const slice = lotRemaining.slice(i, i + BATCH);
+            const startRow = 2 + i;
+            const endRow = startRow + slice.length - 1;
+            await service.writeSheet('로트매칭', `A${startRow}:G${endRow}`, slice);
+          }
+        }
+        result.sheets['로트매칭'].write_success = true;
+      }
+    } catch (e: any) {
+      result.sheets['로트매칭'] = { error: e.message };
+    }
+
+    // ────────────────────────────────────────────────────
+    // 3. 일별수불부 시트 (A: 일자, A2:H50000)
+    // ────────────────────────────────────────────────────
+    try {
+      const stockData = await service.readSheet('일별수불부', 'A2:H50000');
+      const stockDeleted: Record<string, number> = {};
+      cleanDates.forEach((d: string) => stockDeleted[d] = 0);
+
+      const stockRemaining = stockData.filter((row: any[]) => {
+        const rowDate = normalizeDate(row[0]);
+        if (cleanDates.includes(rowDate)) {
+          stockDeleted[rowDate]++;
+          return false;
+        }
+        return true;
+      });
+
+      const stockTotalDeleted = stockData.length - stockRemaining.length;
+      result.sheets['일별수불부'] = {
+        original_rows: stockData.length,
+        deleted_counts: stockDeleted,
+        total_deleted: stockTotalDeleted,
+        remaining_rows: stockRemaining.length
+      };
+
+      if (!dryRun && stockTotalDeleted > 0) {
+        await service.clearRange('일별수불부', 'A2:H50000');
+        if (stockRemaining.length > 0) {
+          const BATCH = 5000;
+          for (let i = 0; i < stockRemaining.length; i += BATCH) {
+            const slice = stockRemaining.slice(i, i + BATCH);
+            const startRow = 2 + i;
+            const endRow = startRow + slice.length - 1;
+            await service.writeSheet('일별수불부', `A${startRow}:H${endRow}`, slice);
+          }
+        }
+        result.sheets['일별수불부'].write_success = true;
+      }
+    } catch (e: any) {
+      result.sheets['일별수불부'] = { error: e.message };
+    }
+
+    // ────────────────────────────────────────────────────
+    // 4. 부자재수불부 시트 (A: 일자, A2:H50000)
+    // ────────────────────────────────────────────────────
+    try {
+      const subData = await service.readSheet('부자재수불부', 'A2:H50000');
+      const subDeleted: Record<string, number> = {};
+      cleanDates.forEach((d: string) => subDeleted[d] = 0);
+
+      const subRemaining = subData.filter((row: any[]) => {
+        const rowDate = normalizeDate(row[0]);
+        if (cleanDates.includes(rowDate)) {
+          subDeleted[rowDate]++;
+          return false;
+        }
+        return true;
+      });
+
+      const subTotalDeleted = subData.length - subRemaining.length;
+      result.sheets['부자재수불부'] = {
+        original_rows: subData.length,
+        deleted_counts: subDeleted,
+        total_deleted: subTotalDeleted,
+        remaining_rows: subRemaining.length
+      };
+
+      if (!dryRun && subTotalDeleted > 0) {
+        await service.clearRange('부자재수불부', 'A2:H50000');
+        if (subRemaining.length > 0) {
+          const BATCH = 5000;
+          for (let i = 0; i < subRemaining.length; i += BATCH) {
+            const slice = subRemaining.slice(i, i + BATCH);
+            const startRow = 2 + i;
+            const endRow = startRow + slice.length - 1;
+            await service.writeSheet('부자재수불부', `A${startRow}:H${endRow}`, slice);
+          }
+        }
+        result.sheets['부자재수불부'].write_success = true;
+      }
+    } catch (e: any) {
+      result.sheets['부자재수불부'] = { error: e.message };
+    }
+
+    // 총합 계산
+    const grandTotal = Object.values(result.sheets).reduce((sum: number, sheet: any) => {
+      return sum + (sheet.total_deleted || 0);
+    }, 0);
+
+    return c.json({
+      success: true,
+      message: dryRun
+        ? `[DRY RUN] ${cleanDates.join(', ')} 삭제 예정 총 ${grandTotal}행`
+        : `${cleanDates.join(', ')} 삭제 완료 총 ${grandTotal}행`,
+      grand_total_deleted: grandTotal,
+      ...result
+    });
+  } catch (error: any) {
+    console.error('[production/delete-date] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.6.50: SF_BOM 시트 생성 (반제품 BOM 마스터) ★★★
 sheets.post('/create-sf-bom-sheet', async (c) => {
   const service = getSheetService(c);

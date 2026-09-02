@@ -9,6 +9,66 @@ import type { Bindings } from '../types';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+// ★★★ v3.6.57: 한국 시간(KST) 헬퍼 함수 - 공정 시간 저장용 ★★★
+// UTC로 저장하면 화면에 04:59처럼 실제 시간과 9시간 어긋나 표시되므로
+// KST 시간에 +09:00 타임존 오프셋을 붙여 ISO 8601 형식으로 저장.
+// - substring(11, 16) 파싱 → KST 시각 그대로 표시
+// - new Date(str) 파싱 → 타임존 오프셋 인식하여 경과 시간 정확히 계산
+function getKSTISOString(): string {
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  // "2026-08-20T13:59:00.000Z" → "2026-08-20T13:59:00.000+09:00" 형태로 반환
+  return kst.toISOString().replace('Z', '+09:00');
+}
+
+// ★★★ v3.6.58: DB에서 읽은 시각 문자열을 KST 표시용으로 정규화 ★★★
+// 기존에 UTC로 저장된 데이터("...Z" 또는 오프셋 없는 문자열)를 화면 표시용 KST로 변환
+// - Z 로 끝나거나 오프셋이 없으면 UTC로 간주 → KST(+9h)로 변환 후 +09:00 오프셋 붙임
+// - 이미 +09:00 이 붙어있으면 그대로 리턴
+function normalizeToKST(dt: any): string | null {
+  if (!dt) return null;
+  const s = String(dt);
+  // 이미 +09:00 있으면 그대로
+  if (s.includes('+09:00') || s.includes('+0900')) return s;
+  // UTC 표시(Z)나 오프셋 없는 문자열 → KST로 변환
+  let d: Date;
+  if (s.endsWith('Z')) {
+    d = new Date(s);
+  } else if (/[+-]\d{2}:?\d{2}$/.test(s)) {
+    // 다른 오프셋이 있는 경우
+    d = new Date(s);
+  } else {
+    // 오프셋이 없는 경우 UTC로 간주 (SQLite CURRENT_TIMESTAMP 등)
+    d = new Date(s.replace(' ', 'T') + 'Z');
+  }
+  if (isNaN(d.getTime())) return s; // 파싱 실패 시 원본 유지
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().replace('Z', '+09:00');
+}
+
+// timeLog 배열에 elapsed_seconds 계산 및 시각 KST 정규화
+function enrichTimeLogs(logs: any[]): any[] {
+  return (logs || []).map(log => {
+    const enriched = { ...log };
+    // 시각 KST 정규화 (기존 UTC 데이터 호환)
+    if (log.start_time) enriched.start_time = normalizeToKST(log.start_time);
+    if (log.end_time) enriched.end_time = normalizeToKST(log.end_time);
+    // elapsed_seconds 계산
+    if (log.status === 'COMPLETED') {
+      if (enriched.start_time && enriched.end_time) {
+        const secs = Math.max(0, Math.round((new Date(enriched.end_time).getTime() - new Date(enriched.start_time).getTime()) / 1000));
+        enriched.elapsed_seconds = secs;
+      } else if (log.actual_minutes) {
+        enriched.elapsed_seconds = log.actual_minutes * 60;
+      }
+    } else if (log.status === 'IN_PROGRESS' && enriched.start_time) {
+      const secs = Math.max(0, Math.round((Date.now() - new Date(enriched.start_time).getTime()) / 1000));
+      enriched.elapsed_seconds = secs;
+    }
+    return enriched;
+  });
+}
+
 // ========== 데이터베이스 초기화 ==========
 app.post('/init-db', async (c) => {
   try {
@@ -843,7 +903,7 @@ app.post('/scan/start', async (c) => {
       return c.json({ success: false, error: '시작할 수 있는 공정이 없습니다' }, 400);
     }
 
-    const now = new Date().toISOString();
+    const now = getKSTISOString();
 
     // 공정 시작
     await c.env.DB.prepare(`
@@ -911,7 +971,7 @@ app.post('/scan/end', async (c) => {
       return c.json({ success: false, error: '진행 중인 공정이 없습니다' }, 400);
     }
 
-    const now = new Date().toISOString();
+    const now = getKSTISOString();
     const startTime = new Date(currentProcess.start_time as string);
     const endTime = new Date(now);
     const actualMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
@@ -1124,7 +1184,7 @@ app.post('/skip-process', async (c) => {
       return c.json({ success: false, error: '배치를 찾을 수 없습니다' }, 404);
     }
 
-    const now = new Date().toISOString();
+    const now = getKSTISOString();
 
     // 공정 스킵 처리
     await c.env.DB.prepare(`
@@ -1149,7 +1209,7 @@ app.post('/skip-process', async (c) => {
 app.post('/batch/:batchCode/cancel', async (c) => {
   try {
     const batchCode = c.req.param('batchCode');
-    const now = new Date().toISOString();
+    const now = getKSTISOString();
     
     // 배치 상태를 CANCELLED로 변경
     const result = await c.env.DB.prepare(`
@@ -1204,7 +1264,7 @@ app.post('/batch/cleanup-old', async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
     const hoursOld = body.hours_old || 24;  // 기본 24시간 이상 된 것
-    const now = new Date().toISOString();
+    const now = getKSTISOString();
     
     // hoursOld 시간 이상 된 CREATED/IN_PROGRESS 배치를 CANCELLED로 변경
     const cutoff = new Date(Date.now() - hoursOld * 60 * 60 * 1000).toISOString();
@@ -1380,15 +1440,22 @@ app.get('/barcode/:barcode', async (c) => {
       const logsResult = await c.env.DB.prepare(`
         SELECT * FROM process_time_log WHERE cycle_id = ? ORDER BY process_order
       `).bind(activeCycle.id).all();
-      timeLogs = logsResult.results;
+      timeLogs = enrichTimeLogs(logsResult.results || []);
     }
+    
+    // ★ v3.6.58: current_process 시각도 KST 정규화
+    const enrichedCurrent = currentTimeLog ? {
+      ...currentTimeLog,
+      start_time: normalizeToKST(currentTimeLog.start_time),
+      end_time: currentTimeLog.end_time ? normalizeToKST(currentTimeLog.end_time) : null
+    } : null;
     
     return c.json({ 
       success: true, 
       data: {
         barcode: master,
         active_cycle: activeCycle,
-        current_process: currentTimeLog,
+        current_process: enrichedCurrent,
         time_logs: timeLogs
       }
     });
@@ -1533,7 +1600,7 @@ app.post('/cycle/process/start', async (c) => {
       return c.json({ success: false, error: '시작할 수 있는 공정이 없습니다' }, 400);
     }
 
-    const now = new Date().toISOString();
+    const now = getKSTISOString();
 
     // 공정 시작
     await c.env.DB.prepare(`
@@ -1575,7 +1642,7 @@ app.post('/cycle/process/end', async (c) => {
       return c.json({ success: false, error: '진행 중인 공정이 없습니다' }, 400);
     }
 
-    const now = new Date().toISOString();
+    const now = getKSTISOString();
     const startTime = new Date(currentProcess.start_time as string);
     const endTime = new Date(now);
     const actualMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000);
@@ -1642,7 +1709,15 @@ app.get('/cycle/active', async (c) => {
       ORDER BY c.started_at DESC
     `).bind(today).all();
 
-    return c.json({ success: true, data: result.results });
+    // ★ v3.6.58: 시각 KST 정규화
+    const enrichedResults = (result.results || []).map((r: any) => ({
+      ...r,
+      started_at: normalizeToKST(r.started_at),
+      completed_at: r.completed_at ? normalizeToKST(r.completed_at) : null,
+      current_start_time: r.current_start_time ? normalizeToKST(r.current_start_time) : null
+    }));
+
+    return c.json({ success: true, data: enrichedResults });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }
@@ -1673,7 +1748,15 @@ app.get('/cycle/today', async (c) => {
         c.started_at DESC
     `).bind(today).all();
 
-    return c.json({ success: true, data: result.results });
+    // ★ v3.6.58: 시각 KST 정규화
+    const enrichedResults = (result.results || []).map((r: any) => ({
+      ...r,
+      started_at: normalizeToKST(r.started_at),
+      completed_at: r.completed_at ? normalizeToKST(r.completed_at) : null,
+      current_start_time: r.current_start_time ? normalizeToKST(r.current_start_time) : null
+    }));
+
+    return c.json({ success: true, data: enrichedResults });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);
   }
@@ -1696,11 +1779,19 @@ app.get('/cycle/:cycleId', async (c) => {
       SELECT * FROM process_time_log WHERE cycle_id = ? ORDER BY process_order
     `).bind(cycleId).all();
 
+    // ★ v3.6.58: 시각 KST 정규화 + elapsed_seconds 계산
+    const enrichedLogs = enrichTimeLogs(timeLogs.results || []);
+    const enrichedCycle = cycle ? {
+      ...cycle,
+      started_at: normalizeToKST(cycle.started_at),
+      completed_at: cycle.completed_at ? normalizeToKST(cycle.completed_at) : null
+    } : cycle;
+
     return c.json({ 
       success: true, 
       data: {
-        cycle,
-        time_logs: timeLogs.results
+        cycle: enrichedCycle,
+        time_logs: enrichedLogs
       }
     });
   } catch (error: any) {

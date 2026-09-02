@@ -159,10 +159,10 @@ function setUserInfo(user) {
   state.user = user;
   state.isLoggedIn = true;
   
-  // ★ v3.4.25: 자동 로그아웃 타이머 시작
-  if (typeof startAutoLogoutTimer === 'function') {
-    startAutoLogoutTimer();
-  }
+  // ★ v3.6.54: 자동 로그아웃 기능 제거 (로그아웃 버튼 클릭 시까지 상태 유지)
+  // if (typeof startAutoLogoutTimer === 'function') {
+  //   startAutoLogoutTimer();
+  // }
 }
 
 // 사용자 정보 가져오기
@@ -380,169 +380,49 @@ async function handleRegister(e) {
   }
 }
 
-// ★ v3.4.25: 자동 로그아웃 시스템
-const AUTO_LOGOUT_TIME = 30 * 60 * 1000; // 30분 (밀리초)
-const AUTO_LOGOUT_WARNING_TIME = 5 * 60 * 1000; // 5분 전 경고
-let autoLogoutTimer = null;
-let autoLogoutWarningTimer = null;
-let lastActivityTime = Date.now();
-
-// 자동 로그아웃 타이머 시작
-function startAutoLogoutTimer() {
-  resetAutoLogoutTimer();
-  
-  // 사용자 활동 감지 이벤트
-  const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
-  activityEvents.forEach(event => {
-    document.addEventListener(event, handleUserActivity, { passive: true });
-  });
-  
-  console.log('⏰ 자동 로그아웃 타이머 시작 (30분)');
-}
-
-// 사용자 활동 감지
-function handleUserActivity() {
-  const now = Date.now();
-  // 1초 이내 중복 호출 방지
-  if (now - lastActivityTime < 1000) return;
-  
-  lastActivityTime = now;
-  resetAutoLogoutTimer();
-}
-
-// 타이머 리셋
-function resetAutoLogoutTimer() {
-  // 기존 타이머 정리
-  if (autoLogoutTimer) clearTimeout(autoLogoutTimer);
-  if (autoLogoutWarningTimer) clearTimeout(autoLogoutWarningTimer);
-  
-  // 경고 팝업 닫기
-  const warningPopup = document.getElementById('auto-logout-warning');
-  if (warningPopup) warningPopup.remove();
-  
-  // 경고 타이머 설정 (로그아웃 5분 전)
-  autoLogoutWarningTimer = setTimeout(() => {
-    showAutoLogoutWarning();
-  }, AUTO_LOGOUT_TIME - AUTO_LOGOUT_WARNING_TIME);
-  
-  // 로그아웃 타이머 설정
-  autoLogoutTimer = setTimeout(() => {
-    performAutoLogout();
-  }, AUTO_LOGOUT_TIME);
-}
-
-// 자동 로그아웃 경고 표시
-function showAutoLogoutWarning() {
-  // 이미 경고 팝업이 있으면 무시
-  if (document.getElementById('auto-logout-warning')) return;
-  
-  const popup = document.createElement('div');
-  popup.id = 'auto-logout-warning';
-  popup.innerHTML = `
-    <div style="position:fixed; top:0; left:0; right:0; bottom:0; 
-                background:rgba(0,0,0,0.5); z-index:99999;
-                display:flex; align-items:center; justify-content:center;
-                font-family: 'Malgun Gothic', sans-serif;">
-      <div style="background:white; border-radius:16px; padding:30px 40px;
-                  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-                  max-width:400px; width:90%; text-align:center;">
-        <div style="font-size:50px; margin-bottom:15px;">⏰</div>
-        <h2 style="margin:0 0 10px 0; font-size:20px; color:#333;">자동 로그아웃 예정</h2>
-        <p style="color:#666; margin-bottom:20px; font-size:14px;">
-          5분간 활동이 없어 곧 자동 로그아웃됩니다.<br>
-          계속 사용하시려면 아래 버튼을 클릭하세요.
-        </p>
-        <div id="auto-logout-countdown" style="font-size:32px; font-weight:bold; color:#EF4444; margin-bottom:20px;">
-          5:00
-        </div>
-        <button onclick="extendSession()" 
-                style="background:linear-gradient(135deg, #10B981 0%, #059669 100%);
-                       border:none; color:white; padding:12px 40px; border-radius:8px;
-                       font-size:15px; font-weight:bold; cursor:pointer;
-                       margin-right:10px;">
-          계속 사용
-        </button>
-        <button onclick="performAutoLogout()" 
-                style="background:#EF4444;
-                       border:none; color:white; padding:12px 30px; border-radius:8px;
-                       font-size:15px; cursor:pointer;">
-          로그아웃
-        </button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(popup);
-  
-  // 카운트다운 시작
-  startLogoutCountdown();
-}
-
-// 카운트다운 표시
+// ★ v3.6.54: 자동 로그아웃 시스템 완전 제거
+// 사용자 요청: 로그인되면 로그아웃 버튼 클릭 전까지 상태 유지
+// 아래 함수들은 no-op(빈 함수)로 유지 - 기존 호출부에서 에러 방지용
 let countdownInterval = null;
+
+function startAutoLogoutTimer() {
+  // 자동 로그아웃 비활성화됨
+  console.log('ℹ️ 자동 로그아웃 기능이 비활성화되어 있습니다. 수동 로그아웃 전까지 로그인 유지됩니다.');
+}
+
+function handleUserActivity() {
+  // 자동 로그아웃 비활성화됨
+}
+
+function resetAutoLogoutTimer() {
+  // 자동 로그아웃 비활성화됨
+}
+
+function showAutoLogoutWarning() {
+  // 자동 로그아웃 비활성화됨
+}
+
 function startLogoutCountdown() {
-  let remaining = 5 * 60; // 5분
-  
-  if (countdownInterval) clearInterval(countdownInterval);
-  
-  countdownInterval = setInterval(() => {
-    remaining--;
-    const mins = Math.floor(remaining / 60);
-    const secs = remaining % 60;
-    const countdownEl = document.getElementById('auto-logout-countdown');
-    if (countdownEl) {
-      countdownEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
-    }
-    
-    if (remaining <= 0) {
-      clearInterval(countdownInterval);
-    }
-  }, 1000);
+  // 자동 로그아웃 비활성화됨
 }
 
-// 세션 연장
 function extendSession() {
+  // 자동 로그아웃 비활성화됨 - 항상 유지 상태
   const warningPopup = document.getElementById('auto-logout-warning');
   if (warningPopup) warningPopup.remove();
-  if (countdownInterval) clearInterval(countdownInterval);
-  
-  resetAutoLogoutTimer();
-  showToast('세션이 연장되었습니다.', 'success');
 }
 
-// 자동 로그아웃 실행
 function performAutoLogout() {
+  // 자동 로그아웃 비활성화됨 - 아무 동작 안 함
+  console.log('ℹ️ 자동 로그아웃이 비활성화되어 실행되지 않습니다.');
   const warningPopup = document.getElementById('auto-logout-warning');
   if (warningPopup) warningPopup.remove();
-  if (countdownInterval) clearInterval(countdownInterval);
-  if (autoLogoutTimer) clearTimeout(autoLogoutTimer);
-  if (autoLogoutWarningTimer) clearTimeout(autoLogoutWarningTimer);
-  
-  // 알림 시스템 정리
-  if (window.TaskNotification && typeof window.TaskNotification.cleanup === 'function') {
-    window.TaskNotification.cleanup();
-  }
-  
-  clearAuthToken();
-  state.user = null;
-  state.isLoggedIn = false;
-  showLoginScreen();
-  showToast('장시간 미사용으로 자동 로그아웃 되었습니다.', 'info');
 }
 
-// 자동 로그아웃 타이머 정지
 function stopAutoLogoutTimer() {
-  if (autoLogoutTimer) clearTimeout(autoLogoutTimer);
-  if (autoLogoutWarningTimer) clearTimeout(autoLogoutWarningTimer);
-  if (countdownInterval) clearInterval(countdownInterval);
-  
+  // 자동 로그아웃 비활성화됨 - 정리할 것 없음
   const warningPopup = document.getElementById('auto-logout-warning');
   if (warningPopup) warningPopup.remove();
-  
-  // 이벤트 리스너 제거
-  const activityEvents = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
-  activityEvents.forEach(event => {
-    document.removeEventListener(event, handleUserActivity);
-  });
 }
 
 // 로그아웃
@@ -2011,16 +1891,24 @@ async function loadDashboardTaskSummary() {
   }
 }
 
-// 대시보드 인쇄 함수
+// 대시보드 인쇄 함수 (v3.6.54: 현재 화면과 완전 동기화)
 async function printDashboard() {
   try {
-    const result = await api('/dashboard');
+    // ★ 화면 렌더링과 동일한 API 호출
+    const today = getLocalDateString();
+    const [result, safetyStockResult, todayUsageResult] = await Promise.all([
+      api('/dashboard'),
+      api('/dashboard/safety-stock-status?lead_days=3&days=30'),
+      api(`/barcode/today-transactions?date=${today}`)
+    ]);
     const data = result.data;
-    
-    // 재고 요약 데이터 추출
-    const rawMaterialStock = data.summary.stock.find(s => s.category === '원료') || { item_count: 0, total_stock: 0, low_stock_count: 0 };
-    const productStock = data.summary.stock.find(s => s.category === '제품') || { item_count: 0, total_stock: 0, low_stock_count: 0 };
-    
+    const safetyData = safetyStockResult.success ? safetyStockResult : { summary: {}, items: [], items_by_grade: null };
+    const todayUsageData = todayUsageResult.success ? (todayUsageResult.data || []) : [];
+
+    // 등급별 리스트 분리
+    const urgentItems = (safetyData.items || []).filter(i => i.status_color === 'red');
+    const warningItems = (safetyData.items || []).filter(i => i.status_color === 'yellow');
+
     const printWindow = window.open('', '_blank');
     printWindow.document.write(`
       <!DOCTYPE html>
@@ -2126,14 +2014,98 @@ async function printDashboard() {
           }
           .badge-blue { background: #dbeafe; color: #1d4ed8; }
           .badge-green { background: #dcfce7; color: #16a34a; }
-          
+          .badge-purple { background: #7c3aed; color: #fff; font-weight: bold; }
+          .badge-orange { background: #f97316; color: #fff; font-weight: bold; }
+          .badge-gray { background: #e5e7eb; color: #4b5563; }
+
           .two-columns {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 10px;
           }
-          
+
           .no-data { text-align: center; padding: 15px; color: #999; font-style: italic; }
+
+          /* ★ 긴급 발주 배너 */
+          .urgent-banner {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(90deg, #dc2626, #b91c1c);
+            color: #fff;
+            padding: 10px 14px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+          }
+          .urgent-banner.green { background: linear-gradient(90deg, #16a34a, #15803d); }
+          .urgent-left .urgent-title { font-size: 9px; opacity: 0.9; margin-bottom: 2px; }
+          .urgent-left .urgent-count { font-size: 26px; font-weight: bold; line-height: 1; }
+          .urgent-left .urgent-count-small { font-size: 14px; font-weight: bold; }
+          .urgent-left .urgent-unit { font-size: 11px; margin-left: 4px; }
+          .urgent-left .urgent-note { font-size: 7px; opacity: 0.8; margin-top: 3px; }
+          .urgent-right { text-align: right; }
+          .urgent-right .urgent-sub {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 8px;
+            margin-left: 4px;
+          }
+          .urgent-right .urgent-sub b { font-size: 11px; margin-left: 2px; }
+          .urgent-right .urgent-period { font-size: 7px; opacity: 0.85; margin-top: 4px; }
+
+          /* ★ Alert Cards (3개) */
+          .alert-cards-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+          }
+
+          /* ★ 등급별 카드 (4개) */
+          .grade-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+            margin-bottom: 12px;
+          }
+          .grade-card {
+            border: 1px solid #ddd;
+            padding: 6px 8px;
+            border-radius: 4px;
+          }
+          .grade-card.purple { background: #f5f3ff; border-color: #a78bfa; }
+          .grade-card.blue { background: #eff6ff; border-color: #60a5fa; }
+          .grade-card.orange { background: #fff7ed; border-color: #fb923c; }
+          .grade-card.gray { background: #f9fafb; border-color: #d1d5db; }
+          .grade-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 8px;
+            font-weight: bold;
+          }
+          .grade-tag {
+            background: #4b5563;
+            color: #fff;
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-size: 6px;
+          }
+          .grade-card.purple .grade-tag { background: #7c3aed; }
+          .grade-card.blue .grade-tag { background: #2563eb; }
+          .grade-card.orange .grade-tag { background: #ea580c; }
+          .grade-value {
+            font-size: 15px;
+            font-weight: bold;
+            margin-top: 3px;
+            color: #333;
+          }
+          .grade-unit { font-size: 8px; margin-left: 2px; color: #666; }
+          .grade-alert { font-size: 7px; color: #666; margin-top: 2px; }
+
+          .section-title.purple { border-left-color: #7c3aed; background: #f5f3ff; color: #6d28d9; }
           
           @media print {
             body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -2145,16 +2117,39 @@ async function printDashboard() {
           <h1>📊 재고관리 대시보드</h1>
           <div class="date">${data.date} 기준</div>
         </div>
-        
-        <!-- Alert Cards -->
-        <div class="alert-cards">
-          <div class="alert-card ${data.alerts.lowStockItems.length > 0 ? 'red' : 'green'}">
-            <div class="label">안전재고 미만</div>
-            <div class="value ${data.alerts.lowStockItems.length > 0 ? 'red' : 'green'}">${data.alerts.lowStockCount || data.alerts.lowStockItems.length}</div>
+
+        <!-- ★ 긴급 발주 요약 배너 (화면 최상단과 동일) -->
+        ${safetyData.summary && safetyData.summary.urgent_count > 0 ? `
+        <div class="urgent-banner">
+          <div class="urgent-left">
+            <div class="urgent-title">⚠️ 긴급 발주 필요 (잔여일 0~2일)</div>
+            <div class="urgent-count">${safetyData.summary.urgent_count}<span class="urgent-unit">품목</span></div>
+            <div class="urgent-note">* 정제수(RM184) 제외</div>
           </div>
+          <div class="urgent-right">
+            <div class="urgent-sub">🟡 주의 <b>${safetyData.summary.warning_count || 0}</b></div>
+            <div class="urgent-sub">🟢 정상 <b>${safetyData.summary.normal_count || 0}</b></div>
+            <div class="urgent-period">분석기간: ${safetyData.summary.analysis_period || '-'}</div>
+          </div>
+        </div>
+        ` : `
+        <div class="urgent-banner green">
+          <div class="urgent-left">
+            <div class="urgent-title">✅ 긴급 발주 필요 품목 없음</div>
+            <div class="urgent-count-small">모든 원료 재고 정상</div>
+          </div>
+          <div class="urgent-right">
+            <div class="urgent-sub">🟡 주의 <b>${safetyData.summary?.warning_count || 0}</b></div>
+            <div class="urgent-sub">🟢 정상 <b>${safetyData.summary?.normal_count || 0}</b></div>
+          </div>
+        </div>
+        `}
+
+        <!-- ★ Alert Cards 3개 (화면과 동일: 소비기한/품질KPI/오늘KPI) -->
+        <div class="alert-cards-3">
           <div class="alert-card ${data.alerts.expiringLots.length > 0 ? 'yellow' : 'green'}">
             <div class="label">소비기한 임박 LOT</div>
-            <div class="value ${data.alerts.expiringLots.length > 0 ? 'yellow' : 'green'}">${data.alerts.expiringCount || data.alerts.expiringLots.length}</div>
+            <div class="value ${data.alerts.expiringLots.length > 0 ? 'yellow' : 'green'}">${data.alerts.expiringLots.length}</div>
           </div>
           <div class="alert-card ${data.alerts.kpiAlerts.nonCompliantCount > 0 ? 'red' : 'green'}">
             <div class="label">품질 KPI 부적합</div>
@@ -2165,55 +2160,170 @@ async function printDashboard() {
             <div class="value ${data.alerts.kpiAlerts.unregisteredToday ? 'orange' : 'green'}">${data.alerts.kpiAlerts.unregisteredToday ? '미등록' : '완료'}</div>
           </div>
         </div>
-        
-        <!-- 재고 현황 요약 -->
-        <div class="summary-grid">
-          <div class="summary-box">
-            <div class="title">📦 원료 재고 현황</div>
-            <div class="row"><span>품목 수</span><span>${rawMaterialStock.item_count}개</span></div>
-            <div class="row"><span>총 재고</span><span>${formatNumber(rawMaterialStock.total_stock)}</span></div>
-            <div class="row"><span>안전재고 미만</span><span class="highlight">${rawMaterialStock.low_stock_count}개</span></div>
+
+        <!-- ★ 등급별 요약 카드 (A/B/C/기타) -->
+        ${safetyData.summary && safetyData.summary.grade_a ? `
+        <div class="grade-grid">
+          <div class="grade-card purple">
+            <div class="grade-head"><span>A등급 (핵심원료)</span><span class="grade-tag">일100kg+</span></div>
+            <div class="grade-value">${safetyData.summary.grade_a?.total || 0}<span class="grade-unit">개</span></div>
+            <div class="grade-alert">긴급/주의: ${safetyData.summary.grade_a?.alert || 0}개</div>
           </div>
-          <div class="summary-box">
-            <div class="title">🏭 제품 재고 현황</div>
-            <div class="row"><span>품목 수</span><span>${productStock.item_count}개</span></div>
-            <div class="row"><span>총 재고</span><span>${formatNumber(productStock.total_stock)}</span></div>
-            <div class="row"><span>안전재고 미만</span><span class="highlight">${productStock.low_stock_count}개</span></div>
+          <div class="grade-card blue">
+            <div class="grade-head"><span>B등급 (중간사용)</span><span class="grade-tag">일10kg+</span></div>
+            <div class="grade-value">${safetyData.summary.grade_b?.total || 0}<span class="grade-unit">개</span></div>
+            <div class="grade-alert">긴급/주의: ${safetyData.summary.grade_b?.alert || 0}개</div>
+          </div>
+          <div class="grade-card orange">
+            <div class="grade-head"><span>C등급 (유통기한短)</span><span class="grade-tag">30일↓</span></div>
+            <div class="grade-value">${safetyData.summary.grade_c?.total || 0}<span class="grade-unit">개</span></div>
+            <div class="grade-alert">긴급/주의: ${safetyData.summary.grade_c?.alert || 0}개</div>
+          </div>
+          <div class="grade-card gray">
+            <div class="grade-head"><span>기타 (저사용량)</span></div>
+            <div class="grade-value">${safetyData.summary.grade_other?.total || 0}<span class="grade-unit">개</span></div>
           </div>
         </div>
-        
-        <!-- 안전재고 미만 품목 -->
-        ${data.alerts.lowStockItems.length > 0 ? `
+        ` : ''}
+
+        <!-- ★ 🔴 긴급 발주 필요 리스트 -->
+        ${urgentItems.length > 0 ? `
         <div class="section">
-          <div class="section-title red">⚠️ 안전재고 미만 품목 (${data.alerts.lowStockCount || data.alerts.lowStockItems.length}개)</div>
+          <div class="section-title red">🔴 긴급 발주 필요 (${urgentItems.length}개) - 잔여일 0~3일</div>
           <table>
             <thead>
               <tr>
+                <th class="text-center">등급</th>
                 <th>품목코드</th>
                 <th>품목명</th>
-                <th>구분</th>
                 <th class="text-right">현재고</th>
-                <th class="text-right">안전재고</th>
-                <th class="text-right">부족량</th>
+                <th class="text-right">일평균</th>
+                <th class="text-right">잔여일</th>
+                <th class="text-right">발주점</th>
+                <th>등급사유</th>
               </tr>
             </thead>
             <tbody>
-              ${data.alerts.lowStockItems.map(item => `
-                <tr>
+              ${urgentItems.map(item => {
+                const gradeBadge = item.grade === 'A' ? '<span class="badge badge-purple">A</span>' :
+                                   item.grade === 'B' ? '<span class="badge badge-blue">B</span>' :
+                                   item.grade === 'C' ? '<span class="badge badge-orange">C</span>' :
+                                   '<span class="badge badge-gray">기타</span>';
+                return `<tr>
+                  <td class="text-center">${gradeBadge}</td>
                   <td>${item.item_code}</td>
-                  <td>${item.item_name}</td>
-                  <td><span class="badge ${item.category === '원료' ? 'badge-blue' : 'badge-green'}">${item.category}</span></td>
-                  <td class="text-right text-red">${formatNumber(item.current_stock)} ${item.unit || ''}</td>
-                  <td class="text-right">${formatNumber(item.safety_stock)} ${item.unit || ''}</td>
-                  <td class="text-right text-red">${formatNumber(item.shortage)} ${item.unit || ''}</td>
-                </tr>
-              `).join('')}
+                  <td class="text-red">${item.item_name}</td>
+                  <td class="text-right text-red"><b>${formatNumber(item.current_stock)}</b> ${item.unit || ''}</td>
+                  <td class="text-right">${formatNumber(item.daily_avg)}</td>
+                  <td class="text-right text-red"><b>${item.days_of_stock === 999 ? '-' : item.days_of_stock + '일'}</b></td>
+                  <td class="text-right">${formatNumber(item.reorder_point)}</td>
+                  <td style="font-size:7px; color:#666;">${item.grade_reason || ''}</td>
+                </tr>`;
+              }).join('')}
             </tbody>
           </table>
         </div>
-        ` : '<div class="section"><div class="section-title green">✅ 안전재고 미만 품목 없음</div></div>'}
-        
-        <!-- 소비기한 임박 LOT -->
+        ` : ''}
+
+        <!-- ★ 🟡 주의 필요 리스트 -->
+        ${warningItems.length > 0 ? `
+        <div class="section">
+          <div class="section-title yellow">🟡 주의 필요 (${warningItems.length}개) - 잔여일 4~10일</div>
+          <table>
+            <thead>
+              <tr>
+                <th class="text-center">등급</th>
+                <th>품목코드</th>
+                <th>품목명</th>
+                <th class="text-right">현재고</th>
+                <th class="text-right">일평균</th>
+                <th class="text-right">잔여일</th>
+                <th class="text-right">발주점</th>
+                <th>등급사유</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${warningItems.map(item => {
+                const gradeBadge = item.grade === 'A' ? '<span class="badge badge-purple">A</span>' :
+                                   item.grade === 'B' ? '<span class="badge badge-blue">B</span>' :
+                                   item.grade === 'C' ? '<span class="badge badge-orange">C</span>' :
+                                   '<span class="badge badge-gray">기타</span>';
+                return `<tr>
+                  <td class="text-center">${gradeBadge}</td>
+                  <td>${item.item_code}</td>
+                  <td class="text-yellow">${item.item_name}</td>
+                  <td class="text-right text-yellow"><b>${formatNumber(item.current_stock)}</b> ${item.unit || ''}</td>
+                  <td class="text-right">${formatNumber(item.daily_avg)}</td>
+                  <td class="text-right text-yellow"><b>${item.days_of_stock === 999 ? '-' : item.days_of_stock + '일'}</b></td>
+                  <td class="text-right">${formatNumber(item.reorder_point)}</td>
+                  <td style="font-size:7px; color:#666;">${item.grade_reason || ''}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+        ` : ''}
+
+        <!-- ★ 생산등록 현황 (일별 최근 5일) + 오늘 원료 사용내역 -->
+        <div class="two-columns">
+          ${data.production ? `
+          <div class="section">
+            <div class="section-title purple">📋 생산등록 현황 (일별)</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>생산일</th>
+                  <th class="text-center">품목수</th>
+                  <th class="text-right">총생산량</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(data.production?.dailySummary || []).length > 0 ?
+                  data.production.dailySummary.slice(0, 5).map((item, idx) => {
+                    const dayOfWeek = new Date(item.date).toLocaleDateString('ko-KR', {weekday: 'short'});
+                    return `<tr>
+                      <td>${item.date} <span style="color:#888;">(${dayOfWeek})</span>${idx === 0 ? ' <b style="color:#7c3aed;">오늘</b>' : ''}</td>
+                      <td class="text-center"><b>${item.products}종</b></td>
+                      <td class="text-right"><b>${formatNumber(item.total)}개</b></td>
+                    </tr>`;
+                  }).join('') :
+                  '<tr><td colspan="3" class="no-data">데이터 없음</td></tr>'
+                }
+              </tbody>
+            </table>
+          </div>
+          ` : ''}
+
+          <div class="section">
+            <div class="section-title red">🥣 오늘 원료 사용내역 (${todayUsageData.length}건)</div>
+            ${todayUsageData.length > 0 ? `
+            <table>
+              <thead>
+                <tr>
+                  <th>시간</th>
+                  <th>품목코드</th>
+                  <th>원료명</th>
+                  <th class="text-right">수량</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${todayUsageData.slice(0, 20).map(item => {
+                  const time = item.created_at ? new Date(item.created_at).toLocaleTimeString('ko-KR', {hour: '2-digit', minute:'2-digit'}) : '-';
+                  const qty = Math.abs(parseFloat(item.quantity) || 0);
+                  return `<tr>
+                    <td style="color:#888;">${time}</td>
+                    <td>${item.item_code}</td>
+                    <td>${item.item_name || '-'}</td>
+                    <td class="text-right text-red">-${formatNumber(qty)} ${item.unit || 'kg'}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+            ` : '<div class="no-data">오늘 사용 내역 없음</div>'}
+          </div>
+        </div>
+
+        <!-- ★ 소비기한 임박 LOT -->
         ${data.alerts.expiringLots.length > 0 ? `
         <div class="section">
           <div class="section-title yellow">⏰ 소비기한 임박 LOT - 30일 이내 (${data.alerts.expiringCount || data.alerts.expiringLots.length}개)</div>
@@ -2240,49 +2350,8 @@ async function printDashboard() {
             </tbody>
           </table>
         </div>
-        ` : '<div class="section"><div class="section-title green">✅ 소비기한 임박 LOT 없음</div></div>'}
-        
-        <!-- 오늘 사용/출고 현황 -->
-        <div class="two-columns">
-          <div class="section">
-            <div class="section-title blue">📋 오늘 원료 사용량 TOP 10</div>
-            ${data.today.usage.length > 0 ? `
-            <table>
-              <thead>
-                <tr><th>품목</th><th class="text-right">사용량</th></tr>
-              </thead>
-              <tbody>
-                ${data.today.usage.slice(0, 10).map(item => `
-                  <tr>
-                    <td>${item.item_name}</td>
-                    <td class="text-right">${formatNumber(item.total_qty)} ${item.unit}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-            ` : '<div class="no-data">오늘 사용 내역 없음</div>'}
-          </div>
-          
-          <div class="section">
-            <div class="section-title blue">📤 오늘 제품 출고량 TOP 10</div>
-            ${data.today.outbound.length > 0 ? `
-            <table>
-              <thead>
-                <tr><th>품목</th><th class="text-right">출고량</th></tr>
-              </thead>
-              <tbody>
-                ${data.today.outbound.slice(0, 10).map(item => `
-                  <tr>
-                    <td>${item.item_name}</td>
-                    <td class="text-right">${formatNumber(item.total_qty)} ${item.unit}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-            ` : '<div class="no-data">오늘 출고 내역 없음</div>'}
-          </div>
-        </div>
-        
+        ` : ''}
+
         <div style="text-align: center; margin-top: 15px; font-size: 8px; color: #999;">
           출력일시: ${new Date().toLocaleString('ko-KR')}
         </div>
@@ -5758,32 +5827,31 @@ function downloadSuppliesInventory() {
 }
 
 function printSuppliesInventory() {
+  // v3.6.54: 통합 printData 스타일로 통일 (본비반트 헤더/결재란 포함)
   const items = window.suppliesData || [];
-  const printWindow = window.open('', '_blank');
-  printWindow.document.write(`
-    <!DOCTYPE html><html><head><title>부자재 재고 현황</title>
-    <style>
-      body { font-family: sans-serif; padding: 20px; }
-      h1 { font-size: 18px; margin-bottom: 10px; }
-      table { width: 100%; border-collapse: collapse; font-size: 12px; }
-      th, td { border: 1px solid #333; padding: 6px; }
-      th { background: #f0f0f0; }
-      .right { text-align: right; }
-    </style></head><body>
-    <h1>부자재 재고 현황 (${formatDate(new Date())})</h1>
-    <table>
-      <thead><tr><th>품목코드</th><th>품목명</th><th>단위</th><th>현재고</th><th>안전재고</th><th>상태</th></tr></thead>
-      <tbody>
-        ${items.map(i => `<tr>
-          <td>${i.item_code}</td><td>${i.item_name}</td><td>${i.unit}</td>
-          <td class="right">${formatNumber(i.current_stock)}</td><td class="right">${formatNumber(i.safety_stock)}</td>
-          <td>${i.current_stock <= 0 ? '재고없음' : i.current_stock < i.safety_stock ? '부족' : '정상'}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table></body></html>
-  `);
-  printWindow.document.close();
-  printWindow.print();
+
+  const columns = [
+    { key: 'item_code', label: '품목코드' },
+    { key: 'item_name', label: '품목명' },
+    { key: 'unit', label: '단위', type: 'center' },
+    { key: 'current_stock', label: '현재고', type: 'number' },
+    { key: 'safety_stock', label: '안전재고', type: 'number' },
+    { key: 'status', label: '상태', type: 'center', format: (v) => {
+      const cls = v === '재고없음' ? 'badge-fail' : v === '부족' ? 'badge-fail' : 'badge-pass';
+      return `<span class="badge ${cls}">${v}</span>`;
+    }}
+  ];
+
+  // 상태 계산해서 데이터에 주입
+  const enriched = items.map(i => ({
+    ...i,
+    status: i.current_stock <= 0 ? '재고없음' : i.current_stock < i.safety_stock ? '부족' : '정상'
+  }));
+
+  const lowCount = enriched.filter(d => d.status !== '정상').length;
+  const tableHtml = tableToHtml(enriched, columns);
+  printData('부자재 재고 현황', tableHtml,
+    `<strong>총 품목:</strong> ${enriched.length}개 | <strong class="text-red">재고 부족/없음:</strong> ${lowCount}개`);
 }
 
 window.renderSuppliesInventory = renderSuppliesInventory;
@@ -55062,7 +55130,15 @@ async function renderProcessTracking() {
                    autofocus
                    onkeypress="if(event.key==='Enter') { event.preventDefault(); handleProcessBarcodeScan(); }"
                    oninput="handleProcessBarcodeAutoScan(event)"
-                   onblur="setTimeout(() => { if(document.getElementById('process-barcode-input')) document.getElementById('process-barcode-input').focus(); }, 100)">
+                   onblur="setTimeout(() => {
+                     // ★ v3.6.56: 모달/드롭다운이 열려있으면 재포커스하지 않음 (성형명 select 클릭 시 닫히는 문제 해결)
+                     const modalOpen = document.querySelector('#modal-container .modal.active');
+                     const activeTag = document.activeElement?.tagName;
+                     const isFormElement = activeTag === 'SELECT' || activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'BUTTON';
+                     if (modalOpen || isFormElement) return;
+                     const el = document.getElementById('process-barcode-input');
+                     if (el) el.focus();
+                   }, 100)">
           </div>
           <button onclick="handleProcessBarcodeScan()" class="px-8 py-4 bg-white text-emerald-600 rounded-xl font-bold text-lg hover:bg-emerald-50 shadow-lg">
             <i class="fas fa-play-circle mr-2"></i> 스캔

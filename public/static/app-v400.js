@@ -17015,6 +17015,10 @@ async function deleteDoughMaster(id) {
 
 // Initialize app
 async function initializeApp() {
+  // 초기 데이터 로딩 중 사용자가 사이드메뉴를 직접 클릭했는지 추적하는 플래그
+  // (로딩이 끝난 뒤 대시보드로 강제 이동하면서 사용자의 클릭을 덮어쓰는 버그 방지용)
+  let userNavigatedDuringInit = false;
+
   // 로그인 상태 확인
   const isLoggedIn = await checkAuth();
   
@@ -17057,6 +17061,7 @@ async function initializeApp() {
     link.addEventListener('click', function(e) {
       e.preventDefault();
       const page = this.dataset.page;
+      userNavigatedDuringInit = true; // 초기 데이터 로딩 중 사용자가 직접 클릭했음을 표시
       navigateTo(page);
       
       // Close sidebar on mobile
@@ -17072,8 +17077,12 @@ async function initializeApp() {
   
   // ★★★ v3.6.97: 처음 접속 시 항상 대시보드 표시 ★★★
   // 해시가 있어도 무시하고 대시보드로 시작
-  window.location.hash = 'dashboard';
-  renderDashboard();
+  // 단, 위 데이터 로딩(await) 도중 사용자가 이미 다른 메뉴를 클릭했다면
+  // 그 클릭 결과를 덮어쓰지 않는다 (버그 수정: 클릭 후 대시보드로 튕기던 현상)
+  if (!userNavigatedDuringInit) {
+    window.location.hash = 'dashboard';
+    renderDashboard();
+  }
 }
 
 // Initialize - 여러 방법으로 시도

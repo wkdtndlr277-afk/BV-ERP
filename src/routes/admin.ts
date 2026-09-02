@@ -8852,6 +8852,9 @@ admin.post('/recalculate-stats', async (c) => {
         const reorderPoint = Math.round((dailyAvg * leadTime + safetyStock) * 10) / 10;
         
         // DB 업데이트
+        // ★ safety_stock도 함께 저장 (대시보드 "긴급 발주 필요" 알림이 이 필드를 사용함.
+        //   기존에는 계산만 하고 저장을 안 해서, safety_stock이 항상 0으로 남아
+        //   대시보드 알림 자체가 절대 뜨지 않는 문제가 있었음)
         await c.env.DB.prepare(`
           UPDATE master SET
             daily_usage_avg = ?,
@@ -8862,6 +8865,7 @@ admin.post('/recalculate-stats', async (c) => {
             usage_cv = ?,
             item_grade = ?,
             calculated_reorder_point = ?,
+            safety_stock = ?,
             stats_updated_at = ?
           WHERE item_code = ?
         `).bind(
@@ -8873,6 +8877,7 @@ admin.post('/recalculate-stats', async (c) => {
           Math.round(cv * 1000) / 1000,
           grade,
           reorderPoint,
+          Math.round(safetyStock * 100) / 100,
           statsTime,
           item.item_code
         ).run();

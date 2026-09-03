@@ -58369,6 +58369,7 @@ async function renderEquipment() {
     });
     
     // 사이즈별 재고를 배지로 렌더링
+    // v3.6.72: 배지에 마우스 오버 시 편집(⚙️)/삭제(🗑️) 아이콘 표시
     function renderSizeBadges(itemCode, itemName) {
       const list = stockByItem[itemCode] || [];
       if (list.length === 0) {
@@ -58380,7 +58381,6 @@ async function renderEquipment() {
         const sb = (b.size || '').toString();
         if (!sa && sb) return 1;
         if (sa && !sb) return -1;
-        // 숫자로 시작하면 숫자 정렬
         const na = parseInt(sa, 10), nb = parseInt(sb, 10);
         if (!isNaN(na) && !isNaN(nb)) return na - nb;
         return sa.localeCompare(sb, 'ko');
@@ -58397,14 +58397,29 @@ async function renderEquipment() {
           colorCls = 'bg-green-50 text-green-700 border-green-200';
         }
         const safeName = (itemName || '').replace(/'/g, "\\'");
-        const safeSize = sizeLabel.replace(/'/g, "\\'");
-        return `<button
-          onclick="showEquipmentTxnModalForSize('${itemCode}','${safeName}','${safeSize === '공통' ? '' : safeSize}')"
-          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border ${colorCls} text-xs font-medium hover:shadow-sm transition"
-          title="클릭하여 입고/지급 등록">
-          <span class="text-gray-500">${sizeLabel}</span>
-          <span class="font-bold">${qty}</span>
-        </button>`;
+        const safeSize = (s.size || '').replace(/'/g, "\\'");
+        return `<span class="inline-flex items-center rounded border ${colorCls} text-xs font-medium overflow-hidden group">
+          <button
+            onclick="showEquipmentTxnModalForSize('${itemCode}','${safeName}','${safeSize}')"
+            class="px-2.5 py-1 hover:bg-white/40 transition"
+            title="클릭하여 입고/지급 등록">
+            <span class="text-gray-500">${sizeLabel}</span>
+            <span class="font-bold ml-1">${qty}</span>
+            ${s.safety_stock > 0 ? `<span class="text-gray-400 text-[10px] ml-1">/안전${s.safety_stock}</span>` : ''}
+          </button>
+          <button
+            onclick="showEquipmentStockEditModal(${s.id})"
+            class="px-1.5 py-1 border-l border-current/20 hover:bg-white/60 opacity-40 group-hover:opacity-100 transition"
+            title="재고/안전재고 수정">
+            <i class="fas fa-cog text-[10px]"></i>
+          </button>
+          <button
+            onclick="deleteEquipmentStock(${s.id}, '${safeName}', '${safeSize}', ${qty})"
+            class="px-1.5 py-1 border-l border-current/20 hover:bg-red-100 hover:text-red-700 opacity-40 group-hover:opacity-100 transition"
+            title="이 사이즈 삭제">
+            <i class="fas fa-times text-[10px]"></i>
+          </button>
+        </span>`;
       }).join('');
     }
     
@@ -58453,7 +58468,7 @@ async function renderEquipment() {
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase" style="min-width:280px;">사이즈별 재고 (사이즈 · 수량)</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">총 재고</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">단가</th>
-                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">사이즈 추가</th>
+                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">관리</th>
               </tr>
             </thead>
             <tbody id="equipment-tbody" class="divide-y divide-gray-200">
@@ -58461,10 +58476,11 @@ async function renderEquipment() {
                 items.map(item => {
                   const badges = renderSizeBadges(item.item_code, item.item_name);
                   const safeName = (item.item_name || '').replace(/'/g, "\\'");
+                  const isInactive = item.is_active === 0;
                   return `
-                  <tr class="hover:bg-gray-50 align-top">
+                  <tr class="hover:bg-gray-50 align-top ${isInactive ? 'opacity-50' : ''}">
                     <td class="px-4 py-3">
-                      <div class="text-sm font-medium text-gray-900">${item.item_name}</div>
+                      <div class="text-sm font-medium text-gray-900">${item.item_name} ${isInactive ? '<span class="ml-1 text-xs text-red-500">(비활성)</span>' : ''}</div>
                       <div class="text-xs text-gray-400 font-mono">${item.item_code} · ${item.unit || 'EA'}</div>
                     </td>
                     <td class="px-4 py-3 text-sm"><span class="px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-700">${item.category || '-'}</span></td>
@@ -58473,8 +58489,10 @@ async function renderEquipment() {
                     </td>
                     <td class="px-4 py-3 text-sm text-right font-semibold ${item.total_stock > 0 ? 'text-green-600' : 'text-gray-400'}">${(item.total_stock || 0).toLocaleString()}</td>
                     <td class="px-4 py-3 text-sm text-right text-gray-700">${(item.unit_price || 0).toLocaleString()}원</td>
-                    <td class="px-4 py-3 text-center">
-                      <button onclick="showEquipmentAddSizeModal('${item.item_code}','${safeName}')" class="text-purple-500 hover:text-purple-700 text-sm" title="사이즈 추가"><i class="fas fa-plus-circle"></i></button>
+                    <td class="px-4 py-3 text-center whitespace-nowrap">
+                      <button onclick="showEquipmentAddSizeModal('${item.item_code}','${safeName}')" class="text-purple-500 hover:text-purple-700 text-sm px-1" title="사이즈 추가"><i class="fas fa-plus-circle"></i></button>
+                      <button onclick="showEquipmentEditItemModal('${item.item_code}')" class="text-blue-500 hover:text-blue-700 text-sm px-1" title="품목 수정"><i class="fas fa-edit"></i></button>
+                      <button onclick="deleteEquipmentItem('${item.item_code}','${safeName}')" class="text-red-500 hover:text-red-700 text-sm px-1" title="품목 삭제"><i class="fas fa-trash"></i></button>
                     </td>
                   </tr>
                 `;}).join('')
@@ -58559,6 +58577,230 @@ async function submitEquipmentAddSize(itemCode) {
     }
   } catch (e) {
     alert('저장 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+// v3.6.72: ========== 품목 수정 ==========
+async function showEquipmentEditItemModal(itemCode) {
+  try {
+    const res = await axios.get('/api/equipment/items');
+    const items = res.data.data || [];
+    const item = items.find(i => i.item_code === itemCode);
+    if (!item) { alert('품목을 찾을 수 없습니다.'); return; }
+    
+    const html = `
+      <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md m-4">
+          <div class="px-6 py-4 border-b flex justify-between items-center">
+            <h3 class="text-lg font-bold">품목 수정 · ${item.item_code}</h3>
+            <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="p-6 space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">품목코드</label>
+              <input type="text" value="${item.item_code}" disabled class="w-full border rounded-lg px-3 py-2 bg-gray-100 text-gray-500 font-mono">
+              <p class="text-xs text-gray-400 mt-1">품목코드는 변경할 수 없습니다.</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">품목명 *</label>
+              <input type="text" id="eq-edit-name" value="${(item.item_name || '').replace(/"/g, '&quot;')}" class="w-full border rounded-lg px-3 py-2">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">분류</label>
+              <select id="eq-edit-category" class="w-full border rounded-lg px-3 py-2">
+                ${['의류','신발','장갑','모자','방문객용','기타'].map(c => `<option value="${c}" ${item.category === c ? 'selected' : ''}>${c}</option>`).join('')}
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">단위</label>
+              <input type="text" id="eq-edit-unit" value="${item.unit || 'EA'}" class="w-full border rounded-lg px-3 py-2">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">단가 (원)</label>
+              <input type="number" id="eq-edit-price" min="0" value="${item.unit_price || 0}" class="w-full border rounded-lg px-3 py-2">
+              <p class="text-xs text-gray-400 mt-1">단가를 변경해도 이전 거래 이력의 단가는 유지됩니다.</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+              <textarea id="eq-edit-memo" rows="2" class="w-full border rounded-lg px-3 py-2">${item.memo || ''}</textarea>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="checkbox" id="eq-edit-active" ${item.is_active !== 0 ? 'checked' : ''} class="w-4 h-4">
+              <label for="eq-edit-active" class="text-sm text-gray-700">활성 (체크 해제 시 목록에서 흐리게 표시)</label>
+            </div>
+          </div>
+          <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+            <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+            <button onclick="submitEquipmentEditItem('${itemCode}')" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">저장</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+    setTimeout(() => document.getElementById('eq-edit-name')?.focus(), 30);
+  } catch (e) {
+    alert('품목 조회 실패: ' + e.message);
+  }
+}
+
+async function submitEquipmentEditItem(itemCode) {
+  const payload = {
+    item_name: (document.getElementById('eq-edit-name').value || '').trim(),
+    category: document.getElementById('eq-edit-category').value,
+    unit: (document.getElementById('eq-edit-unit').value || 'EA').trim(),
+    unit_price: parseFloat(document.getElementById('eq-edit-price').value) || 0,
+    memo: document.getElementById('eq-edit-memo').value || '',
+    is_active: document.getElementById('eq-edit-active').checked ? 1 : 0
+  };
+  if (!payload.item_name) { alert('품목명은 필수입니다.'); return; }
+  
+  try {
+    const res = await axios.put('/api/equipment/items/' + encodeURIComponent(itemCode), payload);
+    if (res.data.success) {
+      alert('수정되었습니다.');
+      document.querySelector('.fixed.inset-0')?.remove();
+      renderEquipment();
+    } else {
+      alert('저장 실패: ' + (res.data.error || '알 수 없음'));
+    }
+  } catch (e) {
+    alert('저장 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+// v3.6.72: ========== 품목 삭제 ==========
+async function deleteEquipmentItem(itemCode, itemName) {
+  const first = confirm(`정말로 [${itemName}] 품목을 삭제하시겠습니까?\n\n· 거래 이력이 있으면 자동으로 '비활성화'됩니다\n· 이력이 없으면 즉시 완전 삭제됩니다`);
+  if (!first) return;
+  
+  try {
+    const res = await axios.delete('/api/equipment/items/' + encodeURIComponent(itemCode));
+    if (res.data.success) {
+      if (res.data.soft_delete) {
+        // 거래 이력이 있어 비활성화됨 → 강제 삭제 여부 확인
+        const force = confirm(res.data.message + '\n\n완전 삭제하려면 확인을 누르세요. (이력까지 모두 삭제됩니다 — 복구 불가)');
+        if (force) {
+          const res2 = await axios.delete('/api/equipment/items/' + encodeURIComponent(itemCode) + '?force=1');
+          if (res2.data.success) alert('완전 삭제되었습니다.');
+          else alert('강제 삭제 실패: ' + (res2.data.error || '알 수 없음'));
+        } else {
+          alert('비활성화 처리되었습니다. 목록에서 흐리게 표시됩니다.');
+        }
+      } else {
+        alert(res.data.message || '삭제되었습니다.');
+      }
+      renderEquipment();
+    } else {
+      alert('삭제 실패: ' + (res.data.error || '알 수 없음'));
+    }
+  } catch (e) {
+    alert('삭제 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+// v3.6.72: ========== 사이즈별 재고 수정 (재고 조정 + 안전재고) ==========
+async function showEquipmentStockEditModal(stockId) {
+  try {
+    // /api/equipment/stock 은 item_code 없이 호출하면 전체를 반환 → id로 필터
+    const res = await axios.get('/api/equipment/stock');
+    const list = res.data.data || [];
+    const stock = list.find(s => s.id === stockId);
+    if (!stock) { alert('재고 항목을 찾을 수 없습니다.'); return; }
+    
+    const sizeLabel = stock.size || '(공통)';
+    const html = `
+      <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md m-4">
+          <div class="px-6 py-4 border-b flex justify-between items-center">
+            <h3 class="text-lg font-bold">재고 조정 · ${stock.item_name} · ${sizeLabel}</h3>
+            <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+          </div>
+          <div class="p-6 space-y-4">
+            <div class="bg-gray-50 rounded p-3 text-sm">
+              <div class="flex justify-between"><span class="text-gray-500">현재 재고:</span><span class="font-semibold">${stock.current_stock}</span></div>
+              <div class="flex justify-between mt-1"><span class="text-gray-500">현재 안전재고:</span><span class="font-semibold">${stock.safety_stock}</span></div>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">새 재고 수량 *</label>
+              <input type="number" id="eq-stock-new" min="0" value="${stock.current_stock}" class="w-full border rounded-lg px-3 py-2">
+              <p class="text-xs text-gray-500 mt-1">변경 시 자동으로 '재고조정' 이력이 남습니다.</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">안전 재고 (부족 경고 기준)</label>
+              <input type="number" id="eq-stock-safety" min="0" value="${stock.safety_stock}" class="w-full border rounded-lg px-3 py-2">
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+              <input type="text" id="eq-stock-memo" placeholder="재고 실사, 파손, 오류 정정 등" class="w-full border rounded-lg px-3 py-2">
+            </div>
+          </div>
+          <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+            <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+            <button onclick="submitEquipmentStockEdit(${stockId})" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">저장</button>
+          </div>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', html);
+    setTimeout(() => {
+      const el = document.getElementById('eq-stock-new');
+      if (el) { el.focus(); el.select(); }
+    }, 30);
+  } catch (e) {
+    alert('재고 조회 실패: ' + e.message);
+  }
+}
+
+async function submitEquipmentStockEdit(stockId) {
+  const payload = {
+    current_stock: parseFloat(document.getElementById('eq-stock-new').value),
+    safety_stock: parseFloat(document.getElementById('eq-stock-safety').value) || 0,
+    memo: document.getElementById('eq-stock-memo').value || ''
+  };
+  if (isNaN(payload.current_stock) || payload.current_stock < 0) {
+    alert('재고는 0 이상이어야 합니다.');
+    return;
+  }
+  try {
+    const res = await axios.put('/api/equipment/stock/' + stockId, payload);
+    if (res.data.success) {
+      alert(res.data.message || '수정되었습니다.');
+      document.querySelector('.fixed.inset-0')?.remove();
+      renderEquipment();
+    } else {
+      alert('저장 실패: ' + (res.data.error || '알 수 없음'));
+    }
+  } catch (e) {
+    alert('저장 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+// v3.6.72: ========== 사이즈 삭제 ==========
+async function deleteEquipmentStock(stockId, itemName, size, currentStock) {
+  const sizeLabel = size || '(공통)';
+  const first = confirm(`정말로 [${itemName} · ${sizeLabel}] 사이즈를 삭제하시겠습니까?\n\n· 현재 재고: ${currentStock}\n· 재고가 남아있거나 거래 이력이 있으면 삭제가 거부됩니다`);
+  if (!first) return;
+  
+  try {
+    const res = await axios.delete('/api/equipment/stock/' + stockId);
+    if (res.data.success) {
+      alert(res.data.message || '삭제되었습니다.');
+      renderEquipment();
+    } else {
+      // 재고 남아있거나 이력 있음 → 강제 삭제 옵션
+      const force = confirm((res.data.error || '삭제할 수 없습니다.') + '\n\n강제 삭제하시겠습니까? (관련 거래 이력까지 모두 삭제됩니다 — 복구 불가)');
+      if (force) {
+        const res2 = await axios.delete('/api/equipment/stock/' + stockId + '?force=1');
+        if (res2.data.success) {
+          alert('강제 삭제되었습니다.');
+          renderEquipment();
+        } else {
+          alert('강제 삭제 실패: ' + (res2.data.error || '알 수 없음'));
+        }
+      }
+    }
+  } catch (e) {
+    alert('삭제 실패: ' + (e.response?.data?.error || e.message));
   }
 }
 
@@ -59409,6 +59651,13 @@ window.loadEquipmentTransactions = loadEquipmentTransactions;
 window.showEquipmentTxnModalForSize = showEquipmentTxnModalForSize;
 window.showEquipmentAddSizeModal = showEquipmentAddSizeModal;
 window.submitEquipmentAddSize = submitEquipmentAddSize;
+// v3.6.72: 품목/재고 수정·삭제
+window.showEquipmentEditItemModal = showEquipmentEditItemModal;
+window.submitEquipmentEditItem = submitEquipmentEditItem;
+window.deleteEquipmentItem = deleteEquipmentItem;
+window.showEquipmentStockEditModal = showEquipmentStockEditModal;
+window.submitEquipmentStockEdit = submitEquipmentStockEdit;
+window.deleteEquipmentStock = deleteEquipmentStock;
 window.renderPackagingBOM = renderPackagingBOM;
 window.showPackagingAddModal = showPackagingAddModal;
 window.submitPackagingBOM = submitPackagingBOM;

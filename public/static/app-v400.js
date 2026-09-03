@@ -58643,6 +58643,11 @@ async function loadEquipmentTransactions() {
 }
 
 // ========== 포장재 BOM ==========
+// ========== 포장재 BOM (v3.6.69: 제품명 기반 검색) ==========
+// 제품/포장재 후보 캐시 (모달 재오픈 시 재사용)
+window.__pkgProductsCache = window.__pkgProductsCache || null;
+window.__pkgSuppliesCache = window.__pkgSuppliesCache || null;
+
 async function renderPackagingBOM() {
   const content = document.getElementById('page-content');
   const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
@@ -58653,6 +58658,14 @@ async function renderPackagingBOM() {
     if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
     
     const list = res.data.data || [];
+    // 제품명 기준 정렬 (제품명이 없으면 뒤로)
+    list.sort((a, b) => {
+      const na = (a.production_name || '').toString();
+      const nb = (b.production_name || '').toString();
+      if (!na && nb) return 1;
+      if (na && !nb) return -1;
+      return na.localeCompare(nb, 'ko');
+    });
     
     content.innerHTML = `
       <div class="mb-6">
@@ -58662,44 +58675,48 @@ async function renderPackagingBOM() {
         <p class="text-gray-500 text-sm mt-1">제품별 포장재(박스 등) 연결 정보. 출고 시 자동으로 재고에서 차감됩니다.</p>
       </div>
       
-      <div class="bg-white rounded-lg shadow p-4 mb-6">
+      <div class="bg-white rounded-lg shadow p-4 mb-6 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-2 flex-1 max-w-md">
+          <i class="fas fa-search text-gray-400"></i>
+          <input type="text" id="pkg-list-filter" placeholder="제품명 또는 포장재명으로 검색..." class="flex-1 border rounded-lg px-3 py-2 text-sm" oninput="filterPackagingList()">
+        </div>
         <button onclick="showPackagingAddModal()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
           <i class="fas fa-plus"></i> 포장재 연결 추가
         </button>
       </div>
       
       <div class="bg-white rounded-lg shadow overflow-hidden">
-        <div class="px-6 py-4 border-b bg-gray-50">
-          <h3 class="font-semibold text-gray-800">등록된 포장재 매핑 (${list.length}건)</h3>
+        <div class="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
+          <h3 class="font-semibold text-gray-800">등록된 포장재 매핑 (<span id="pkg-list-count">${list.length}</span>건)</h3>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full">
             <thead class="bg-gray-100">
               <tr>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">제품코드</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">제품명</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">포장재코드</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">포장재명</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">입수량 (개/박스)</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">메모</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase text-gray-400">코드</th>
                 <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">삭제</th>
               </tr>
             </thead>
-            <tbody class="divide-y divide-gray-200">
-              ${list.length === 0 ? '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">등록된 포장재 매핑이 없습니다.</td></tr>' :
-                list.map(row => `
-                  <tr class="hover:bg-gray-50">
-                    <td class="px-4 py-3 text-sm font-mono">${row.production_code}</td>
-                    <td class="px-4 py-3 text-sm">${row.production_name || '-'}</td>
-                    <td class="px-4 py-3 text-sm font-mono">${row.supply_code}</td>
-                    <td class="px-4 py-3 text-sm">${row.supply_name || '-'}</td>
+            <tbody class="divide-y divide-gray-200" id="pkg-list-body">
+              ${list.length === 0 ? '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">등록된 포장재 매핑이 없습니다.</td></tr>' :
+                list.map(row => {
+                  const searchKey = ((row.production_name || '') + ' ' + (row.supply_name || '') + ' ' + (row.production_code || '') + ' ' + (row.supply_code || '')).toLowerCase();
+                  return `
+                  <tr class="hover:bg-gray-50 pkg-row" data-search="${searchKey.replace(/"/g, '&quot;')}">
+                    <td class="px-4 py-3 text-sm font-medium">${row.production_name || '<span class="text-gray-400">-</span>'}</td>
+                    <td class="px-4 py-3 text-sm">${row.supply_name || '<span class="text-gray-400">-</span>'}</td>
                     <td class="px-4 py-3 text-sm text-right font-semibold">${row.pack_qty}</td>
                     <td class="px-4 py-3 text-sm text-gray-500">${row.memo || ''}</td>
+                    <td class="px-4 py-3 text-xs text-gray-400 font-mono">${row.production_code} / ${row.supply_code}</td>
                     <td class="px-4 py-3 text-center">
                       <button onclick="deletePackagingBOM(${row.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
                     </td>
                   </tr>
-                `).join('')
+                `;}).join('')
               }
             </tbody>
           </table>
@@ -58711,40 +58728,92 @@ async function renderPackagingBOM() {
   }
 }
 
+// 리스트 검색 필터 (제품명/포장재명)
+function filterPackagingList() {
+  const q = (document.getElementById('pkg-list-filter')?.value || '').trim().toLowerCase();
+  const rows = document.querySelectorAll('#pkg-list-body .pkg-row');
+  let visible = 0;
+  rows.forEach(r => {
+    const key = r.getAttribute('data-search') || '';
+    const show = !q || key.indexOf(q) !== -1;
+    r.style.display = show ? '' : 'none';
+    if (show) visible++;
+  });
+  const countEl = document.getElementById('pkg-list-count');
+  if (countEl) countEl.textContent = q ? (visible + ' / ' + rows.length) : rows.length;
+}
+
 async function showPackagingAddModal() {
   try {
-    // 제품 목록 + 부자재(포장재) 목록 로드
-    // - 제품: /api/admin/production-items (production_items 테이블)
-    // - 부자재: /api/master 에서 category === '부자재' 필터
-    const [prodRes, masterRes] = await Promise.all([
-      axios.get('/api/admin/production-items'),
-      axios.get('/api/master')
-    ]);
-    const products = (prodRes.data.data || prodRes.data.items || []).filter(p => p.is_active !== 0);
-    const supplies = (masterRes.data.data || []).filter(m => m.category === '부자재');
+    // 제품 목록 + 부자재(포장재) 목록 로드 (캐시)
+    if (!window.__pkgProductsCache || !window.__pkgSuppliesCache) {
+      const [prodRes, masterRes] = await Promise.all([
+        axios.get('/api/admin/production-items'),
+        axios.get('/api/master')
+      ]);
+      const products = (prodRes.data.data || prodRes.data.items || []).filter(p => p.is_active !== 0);
+      const supplies = (masterRes.data.data || []).filter(m => m.category === '부자재');
+      // 제품명/자재명 기준 정렬
+      products.sort((a, b) => (a.production_name || '').localeCompare(b.production_name || '', 'ko'));
+      supplies.sort((a, b) => (a.item_name || '').localeCompare(b.item_name || '', 'ko'));
+      window.__pkgProductsCache = products;
+      window.__pkgSuppliesCache = supplies;
+    }
+    const products = window.__pkgProductsCache;
+    const supplies = window.__pkgSuppliesCache;
     
     const html = `
       <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md m-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg m-4">
           <div class="px-6 py-4 border-b flex justify-between items-center">
             <h3 class="text-lg font-bold">포장재 연결 추가</h3>
             <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
           </div>
           <div class="p-6 space-y-4">
-            <div><label class="block text-sm font-medium text-gray-700 mb-1">제품 * <span class="text-xs text-gray-400">(${products.length}개)</span></label>
-              <select id="pkg-product" class="w-full border rounded-lg px-3 py-2">
-                <option value="">-- 선택 --</option>
-                ${products.map(p => '<option value="' + p.production_code + '">' + p.production_code + ' - ' + p.production_name + '</option>').join('')}
-              </select>
+            <!-- 제품 검색 -->
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                제품명 검색 * <span class="text-xs text-gray-400">(${products.length}개)</span>
+              </label>
+              <div class="relative">
+                <input type="text" id="pkg-product-search" autocomplete="off"
+                  placeholder="제품명을 입력하세요 (예: 식빵)"
+                  oninput="onPkgProductSearch()"
+                  onfocus="onPkgProductSearch()"
+                  class="w-full border rounded-lg px-3 py-2">
+                <input type="hidden" id="pkg-product-code" value="">
+                <div id="pkg-product-list" class="hidden absolute z-10 mt-1 w-full bg-white border rounded-lg shadow-lg max-h-56 overflow-y-auto"></div>
+              </div>
+              <p class="text-xs text-gray-500 mt-1">제품명 일부만 입력해도 검색됩니다. 선택 후 코드가 자동 매칭됩니다.</p>
+              <div id="pkg-product-selected" class="hidden mt-2 text-xs bg-purple-50 border border-purple-200 rounded px-3 py-2"></div>
             </div>
-            <div><label class="block text-sm font-medium text-gray-700 mb-1">포장재 (부자재) * <span class="text-xs text-gray-400">(${supplies.length}개)</span></label>
-              <select id="pkg-supply" class="w-full border rounded-lg px-3 py-2">
-                <option value="">-- 선택 --</option>
-                ${supplies.map(s => '<option value="' + s.item_code + '">' + s.item_code + ' - ' + s.item_name + '</option>').join('')}
-              </select>
+            
+            <!-- 포장재 검색 -->
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                포장재명 검색 * <span class="text-xs text-gray-400">(${supplies.length}개)</span>
+              </label>
+              <div class="relative">
+                <input type="text" id="pkg-supply-search" autocomplete="off"
+                  placeholder="포장재명을 입력하세요 (예: 박스)"
+                  oninput="onPkgSupplySearch()"
+                  onfocus="onPkgSupplySearch()"
+                  class="w-full border rounded-lg px-3 py-2">
+                <input type="hidden" id="pkg-supply-code" value="">
+                <div id="pkg-supply-list" class="hidden absolute z-10 mt-1 w-full bg-white border rounded-lg shadow-lg max-h-56 overflow-y-auto"></div>
+              </div>
+              <div id="pkg-supply-selected" class="hidden mt-2 text-xs bg-purple-50 border border-purple-200 rounded px-3 py-2"></div>
             </div>
-            <div><label class="block text-sm font-medium text-gray-700 mb-1">입수량 (개/박스) *</label><input type="number" id="pkg-qty" min="1" value="20" class="w-full border rounded-lg px-3 py-2"><p class="text-xs text-gray-500 mt-1">예: 20이면 20개 출고할 때마다 포장재 1개 차감</p></div>
-            <div><label class="block text-sm font-medium text-gray-700 mb-1">메모</label><input type="text" id="pkg-memo" class="w-full border rounded-lg px-3 py-2"></div>
+            
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">입수량 (개/박스) *</label>
+              <input type="number" id="pkg-qty" min="1" value="20" class="w-full border rounded-lg px-3 py-2">
+              <p class="text-xs text-gray-500 mt-1">예: 20이면 20개 출고할 때마다 포장재 1개 차감</p>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+              <input type="text" id="pkg-memo" class="w-full border rounded-lg px-3 py-2">
+            </div>
           </div>
           <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
             <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
@@ -58754,25 +58823,139 @@ async function showPackagingAddModal() {
       </div>
     `;
     document.body.insertAdjacentHTML('beforeend', html);
+    
+    // 바깥 클릭 시 dropdown 숨김
+    document.addEventListener('click', function _pkgClickHandler(e) {
+      if (!document.getElementById('pkg-product-search')) {
+        document.removeEventListener('click', _pkgClickHandler);
+        return;
+      }
+      const inside = e.target.closest('#pkg-product-search, #pkg-product-list, #pkg-supply-search, #pkg-supply-list');
+      if (!inside) {
+        const pl = document.getElementById('pkg-product-list');
+        const sl = document.getElementById('pkg-supply-list');
+        if (pl) pl.classList.add('hidden');
+        if (sl) sl.classList.add('hidden');
+      }
+    });
   } catch (e) {
     alert('모달 로딩 실패: ' + e.message);
   }
 }
 
+// 제품 검색 (제품명 부분일치, 코드도 함께 검색 가능)
+function onPkgProductSearch() {
+  const q = (document.getElementById('pkg-product-search')?.value || '').trim().toLowerCase();
+  const listEl = document.getElementById('pkg-product-list');
+  if (!listEl) return;
+  const items = (window.__pkgProductsCache || []);
+  const filtered = !q ? items.slice(0, 50) : items.filter(p => {
+    const name = (p.production_name || '').toLowerCase();
+    const code = (p.production_code || '').toLowerCase();
+    return name.indexOf(q) !== -1 || code.indexOf(q) !== -1;
+  }).slice(0, 50);
+  
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div class="px-3 py-2 text-sm text-gray-500">일치하는 제품이 없습니다</div>';
+  } else {
+    listEl.innerHTML = filtered.map(p => {
+      const name = p.production_name || '(이름 없음)';
+      const code = p.production_code || '';
+      const wt = p.standard_weight ? ' <span class="text-xs text-gray-400">' + p.standard_weight + 'g</span>' : '';
+      return `<div class="px-3 py-2 hover:bg-purple-50 cursor-pointer border-b last:border-0" onclick="selectPkgProduct('${code.replace(/'/g, "\\'")}', '${name.replace(/'/g, "\\'")}')">
+        <div class="text-sm font-medium">${name}${wt}</div>
+        <div class="text-xs text-gray-400 font-mono">${code}</div>
+      </div>`;
+    }).join('');
+  }
+  listEl.classList.remove('hidden');
+}
+
+function selectPkgProduct(code, name) {
+  document.getElementById('pkg-product-code').value = code;
+  document.getElementById('pkg-product-search').value = name;
+  document.getElementById('pkg-product-list').classList.add('hidden');
+  const sel = document.getElementById('pkg-product-selected');
+  if (sel) {
+    sel.classList.remove('hidden');
+    sel.innerHTML = '<i class="fas fa-check-circle text-purple-500 mr-1"></i> 선택됨: <strong>' + name + '</strong> <span class="text-gray-400 font-mono">(' + code + ')</span>';
+  }
+}
+
+// 포장재 검색
+function onPkgSupplySearch() {
+  const q = (document.getElementById('pkg-supply-search')?.value || '').trim().toLowerCase();
+  const listEl = document.getElementById('pkg-supply-list');
+  if (!listEl) return;
+  const items = (window.__pkgSuppliesCache || []);
+  const filtered = !q ? items.slice(0, 50) : items.filter(s => {
+    const name = (s.item_name || '').toLowerCase();
+    const code = (s.item_code || '').toLowerCase();
+    return name.indexOf(q) !== -1 || code.indexOf(q) !== -1;
+  }).slice(0, 50);
+  
+  if (filtered.length === 0) {
+    listEl.innerHTML = '<div class="px-3 py-2 text-sm text-gray-500">일치하는 포장재가 없습니다</div>';
+  } else {
+    listEl.innerHTML = filtered.map(s => {
+      const name = s.item_name || '(이름 없음)';
+      const code = s.item_code || '';
+      const unit = s.unit ? ' <span class="text-xs text-gray-400">/' + s.unit + '</span>' : '';
+      return `<div class="px-3 py-2 hover:bg-purple-50 cursor-pointer border-b last:border-0" onclick="selectPkgSupply('${code.replace(/'/g, "\\'")}', '${name.replace(/'/g, "\\'")}')">
+        <div class="text-sm font-medium">${name}${unit}</div>
+        <div class="text-xs text-gray-400 font-mono">${code}</div>
+      </div>`;
+    }).join('');
+  }
+  listEl.classList.remove('hidden');
+}
+
+function selectPkgSupply(code, name) {
+  document.getElementById('pkg-supply-code').value = code;
+  document.getElementById('pkg-supply-search').value = name;
+  document.getElementById('pkg-supply-list').classList.add('hidden');
+  const sel = document.getElementById('pkg-supply-selected');
+  if (sel) {
+    sel.classList.remove('hidden');
+    sel.innerHTML = '<i class="fas fa-check-circle text-purple-500 mr-1"></i> 선택됨: <strong>' + name + '</strong> <span class="text-gray-400 font-mono">(' + code + ')</span>';
+  }
+}
+
 async function submitPackagingBOM() {
+  const productionCode = document.getElementById('pkg-product-code').value.trim();
+  const supplyCode = document.getElementById('pkg-supply-code').value.trim();
+  const packQty = parseFloat(document.getElementById('pkg-qty').value);
+  const memo = document.getElementById('pkg-memo').value || '';
+  
+  if (!productionCode) {
+    alert('제품을 검색해서 선택해주세요.');
+    document.getElementById('pkg-product-search')?.focus();
+    return;
+  }
+  if (!supplyCode) {
+    alert('포장재를 검색해서 선택해주세요.');
+    document.getElementById('pkg-supply-search')?.focus();
+    return;
+  }
+  if (!packQty || packQty <= 0) {
+    alert('입수량은 0보다 커야 합니다.');
+    document.getElementById('pkg-qty')?.focus();
+    return;
+  }
+  
   const payload = {
-    production_code: document.getElementById('pkg-product').value,
-    supply_code: document.getElementById('pkg-supply').value,
-    pack_qty: parseFloat(document.getElementById('pkg-qty').value),
-    memo: document.getElementById('pkg-memo').value || ''
+    production_code: productionCode,
+    supply_code: supplyCode,
+    pack_qty: packQty,
+    memo: memo
   };
-  if (!payload.production_code || !payload.supply_code || !payload.pack_qty) { alert('제품, 포장재, 입수량은 필수입니다.'); return; }
   
   try {
-    const res = await axios.post('/api/packaging/upsert', payload);
+    // v3.6.69: 올바른 엔드포인트 /api/packaging/link
+    const res = await axios.post('/api/packaging/link', payload);
     if (res.data.success) {
-      alert('저장 완료');
-      document.querySelector('.fixed.inset-0').remove();
+      alert(res.data.message || '저장 완료');
+      document.querySelector('.fixed.inset-0')?.remove();
       renderPackagingBOM();
     } else {
       alert('저장 실패: ' + (res.data.error || '알 수 없음'));
@@ -58785,7 +58968,8 @@ async function submitPackagingBOM() {
 async function deletePackagingBOM(id) {
   if (!confirm('이 포장재 연결을 삭제하시겠습니까?')) return;
   try {
-    const res = await axios.delete('/api/packaging/' + id);
+    // v3.6.69: 올바른 엔드포인트 /api/packaging/link/:id
+    const res = await axios.delete('/api/packaging/link/' + id);
     if (res.data.success) {
       renderPackagingBOM();
     } else {
@@ -59070,6 +59254,12 @@ window.renderPackagingBOM = renderPackagingBOM;
 window.showPackagingAddModal = showPackagingAddModal;
 window.submitPackagingBOM = submitPackagingBOM;
 window.deletePackagingBOM = deletePackagingBOM;
+// v3.6.69: 포장재 BOM 제품명 검색 UI
+window.filterPackagingList = filterPackagingList;
+window.onPkgProductSearch = onPkgProductSearch;
+window.selectPkgProduct = selectPkgProduct;
+window.onPkgSupplySearch = onPkgSupplySearch;
+window.selectPkgSupply = selectPkgSupply;
 window.renderYieldReport = renderYieldReport;
 window.loadYieldReport = loadYieldReport;
 window.showStandardWeightSuggestModal = showStandardWeightSuggestModal;

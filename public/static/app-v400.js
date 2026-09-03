@@ -58344,77 +58344,140 @@ window.deleteBarcodeItem = deleteBarcodeItem;
 // v3.6.64 신규: 비품 관리 / 포장재 BOM / 수율 리포트
 // ============================================================
 
-// ========== 비품 관리 ==========
+// ========== 비품 관리 (v3.6.71: 사이즈별 재고 인라인 표시) ==========
 async function renderEquipment() {
   const content = document.getElementById('page-content');
   const myToken = (typeof beginRender === 'function') ? beginRender() : 0;
   content.innerHTML = '<div class="text-center py-20"><i class="fas fa-spinner fa-spin text-4xl text-purple-500"></i><p class="mt-4 text-gray-600">비품 목록 로딩 중...</p></div>';
   
   try {
-    const res = await axios.get('/api/equipment/items');
+    // 품목과 사이즈별 재고를 한 번에 로드
+    const [itemsRes, stockRes] = await Promise.all([
+      axios.get('/api/equipment/items'),
+      axios.get('/api/equipment/stock')
+    ]);
     if (typeof isRenderCurrent === 'function' && !isRenderCurrent(myToken)) return;
     
-    const items = res.data.data || [];
+    const items = itemsRes.data.data || [];
+    const stocks = stockRes.data.data || [];
+    
+    // 품목코드별로 사이즈 재고 그룹핑
+    const stockByItem = {};
+    stocks.forEach(s => {
+      if (!stockByItem[s.item_code]) stockByItem[s.item_code] = [];
+      stockByItem[s.item_code].push(s);
+    });
+    
+    // 사이즈별 재고를 배지로 렌더링
+    function renderSizeBadges(itemCode, itemName) {
+      const list = stockByItem[itemCode] || [];
+      if (list.length === 0) {
+        return '<span class="text-xs text-gray-400">사이즈 미등록 · 입고 시 자동 생성</span>';
+      }
+      // 사이즈 정렬 (사이즈 없음은 뒤로)
+      list.sort((a, b) => {
+        const sa = (a.size || '').toString();
+        const sb = (b.size || '').toString();
+        if (!sa && sb) return 1;
+        if (sa && !sb) return -1;
+        // 숫자로 시작하면 숫자 정렬
+        const na = parseInt(sa, 10), nb = parseInt(sb, 10);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return sa.localeCompare(sb, 'ko');
+      });
+      return list.map(s => {
+        const sizeLabel = s.size || '공통';
+        const qty = s.current_stock || 0;
+        let colorCls;
+        if (qty <= 0) {
+          colorCls = 'bg-gray-100 text-gray-400 border-gray-200';
+        } else if (s.is_low || (s.safety_stock > 0 && qty <= s.safety_stock)) {
+          colorCls = 'bg-red-50 text-red-700 border-red-200';
+        } else {
+          colorCls = 'bg-green-50 text-green-700 border-green-200';
+        }
+        const safeName = (itemName || '').replace(/'/g, "\\'");
+        const safeSize = sizeLabel.replace(/'/g, "\\'");
+        return `<button
+          onclick="showEquipmentTxnModalForSize('${itemCode}','${safeName}','${safeSize === '공통' ? '' : safeSize}')"
+          class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded border ${colorCls} text-xs font-medium hover:shadow-sm transition"
+          title="클릭하여 입고/지급 등록">
+          <span class="text-gray-500">${sizeLabel}</span>
+          <span class="font-bold">${qty}</span>
+        </button>`;
+      }).join('');
+    }
     
     content.innerHTML = `
       <div class="mb-6">
         <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
           <i class="fas fa-tshirt text-purple-500"></i> 비품 관리
         </h2>
-        <p class="text-gray-500 text-sm mt-1">위생복/위생화/장갑/모자 등 비품 재고와 지급 이력을 관리합니다.</p>
+        <p class="text-gray-500 text-sm mt-1">위생복/위생화/장갑/모자 등 비품 재고와 지급 이력을 관리합니다. <span class="text-purple-600">사이즈 배지를 클릭하면 해당 사이즈로 바로 입고/지급 가능</span></p>
       </div>
       
       <div class="bg-white rounded-lg shadow p-4 mb-6">
-        <div class="flex gap-3 flex-wrap">
-          <button onclick="showEquipmentInboundModal()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
-            <i class="fas fa-plus"></i> 입고 등록
-          </button>
-          <button onclick="showEquipmentIssueModal()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
-            <i class="fas fa-hand-holding"></i> 지급 등록
-          </button>
-          <button onclick="showEquipmentAddItemModal()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
-            <i class="fas fa-tag"></i> 품목 추가
-          </button>
-          <button onclick="loadEquipmentTransactions()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
-            <i class="fas fa-history"></i> 거래 이력
-          </button>
+        <div class="flex gap-3 flex-wrap items-center justify-between">
+          <div class="flex gap-3 flex-wrap">
+            <button onclick="showEquipmentInboundModal()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+              <i class="fas fa-plus"></i> 입고 등록
+            </button>
+            <button onclick="showEquipmentIssueModal()" class="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+              <i class="fas fa-hand-holding"></i> 지급 등록
+            </button>
+            <button onclick="showEquipmentAddItemModal()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+              <i class="fas fa-tag"></i> 품목 추가
+            </button>
+            <button onclick="loadEquipmentTransactions()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+              <i class="fas fa-history"></i> 거래 이력
+            </button>
+          </div>
+          <div class="flex items-center gap-2 text-xs text-gray-500">
+            <span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded bg-green-50 border border-green-200"></span> 정상</span>
+            <span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded bg-red-50 border border-red-200"></span> 부족</span>
+            <span class="inline-flex items-center gap-1"><span class="inline-block w-3 h-3 rounded bg-gray-100 border border-gray-200"></span> 없음</span>
+          </div>
         </div>
       </div>
       
       <div class="bg-white rounded-lg shadow overflow-hidden">
         <div class="px-6 py-4 border-b bg-gray-50">
-          <h3 class="font-semibold text-gray-800">품목별 재고 (${items.length}종)</h3>
+          <h3 class="font-semibold text-gray-800">품목별 · 사이즈별 재고 (${items.length}종)</h3>
         </div>
         <div class="overflow-x-auto">
           <table class="w-full">
             <thead class="bg-gray-100">
               <tr>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">품목코드</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">품목명</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">분류</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">단위</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">단가</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase" style="min-width:280px;">사이즈별 재고 (사이즈 · 수량)</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">총 재고</th>
-                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">사이즈 수</th>
-                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">상세</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">단가</th>
+                <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">사이즈 추가</th>
               </tr>
             </thead>
             <tbody id="equipment-tbody" class="divide-y divide-gray-200">
-              ${items.length === 0 ? '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">등록된 비품이 없습니다.</td></tr>' :
-                items.map(item => `
-                  <tr class="hover:bg-gray-50">
-                    <td class="px-4 py-3 text-sm font-mono text-gray-700">${item.item_code}</td>
-                    <td class="px-4 py-3 text-sm font-medium text-gray-900">${item.item_name}</td>
+              ${items.length === 0 ? '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">등록된 비품이 없습니다.</td></tr>' :
+                items.map(item => {
+                  const badges = renderSizeBadges(item.item_code, item.item_name);
+                  const safeName = (item.item_name || '').replace(/'/g, "\\'");
+                  return `
+                  <tr class="hover:bg-gray-50 align-top">
+                    <td class="px-4 py-3">
+                      <div class="text-sm font-medium text-gray-900">${item.item_name}</div>
+                      <div class="text-xs text-gray-400 font-mono">${item.item_code} · ${item.unit || 'EA'}</div>
+                    </td>
                     <td class="px-4 py-3 text-sm"><span class="px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-700">${item.category || '-'}</span></td>
-                    <td class="px-4 py-3 text-sm text-gray-600">${item.unit || 'EA'}</td>
-                    <td class="px-4 py-3 text-sm text-right text-gray-700">${(item.unit_price || 0).toLocaleString()}원</td>
+                    <td class="px-4 py-3">
+                      <div class="flex flex-wrap gap-1.5">${badges}</div>
+                    </td>
                     <td class="px-4 py-3 text-sm text-right font-semibold ${item.total_stock > 0 ? 'text-green-600' : 'text-gray-400'}">${(item.total_stock || 0).toLocaleString()}</td>
-                    <td class="px-4 py-3 text-sm text-center text-gray-600">${item.size_variant_count || 0}</td>
+                    <td class="px-4 py-3 text-sm text-right text-gray-700">${(item.unit_price || 0).toLocaleString()}원</td>
                     <td class="px-4 py-3 text-center">
-                      <button onclick="showEquipmentSizeDetail('${item.item_code}','${item.item_name}')" class="text-blue-500 hover:text-blue-700 text-sm"><i class="fas fa-list"></i></button>
+                      <button onclick="showEquipmentAddSizeModal('${item.item_code}','${safeName}')" class="text-purple-500 hover:text-purple-700 text-sm" title="사이즈 추가"><i class="fas fa-plus-circle"></i></button>
                     </td>
                   </tr>
-                `).join('')
+                `;}).join('')
               }
             </tbody>
           </table>
@@ -58423,6 +58486,79 @@ async function renderEquipment() {
     `;
   } catch (error) {
     content.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-6 text-center"><i class="fas fa-exclamation-triangle text-red-500 text-3xl mb-3"></i><p class="text-red-700 font-medium">비품 목록 로딩 실패</p><p class="text-red-600 text-sm mt-2">${error.message || error}</p></div>`;
+  }
+}
+
+// 배지 클릭 시 해당 품목/사이즈로 프리셋된 거래 모달 열기
+async function showEquipmentTxnModalForSize(itemCode, itemName, size) {
+  const choice = confirm(`[${itemName}${size ? ' · ' + size : ''}]\n\n확인 → 입고 등록\n취소 → 지급 등록`);
+  const txnType = choice ? '입고' : '지급';
+  await showEquipmentTxnModal(txnType);
+  // 모달이 열린 뒤 값을 프리셋
+  setTimeout(() => {
+    const itemSel = document.getElementById('eq-txn-item');
+    const sizeInp = document.getElementById('eq-txn-size');
+    if (itemSel) itemSel.value = itemCode;
+    if (sizeInp) sizeInp.value = size || '';
+  }, 50);
+}
+
+// 사이즈 추가 모달 (equipment.post('/stock/init') 호출)
+function showEquipmentAddSizeModal(itemCode, itemName) {
+  const html = `
+    <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onclick="if(event.target===this)this.remove()">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-md m-4">
+        <div class="px-6 py-4 border-b flex justify-between items-center">
+          <h3 class="text-lg font-bold">사이즈 추가 · ${itemName}</h3>
+          <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="p-6 space-y-4">
+          <div class="text-xs text-gray-500 bg-gray-50 rounded p-2">
+            <i class="fas fa-info-circle mr-1"></i> 사이즈를 미리 등록해두면 재고 0인 상태로 리스트에 표시됩니다. <br>
+            (사이즈 없이 입고만 해도 자동 생성됩니다)
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">사이즈 *</label>
+            <input type="text" id="eq-size-value" placeholder="M, L, 245, 260 등" class="w-full border rounded-lg px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">초기 재고</label>
+            <input type="number" id="eq-size-initial" min="0" value="0" class="w-full border rounded-lg px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">안전 재고 (부족 경고 기준)</label>
+            <input type="number" id="eq-size-safety" min="0" value="0" class="w-full border rounded-lg px-3 py-2">
+          </div>
+        </div>
+        <div class="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
+          <button onclick="this.closest('.fixed').remove()" class="px-4 py-2 border rounded-lg hover:bg-gray-100">취소</button>
+          <button onclick="submitEquipmentAddSize('${itemCode}')" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg">저장</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+  setTimeout(() => document.getElementById('eq-size-value')?.focus(), 30);
+}
+
+async function submitEquipmentAddSize(itemCode) {
+  const size = (document.getElementById('eq-size-value').value || '').trim();
+  const initial_stock = parseFloat(document.getElementById('eq-size-initial').value) || 0;
+  const safety_stock = parseFloat(document.getElementById('eq-size-safety').value) || 0;
+  if (!size) { alert('사이즈를 입력해주세요.'); return; }
+  try {
+    const res = await axios.post('/api/equipment/stock/init', {
+      item_code: itemCode, size, initial_stock, safety_stock
+    });
+    if (res.data.success) {
+      alert('사이즈가 등록되었습니다.');
+      document.querySelector('.fixed.inset-0')?.remove();
+      renderEquipment();
+    } else {
+      alert('저장 실패: ' + (res.data.error || '알 수 없음'));
+    }
+  } catch (e) {
+    alert('저장 실패: ' + (e.response?.data?.error || e.message));
   }
 }
 
@@ -59269,6 +59405,10 @@ window.submitEquipmentTxn = submitEquipmentTxn;
 window.showEquipmentAddItemModal = showEquipmentAddItemModal;
 window.submitNewEquipmentItem = submitNewEquipmentItem;
 window.loadEquipmentTransactions = loadEquipmentTransactions;
+// v3.6.71: 사이즈별 재고 인라인 표시 + 배지 클릭 액션
+window.showEquipmentTxnModalForSize = showEquipmentTxnModalForSize;
+window.showEquipmentAddSizeModal = showEquipmentAddSizeModal;
+window.submitEquipmentAddSize = submitEquipmentAddSize;
 window.renderPackagingBOM = renderPackagingBOM;
 window.showPackagingAddModal = showPackagingAddModal;
 window.submitPackagingBOM = submitPackagingBOM;

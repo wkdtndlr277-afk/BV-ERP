@@ -120,24 +120,41 @@ equipment.post('/inbound', async (c) => {
     const sizeValue = size || ''
     const date = trans_date || new Date().toISOString().split('T')[0]
 
+    // v3.6.70: 품목코드 유효성 먼저 확인
+    const itemExists = await c.env.DB.prepare(
+      'SELECT item_code FROM equipment_items WHERE item_code = ?'
+    ).bind(item_code).first<any>()
+    if (!itemExists) {
+      return c.json({ success: false, error: '등록되지 않은 품목입니다. 먼저 [품목 추가]로 비품을 등록해주세요.' }, 404)
+    }
+
+    // v3.6.70: stock 레코드가 없으면 자동 생성 (upsert)
+    // 이렇게 하면 첫 입고 시 별도의 stock/init 호출이 필요 없음
     const stockRow = await c.env.DB.prepare(
       'SELECT id, current_stock FROM equipment_stock WHERE item_code = ? AND size = ?'
     ).bind(item_code, sizeValue).first<any>()
 
+    const batch: any[] = []
     if (!stockRow) {
-      return c.json({ success: false, error: '등록되지 않은 품목/사이즈입니다. 먼저 stock/init으로 사이즈를 등록해주세요.' }, 404)
+      // 자동 생성
+      batch.push(
+        c.env.DB.prepare('INSERT INTO equipment_stock (item_code, size, current_stock) VALUES (?, ?, ?)')
+          .bind(item_code, sizeValue, quantity)
+      )
+    } else {
+      batch.push(
+        c.env.DB.prepare('UPDATE equipment_stock SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .bind(quantity, stockRow.id)
+      )
     }
-
-    const batch: any[] = [
-      c.env.DB.prepare('UPDATE equipment_stock SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .bind(quantity, stockRow.id),
+    batch.push(
       c.env.DB.prepare(`
         INSERT INTO equipment_transactions (trans_date, item_code, size, trans_type, quantity, unit_price, memo)
         VALUES (?, ?, ?, '입고', ?, ?, ?)
       `).bind(date, item_code, sizeValue, quantity, unit_price || 0, memo || null)
-    ]
+    )
     // 입고 단가가 있으면 품목의 "현재 단가"도 최신으로 갱신
-    if (unit_price !== undefined && unit_price !== null) {
+    if (unit_price !== undefined && unit_price !== null && unit_price > 0) {
       batch.push(
         c.env.DB.prepare('UPDATE equipment_items SET unit_price = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?')
           .bind(unit_price, item_code)
@@ -220,6 +237,37 @@ equipment.post('/adjust', async (c) => {
     ])
 
     return c.json({ success: true, message: '재고가 조정되었습니다.', diff })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// v3.6.70: ===== 전체 거래 이력 조회 (입고/지급/조정 모두) =====
+equipment.get('/transactions', async (c) => {
+  try {
+    const itemCode = c.req.query('item_code')
+    const transType = c.req.query('trans_type')  // '입고' | '지급' | '재고조정'
+    const start = c.req.query('start')
+    const end = c.req.query('end')
+    const limit = Number(c.req.query('limit') || 200)
+
+    let query = `
+      SELECT t.id, t.trans_date, t.item_code, ei.item_name, t.size, t.trans_type,
+             t.quantity, t.unit_price, (t.quantity * t.unit_price) as total_price,
+             t.issued_to, t.department, t.memo, t.created_at
+      FROM equipment_transactions t
+      LEFT JOIN equipment_items ei ON t.item_code = ei.item_code
+      WHERE 1=1
+    `
+    const params: any[] = []
+    if (itemCode) { query += ' AND t.item_code = ?'; params.push(itemCode) }
+    if (transType) { query += ' AND t.trans_type = ?'; params.push(transType) }
+    if (start && end) { query += ' AND t.trans_date BETWEEN ? AND ?'; params.push(start, end) }
+    query += ' ORDER BY t.trans_date DESC, t.id DESC LIMIT ?'
+    params.push(limit)
+
+    const result = await c.env.DB.prepare(query).bind(...params).all()
+    return c.json({ success: true, data: result.results || [] })
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500)
   }

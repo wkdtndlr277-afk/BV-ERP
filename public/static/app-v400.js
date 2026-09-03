@@ -58513,21 +58513,40 @@ async function showEquipmentTxnModal(txnType) {
 }
 
 async function submitEquipmentTxn(txnType) {
+  // v3.6.70: 거래 유형별로 실제 백엔드 엔드포인트에 맞게 라우팅
   const payload = {
     trans_date: document.getElementById('eq-txn-date').value,
     item_code: document.getElementById('eq-txn-item').value,
     size: document.getElementById('eq-txn-size').value || '',
-    trans_type: txnType,
     quantity: parseFloat(document.getElementById('eq-txn-qty').value),
     memo: document.getElementById('eq-txn-memo').value || ''
   };
-  if (txnType === '입고') payload.unit_price = parseFloat(document.getElementById('eq-txn-price').value) || 0;
-  if (txnType === '지급') payload.issued_to = document.getElementById('eq-txn-issued-to').value || '';
+  
+  if (!payload.item_code) { alert('품목을 선택해주세요.'); return; }
+  if (!payload.quantity || payload.quantity <= 0) { alert('수량은 0보다 커야 합니다.'); return; }
+  
+  let endpoint = '';
+  if (txnType === '입고') {
+    payload.unit_price = parseFloat(document.getElementById('eq-txn-price').value) || 0;
+    endpoint = '/api/equipment/inbound';
+  } else if (txnType === '지급') {
+    payload.issued_to = (document.getElementById('eq-txn-issued-to').value || '').trim();
+    if (!payload.issued_to) { alert('지급 대상자를 입력해주세요.'); return; }
+    endpoint = '/api/equipment/issue';
+  } else if (txnType === '재고조정') {
+    // 재고조정은 별도 UI가 있어야 함 (new_stock 입력) — 현재는 사용되지 않음
+    payload.new_stock = payload.quantity;
+    delete payload.quantity;
+    endpoint = '/api/equipment/adjust';
+  } else {
+    alert('알 수 없는 거래 유형: ' + txnType);
+    return;
+  }
   
   try {
-    const res = await axios.post('/api/equipment/transaction', payload);
+    const res = await axios.post(endpoint, payload);
     if (res.data.success) {
-      alert(txnType + ' 등록 완료');
+      alert(res.data.message || (txnType + ' 등록 완료'));
       document.querySelector('.fixed.inset-0').remove();
       renderEquipment();
     } else {

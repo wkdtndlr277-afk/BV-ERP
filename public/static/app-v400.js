@@ -58368,14 +58368,14 @@ async function renderEquipment() {
       stockByItem[s.item_code].push(s);
     });
     
-    // 사이즈별 재고를 배지로 렌더링
-    // v3.6.72: 배지에 마우스 오버 시 편집(⚙️)/삭제(🗑️) 아이콘 표시
+    // 사이즈별 재고를 카드형 배지로 렌더링
+    // v3.6.73: 육안 판독성 강화 — 사이즈/수량을 큰 글씨로, 관리 아이콘 상시 노출
     function renderSizeBadges(itemCode, itemName) {
       const list = stockByItem[itemCode] || [];
       if (list.length === 0) {
-        return '<span class="text-xs text-gray-400">사이즈 미등록 · 입고 시 자동 생성</span>';
+        return '<span class="text-xs text-gray-400 italic">사이즈 미등록 · 입고 시 자동 생성</span>';
       }
-      // 사이즈 정렬 (사이즈 없음은 뒤로)
+      // 사이즈 정렬
       list.sort((a, b) => {
         const sa = (a.size || '').toString();
         const sb = (b.size || '').toString();
@@ -58388,38 +58388,52 @@ async function renderEquipment() {
       return list.map(s => {
         const sizeLabel = s.size || '공통';
         const qty = s.current_stock || 0;
-        let colorCls;
+        // 상태별 색상 (진하게 → 눈에 잘 띔)
+        let cardCls, sizeCls, qtyCls;
         if (qty <= 0) {
-          colorCls = 'bg-gray-100 text-gray-400 border-gray-200';
+          cardCls = 'bg-gray-50 border-gray-300';
+          sizeCls = 'bg-gray-200 text-gray-500';
+          qtyCls  = 'text-gray-400';
         } else if (s.is_low || (s.safety_stock > 0 && qty <= s.safety_stock)) {
-          colorCls = 'bg-red-50 text-red-700 border-red-200';
+          cardCls = 'bg-white border-red-400 shadow-sm ring-1 ring-red-100';
+          sizeCls = 'bg-red-500 text-white';
+          qtyCls  = 'text-red-700';
         } else {
-          colorCls = 'bg-green-50 text-green-700 border-green-200';
+          cardCls = 'bg-white border-green-400 shadow-sm';
+          sizeCls = 'bg-green-500 text-white';
+          qtyCls  = 'text-green-700';
         }
         const safeName = (itemName || '').replace(/'/g, "\\'");
         const safeSize = (s.size || '').replace(/'/g, "\\'");
-        return `<span class="inline-flex items-center rounded border ${colorCls} text-xs font-medium overflow-hidden group">
+        const safetyBadge = s.safety_stock > 0
+          ? `<span class="text-[9px] text-gray-400 leading-none">안전 ${s.safety_stock}</span>`
+          : '';
+        return `<div class="relative group inline-flex flex-col items-stretch rounded-md border-2 ${cardCls} overflow-hidden hover:shadow-md transition min-w-[68px]">
           <button
             onclick="showEquipmentTxnModalForSize('${itemCode}','${safeName}','${safeSize}')"
-            class="px-2.5 py-1 hover:bg-white/40 transition"
-            title="클릭하여 입고/지급 등록">
-            <span class="text-gray-500">${sizeLabel}</span>
-            <span class="font-bold ml-1">${qty}</span>
-            ${s.safety_stock > 0 ? `<span class="text-gray-400 text-[10px] ml-1">/안전${s.safety_stock}</span>` : ''}
+            class="flex flex-col items-center hover:bg-gray-50/50 transition"
+            title="클릭 → 입고/지급 등록">
+            <span class="w-full text-center text-[11px] font-bold ${sizeCls} px-2 py-0.5 leading-tight">${sizeLabel}</span>
+            <span class="flex flex-col items-center px-2 py-1 leading-tight">
+              <span class="text-xl font-bold ${qtyCls} leading-none">${qty}</span>
+              ${safetyBadge}
+            </span>
           </button>
-          <button
-            onclick="showEquipmentStockEditModal(${s.id})"
-            class="px-1.5 py-1 border-l border-current/20 hover:bg-white/60 opacity-40 group-hover:opacity-100 transition"
-            title="재고/안전재고 수정">
-            <i class="fas fa-cog text-[10px]"></i>
-          </button>
-          <button
-            onclick="deleteEquipmentStock(${s.id}, '${safeName}', '${safeSize}', ${qty})"
-            class="px-1.5 py-1 border-l border-current/20 hover:bg-red-100 hover:text-red-700 opacity-40 group-hover:opacity-100 transition"
-            title="이 사이즈 삭제">
-            <i class="fas fa-times text-[10px]"></i>
-          </button>
-        </span>`;
+          <div class="flex border-t border-gray-200">
+            <button
+              onclick="showEquipmentStockEditModal(${s.id})"
+              class="flex-1 py-0.5 text-gray-400 hover:bg-blue-50 hover:text-blue-600 transition"
+              title="재고 수정">
+              <i class="fas fa-cog text-[10px]"></i>
+            </button>
+            <button
+              onclick="deleteEquipmentStock(${s.id}, '${safeName}', '${safeSize}', ${qty})"
+              class="flex-1 py-0.5 text-gray-400 hover:bg-red-50 hover:text-red-600 border-l border-gray-200 transition"
+              title="사이즈 삭제">
+              <i class="fas fa-times text-[10px]"></i>
+            </button>
+          </div>
+        </div>`;
       }).join('');
     }
     
@@ -58460,12 +58474,20 @@ async function renderEquipment() {
           <h3 class="font-semibold text-gray-800">품목별 · 사이즈별 재고 (${items.length}종)</h3>
         </div>
         <div class="overflow-x-auto">
-          <table class="w-full">
+          <table class="w-full" style="table-layout:auto;">
+            <colgroup>
+              <col style="width:220px;">
+              <col style="width:90px;">
+              <col>
+              <col style="width:90px;">
+              <col style="width:90px;">
+              <col style="width:110px;">
+            </colgroup>
             <thead class="bg-gray-100">
               <tr>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">품목명</th>
                 <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">분류</th>
-                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase" style="min-width:280px;">사이즈별 재고 (사이즈 · 수량)</th>
+                <th class="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">사이즈별 재고</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">총 재고</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-600 uppercase">단가</th>
                 <th class="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">관리</th>

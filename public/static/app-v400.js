@@ -59473,16 +59473,22 @@ async function loadYieldReport() {
             <tbody class="divide-y divide-gray-200">
               ${data.length === 0 ? '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">조회된 데이터가 없습니다.</td></tr>' :
                 data.map(row => {
-                  const pct = row.yield_pct;
-                  const pctColor = pct === null ? 'text-gray-400' : pct >= 90 ? 'text-green-600' : pct >= 80 ? 'text-yellow-600' : 'text-red-600';
+                  // v3.6.74: 백엔드 필드 alias 안전 처리 (yield_pct || yield_rate_pct)
+                  const pct = row.yield_pct !== undefined ? row.yield_pct : row.yield_rate_pct;
+                  const pctColor = (pct === null || pct === undefined) ? 'text-gray-400' : pct >= 90 ? 'text-green-600' : pct >= 80 ? 'text-yellow-600' : 'text-red-600';
+                  const prodDate = row.production_date || row.prod_date || '-';
+                  const prodCode = row.production_code || row.product_code || '';
+                  const inputKg = Number(row.input_kg || row.total_input_kg || 0);
+                  const outputKg = Number(row.output_kg || 0);
+                  const discardKg = Number(row.discard_kg || 0);
                   return `
                     <tr class="hover:bg-gray-50">
-                      <td class="px-4 py-3 text-sm">${row.production_date || '-'}</td>
-                      <td class="px-4 py-3 text-sm">${row.production_code || ''} <span class="text-gray-500">${row.production_name || ''}</span></td>
-                      <td class="px-4 py-3 text-sm text-right">${(row.input_kg || 0).toFixed(2)}</td>
-                      <td class="px-4 py-3 text-sm text-right">${(row.output_kg || 0).toFixed(2)}</td>
-                      <td class="px-4 py-3 text-sm text-right text-red-500">${(row.discard_kg || 0).toFixed(2)}</td>
-                      <td class="px-4 py-3 text-sm text-right font-bold ${pctColor}">${pct !== null ? pct.toFixed(1) + '%' : '-'}</td>
+                      <td class="px-4 py-3 text-sm">${prodDate}</td>
+                      <td class="px-4 py-3 text-sm">${prodCode} <span class="text-gray-500">${row.production_name || ''}</span></td>
+                      <td class="px-4 py-3 text-sm text-right">${inputKg.toFixed(2)}</td>
+                      <td class="px-4 py-3 text-sm text-right">${outputKg.toFixed(2)}</td>
+                      <td class="px-4 py-3 text-sm text-right text-red-500">${discardKg.toFixed(2)}</td>
+                      <td class="px-4 py-3 text-sm text-right font-bold ${pctColor}">${(pct !== null && pct !== undefined) ? Number(pct).toFixed(1) + '%' : '-'}</td>
                       <td class="px-4 py-3 text-xs text-gray-500">${row.note || ''}</td>
                     </tr>
                   `;

@@ -145,19 +145,25 @@ yieldRoutes.get('/production/:id', async (c) => {
 // ===== 기간별 수율 리포트 (제품별 집계) =====
 yieldRoutes.get('/report', async (c) => {
   try {
-    const start = c.req.query('start') || new Date().toISOString().split('T')[0]
-    const end = c.req.query('end') || start
+    // v3.6.74: FE가 start_date/end_date로 보내는 케이스도 지원 (start/end alias)
+    const start = c.req.query('start') || c.req.query('start_date') || new Date().toISOString().split('T')[0]
+    const end = c.req.query('end') || c.req.query('end_date') || start
     const productCode = c.req.query('product_code')
+    // v3.6.74: 완료 여부 필터를 옵션으로 (기본: 모든 상태 포함)
+    const onlyCompleted = c.req.query('only_completed') === '1'
 
     let query = `
-      SELECT p.id, p.prod_date, p.product_code, pi.production_name, p.quantity, pi.standard_weight,
+      SELECT p.id, p.prod_date, p.product_code, pi.production_name, p.quantity, pi.standard_weight, p.status,
              (SELECT COALESCE(SUM(actual_qty), 0) FROM production_materials WHERE production_id = p.id) as total_input_kg,
              (SELECT COALESCE(SUM(discard_qty), 0) FROM production_discard WHERE production_id = p.id) as total_discard_qty,
              (SELECT COALESCE(SUM(discard_weight_kg), 0) FROM production_discard WHERE production_id = p.id) as declared_discard_kg
       FROM production p
       LEFT JOIN production_items pi ON p.product_code = pi.production_code
-      WHERE p.prod_date BETWEEN ? AND ? AND p.status = '완료'
+      WHERE p.prod_date BETWEEN ? AND ?
     `
+    if (onlyCompleted) {
+      query += ` AND p.status = '완료'`
+    }
     const params: any[] = [start, end]
     if (productCode) {
       query += ' AND p.product_code = ?'
@@ -177,18 +183,28 @@ yieldRoutes.get('/report', async (c) => {
           yieldPct = Math.round((outputKg / r.total_input_kg) * 1000) / 10
         }
       }
+      // v3.6.74: FE 호환용 alias 필드 추가
+      const note = !hasWeight
+        ? '표준중량 미등록'
+        : (r.total_input_kg <= 0 ? '원료 투입 기록 없음' : '')
       return {
         production_id: r.id,
         prod_date: r.prod_date,
+        production_date: r.prod_date,  // FE alias
         product_code: r.product_code,
+        production_code: r.product_code,  // FE alias
         production_name: r.production_name,
+        status: r.status,
         good_quantity: r.quantity,
         discard_quantity: r.total_discard_qty,
         total_input_kg: Math.round(r.total_input_kg * 1000) / 1000,
+        input_kg: Math.round(r.total_input_kg * 1000) / 1000,  // FE alias
         output_kg: outputKg !== null ? Math.round(outputKg * 1000) / 1000 : null,
         discard_kg: discardKg !== null ? Math.round(discardKg * 1000) / 1000 : null,
         yield_rate_pct: yieldPct,
-        has_standard_weight: hasWeight
+        yield_pct: yieldPct,  // FE alias
+        has_standard_weight: hasWeight,
+        note
       }
     })
 

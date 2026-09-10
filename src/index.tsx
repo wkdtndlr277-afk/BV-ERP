@@ -36,6 +36,7 @@ import shipmentRoutes from './routes/shipment';
 import packagingRoutes from './routes/packaging';
 import equipmentRoutes from './routes/equipment';
 import yieldRoutes from './routes/yield';
+import orderPlanRoutes from './routes/order-plan';
 import validateRoutes from './routes/validate';
 import debugMasterRoutes from './routes/debug-master';
 import levainRoutes from './routes/levain';
@@ -80,6 +81,7 @@ app.route('/api/shipment', shipmentRoutes);
 app.route('/api/packaging', packagingRoutes);
 app.route('/api/equipment', equipmentRoutes);
 app.route('/api/yield', yieldRoutes);
+app.route('/api/order-plan', orderPlanRoutes);
 app.route('/api/validate', validateRoutes);
 app.route('/api/debug-master', debugMasterRoutes);
 app.route('/api/levain', levainRoutes);
@@ -714,10 +716,15 @@ app.get('/*', (c) => {
                     <p class="text-xs font-semibold text-blue-600 uppercase tracking-wider px-4">📦 생산 관리</p>
                 </div>
                 
-                <a href="#order-upload" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium bg-blue-50 border-l-4 border-blue-500" data-page="order-upload">
+                <a href="#order-plan" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium bg-purple-50 border-l-4 border-purple-500" data-page="order-plan">
+                    <i class="fas fa-table w-5 text-purple-600"></i>
+                    <span class="font-semibold">발주 계획표</span>
+                    <span class="ml-auto text-xs bg-purple-500 text-white px-2 py-0.5 rounded">NEW</span>
+                </a>
+
+                <a href="#order-upload" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="order-upload">
                     <i class="fas fa-file-upload w-5 text-blue-600"></i>
-                    <span class="font-semibold">발주서 업로드</span>
-                    <span class="ml-auto text-xs bg-blue-500 text-white px-2 py-0.5 rounded">NEW</span>
+                    <span>발주서 업로드</span>
                 </a>
                 
                 <a href="#order-list" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="order-list">

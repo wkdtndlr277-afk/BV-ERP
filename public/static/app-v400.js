@@ -1300,6 +1300,7 @@ function renderPage(page) {
     case 'equipment': renderEquipment(); break;
     case 'packaging-bom': renderPackagingBOM(); break;
     case 'yield-report': renderYieldReport(); break;
+    case 'order-plan': renderOrderPlan(); break;
     default: renderDashboard();
   }
 }
@@ -59703,3 +59704,427 @@ window.updateStdwSelectedCount = updateStdwSelectedCount;
 window.toggleStdwChecks = toggleStdwChecks;
 window.toggleStdwChecksByConfidence = toggleStdwChecksByConfidence;
 window.applyStandardWeights = applyStandardWeights;
+
+// =====================================================================
+// v3.6.75: 발주 계획표 (Order Plan) — 격자형 발주 입력 UI
+// =====================================================================
+// 데이터 흐름:
+//   [격자 UI] → order_plan 테이블 (원본) + orders 테이블 (자동 동기화)
+// 채널: 쿠팡/오아시스/컬리 냉동/컬리 상온/매장용/가맹점/GS/배민/롯데/CJ/샌드위치
+
+let __orderPlanData = { grid: [], channels: [], date: '', filterText: '' };
+
+async function renderOrderPlan() {
+  const container = document.getElementById('main-content');
+  const today = new Date().toISOString().split('T')[0];
+
+  container.innerHTML = `
+    <div class="bg-white rounded-xl shadow-lg p-6 mb-4">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+            <i class="fas fa-table text-purple-500"></i> 발주 계획표
+          </h2>
+          <p class="text-gray-500 text-sm mt-1">엑셀 계획표를 그대로 웹에서 · 채널별 발주 통합 관리</p>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <label class="text-sm font-medium text-gray-700">계획일:</label>
+          <input type="date" id="op-date" value="${today}" class="border rounded-lg px-3 py-2 text-sm" onchange="loadOrderPlan()">
+          <button onclick="loadOrderPlan()" class="bg-purple-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-600">
+            <i class="fas fa-sync mr-1"></i> 조회
+          </button>
+          <button onclick="saveOrderPlan()" class="bg-green-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-600 font-semibold">
+            <i class="fas fa-save mr-1"></i> 저장
+          </button>
+          <div class="border-l pl-2 flex gap-1">
+            <label class="cursor-pointer bg-blue-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-600">
+              <i class="fas fa-upload mr-1"></i> 엑셀 업로드
+              <input type="file" accept=".xlsx,.xls" onchange="importOrderPlanExcel(event)" class="hidden">
+            </label>
+            <button onclick="exportOrderPlanExcel()" class="bg-teal-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-teal-600">
+              <i class="fas fa-download mr-1"></i> 엑셀 다운로드
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="mt-3 flex gap-2 items-center text-xs">
+        <input type="text" id="op-filter" placeholder="🔍 제품명/코드 검색..." class="border rounded px-3 py-1.5 flex-1 max-w-xs" oninput="filterOrderPlan()">
+        <span class="text-gray-500">| 재고 컬럼은 <b>참고용</b> (저장되지 않음)</span>
+      </div>
+    </div>
+
+    <div id="op-summary" class="mb-4"></div>
+
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+      <div id="op-grid-container" class="overflow-auto" style="max-height: calc(100vh - 320px);">
+        <div class="text-center py-12 text-gray-400">
+          <i class="fas fa-spinner fa-spin text-3xl"></i>
+          <p class="mt-2">계획표 로딩 중...</p>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // SheetJS lazy load
+  if (typeof XLSX === 'undefined') {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    document.head.appendChild(script);
+  }
+
+  await loadOrderPlan();
+}
+
+async function loadOrderPlan() {
+  const date = document.getElementById('op-date').value;
+  if (!date) return;
+  __orderPlanData.date = date;
+
+  const container = document.getElementById('op-grid-container');
+  container.innerHTML = '<div class="text-center py-12 text-gray-400"><i class="fas fa-spinner fa-spin text-3xl"></i><p class="mt-2">로딩 중...</p></div>';
+
+  try {
+    const res = await axios.get('/api/order-plan/' + date);
+    if (!res.data.success) throw new Error(res.data.error || '조회 실패');
+    __orderPlanData.grid = res.data.grid || [];
+    __orderPlanData.channels = res.data.channels || [];
+    renderOrderPlanGrid();
+    renderOrderPlanSummary(res.data.summary);
+  } catch (e) {
+    container.innerHTML = `<div class="p-6 text-red-600">조회 실패: ${e.message}</div>`;
+  }
+}
+
+function renderOrderPlanSummary(summary) {
+  const box = document.getElementById('op-summary');
+  if (!box || !summary) return;
+  const chTotals = summary.channel_totals || {};
+  const cards = __orderPlanData.channels.map(ch => {
+    const v = chTotals[ch] || 0;
+    return `<div class="bg-white rounded-lg shadow px-3 py-2 text-center border-t-4 ${v > 0 ? 'border-purple-400' : 'border-gray-200'}">
+      <p class="text-[10px] text-gray-500">${ch}</p>
+      <p class="text-lg font-bold ${v > 0 ? 'text-purple-700' : 'text-gray-400'}">${v}</p>
+    </div>`;
+  }).join('');
+  box.innerHTML = `
+    <div class="grid grid-cols-2 md:grid-cols-6 lg:grid-cols-12 gap-2">
+      <div class="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg shadow px-3 py-2 text-center text-white">
+        <p class="text-[10px] opacity-80">총 발주량</p>
+        <p class="text-lg font-bold">${summary.grand_total}</p>
+      </div>
+      ${cards}
+    </div>
+  `;
+}
+
+function renderOrderPlanGrid() {
+  const container = document.getElementById('op-grid-container');
+  const channels = __orderPlanData.channels;
+  let grid = __orderPlanData.grid;
+  const filter = (__orderPlanData.filterText || '').trim().toLowerCase();
+  if (filter) {
+    grid = grid.filter(r => (r.code || '').toLowerCase().includes(filter) || (r.name || '').toLowerCase().includes(filter));
+  }
+
+  // sticky header
+  const chHeader = channels.map(ch =>
+    `<th class="px-2 py-2 text-xs font-semibold text-gray-700 bg-purple-100 min-w-[70px]" title="${ch}">${ch}</th>`
+  ).join('');
+  const chHeaderExtra = channels.map(ch =>
+    `<th class="px-2 py-2 text-xs font-semibold text-gray-700 bg-orange-50 min-w-[70px]" title="추가 ${ch}">추가</th>`
+  ).join('');
+
+  const rows = grid.map((row, rowIdx) => {
+    const regularCells = channels.map(ch => {
+      const v = row.channels[ch] || '';
+      return `<td class="p-0 border">
+        <input type="number" min="0" step="1" value="${v}" 
+          data-code="${row.code}" data-channel="${ch}" data-type="regular"
+          oninput="onOrderPlanCellChange(this)"
+          class="w-full px-2 py-1.5 text-sm text-right border-0 focus:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-purple-300 ${v ? 'font-semibold text-purple-700' : 'text-gray-400'}">
+      </td>`;
+    }).join('');
+    const extraCells = channels.map(ch => {
+      const v = row.extra[ch] || '';
+      return `<td class="p-0 border">
+        <input type="number" min="0" step="1" value="${v}"
+          data-code="${row.code}" data-channel="${ch}" data-type="extra"
+          oninput="onOrderPlanCellChange(this)"
+          class="w-full px-2 py-1.5 text-sm text-right border-0 bg-orange-50/30 focus:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-orange-300 ${v ? 'font-semibold text-orange-700' : 'text-gray-400'}">
+      </td>`;
+    }).join('');
+
+    const stock = row.stock;
+    const stockCell = stock === null || stock === undefined
+      ? '<td class="px-2 py-1.5 text-xs text-gray-300 text-center border bg-gray-50">-</td>'
+      : `<td class="px-2 py-1.5 text-xs text-center border bg-gray-50 ${stock < 0 ? 'text-red-500 font-semibold' : 'text-gray-500'}">${stock}</td>`;
+
+    return `<tr class="hover:bg-purple-50/30">
+      <td class="px-2 py-1.5 text-xs text-gray-400 text-center border sticky left-0 bg-white z-10">${rowIdx + 1}</td>
+      <td class="px-2 py-1.5 text-xs text-gray-600 border sticky left-[36px] bg-white z-10 font-mono">${row.code}</td>
+      <td class="px-2 py-1.5 text-xs text-gray-800 border sticky left-[140px] bg-white z-10 min-w-[280px]" title="${row.name}">${row.name}</td>
+      <td class="px-2 py-1.5 text-sm text-right border bg-purple-50 font-bold text-purple-700" data-code="${row.code}" data-role="total">${row.total || 0}</td>
+      ${stockCell}
+      ${regularCells}
+      ${extraCells}
+    </tr>`;
+  }).join('');
+
+  container.innerHTML = `
+    <table class="w-full border-collapse text-xs">
+      <thead class="sticky top-0 z-20 bg-white shadow">
+        <tr class="bg-gray-100">
+          <th class="px-2 py-2 border sticky left-0 bg-gray-100 z-30" style="width:36px;">#</th>
+          <th class="px-2 py-2 border sticky left-[36px] bg-gray-100 z-30 text-xs" style="width:104px;">코드</th>
+          <th class="px-2 py-2 border sticky left-[140px] bg-gray-100 z-30 text-xs">제품명</th>
+          <th class="px-2 py-2 border bg-purple-100 text-xs" style="width:70px;">합계</th>
+          <th class="px-2 py-2 border bg-gray-50 text-xs" style="width:60px;" title="참고용">재고</th>
+          ${chHeader}
+          ${chHeaderExtra}
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${grid.length === 0 ? '<div class="p-8 text-center text-gray-400">등록된 제품이 없습니다.</div>' : ''}
+  `;
+}
+
+function onOrderPlanCellChange(input) {
+  const code = input.dataset.code;
+  const channel = input.dataset.channel;
+  const type = input.dataset.type;
+  const val = Number(input.value) || 0;
+
+  const row = __orderPlanData.grid.find(r => r.code === code);
+  if (!row) return;
+  if (type === 'regular') {
+    if (val > 0) row.channels[channel] = val;
+    else delete row.channels[channel];
+  } else {
+    if (val > 0) row.extra[channel] = val;
+    else delete row.extra[channel];
+  }
+
+  // 합계 재계산
+  let total = 0;
+  for (const v of Object.values(row.channels)) total += Number(v) || 0;
+  for (const v of Object.values(row.extra)) total += Number(v) || 0;
+  row.total = Math.round(total * 100) / 100;
+
+  // 화면 갱신 (합계 셀만)
+  const totalCell = document.querySelector(`td[data-code="${code}"][data-role="total"]`);
+  if (totalCell) totalCell.textContent = row.total;
+
+  // 색상 갱신
+  if (val > 0) {
+    input.classList.remove('text-gray-400');
+    input.classList.add('font-semibold', type === 'regular' ? 'text-purple-700' : 'text-orange-700');
+  } else {
+    input.classList.add('text-gray-400');
+    input.classList.remove('font-semibold', 'text-purple-700', 'text-orange-700');
+  }
+}
+
+function filterOrderPlan() {
+  const val = document.getElementById('op-filter').value;
+  __orderPlanData.filterText = val;
+  renderOrderPlanGrid();
+}
+
+async function saveOrderPlan() {
+  const date = __orderPlanData.date;
+  if (!date) { alert('계획일을 선택하세요.'); return; }
+  const grid = __orderPlanData.grid;
+  const rowsWithData = grid.filter(r => Object.keys(r.channels).length > 0 || Object.keys(r.extra).length > 0);
+
+  if (rowsWithData.length === 0) {
+    if (!confirm('입력된 발주가 하나도 없습니다. 그래도 저장(=해당 날짜 전체 삭제)하시겠습니까?')) return;
+  } else {
+    if (!confirm(`${date}에 총 ${rowsWithData.length}개 제품의 발주를 저장하시겠습니까?\n\n※ 기존 해당 날짜의 계획표는 덮어쓰기 됩니다.`)) return;
+  }
+
+  try {
+    const res = await axios.post('/api/order-plan/save', {
+      plan_date: date,
+      rows: rowsWithData.map(r => ({
+        product_code: r.code,
+        product_name: r.name,
+        channels: r.channels,
+        extra: r.extra
+      }))
+    });
+    if (!res.data.success) throw new Error(res.data.error || '저장 실패');
+    alert(`✅ 저장 완료\n계획표 ${res.data.plan_inserted}건 · 발주서 ${res.data.orders_inserted}건 생성됨`);
+    await loadOrderPlan();
+  } catch (e) {
+    alert('저장 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+// =====================================================================
+// 엑셀 임포트 (SheetJS)
+// =====================================================================
+async function importOrderPlanExcel(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';  // reset
+
+  if (typeof XLSX === 'undefined') {
+    alert('엑셀 라이브러리 로딩 중입니다. 잠시 후 다시 시도해주세요.');
+    return;
+  }
+
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const wsName = wb.SheetNames[0];
+    const ws = wb.Sheets[wsName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
+
+    // 계획표.xlsx 구조:
+    // 2행(index=1) = 헤더 (D열=품명, G=쿠팡, H=오아시스, I=의왕, J=매장용, K=가맹점,
+    //                     L=컬리냉동, M/N/O=컬리평택/김포/창원, P=재고, Q=GS, R=배민, S=롯데, T=CJ, U=샌드위치, W=추가합계)
+    // 5행부터 데이터
+    // 엑셀 열 번호: A=0, B=1, C=2, D=3, E=4, F=5, G=6, ...
+    const COL = {
+      name: 3,           // D열
+      쿠팡: 6,           // G열
+      오아시스: 7,       // H열
+      매장용: 9,         // J열
+      가맹점: 10,        // K열
+      컬리냉동: 11,      // L열
+      컬리평택: 12,      // M열
+      컬리김포: 13,      // N열
+      컬리창원: 14,      // O열
+      재고: 15,          // P열 (참고, 미사용)
+      GS: 16,            // Q열
+      배민: 17,          // R열
+      롯데: 18,          // S열
+      CJ: 19,            // T열
+      샌드위치: 20,      // U열
+      추가합계: 22       // W열
+    };
+
+    // 제품명 → product_code 매칭 (이미 로드된 격자 데이터 사용)
+    const nameToCode = {};
+    for (const p of __orderPlanData.grid) {
+      if (p.name) nameToCode[normalizeProductName(p.name)] = p.code;
+    }
+
+    let importCount = 0, unmatchedNames = [];
+    const gridMap = {};   // code → { channels, extra }
+
+    for (let i = 4; i < rows.length; i++) {  // 5행부터
+      const r = rows[i];
+      if (!r) continue;
+      const name = r[COL.name];
+      if (!name || String(name).trim() === '') continue;
+
+      const code = nameToCode[normalizeProductName(name)];
+      if (!code) { unmatchedNames.push(name); continue; }
+      if (!gridMap[code]) gridMap[code] = { channels: {}, extra: {} };
+
+      // 정기 채널 (쿠팡 상세는 G열 하나 사용, 컬리 상온은 M+N+O 합산)
+      const 쿠팡 = num(r[COL.쿠팡]);
+      const 오아시스 = num(r[COL.오아시스]);
+      const 매장용 = num(r[COL.매장용]);
+      const 가맹점 = num(r[COL.가맹점]);
+      const 컬리냉동 = num(r[COL.컬리냉동]);
+      const 컬리상온 = num(r[COL.컬리평택]) + num(r[COL.컬리김포]) + num(r[COL.컬리창원]);
+      const GS = num(r[COL.GS]);
+      const 배민 = num(r[COL.배민]);
+      const 롯데 = num(r[COL.롯데]);
+      const CJ = num(r[COL.CJ]);
+      const 샌드위치 = num(r[COL.샌드위치]);
+      const 추가합계 = num(r[COL.추가합계]);
+
+      if (쿠팡) gridMap[code].channels['쿠팡'] = 쿠팡;
+      if (오아시스) gridMap[code].channels['오아시스'] = 오아시스;
+      if (매장용) gridMap[code].channels['매장용'] = 매장용;
+      if (가맹점) gridMap[code].channels['가맹점'] = 가맹점;
+      if (컬리냉동) gridMap[code].channels['컬리 냉동'] = 컬리냉동;
+      if (컬리상온) gridMap[code].channels['컬리 상온'] = 컬리상온;
+      if (GS) gridMap[code].channels['GS'] = GS;
+      if (배민) gridMap[code].channels['배민'] = 배민;
+      if (롯데) gridMap[code].channels['롯데'] = 롯데;
+      if (CJ) gridMap[code].channels['CJ'] = CJ;
+      if (샌드위치) gridMap[code].channels['샌드위치'] = 샌드위치;
+      // 추가 발주는 어느 채널인지 엑셀만으로 알 수 없어 "쿠팡 추가"로 처리 (계획표 특성상 대부분 쿠팡)
+      if (추가합계) gridMap[code].extra['쿠팡'] = 추가합계;
+
+      importCount++;
+    }
+
+    // 현재 __orderPlanData.grid에 병합 (기존 값 덮어쓰기)
+    for (const row of __orderPlanData.grid) {
+      const m = gridMap[row.code];
+      if (m) {
+        row.channels = m.channels;
+        row.extra = m.extra;
+        let total = 0;
+        for (const v of Object.values(row.channels)) total += Number(v) || 0;
+        for (const v of Object.values(row.extra)) total += Number(v) || 0;
+        row.total = Math.round(total * 100) / 100;
+      }
+    }
+
+    renderOrderPlanGrid();
+
+    let msg = `✅ 엑셀에서 ${importCount}개 제품 임포트 완료\n(격자에만 적용됨 - 확인 후 [저장] 버튼을 눌러주세요)`;
+    if (unmatchedNames.length > 0) {
+      msg += `\n\n⚠️ 매칭 실패 제품(${unmatchedNames.length}개):\n` + unmatchedNames.slice(0, 10).join('\n');
+      if (unmatchedNames.length > 10) msg += `\n... 외 ${unmatchedNames.length - 10}개`;
+    }
+    alert(msg);
+  } catch (e) {
+    alert('엑셀 파싱 실패: ' + e.message);
+    console.error(e);
+  }
+}
+
+function num(v) {
+  if (v === null || v === undefined || v === '') return 0;
+  const n = Number(v);
+  return isFinite(n) ? n : 0;
+}
+
+function normalizeProductName(name) {
+  return String(name).replace(/\s+/g, '').toLowerCase();
+}
+
+// =====================================================================
+// 엑셀 익스포트 (SheetJS)
+// =====================================================================
+function exportOrderPlanExcel() {
+  if (typeof XLSX === 'undefined') {
+    alert('엑셀 라이브러리 로딩 중입니다. 잠시 후 다시 시도해주세요.');
+    return;
+  }
+  const date = __orderPlanData.date;
+  const grid = __orderPlanData.grid;
+  const channels = __orderPlanData.channels;
+
+  // 헤더 행
+  const header = ['#', '코드', '제품명', '합계', '재고', ...channels, ...channels.map(c => '추가 ' + c)];
+  const aoa = [header];
+  for (const [i, row] of grid.entries()) {
+    if (Object.keys(row.channels).length === 0 && Object.keys(row.extra).length === 0) continue;
+    const arr = [i + 1, row.code, row.name, row.total || 0, row.stock ?? ''];
+    for (const ch of channels) arr.push(row.channels[ch] || '');
+    for (const ch of channels) arr.push(row.extra[ch] || '');
+    aoa.push(arr);
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '계획');
+  XLSX.writeFile(wb, `계획표_${date}.xlsx`);
+}
+
+window.renderOrderPlan = renderOrderPlan;
+window.loadOrderPlan = loadOrderPlan;
+window.onOrderPlanCellChange = onOrderPlanCellChange;
+window.filterOrderPlan = filterOrderPlan;
+window.saveOrderPlan = saveOrderPlan;
+window.importOrderPlanExcel = importOrderPlanExcel;
+window.exportOrderPlanExcel = exportOrderPlanExcel;

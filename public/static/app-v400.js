@@ -59737,12 +59737,15 @@ async function renderOrderPlan() {
             <i class="fas fa-save mr-1"></i> 저장
           </button>
           <div class="border-l pl-2 flex gap-1">
+            <button onclick="showAddManualProductModal()" class="bg-amber-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-amber-600" title="계획표에 없는 제품을 수기로 추가">
+              <i class="fas fa-plus mr-1"></i> 수기 추가
+            </button>
             <label class="cursor-pointer bg-blue-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-600">
-              <i class="fas fa-upload mr-1"></i> 엑셀 업로드
+              <i class="fas fa-upload mr-1"></i> 계획표 업로드
               <input type="file" accept=".xlsx,.xls" onchange="importOrderPlanExcel(event)" class="hidden">
             </label>
             <button onclick="exportOrderPlanExcel()" class="bg-teal-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-teal-600">
-              <i class="fas fa-download mr-1"></i> 엑셀 다운로드
+              <i class="fas fa-download mr-1"></i> 계획표 다운로드
             </button>
           </div>
         </div>
@@ -60120,6 +60123,148 @@ function exportOrderPlanExcel() {
   XLSX.utils.book_append_sheet(wb, ws, '계획');
   XLSX.writeFile(wb, `계획표_${date}.xlsx`);
 }
+
+// =====================================================================
+// v3.6.76: 수기 제품 추가 (계획표에 없는 제품 - 쿠키류 등)
+// =====================================================================
+// 두 가지 케이스 지원:
+// (A) 제품 마스터(production_items)에는 있지만 격자에서 못 찾을 때
+//     → 이름 검색으로 격자 상단에 하이라이트 이동 (스크롤 + 하이라이트)
+// (B) 제품 마스터에 아예 없는 신규 제품
+//     → 임시로 격자에 추가 (저장 시 orders에만 반영, order_plan에는 product_code 없이 저장 불가하므로 안내)
+
+function showAddManualProductModal() {
+  const modalHtml = `
+    <div id="op-add-manual-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div class="px-6 py-4 border-b bg-gradient-to-r from-amber-500 to-orange-500 text-white flex items-center justify-between">
+          <h3 class="text-lg font-bold"><i class="fas fa-plus-circle mr-2"></i>계획표 수기 추가</h3>
+          <button onclick="closeAddManualProductModal()" class="text-white hover:text-gray-200">
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+
+        <div class="p-6 overflow-y-auto flex-1">
+          <div class="bg-amber-50 border-l-4 border-amber-400 p-3 rounded text-sm text-amber-800 mb-4">
+            <i class="fas fa-info-circle mr-1"></i>
+            계획표.xlsx에 없는 제품(쿠키 등)을 발주 계획에 추가합니다.<br>
+            <b>등록된 제품</b>이면 검색해서 선택 → 격자로 이동하여 수량 입력.
+          </div>
+
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            <i class="fas fa-search mr-1"></i> 제품 검색 (제품명 또는 코드)
+          </label>
+          <input type="text" id="op-manual-search" placeholder="예: 쿠키, 초코칩, PR-..." 
+            oninput="filterManualProductSearch()"
+            class="w-full border-2 border-amber-300 rounded-lg px-3 py-2 focus:border-amber-500 focus:outline-none">
+
+          <div id="op-manual-search-results" class="mt-3 border rounded-lg max-h-96 overflow-y-auto">
+            <div class="p-4 text-center text-gray-400 text-sm">
+              검색어를 입력하면 등록된 제품 목록이 표시됩니다.
+            </div>
+          </div>
+        </div>
+
+        <div class="px-6 py-3 border-t bg-gray-50 flex justify-between items-center">
+          <p class="text-xs text-gray-500"><i class="fas fa-lightbulb mr-1 text-yellow-500"></i>
+            제품 마스터에 없다면 먼저 <b>바코드 마스터</b>에서 등록해주세요.
+          </p>
+          <button onclick="closeAddManualProductModal()" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg text-sm">
+            닫기
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  // 자동 포커스
+  setTimeout(() => document.getElementById('op-manual-search')?.focus(), 100);
+}
+
+function closeAddManualProductModal() {
+  document.getElementById('op-add-manual-modal')?.remove();
+}
+
+function filterManualProductSearch() {
+  const q = (document.getElementById('op-manual-search').value || '').trim().toLowerCase();
+  const box = document.getElementById('op-manual-search-results');
+  if (!q) {
+    box.innerHTML = '<div class="p-4 text-center text-gray-400 text-sm">검색어를 입력하면 등록된 제품 목록이 표시됩니다.</div>';
+    return;
+  }
+
+  // __orderPlanData.grid는 이미 is_active=1 모든 제품 포함
+  const grid = __orderPlanData.grid || [];
+  const results = grid.filter(r => {
+    const code = String(r.code || '').toLowerCase();
+    const name = String(r.name || '').toLowerCase();
+    return code.includes(q) || name.includes(q);
+  }).slice(0, 30);
+
+  if (results.length === 0) {
+    box.innerHTML = `
+      <div class="p-6 text-center">
+        <p class="text-gray-500 text-sm mb-3"><i class="fas fa-search mr-1"></i> "${q}" 검색 결과 없음</p>
+        <p class="text-xs text-gray-400">이 제품은 제품 마스터에 등록되지 않은 것 같습니다.</p>
+        <p class="text-xs text-gray-400 mt-1">사이드바 <b>바코드 마스터</b>에서 먼저 제품을 등록해주세요.</p>
+      </div>
+    `;
+    return;
+  }
+
+  // 이미 수량이 입력된 제품은 표시
+  const items = results.map(r => {
+    const hasValue = Object.keys(r.channels).length > 0 || Object.keys(r.extra).length > 0;
+    const badge = hasValue ? '<span class="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">입력됨</span>' : '';
+    return `
+      <div onclick="jumpToManualProduct('${r.code.replace(/'/g, "\\'")}'); closeAddManualProductModal();" 
+           class="p-3 border-b hover:bg-amber-50 cursor-pointer transition">
+        <div class="flex items-center justify-between">
+          <div class="flex-1 min-w-0">
+            <div class="font-mono text-xs text-gray-500">${r.code}</div>
+            <div class="text-sm font-medium text-gray-800 truncate">${r.name}${badge}</div>
+          </div>
+          <div class="text-right ml-2">
+            <div class="text-xs text-gray-400">현재 합계</div>
+            <div class="text-lg font-bold ${hasValue ? 'text-purple-700' : 'text-gray-300'}">${r.total || 0}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  box.innerHTML = items + (results.length >= 30 ? '<div class="p-2 text-center text-xs text-gray-400">30개까지만 표시. 더 좁게 검색해주세요.</div>' : '');
+}
+
+function jumpToManualProduct(code) {
+  // 필터를 해당 코드로 설정 → 격자에 해당 제품만 표시
+  const filterInput = document.getElementById('op-filter');
+  if (filterInput) {
+    filterInput.value = code;
+    __orderPlanData.filterText = code;
+    renderOrderPlanGrid();
+  }
+
+  // 첫 셀에 포커스 (쿠팡)
+  setTimeout(() => {
+    const firstCell = document.querySelector(`input[data-code="${code}"][data-channel="쿠팡"][data-type="regular"]`);
+    if (firstCell) {
+      firstCell.focus();
+      firstCell.select();
+      // 잠깐 하이라이트
+      const row = firstCell.closest('tr');
+      if (row) {
+        row.classList.add('bg-yellow-100');
+        setTimeout(() => row.classList.remove('bg-yellow-100'), 1500);
+      }
+    }
+  }, 150);
+}
+
+window.showAddManualProductModal = showAddManualProductModal;
+window.closeAddManualProductModal = closeAddManualProductModal;
+window.filterManualProductSearch = filterManualProductSearch;
+window.jumpToManualProduct = jumpToManualProduct;
 
 window.renderOrderPlan = renderOrderPlan;
 window.loadOrderPlan = loadOrderPlan;

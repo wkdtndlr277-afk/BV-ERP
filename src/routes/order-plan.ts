@@ -769,6 +769,181 @@ orderPlan.post('/apply-to-daily-report', async (c) => {
 })
 
 // ============================================================
+// POST /api/order-plan/material-usage
+// 계획표 → 반죽 판수 → 원료 총 사용량 자동 계산
+// body: { plan_date, include_extra? }
+// 응답: { doughs: [{code, name, total_kg, batch_count, materials}], raw_materials: [{name, total_kg}], products_summary }
+// ============================================================
+orderPlan.post('/material-usage', async (c) => {
+  try {
+    const { plan_date, include_extra } = await c.req.json()
+    if (!plan_date || !/^\d{4}-\d{2}-\d{2}$/.test(plan_date)) {
+      return c.json({ success: false, error: 'plan_date(YYYY-MM-DD) 필요' }, 400)
+    }
+    const includeExtra = include_extra !== false
+
+    // 1. 해당 날짜의 계획 로드 (제품별 총 수량 집계)
+    const planRes = await c.env.DB.prepare(`
+      SELECT product_code, product_name, SUM(quantity) as total_qty
+      FROM order_plan
+      WHERE plan_date = ? ${includeExtra ? '' : "AND is_extra = 0"}
+      GROUP BY product_code, product_name
+    `).bind(plan_date).all()
+    const plans = (planRes.results as any[]) || []
+    if (plans.length === 0) {
+      return c.json({ success: false, error: `${plan_date}에 저장된 계획이 없습니다.` }, 400)
+    }
+
+    // 2. 반죽 마스터 + 원료 배합 + 제품별 반죽 사용 매핑
+    let doughRecipes: any[] = []
+    let doughMaterials: any[] = []
+    let productDoughUsages: any[] = []
+    let productBoms: any[] = []
+    try {
+      const [drRes, dmRes, pduRes] = await Promise.all([
+        c.env.DB.prepare(`SELECT * FROM dough_recipe WHERE is_active = 1`).all(),
+        c.env.DB.prepare(`SELECT * FROM dough_material`).all(),
+        c.env.DB.prepare(`SELECT * FROM product_dough_usage`).all(),
+      ])
+      doughRecipes = (drRes.results as any[]) || []
+      doughMaterials = (dmRes.results as any[]) || []
+      productDoughUsages = (pduRes.results as any[]) || []
+    } catch (e: any) {
+      if (e.message?.includes('no such table')) {
+        return c.json({
+          success: false,
+          error: '반죽 마스터 테이블이 없습니다. 마이그레이션 0042 실행이 필요합니다.',
+          needs_migration: true
+        }, 500)
+      }
+      throw e
+    }
+    // BOM은 옵션 (반죽에 안 잡히는 제품용 fallback)
+    try {
+      const bomRes = await c.env.DB.prepare(`SELECT * FROM production_bom`).all()
+      productBoms = (bomRes.results as any[]) || []
+    } catch (e) { /* 옵션 */ }
+
+    const doughByCode: Record<string, any> = {}
+    for (const dr of doughRecipes) doughByCode[dr.dough_code] = dr
+    const doughMatByCode: Record<string, any[]> = {}
+    for (const dm of doughMaterials) {
+      if (!doughMatByCode[dm.dough_code]) doughMatByCode[dm.dough_code] = []
+      doughMatByCode[dm.dough_code].push(dm)
+    }
+    const pduByProduct: Record<string, any[]> = {}
+    for (const p of productDoughUsages) {
+      if (!pduByProduct[p.production_code]) pduByProduct[p.production_code] = []
+      pduByProduct[p.production_code].push(p)
+    }
+    const bomByProduct: Record<string, any[]> = {}
+    for (const b of productBoms) {
+      if (!bomByProduct[b.production_code]) bomByProduct[b.production_code] = []
+      bomByProduct[b.production_code].push(b)
+    }
+
+    // 3. 각 제품별로 → 반죽 필요 kg 집계
+    const doughUsage: Record<string, number> = {}  // dough_code → total_g
+    const productBreakdown: any[] = []
+    const productsWithoutRecipe: any[] = []
+
+    for (const p of plans) {
+      const qty = Number(p.total_qty) || 0
+      if (qty <= 0) continue
+      const usages = pduByProduct[p.product_code] || []
+
+      if (usages.length > 0) {
+        // 반죽 기반 계산
+        const rowDetail: any = {
+          product_code: p.product_code,
+          product_name: p.product_name,
+          quantity: qty,
+          doughs: [] as any[],
+          has_recipe: true
+        }
+        for (const u of usages) {
+          const gTotal = (u.dough_g_per_product || 0) * qty
+          doughUsage[u.dough_code] = (doughUsage[u.dough_code] || 0) + gTotal
+          rowDetail.doughs.push({
+            dough_code: u.dough_code,
+            dough_name: doughByCode[u.dough_code]?.dough_name || u.dough_code,
+            g_per_product: u.dough_g_per_product,
+            total_g: gTotal
+          })
+        }
+        productBreakdown.push(rowDetail)
+      } else {
+        // 반죽 매핑 없음 → 표시만
+        productsWithoutRecipe.push({
+          product_code: p.product_code,
+          product_name: p.product_name,
+          quantity: qty,
+          has_bom: (bomByProduct[p.product_code] || []).length > 0
+        })
+      }
+    }
+
+    // 4. 반죽별 원료 사용량 계산
+    const rawUsage: Record<string, number> = {}  // material_name → total_g
+    const doughSummary = Object.entries(doughUsage).map(([code, totalG]) => {
+      const dr = doughByCode[code]
+      const batchKg = dr?.batch_size_kg || 40
+      const totalKg = totalG / 1000
+      const batchCount = totalKg / batchKg
+      const mats = doughMatByCode[code] || []
+      const matBreakdown = mats.map((m: any) => {
+        const gTotal = (m.quantity_per_kg || 0) * totalKg  // 반죽 1kg당 g × 총 반죽 kg
+        rawUsage[m.material_name] = (rawUsage[m.material_name] || 0) + gTotal
+        return {
+          material_code: m.material_code,
+          material_name: m.material_name,
+          quantity_per_kg: m.quantity_per_kg,
+          total_g: gTotal,
+          total_kg: gTotal / 1000
+        }
+      })
+      return {
+        dough_code: code,
+        dough_name: dr?.dough_name || code,
+        dough_name_en: dr?.dough_name_en,
+        total_kg: totalKg,
+        batch_size_kg: batchKg,
+        batch_count: batchCount,
+        materials: matBreakdown,
+        has_recipe: mats.length > 0
+      }
+    }).sort((a, b) => b.total_kg - a.total_kg)
+
+    // 5. 원료 총 사용량 (kg 정렬)
+    const rawMaterialSummary = Object.entries(rawUsage).map(([name, totalG]) => ({
+      material_name: name,
+      total_g: totalG,
+      total_kg: totalG / 1000
+    })).sort((a, b) => b.total_kg - a.total_kg)
+
+    return c.json({
+      success: true,
+      plan_date,
+      include_extra: includeExtra,
+      summary: {
+        total_products_planned: plans.length,
+        products_with_recipe: productBreakdown.length,
+        products_without_recipe: productsWithoutRecipe.length,
+        total_dough_kg: Math.round(doughSummary.reduce((s, d) => s + d.total_kg, 0) * 100) / 100,
+        total_batches: Math.round(doughSummary.reduce((s, d) => s + d.batch_count, 0) * 100) / 100,
+      },
+      doughs: doughSummary,
+      raw_materials: rawMaterialSummary,
+      products_breakdown: productBreakdown,
+      products_without_recipe: productsWithoutRecipe
+    })
+  } catch (e: any) {
+    console.error('[order-plan/material-usage] error:', e)
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// ============================================================
 // GET /api/order-plan/export-json/:date
 // 엑셀 다운로드용 원시 데이터 (프론트에서 SheetJS로 xlsx 생성)
 // ============================================================

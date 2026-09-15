@@ -37,6 +37,8 @@ import packagingRoutes from './routes/packaging';
 import equipmentRoutes from './routes/equipment';
 import yieldRoutes from './routes/yield';
 import orderPlanRoutes from './routes/order-plan';
+import doughRecipeRoutes from './routes/dough-recipe';
+import haccpMaterialRoutes from './routes/haccp-material';
 import validateRoutes from './routes/validate';
 import debugMasterRoutes from './routes/debug-master';
 import levainRoutes from './routes/levain';
@@ -82,6 +84,8 @@ app.route('/api/packaging', packagingRoutes);
 app.route('/api/equipment', equipmentRoutes);
 app.route('/api/yield', yieldRoutes);
 app.route('/api/order-plan', orderPlanRoutes);
+app.route('/api/dough', doughRecipeRoutes);
+app.route('/api/haccp/material-check', haccpMaterialRoutes);
 app.route('/api/validate', validateRoutes);
 app.route('/api/debug-master', debugMasterRoutes);
 app.route('/api/levain', levainRoutes);
@@ -720,6 +724,18 @@ app.get('/*', (c) => {
                     <i class="fas fa-table w-5 text-purple-600"></i>
                     <span class="font-semibold">발주 계획표</span>
                     <span class="ml-auto text-xs bg-purple-500 text-white px-2 py-0.5 rounded">NEW</span>
+                </a>
+
+                <a href="#dough-master" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="dough-master">
+                    <i class="fas fa-bread-slice w-5 text-amber-600"></i>
+                    <span>반죽 마스터</span>
+                    <span class="ml-auto text-xs bg-amber-500 text-white px-2 py-0.5 rounded">NEW</span>
+                </a>
+
+                <a href="#haccp-material-check" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="haccp-material-check">
+                    <i class="fas fa-shield-alt w-5 text-red-600"></i>
+                    <span>HACCP 원료체크</span>
+                    <span class="ml-auto text-xs bg-red-500 text-white px-2 py-0.5 rounded">NEW</span>
                 </a>
 
                 <a href="#order-upload" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="order-upload">

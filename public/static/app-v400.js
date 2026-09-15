@@ -1301,6 +1301,8 @@ function renderPage(page) {
     case 'packaging-bom': renderPackagingBOM(); break;
     case 'yield-report': renderYieldReport(); break;
     case 'order-plan': renderOrderPlan(); break;
+    case 'dough-master': renderDoughMaster(); break;
+    case 'haccp-material-check': renderHaccpMaterialCheck(); break;
     default: renderDashboard();
   }
 }
@@ -59743,6 +59745,9 @@ async function renderOrderPlan() {
           <button onclick="applyOrderPlanToDailyReport()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 font-semibold" title="저장된 계획을 생산일보에 반영 (BOM 원재료 자동 집계)">
             <i class="fas fa-industry mr-1"></i> 생산일보 반영
           </button>
+          <button onclick="showMaterialUsageModal()" class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-700 font-semibold" title="반죽 배합 기준 원료 총 사용량 자동 산출 → 생산팀 전달 + HACCP 스냅샷">
+            <i class="fas fa-flask mr-1"></i> 원료 사용량 산출
+          </button>
           <div class="border-l pl-2 flex gap-1">
             <button onclick="showAddManualProductModal()" class="bg-amber-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-amber-600" title="계획표에 없는 제품을 수기로 추가">
               <i class="fas fa-plus mr-1"></i> 수기 추가
@@ -59810,22 +59815,75 @@ async function loadOrderPlan() {
   }
 }
 
-function renderOrderPlanSummary(summary) {
+// v3.6.81: 그리드 데이터 기반 실시간 재계산 (엑셀 임포트/셀 편집 후에도 최신 표시)
+function computeOrderPlanSummary() {
+  const grid = __orderPlanData.grid || [];
+  const channels = __orderPlanData.channels || [];
+  const chTotals = {};
+  const chExtraTotals = {};
+  for (const ch of channels) { chTotals[ch] = 0; chExtraTotals[ch] = 0; }
+  let grandTotal = 0;
+  let grandExtra = 0;
+  let productsWithPlan = 0;
+
+  for (const row of grid) {
+    const rowTotal = (row.total || 0);
+    if (rowTotal > 0) productsWithPlan++;
+    // 정기 채널
+    for (const [ch, v] of Object.entries(row.channels || {})) {
+      const n = Number(v) || 0;
+      if (chTotals[ch] === undefined) chTotals[ch] = 0;
+      chTotals[ch] += n;
+      grandTotal += n;
+    }
+    // 추가 발주
+    for (const [ch, v] of Object.entries(row.extra || {})) {
+      const n = Number(v) || 0;
+      if (chExtraTotals[ch] === undefined) chExtraTotals[ch] = 0;
+      chExtraTotals[ch] += n;
+      grandExtra += n;
+    }
+  }
+
+  return {
+    channel_totals: chTotals,
+    channel_extra_totals: chExtraTotals,
+    grand_total: grandTotal,
+    grand_extra: grandExtra,
+    grand_production_needed: grandTotal + grandExtra,  // 당일 필요 생산 수량
+    products_with_plan: productsWithPlan
+  };
+}
+
+function renderOrderPlanSummary(_ignoredServerSummary) {
   const box = document.getElementById('op-summary');
-  if (!box || !summary) return;
-  const chTotals = summary.channel_totals || {};
-  const cards = __orderPlanData.channels.map(ch => {
+  if (!box) return;
+  // v3.6.81: 서버 summary는 무시하고 그리드 기반으로 재계산
+  const s = computeOrderPlanSummary();
+  const channels = __orderPlanData.channels || [];
+  const chTotals = s.channel_totals;
+  const chExtra = s.channel_extra_totals;
+  const cards = channels.map(ch => {
     const v = chTotals[ch] || 0;
-    return `<div class="bg-white rounded-lg shadow px-3 py-2 text-center border-t-4 ${v > 0 ? 'border-purple-400' : 'border-gray-200'}">
-      <p class="text-[10px] text-gray-500">${ch}</p>
-      <p class="text-lg font-bold ${v > 0 ? 'text-purple-700' : 'text-gray-400'}">${v}</p>
+    const ex = chExtra[ch] || 0;
+    const total = v + ex;
+    return `<div class="bg-white rounded-lg shadow px-3 py-2 text-center border-t-4 ${total > 0 ? 'border-purple-400' : 'border-gray-200'}">
+      <p class="text-[10px] text-gray-500 truncate">${ch}</p>
+      <p class="text-lg font-bold ${total > 0 ? 'text-purple-700' : 'text-gray-400'}">${total.toLocaleString()}</p>
+      ${ex > 0 ? `<p class="text-[9px] text-orange-500">추가 +${ex.toLocaleString()}</p>` : ''}
     </div>`;
   }).join('');
   box.innerHTML = `
-    <div class="grid grid-cols-2 md:grid-cols-6 lg:grid-cols-12 gap-2">
+    <div class="grid grid-cols-2 md:grid-cols-6 lg:grid-cols-13 gap-2">
       <div class="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg shadow px-3 py-2 text-center text-white">
         <p class="text-[10px] opacity-80">총 발주량</p>
-        <p class="text-lg font-bold">${summary.grand_total}</p>
+        <p class="text-lg font-bold">${s.grand_total.toLocaleString()}</p>
+        ${s.grand_extra > 0 ? `<p class="text-[9px] opacity-80">추가 +${s.grand_extra.toLocaleString()}</p>` : ''}
+      </div>
+      <div class="bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-lg shadow px-3 py-2 text-center text-white" title="정기 + 추가 발주 = 오늘 실제 생산해야 할 총 수량">
+        <p class="text-[10px] opacity-80"><i class="fas fa-industry mr-1"></i>당일 필요수량</p>
+        <p class="text-lg font-bold">${s.grand_production_needed.toLocaleString()}</p>
+        <p class="text-[9px] opacity-80">${s.products_with_plan}개 제품</p>
       </div>
       ${cards}
     </div>
@@ -59963,6 +60021,9 @@ function onOrderPlanCellChange(input) {
     input.classList.add('text-gray-400');
     input.classList.remove('font-semibold', 'text-purple-700', 'text-orange-700');
   }
+
+  // v3.6.81: 상단 합계 카드도 실시간 재계산
+  renderOrderPlanSummary();
 }
 
 function filterOrderPlan() {
@@ -60201,6 +60262,7 @@ function applyImportContextToGrid() {
     }
   }
   renderOrderPlanGrid();
+  renderOrderPlanSummary();  // v3.6.81: 상단 합계도 갱신
 }
 
 // =====================================================================
@@ -60679,3 +60741,743 @@ window.closeUnmatchedCandidatesModal = closeUnmatchedCandidatesModal;
 window.confirmUnmatchedCandidate = confirmUnmatchedCandidate;
 window.skipUnmatched = skipUnmatched;
 window.finishUnmatchedResolve = finishUnmatchedResolve;
+
+// =====================================================================
+// v3.6.81: 원료 사용량 산출 모달 (반죽 배합 → 원료 kg)
+// =====================================================================
+let __materialUsageData = null;
+
+async function showMaterialUsageModal() {
+  const date = __orderPlanData.date;
+  if (!date) { alert('먼저 계획일을 조회해주세요.'); return; }
+
+  const loading = document.createElement('div');
+  loading.className = 'fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50';
+  loading.innerHTML = `<div class="bg-white rounded-xl px-6 py-4 shadow-2xl">
+    <i class="fas fa-flask fa-spin text-emerald-500 text-3xl mb-2"></i>
+    <p class="text-sm text-gray-700">반죽 판수 및 원료 사용량 계산 중...</p></div>`;
+  document.body.appendChild(loading);
+
+  try {
+    const res = await axios.post('/api/order-plan/material-usage', {
+      plan_date: date, include_extra: true
+    });
+    loading.remove();
+    if (!res.data?.success) {
+      if (res.data?.needs_migration) {
+        alert('❌ 반죽 마스터 테이블이 없습니다.\n\n마이그레이션 0042를 D1 콘솔에서 실행해주세요.');
+        return;
+      }
+      alert('❌ ' + res.data?.error);
+      return;
+    }
+    __materialUsageData = res.data;
+    renderMaterialUsageModal();
+  } catch (e) {
+    loading.remove();
+    alert('❌ 산출 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+function renderMaterialUsageModal() {
+  const d = __materialUsageData;
+  if (!d) return;
+  const s = d.summary;
+  const doughs = d.doughs || [];
+  const raws = d.raw_materials || [];
+  const noRecipe = d.products_without_recipe || [];
+
+  // 반죽 표
+  const doughRows = doughs.map(dg => {
+    const matStr = dg.materials.length > 0
+      ? dg.materials.map(m => `${m.material_name} ${(m.total_kg).toFixed(2)}kg`).join(', ')
+      : '<span class="text-red-500">배합 미등록</span>';
+    return `<tr class="hover:bg-emerald-50 border-b">
+      <td class="px-2 py-1.5 text-xs">${dg.dough_name}${dg.dough_name_en ? `<br><span class="text-[10px] text-gray-400">${dg.dough_name_en}</span>` : ''}</td>
+      <td class="px-2 py-1.5 text-right text-sm font-bold text-emerald-700">${dg.total_kg.toFixed(2)}</td>
+      <td class="px-2 py-1.5 text-right text-sm font-bold text-purple-700">${dg.batch_count.toFixed(2)}</td>
+      <td class="px-2 py-1.5 text-right text-xs text-gray-600">${dg.batch_size_kg}kg</td>
+      <td class="px-2 py-1.5 text-[11px] text-gray-600">${matStr}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="5" class="p-4 text-center text-gray-400">반죽 사용 데이터 없음 (제품↔반죽 매핑 필요)</td></tr>`;
+
+  // 원료 표
+  const rawRows = raws.map((r, i) => `
+    <tr class="hover:bg-teal-50 border-b">
+      <td class="px-2 py-1.5 text-xs text-gray-500 text-center">${i + 1}</td>
+      <td class="px-2 py-1.5 text-xs font-medium">${r.material_name}</td>
+      <td class="px-2 py-1.5 text-right text-sm font-bold text-teal-700">${r.total_kg.toFixed(3)}</td>
+      <td class="px-2 py-1.5 text-right text-xs text-gray-500">${Math.round(r.total_g).toLocaleString()}</td>
+    </tr>
+  `).join('') || `<tr><td colspan="4" class="p-4 text-center text-gray-400">원료 사용 데이터 없음</td></tr>`;
+
+  // 반죽 매핑 없는 제품
+  const noRecipeRows = noRecipe.slice(0, 50).map(p => `
+    <tr class="hover:bg-orange-50 border-b">
+      <td class="px-2 py-1 text-xs font-mono text-gray-500">${p.product_code}</td>
+      <td class="px-2 py-1 text-xs">${p.product_name}</td>
+      <td class="px-2 py-1 text-right text-xs font-semibold">${p.quantity}</td>
+      <td class="px-2 py-1 text-center text-xs">
+        ${p.has_bom ? '<span class="text-blue-600">BOM 있음</span>' : '<span class="text-red-500">미등록</span>'}
+      </td>
+    </tr>
+  `).join('');
+
+  const html = `
+    <div id="op-material-usage-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-7xl max-h-[95vh] overflow-hidden flex flex-col">
+        <div class="px-6 py-3 border-b bg-gradient-to-r from-emerald-500 to-teal-600 text-white flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-bold"><i class="fas fa-flask mr-2"></i>원료 사용량 산출 · ${d.plan_date}</h3>
+            <p class="text-xs opacity-90">반죽 배합 기준 자동 계산 · 생산팀 전달용</p>
+          </div>
+          <button onclick="closeMaterialUsageModal()" class="text-white hover:text-gray-200"><i class="fas fa-times text-xl"></i></button>
+        </div>
+
+        <!-- 요약 카드 -->
+        <div class="p-3 bg-gray-50 grid grid-cols-2 md:grid-cols-5 gap-2 border-b">
+          <div class="bg-white rounded-lg shadow-sm px-3 py-2 text-center border-t-4 border-purple-400">
+            <p class="text-[10px] text-gray-500">계획 제품 수</p>
+            <p class="text-lg font-bold text-purple-700">${s.total_products_planned}</p>
+          </div>
+          <div class="bg-white rounded-lg shadow-sm px-3 py-2 text-center border-t-4 border-green-400">
+            <p class="text-[10px] text-gray-500">반죽 매핑 있음</p>
+            <p class="text-lg font-bold text-green-700">${s.products_with_recipe}</p>
+          </div>
+          <div class="bg-white rounded-lg shadow-sm px-3 py-2 text-center border-t-4 border-red-400">
+            <p class="text-[10px] text-gray-500">반죽 매핑 없음</p>
+            <p class="text-lg font-bold text-red-600">${s.products_without_recipe}</p>
+          </div>
+          <div class="bg-white rounded-lg shadow-sm px-3 py-2 text-center border-t-4 border-emerald-500">
+            <p class="text-[10px] text-gray-500">총 반죽</p>
+            <p class="text-lg font-bold text-emerald-700">${s.total_dough_kg} kg</p>
+          </div>
+          <div class="bg-white rounded-lg shadow-sm px-3 py-2 text-center border-t-4 border-indigo-500">
+            <p class="text-[10px] text-gray-500">총 판수</p>
+            <p class="text-lg font-bold text-indigo-700">${s.total_batches} 판</p>
+          </div>
+        </div>
+
+        <div class="p-4 overflow-y-auto flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <!-- 반죽 -->
+          <div>
+            <h4 class="font-bold text-emerald-700 mb-2"><i class="fas fa-bread-slice mr-1"></i>반죽별 필요량 (${doughs.length}종)</h4>
+            <div class="border rounded-lg overflow-hidden">
+              <table class="w-full text-sm">
+                <thead class="bg-emerald-50 text-emerald-800 text-xs">
+                  <tr><th class="px-2 py-1.5 text-left">반죽</th><th class="px-2 py-1.5 text-right">필요 kg</th><th class="px-2 py-1.5 text-right">판수</th><th class="px-2 py-1.5 text-right">판당kg</th><th class="px-2 py-1.5 text-left">원료 상세</th></tr>
+                </thead>
+                <tbody>${doughRows}</tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 원료 -->
+          <div>
+            <h4 class="font-bold text-teal-700 mb-2"><i class="fas fa-warehouse mr-1"></i>원료 총 사용량 (${raws.length}종)</h4>
+            <div class="border rounded-lg overflow-hidden max-h-[500px] overflow-y-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-teal-50 text-teal-800 text-xs sticky top-0">
+                  <tr><th class="px-2 py-1.5">#</th><th class="px-2 py-1.5 text-left">원료</th><th class="px-2 py-1.5 text-right">kg</th><th class="px-2 py-1.5 text-right">g</th></tr>
+                </thead>
+                <tbody>${rawRows}</tbody>
+              </table>
+            </div>
+          </div>
+
+          ${noRecipe.length > 0 ? `
+          <div class="lg:col-span-2">
+            <h4 class="font-bold text-orange-600 mb-2"><i class="fas fa-exclamation-triangle mr-1"></i>반죽 매핑 미등록 제품 (${noRecipe.length}개, 원료 산출 제외됨)</h4>
+            <div class="border rounded-lg overflow-hidden max-h-[220px] overflow-y-auto">
+              <table class="w-full text-sm">
+                <thead class="bg-orange-50 text-orange-800 text-xs sticky top-0">
+                  <tr><th class="px-2 py-1 text-left">코드</th><th class="px-2 py-1 text-left">제품명</th><th class="px-2 py-1 text-right">수량</th><th class="px-2 py-1 text-center">비고</th></tr>
+                </thead>
+                <tbody>${noRecipeRows}</tbody>
+              </table>
+              ${noRecipe.length > 50 ? `<div class="p-2 text-center text-xs text-gray-400">상위 50개 표시</div>` : ''}
+            </div>
+            <p class="text-xs text-orange-600 mt-1">💡 [반죽 관리] 메뉴에서 제품↔반죽 매핑을 등록하면 자동 계산에 포함됩니다.</p>
+          </div>
+          ` : ''}
+        </div>
+
+        <div class="px-6 py-3 border-t bg-gray-100 flex justify-between items-center flex-wrap gap-2">
+          <div class="text-xs text-gray-500">
+            <i class="fas fa-info-circle mr-1"></i>
+            판 수 = 총 반죽 kg ÷ 판당 반죽 kg · 원료 = 반죽 kg × 배합 비율
+          </div>
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="exportMaterialUsageExcel()" class="bg-teal-500 hover:bg-teal-600 text-white px-4 py-2 rounded-lg text-sm">
+              <i class="fas fa-file-excel mr-1"></i> 엑셀 다운로드
+            </button>
+            <button onclick="saveMaterialUsageToHaccp()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-semibold" title="계획 원료 사용량을 HACCP 스냅샷으로 저장">
+              <i class="fas fa-shield-alt mr-1"></i> HACCP 스냅샷 저장
+            </button>
+            <button onclick="closeMaterialUsageModal()" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg text-sm">닫기</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function closeMaterialUsageModal() {
+  document.getElementById('op-material-usage-modal')?.remove();
+}
+
+function exportMaterialUsageExcel() {
+  if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리 로딩 중'); return; }
+  const d = __materialUsageData;
+  if (!d) return;
+
+  const wb = XLSX.utils.book_new();
+
+  // Sheet1: 반죽별
+  const doughAoA = [['반죽명', '영문', '총 kg', '판수', '판당kg']];
+  for (const dg of d.doughs) {
+    doughAoA.push([dg.dough_name, dg.dough_name_en || '', dg.total_kg.toFixed(2), dg.batch_count.toFixed(2), dg.batch_size_kg]);
+  }
+  const ws1 = XLSX.utils.aoa_to_sheet(doughAoA);
+  XLSX.utils.book_append_sheet(wb, ws1, '반죽별필요량');
+
+  // Sheet2: 원료
+  const rawAoA = [['#', '원료명', 'kg', 'g']];
+  d.raw_materials.forEach((r, i) => {
+    rawAoA.push([i + 1, r.material_name, r.total_kg.toFixed(3), Math.round(r.total_g)]);
+  });
+  const ws2 = XLSX.utils.aoa_to_sheet(rawAoA);
+  XLSX.utils.book_append_sheet(wb, ws2, '원료사용량');
+
+  // Sheet3: 미등록
+  const noAoA = [['코드', '제품명', '수량', 'BOM유무']];
+  for (const p of (d.products_without_recipe || [])) {
+    noAoA.push([p.product_code, p.product_name, p.quantity, p.has_bom ? 'O' : 'X']);
+  }
+  const ws3 = XLSX.utils.aoa_to_sheet(noAoA);
+  XLSX.utils.book_append_sheet(wb, ws3, '미등록제품');
+
+  XLSX.writeFile(wb, `원료사용량_${d.plan_date}.xlsx`);
+}
+
+async function saveMaterialUsageToHaccp() {
+  const d = __materialUsageData;
+  if (!d) return;
+  const raws = d.raw_materials || [];
+  if (raws.length === 0) { alert('저장할 원료 데이터가 없습니다.'); return; }
+
+  if (!confirm(`📋 ${d.plan_date} 원료 계획 ${raws.length}종을 HACCP 스냅샷으로 저장하시겠습니까?\n\n생산팀에서 실사용량 입력 시 편차가 자동 계산됩니다.`)) return;
+
+  try {
+    const planned = raws.map(r => ({
+      material_name: r.material_name,
+      planned_kg: r.total_kg,
+      category: 'raw'
+    }));
+    // 반죽도 스냅샷에 포함 (category='dough')
+    for (const dg of (d.doughs || [])) {
+      planned.push({ material_name: `[반죽] ${dg.dough_name}`, planned_kg: dg.total_kg, category: 'dough' });
+    }
+    const res = await axios.post('/api/haccp/material-check/snapshot', {
+      check_date: d.plan_date, planned
+    });
+    if (!res.data?.success) {
+      alert('❌ ' + (res.data?.error || '저장 실패'));
+      return;
+    }
+    if (confirm(`✅ HACCP 스냅샷 저장 완료 (${res.data.saved}건)\n\nHACCP 원료체크 화면으로 이동하시겠습니까?`)) {
+      location.hash = '#haccp-material-check';
+    }
+  } catch (e) {
+    alert('❌ 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+window.showMaterialUsageModal = showMaterialUsageModal;
+window.closeMaterialUsageModal = closeMaterialUsageModal;
+window.exportMaterialUsageExcel = exportMaterialUsageExcel;
+window.saveMaterialUsageToHaccp = saveMaterialUsageToHaccp;
+
+// =====================================================================
+// v3.6.81: HACCP 원료 사용량 체크 화면
+// =====================================================================
+let __haccpMatData = null;
+
+async function renderHaccpMaterialCheck() {
+  const container = document.getElementById('page-content');
+  if (!container) { console.error('page-content 없음'); return; }
+  const today = new Date().toISOString().split('T')[0];
+
+  container.innerHTML = `
+    <div class="bg-white rounded-xl shadow-lg p-6 mb-4">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+            <i class="fas fa-shield-alt text-red-500"></i> HACCP 원료 사용량 체크
+          </h2>
+          <p class="text-gray-500 text-sm mt-1">계획 대비 실사용량 관리 · 편차 자동 알림</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <label class="text-sm font-medium">체크일:</label>
+          <input type="date" id="hmc-date" value="${today}" onchange="loadHaccpMatCheck()" class="border rounded-lg px-3 py-2 text-sm">
+          <button onclick="loadHaccpMatCheck()" class="bg-red-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-600">
+            <i class="fas fa-sync mr-1"></i> 조회
+          </button>
+          <button onclick="saveHaccpMatBulk()" class="bg-green-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-600 font-semibold">
+            <i class="fas fa-save mr-1"></i> 실사용 일괄 저장
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="hmc-summary" class="mb-4"></div>
+    <div id="hmc-container" class="bg-white rounded-xl shadow-lg overflow-hidden">
+      <div class="text-center py-12 text-gray-400">
+        <i class="fas fa-spinner fa-spin text-3xl"></i>
+        <p class="mt-2">로딩...</p>
+      </div>
+    </div>
+  `;
+
+  await loadHaccpMatCheck();
+}
+
+async function loadHaccpMatCheck() {
+  const date = document.getElementById('hmc-date')?.value;
+  if (!date) return;
+  try {
+    const res = await axios.get(`/api/haccp/material-check/${date}`);
+    if (!res.data?.success) {
+      document.getElementById('hmc-container').innerHTML = `<div class="p-6 text-red-600">조회 실패: ${res.data?.error}</div>`;
+      return;
+    }
+    __haccpMatData = res.data;
+    renderHaccpMatSummary();
+    renderHaccpMatTable();
+  } catch (e) {
+    document.getElementById('hmc-container').innerHTML = `<div class="p-6 text-red-600">에러: ${e.message}</div>`;
+  }
+}
+
+function renderHaccpMatSummary() {
+  const d = __haccpMatData;
+  if (!d) return;
+  const s = d.summary;
+  const box = document.getElementById('hmc-summary');
+  const alertRate = s.total > 0 ? Math.round(s.alerted / s.total * 100) : 0;
+  box.innerHTML = `
+    <div class="grid grid-cols-2 md:grid-cols-6 gap-2">
+      <div class="bg-white rounded-lg shadow px-3 py-2 text-center border-t-4 border-gray-400">
+        <p class="text-[10px] text-gray-500">전체 원료</p>
+        <p class="text-xl font-bold text-gray-700">${s.total}</p>
+      </div>
+      <div class="bg-white rounded-lg shadow px-3 py-2 text-center border-t-4 border-blue-400">
+        <p class="text-[10px] text-gray-500">계획됨</p>
+        <p class="text-xl font-bold text-blue-700">${s.planned}</p>
+      </div>
+      <div class="bg-white rounded-lg shadow px-3 py-2 text-center border-t-4 border-yellow-400">
+        <p class="text-[10px] text-gray-500">진행 중</p>
+        <p class="text-xl font-bold text-yellow-700">${s.in_progress}</p>
+      </div>
+      <div class="bg-white rounded-lg shadow px-3 py-2 text-center border-t-4 border-green-400">
+        <p class="text-[10px] text-gray-500">확인 완료</p>
+        <p class="text-xl font-bold text-green-700">${s.confirmed}</p>
+      </div>
+      <div class="bg-white rounded-lg shadow px-3 py-2 text-center border-t-4 border-red-500">
+        <p class="text-[10px] text-gray-500"><i class="fas fa-bell mr-1"></i>편차 알림</p>
+        <p class="text-xl font-bold text-red-600">${s.alerted}</p>
+        <p class="text-[9px] text-red-500">${alertRate}%</p>
+      </div>
+      <div class="bg-gradient-to-br from-red-500 to-red-600 text-white rounded-lg shadow px-3 py-2 text-center">
+        <p class="text-[10px] opacity-80">계획/실제 합계 kg</p>
+        <p class="text-sm font-bold">${s.total_planned_kg.toFixed(1)} / ${s.total_actual_kg.toFixed(1)}</p>
+      </div>
+    </div>
+  `;
+}
+
+function renderHaccpMatTable() {
+  const d = __haccpMatData;
+  if (!d) return;
+  const rows = d.rows || [];
+  const container = document.getElementById('hmc-container');
+  if (rows.length === 0) {
+    container.innerHTML = `
+      <div class="p-8 text-center text-gray-500">
+        <i class="fas fa-inbox text-4xl mb-2"></i>
+        <p class="text-lg">이 날짜의 HACCP 원료 계획이 없습니다.</p>
+        <p class="text-sm mt-2">발주계획표 → <b>[원료 사용량 산출]</b> → <b>[HACCP 스냅샷 저장]</b>으로 계획을 등록하세요.</p>
+        ${d.needs_migration ? `<p class="text-xs text-orange-500 mt-3">⚠️ haccp_material_check 테이블이 없습니다. 마이그레이션 0042 실행 필요.</p>` : ''}
+      </div>
+    `;
+    return;
+  }
+
+  const trs = rows.map((r, idx) => {
+    const isDough = r.category === 'dough';
+    const variance = r.variance !== null && r.variance !== undefined ? r.variance : null;
+    const vpct = r.variance_pct !== null && r.variance_pct !== undefined ? r.variance_pct : null;
+    const statusBadge = {
+      'planned': '<span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">계획</span>',
+      'in_progress': '<span class="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">진행중</span>',
+      'confirmed': '<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">확인</span>',
+      'alerted': '<span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full animate-pulse">⚠ 편차</span>',
+    }[r.status] || r.status;
+
+    let vColor = 'text-gray-400';
+    let vText = '-';
+    if (vpct !== null) {
+      const abs = Math.abs(vpct);
+      vColor = abs >= 10 ? 'text-red-600 font-bold' : abs >= 5 ? 'text-orange-500' : 'text-green-600';
+      vText = `${variance >= 0 ? '+' : ''}${variance.toFixed(3)} kg (${vpct >= 0 ? '+' : ''}${vpct.toFixed(1)}%)`;
+    }
+
+    return `
+      <tr class="border-b hover:bg-red-50 ${r.status === 'alerted' ? 'bg-red-50' : ''}">
+        <td class="px-2 py-1.5 text-xs text-gray-400 text-center">${idx + 1}</td>
+        <td class="px-2 py-1.5 text-sm ${isDough ? 'text-purple-700 font-semibold' : ''}">${r.material_name}</td>
+        <td class="px-2 py-1.5 text-right text-sm font-medium">${(r.planned_qty || 0).toFixed(3)}</td>
+        <td class="px-2 py-1.5">
+          <input type="number" step="0.001" min="0"
+            data-id="${r.id}" data-name="${r.material_name.replace(/"/g, '&quot;')}"
+            value="${r.actual_qty ?? ''}"
+            oninput="calcHmcVariance(this)"
+            class="w-24 border rounded px-2 py-1 text-right text-sm ${r.actual_qty !== null && r.actual_qty !== undefined ? 'bg-green-50' : 'bg-white'}"
+            placeholder="입력">
+        </td>
+        <td class="px-2 py-1.5 text-right text-xs ${vColor}" id="hmc-var-${r.id}">${vText}</td>
+        <td class="px-2 py-1.5">
+          <input type="text" data-id="${r.id}" data-field="lot" value="${r.lot_no || ''}"
+            class="w-24 border rounded px-2 py-1 text-xs" placeholder="LOT">
+        </td>
+        <td class="px-2 py-1.5">
+          <input type="text" data-id="${r.id}" data-field="memo" value="${r.memo || ''}"
+            class="w-full border rounded px-2 py-1 text-xs" placeholder="비고">
+        </td>
+        <td class="px-2 py-1.5 text-center">${statusBadge}</td>
+      </tr>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="p-3 bg-yellow-50 border-b text-xs text-yellow-800">
+      💡 계획 대비 편차가 <b>±5%</b>: 주의 · <b>±10%</b>: 알림 발생. 실사용 수량 입력 후 <b>[일괄 저장]</b>.
+    </div>
+    <div class="overflow-x-auto" style="max-height: calc(100vh - 340px);">
+      <table class="w-full text-sm">
+        <thead class="bg-red-50 text-red-800 text-xs sticky top-0">
+          <tr>
+            <th class="px-2 py-2">#</th>
+            <th class="px-2 py-2 text-left">원료명</th>
+            <th class="px-2 py-2 text-right">계획 kg</th>
+            <th class="px-2 py-2 text-center">실사용 kg</th>
+            <th class="px-2 py-2 text-right">편차</th>
+            <th class="px-2 py-2 text-left">LOT</th>
+            <th class="px-2 py-2 text-left">비고</th>
+            <th class="px-2 py-2 text-center">상태</th>
+          </tr>
+        </thead>
+        <tbody>${trs}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function calcHmcVariance(input) {
+  const id = input.dataset.id;
+  const row = __haccpMatData.rows.find(r => String(r.id) === String(id));
+  if (!row) return;
+  const actual = Number(input.value);
+  if (isNaN(actual) || input.value === '') {
+    document.getElementById(`hmc-var-${id}`).textContent = '-';
+    document.getElementById(`hmc-var-${id}`).className = 'px-2 py-1.5 text-right text-xs text-gray-400';
+    return;
+  }
+  const planned = row.planned_qty || 0;
+  const v = actual - planned;
+  const vpct = planned > 0 ? (v / planned * 100) : 0;
+  const abs = Math.abs(vpct);
+  const color = abs >= 10 ? 'text-red-600 font-bold' : abs >= 5 ? 'text-orange-500' : 'text-green-600';
+  const el = document.getElementById(`hmc-var-${id}`);
+  if (el) {
+    el.textContent = `${v >= 0 ? '+' : ''}${v.toFixed(3)} kg (${vpct >= 0 ? '+' : ''}${vpct.toFixed(1)}%)`;
+    el.className = `px-2 py-1.5 text-right text-xs ${color}`;
+  }
+}
+
+async function saveHaccpMatBulk() {
+  const date = document.getElementById('hmc-date')?.value;
+  if (!date) return;
+  const rows = [];
+  const inputs = document.querySelectorAll('input[type="number"][data-id]');
+  inputs.forEach(inp => {
+    if (inp.value === '' || inp.value === null) return;
+    const id = inp.dataset.id;
+    const name = inp.dataset.name;
+    const lot = document.querySelector(`input[data-id="${id}"][data-field="lot"]`)?.value || '';
+    const memo = document.querySelector(`input[data-id="${id}"][data-field="memo"]`)?.value || '';
+    rows.push({ material_name: name, actual_qty: Number(inp.value), lot_no: lot, memo });
+  });
+  if (rows.length === 0) { alert('입력된 실사용 값이 없습니다.'); return; }
+
+  const checkedBy = prompt('확인자 이름을 입력해주세요:', localStorage.getItem('haccp_checker') || '');
+  if (!checkedBy) return;
+  localStorage.setItem('haccp_checker', checkedBy);
+
+  try {
+    const res = await axios.post('/api/haccp/material-check/bulk-actual', {
+      check_date: date, checked_by: checkedBy, rows
+    });
+    if (!res.data?.success) { alert('❌ ' + res.data?.error); return; }
+    const msg = `✅ ${res.data.saved}건 저장 완료${res.data.alerts > 0 ? `\n⚠️ 편차 알림 ${res.data.alerts}건` : ''}`;
+    alert(msg);
+    await loadHaccpMatCheck();
+  } catch (e) {
+    alert('❌ ' + (e.response?.data?.error || e.message));
+  }
+}
+
+window.renderHaccpMaterialCheck = renderHaccpMaterialCheck;
+window.loadHaccpMatCheck = loadHaccpMatCheck;
+window.calcHmcVariance = calcHmcVariance;
+window.saveHaccpMatBulk = saveHaccpMatBulk;
+
+// =====================================================================
+// v3.6.81: 반죽 마스터 관리 화면
+// =====================================================================
+let __doughData = null;
+
+async function renderDoughMaster() {
+  const container = document.getElementById('page-content');
+  if (!container) return;
+
+  container.innerHTML = `
+    <div class="bg-white rounded-xl shadow-lg p-6 mb-4">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+            <i class="fas fa-bread-slice text-amber-600"></i> 반죽 마스터 (Sub-Recipe)
+          </h2>
+          <p class="text-gray-500 text-sm mt-1">발효종·폴리쉬·탕종 배합 관리 · 원료 사용량 자동 산출</p>
+        </div>
+        <div class="flex gap-2">
+          <button onclick="seedDoughDefaults()" class="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-amber-600">
+            <i class="fas fa-magic mr-1"></i> 기본 8종 자동 등록
+          </button>
+          <button onclick="showDoughEditor()" class="bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-600 font-semibold">
+            <i class="fas fa-plus mr-1"></i> 반죽 추가
+          </button>
+        </div>
+      </div>
+    </div>
+    <div id="dough-container" class="bg-white rounded-xl shadow-lg overflow-hidden">
+      <div class="text-center py-12 text-gray-400">
+        <i class="fas fa-spinner fa-spin text-3xl"></i>
+        <p class="mt-2">로딩 중...</p>
+      </div>
+    </div>
+  `;
+  await loadDoughList();
+}
+
+async function loadDoughList() {
+  try {
+    const res = await axios.get('/api/dough/list');
+    if (!res.data?.success) return;
+    __doughData = res.data.data || [];
+    renderDoughTable(res.data.needs_migration);
+  } catch (e) {
+    document.getElementById('dough-container').innerHTML = `<div class="p-6 text-red-600">에러: ${e.message}</div>`;
+  }
+}
+
+function renderDoughTable(needsMigration) {
+  const container = document.getElementById('dough-container');
+  const doughs = __doughData || [];
+  if (doughs.length === 0) {
+    container.innerHTML = `
+      <div class="p-8 text-center text-gray-500">
+        <i class="fas fa-bread-slice text-4xl mb-2"></i>
+        <p class="text-lg">등록된 반죽이 없습니다.</p>
+        <p class="text-sm mt-1">[기본 8종 자동 등록] 또는 [반죽 추가]로 시작하세요.</p>
+        ${needsMigration ? `<p class="text-xs text-orange-500 mt-3">⚠️ 마이그레이션 0042 실행 필요</p>` : ''}
+      </div>
+    `;
+    return;
+  }
+
+  const rows = doughs.map(d => {
+    const matBadges = d.materials.map(m =>
+      `<span class="inline-block bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded text-[11px] mr-1 mb-1">${m.material_name} ${m.quantity_per_kg}g</span>`
+    ).join('');
+    return `
+      <tr class="border-b hover:bg-amber-50">
+        <td class="px-3 py-2 text-sm font-bold text-amber-700">${d.dough_name}</td>
+        <td class="px-3 py-2 text-xs text-gray-500">${d.dough_name_en || '-'}</td>
+        <td class="px-3 py-2 text-sm text-right font-mono">${d.batch_size_kg} kg</td>
+        <td class="px-3 py-2 text-center">
+          <span class="text-sm font-bold ${d.materials.length > 0 ? 'text-green-600' : 'text-red-500'}">
+            ${d.materials.length}종
+          </span>
+          ${d.total_ratio > 0 ? `<br><span class="text-[10px] text-gray-400">합 ${d.total_ratio}g/kg</span>` : ''}
+        </td>
+        <td class="px-3 py-2 text-xs">${matBadges || '<span class="text-red-400">배합 미등록</span>'}</td>
+        <td class="px-3 py-2 text-center whitespace-nowrap">
+          <button onclick="showDoughEditor('${d.dough_code}')" class="bg-blue-500 text-white px-2 py-1 rounded text-xs hover:bg-blue-600">
+            <i class="fas fa-edit"></i> 편집
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-amber-50 text-amber-800 text-xs sticky top-0">
+          <tr>
+            <th class="px-3 py-2 text-left">반죽명</th>
+            <th class="px-3 py-2 text-left">영문</th>
+            <th class="px-3 py-2 text-right">판당 kg</th>
+            <th class="px-3 py-2 text-center">원료</th>
+            <th class="px-3 py-2 text-left">배합 상세</th>
+            <th class="px-3 py-2 text-center">작업</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div class="p-3 bg-gray-50 border-t text-xs text-gray-500">
+      💡 <b>판당 kg</b> = 배치 1판을 만들었을 때 완성 반죽 무게 · <b>배합</b> = 반죽 1kg 완성에 필요한 원료 g
+    </div>
+  `;
+}
+
+async function seedDoughDefaults() {
+  if (!confirm('발효종르방, 폴리쉬, 통밀르방, 통밀폴리쉬, 탕종, 통밀탕종, 쌀르방, 쌀탕종 (8종) 자동 등록하시겠습니까?\n\n(이미 있으면 무시됩니다)')) return;
+  try {
+    const res = await axios.post('/api/dough/seed-defaults');
+    if (!res.data?.success) {
+      if (res.data?.needs_migration) {
+        alert('❌ 마이그레이션 0042를 먼저 실행해주세요.');
+        return;
+      }
+      alert('❌ ' + res.data?.error);
+      return;
+    }
+    alert(`✅ ${res.data.seeded}종 신규 등록 (전체 ${res.data.total}종)`);
+    await loadDoughList();
+  } catch (e) {
+    alert('❌ ' + e.message);
+  }
+}
+
+function showDoughEditor(doughCode) {
+  const existing = doughCode ? __doughData.find(d => d.dough_code === doughCode) : null;
+  const isEdit = !!existing;
+  const materials = existing?.materials || [];
+
+  const matRows = materials.map((m, i) => matRowHtml(m, i)).join('') || matRowHtml({}, 0);
+
+  const html = `
+    <div id="dough-editor-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[95vh] overflow-hidden flex flex-col">
+        <div class="px-6 py-3 border-b bg-gradient-to-r from-amber-500 to-orange-500 text-white flex items-center justify-between">
+          <h3 class="text-lg font-bold"><i class="fas fa-edit mr-2"></i>${isEdit ? '반죽 편집' : '새 반죽 등록'}</h3>
+          <button onclick="closeDoughEditor()" class="text-white"><i class="fas fa-times text-xl"></i></button>
+        </div>
+        <div class="p-4 overflow-y-auto flex-1">
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            <div>
+              <label class="text-xs font-medium text-gray-700">코드</label>
+              <input type="text" id="dough-code" value="${existing?.dough_code || ''}" ${isEdit ? 'readonly' : ''}
+                class="w-full border rounded px-2 py-1.5 text-sm ${isEdit ? 'bg-gray-100' : ''}" placeholder="DOUGH_XXX">
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-700">반죽명 *</label>
+              <input type="text" id="dough-name" value="${existing?.dough_name || ''}" class="w-full border rounded px-2 py-1.5 text-sm" placeholder="예: 발효종르방">
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-700">영문명</label>
+              <input type="text" id="dough-name-en" value="${existing?.dough_name_en || ''}" class="w-full border rounded px-2 py-1.5 text-sm" placeholder="Levain">
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-700">판당 kg *</label>
+              <input type="number" step="0.1" id="dough-batch-size" value="${existing?.batch_size_kg || 40}" class="w-full border rounded px-2 py-1.5 text-sm">
+            </div>
+          </div>
+          <div class="mb-2 flex items-center justify-between">
+            <h4 class="font-bold text-amber-700"><i class="fas fa-vial mr-1"></i>원료 배합 (반죽 1kg 만들 때 필요한 g)</h4>
+            <button onclick="addDoughMatRow()" class="bg-emerald-500 text-white px-3 py-1 rounded text-xs"><i class="fas fa-plus mr-1"></i>원료 추가</button>
+          </div>
+          <div id="dough-mat-list" class="space-y-1">
+            ${matRows}
+          </div>
+        </div>
+        <div class="px-6 py-3 border-t bg-gray-100 flex justify-end gap-2">
+          <button onclick="closeDoughEditor()" class="bg-gray-300 text-gray-800 px-4 py-2 rounded-lg text-sm">취소</button>
+          <button onclick="saveDough()" class="bg-emerald-500 text-white px-5 py-2 rounded-lg text-sm font-semibold">
+            <i class="fas fa-save mr-1"></i> 저장
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function matRowHtml(m, i) {
+  return `
+    <div class="dough-mat-row grid grid-cols-12 gap-2 items-center bg-gray-50 p-2 rounded">
+      <input type="text" class="dough-mat-name col-span-6 border rounded px-2 py-1 text-sm" value="${m.material_name || ''}" placeholder="원료명 (예: 유기농강력)">
+      <input type="number" step="0.01" class="dough-mat-qty col-span-3 border rounded px-2 py-1 text-sm text-right" value="${m.quantity_per_kg || ''}" placeholder="g/kg">
+      <input type="text" class="dough-mat-memo col-span-2 border rounded px-2 py-1 text-xs" value="${m.memo || ''}" placeholder="비고">
+      <button onclick="this.closest('.dough-mat-row').remove()" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>
+    </div>
+  `;
+}
+
+function addDoughMatRow() {
+  document.getElementById('dough-mat-list').insertAdjacentHTML('beforeend', matRowHtml({}, 0));
+}
+
+function closeDoughEditor() {
+  document.getElementById('dough-editor-modal')?.remove();
+}
+
+async function saveDough() {
+  const code = document.getElementById('dough-code').value.trim();
+  const name = document.getElementById('dough-name').value.trim();
+  if (!code || !name) { alert('코드/반죽명 필수'); return; }
+  const enName = document.getElementById('dough-name-en').value.trim();
+  const batch = Number(document.getElementById('dough-batch-size').value) || 40;
+
+  const materials = [];
+  document.querySelectorAll('.dough-mat-row').forEach(r => {
+    const name = r.querySelector('.dough-mat-name').value.trim();
+    const qty = Number(r.querySelector('.dough-mat-qty').value);
+    if (!name || !qty) return;
+    materials.push({ material_name: name, quantity_per_kg: qty, memo: r.querySelector('.dough-mat-memo').value.trim() || null });
+  });
+
+  try {
+    const res = await axios.post('/api/dough/save', {
+      dough_code: code, dough_name: name, dough_name_en: enName || null,
+      batch_size_kg: batch, materials
+    });
+    if (!res.data?.success) { alert('❌ ' + res.data?.error); return; }
+    alert('✅ 저장 완료');
+    closeDoughEditor();
+    await loadDoughList();
+  } catch (e) {
+    alert('❌ ' + (e.response?.data?.error || e.message));
+  }
+}
+
+window.renderDoughMaster = renderDoughMaster;
+window.loadDoughList = loadDoughList;
+window.seedDoughDefaults = seedDoughDefaults;
+window.showDoughEditor = showDoughEditor;
+window.addDoughMatRow = addDoughMatRow;
+window.closeDoughEditor = closeDoughEditor;
+window.saveDough = saveDough;

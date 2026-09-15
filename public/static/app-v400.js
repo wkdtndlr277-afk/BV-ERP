@@ -59715,7 +59715,11 @@ window.applyStandardWeights = applyStandardWeights;
 let __orderPlanData = { grid: [], channels: [], date: '', filterText: '', showOnlyActive: true };
 
 async function renderOrderPlan() {
-  const container = document.getElementById('main-content');
+  const container = document.getElementById('page-content');
+  if (!container) {
+    console.error('❌ page-content 엘리먼트를 찾을 수 없습니다');
+    return;
+  }
   const today = new Date().toISOString().split('T')[0];
 
   container.innerHTML = `

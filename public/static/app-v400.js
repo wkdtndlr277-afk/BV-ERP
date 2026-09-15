@@ -59712,7 +59712,7 @@ window.applyStandardWeights = applyStandardWeights;
 //   [격자 UI] → order_plan 테이블 (원본) + orders 테이블 (자동 동기화)
 // 채널: 쿠팡/오아시스/컬리 냉동/컬리 상온/매장용/가맹점/GS/배민/롯데/CJ/샌드위치
 
-let __orderPlanData = { grid: [], channels: [], date: '', filterText: '' };
+let __orderPlanData = { grid: [], channels: [], date: '', filterText: '', showOnlyActive: true };
 
 async function renderOrderPlan() {
   const container = document.getElementById('main-content');
@@ -59750,9 +59750,14 @@ async function renderOrderPlan() {
           </div>
         </div>
       </div>
-      <div class="mt-3 flex gap-2 items-center text-xs">
+      <div class="mt-3 flex gap-2 items-center text-xs flex-wrap">
         <input type="text" id="op-filter" placeholder="🔍 제품명/코드 검색..." class="border rounded px-3 py-1.5 flex-1 max-w-xs" oninput="filterOrderPlan()">
-        <span class="text-gray-500">| 재고 컬럼은 <b>참고용</b> (저장되지 않음)</span>
+        <label class="inline-flex items-center gap-1 cursor-pointer bg-purple-50 border border-purple-200 rounded px-2 py-1.5">
+          <input type="checkbox" id="op-only-active" checked onchange="toggleOnlyActive(this.checked)" class="rounded">
+          <span class="text-purple-700 font-medium">계획 있는 제품만</span>
+        </label>
+        <span class="text-gray-500" id="op-row-count"></span>
+        <span class="text-gray-500 ml-auto">재고 컬럼은 <b>참고용</b> (저장되지 않음)</span>
       </div>
     </div>
 
@@ -59825,9 +59830,24 @@ function renderOrderPlanGrid() {
   const channels = __orderPlanData.channels;
   let grid = __orderPlanData.grid;
   const filter = (__orderPlanData.filterText || '').trim().toLowerCase();
+  const onlyActive = __orderPlanData.showOnlyActive;
+  const totalProducts = grid.length;
+
+  // 텍스트 필터 (검색어 있으면 우선 적용)
   if (filter) {
     grid = grid.filter(r => (r.code || '').toLowerCase().includes(filter) || (r.name || '').toLowerCase().includes(filter));
+  } else if (onlyActive) {
+    // 계획 있는 제품만 (검색어 없을 때만 적용)
+    grid = grid.filter(r => {
+      const hasChannel = r.channels && Object.keys(r.channels).some(k => Number(r.channels[k]) > 0);
+      const hasExtra = r.extra && Object.keys(r.extra).some(k => Number(r.extra[k]) > 0);
+      return hasChannel || hasExtra;
+    });
   }
+
+  // 행 개수 표시
+  const cntBox = document.getElementById('op-row-count');
+  if (cntBox) cntBox.textContent = `표시: ${grid.length} / 전체: ${totalProducts}`;
 
   // sticky header
   const chHeader = channels.map(ch =>
@@ -59888,8 +59908,18 @@ function renderOrderPlanGrid() {
       </thead>
       <tbody>${rows}</tbody>
     </table>
-    ${grid.length === 0 ? '<div class="p-8 text-center text-gray-400">등록된 제품이 없습니다.</div>' : ''}
+    ${grid.length === 0 ? `<div class="p-8 text-center text-gray-400">
+      ${onlyActive && !filter && totalProducts > 0
+        ? '📭 저장된 발주 계획이 없습니다.<br><span class="text-xs">체크박스 [계획 있는 제품만]을 해제하면 전체 ' + totalProducts + '개 제품 그리드가 표시됩니다.</span>'
+        : '검색 결과가 없습니다.'}
+    </div>` : ''}
   `;
+}
+
+// 계획 있는 제품만 표시 토글
+function toggleOnlyActive(checked) {
+  __orderPlanData.showOnlyActive = !!checked;
+  renderOrderPlanGrid();
 }
 
 function onOrderPlanCellChange(input) {
@@ -60272,4 +60302,5 @@ window.onOrderPlanCellChange = onOrderPlanCellChange;
 window.filterOrderPlan = filterOrderPlan;
 window.saveOrderPlan = saveOrderPlan;
 window.importOrderPlanExcel = importOrderPlanExcel;
+window.toggleOnlyActive = toggleOnlyActive;
 window.exportOrderPlanExcel = exportOrderPlanExcel;

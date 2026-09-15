@@ -59740,6 +59740,9 @@ async function renderOrderPlan() {
           <button onclick="saveOrderPlan()" class="bg-green-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-600 font-semibold">
             <i class="fas fa-save mr-1"></i> 저장
           </button>
+          <button onclick="applyOrderPlanToDailyReport()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 font-semibold" title="저장된 계획을 생산일보에 반영 (BOM 원재료 자동 집계)">
+            <i class="fas fa-industry mr-1"></i> 생산일보 반영
+          </button>
           <div class="border-l pl-2 flex gap-1">
             <button onclick="showAddManualProductModal()" class="bg-amber-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-amber-600" title="계획표에 없는 제품을 수기로 추가">
               <i class="fas fa-plus mr-1"></i> 수기 추가
@@ -59999,8 +60002,11 @@ async function saveOrderPlan() {
 }
 
 // =====================================================================
-// 엑셀 임포트 (SheetJS)
+// 엑셀 임포트 (SheetJS) - v3.6.80: 서버 스마트 매칭 + 후보 제안 UI
 // =====================================================================
+// 임시 저장: 엑셀 파싱 결과 (매칭 후 최종 적용용)
+let __orderPlanImportContext = null;
+
 async function importOrderPlanExcel(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -60019,10 +60025,7 @@ async function importOrderPlanExcel(event) {
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null });
 
     // 계획표.xlsx 구조:
-    // 2행(index=1) = 헤더 (D열=품명, G=쿠팡, H=오아시스, I=의왕, J=매장용, K=가맹점,
-    //                     L=컬리냉동, M/N/O=컬리평택/김포/창원, P=재고, Q=GS, R=배민, S=롯데, T=CJ, U=샌드위치, W=추가합계)
-    // 5행부터 데이터
-    // 엑셀 열 번호: A=0, B=1, C=2, D=3, E=4, F=5, G=6, ...
+    // 2행(index=1) = 헤더, 5행부터 데이터
     const COL = {
       name: 3,           // D열
       쿠팡: 6,           // G열
@@ -60042,26 +60045,16 @@ async function importOrderPlanExcel(event) {
       추가합계: 22       // W열
     };
 
-    // 제품명 → product_code 매칭 (이미 로드된 격자 데이터 사용)
-    const nameToCode = {};
-    for (const p of __orderPlanData.grid) {
-      if (p.name) nameToCode[normalizeProductName(p.name)] = p.code;
-    }
+    // 1단계: 엑셀 행 → 원본 이름 + 수량 데이터 추출
+    const excelRows = [];  // [{ name, channels: {...}, extra: {...} }]
+    const uniqueNames = new Set();
 
-    let importCount = 0, unmatchedNames = [];
-    const gridMap = {};   // code → { channels, extra }
-
-    for (let i = 4; i < rows.length; i++) {  // 5행부터
+    for (let i = 4; i < rows.length; i++) {
       const r = rows[i];
       if (!r) continue;
       const name = r[COL.name];
       if (!name || String(name).trim() === '') continue;
 
-      const code = nameToCode[normalizeProductName(name)];
-      if (!code) { unmatchedNames.push(name); continue; }
-      if (!gridMap[code]) gridMap[code] = { channels: {}, extra: {} };
-
-      // 정기 채널 (쿠팡 상세는 G열 하나 사용, 컬리 상온은 M+N+O 합산)
       const 쿠팡 = num(r[COL.쿠팡]);
       const 오아시스 = num(r[COL.오아시스]);
       const 매장용 = num(r[COL.매장용]);
@@ -60075,46 +60068,417 @@ async function importOrderPlanExcel(event) {
       const 샌드위치 = num(r[COL.샌드위치]);
       const 추가합계 = num(r[COL.추가합계]);
 
-      if (쿠팡) gridMap[code].channels['쿠팡'] = 쿠팡;
-      if (오아시스) gridMap[code].channels['오아시스'] = 오아시스;
-      if (매장용) gridMap[code].channels['매장용'] = 매장용;
-      if (가맹점) gridMap[code].channels['가맹점'] = 가맹점;
-      if (컬리냉동) gridMap[code].channels['컬리 냉동'] = 컬리냉동;
-      if (컬리상온) gridMap[code].channels['컬리 상온'] = 컬리상온;
-      if (GS) gridMap[code].channels['GS'] = GS;
-      if (배민) gridMap[code].channels['배민'] = 배민;
-      if (롯데) gridMap[code].channels['롯데'] = 롯데;
-      if (CJ) gridMap[code].channels['CJ'] = CJ;
-      if (샌드위치) gridMap[code].channels['샌드위치'] = 샌드위치;
-      // 추가 발주는 어느 채널인지 엑셀만으로 알 수 없어 "쿠팡 추가"로 처리 (계획표 특성상 대부분 쿠팡)
-      if (추가합계) gridMap[code].extra['쿠팡'] = 추가합계;
+      const channels = {};
+      const extra = {};
+      if (쿠팡) channels['쿠팡'] = 쿠팡;
+      if (오아시스) channels['오아시스'] = 오아시스;
+      if (매장용) channels['매장용'] = 매장용;
+      if (가맹점) channels['가맹점'] = 가맹점;
+      if (컬리냉동) channels['컬리 냉동'] = 컬리냉동;
+      if (컬리상온) channels['컬리 상온'] = 컬리상온;
+      if (GS) channels['GS'] = GS;
+      if (배민) channels['배민'] = 배민;
+      if (롯데) channels['롯데'] = 롯데;
+      if (CJ) channels['CJ'] = CJ;
+      if (샌드위치) channels['샌드위치'] = 샌드위치;
+      if (추가합계) extra['쿠팡'] = 추가합계;
 
-      importCount++;
+      // 수량이 하나도 없는 행은 skip
+      if (Object.keys(channels).length === 0 && Object.keys(extra).length === 0) continue;
+
+      excelRows.push({ name: String(name).trim(), channels, extra });
+      uniqueNames.add(String(name).trim());
     }
 
-    // 현재 __orderPlanData.grid에 병합 (기존 값 덮어쓰기)
-    for (const row of __orderPlanData.grid) {
-      const m = gridMap[row.code];
-      if (m) {
-        row.channels = m.channels;
-        row.extra = m.extra;
-        let total = 0;
-        for (const v of Object.values(row.channels)) total += Number(v) || 0;
-        for (const v of Object.values(row.extra)) total += Number(v) || 0;
-        row.total = Math.round(total * 100) / 100;
+    if (excelRows.length === 0) {
+      alert('엑셀에서 유효한 발주 수량 데이터를 찾지 못했습니다.');
+      return;
+    }
+
+    // 2단계: 서버 스마트 매칭 API 호출
+    const loadingAlert = document.createElement('div');
+    loadingAlert.id = 'op-import-loading';
+    loadingAlert.className = 'fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50';
+    loadingAlert.innerHTML = `
+      <div class="bg-white rounded-xl px-6 py-4 shadow-2xl">
+        <i class="fas fa-cog fa-spin text-purple-500 text-3xl mb-2"></i>
+        <p class="text-sm text-gray-700">엑셀 ${excelRows.length}행 스마트 매칭 중...</p>
+      </div>
+    `;
+    document.body.appendChild(loadingAlert);
+
+    let matchResult;
+    try {
+      const res = await axios.post('/api/order-plan/match', {
+        names: Array.from(uniqueNames)
+      });
+      matchResult = res.data;
+    } finally {
+      loadingAlert.remove();
+    }
+
+    if (!matchResult?.success) {
+      alert('스마트 매칭 실패: ' + (matchResult?.error || '알 수 없는 오류'));
+      return;
+    }
+
+    // matched: [{ excel_name, code, name, method }]
+    // unmatched: [{ excel_name, candidates: [{code, name, score}] }]
+    const nameToCode = {};  // excel_name → product_code
+    const nameToMethod = {}; // excel_name → method
+    for (const m of matchResult.matched) {
+      nameToCode[m.excel_name] = m.code;
+      nameToMethod[m.excel_name] = m.method;
+    }
+
+    // 3단계: excelRows를 nameToCode로 gridMap 조립
+    const gridMap = {};
+    let matchedCount = 0;
+    const unmatchedRows = []; // 실제로 수량이 있는 미매칭 행들
+
+    for (const row of excelRows) {
+      const code = nameToCode[row.name];
+      if (!code) {
+        unmatchedRows.push(row);
+        continue;
       }
+      if (!gridMap[code]) gridMap[code] = { channels: {}, extra: {} };
+      // 같은 코드가 여러 행에 있으면 합산
+      for (const [k, v] of Object.entries(row.channels)) {
+        gridMap[code].channels[k] = (gridMap[code].channels[k] || 0) + v;
+      }
+      for (const [k, v] of Object.entries(row.extra)) {
+        gridMap[code].extra[k] = (gridMap[code].extra[k] || 0) + v;
+      }
+      matchedCount++;
     }
 
-    renderOrderPlanGrid();
+    // 4단계: 컨텍스트 저장
+    __orderPlanImportContext = {
+      gridMap,
+      matchResult,
+      unmatchedRows,
+      excelRows,
+      totalExcelRows: excelRows.length
+    };
 
-    let msg = `✅ 엑셀에서 ${importCount}개 제품 임포트 완료\n(격자에만 적용됨 - 확인 후 [저장] 버튼을 눌러주세요)`;
-    if (unmatchedNames.length > 0) {
-      msg += `\n\n⚠️ 매칭 실패 제품(${unmatchedNames.length}개):\n` + unmatchedNames.slice(0, 10).join('\n');
-      if (unmatchedNames.length > 10) msg += `\n... 외 ${unmatchedNames.length - 10}개`;
+    // 5단계: 매칭 결과를 그리드에 즉시 적용 (매칭된 것만)
+    applyImportContextToGrid();
+
+    // 6단계: 미매칭이 있으면 후보 제안 모달, 없으면 완료 알림
+    if (unmatchedRows.length > 0) {
+      showUnmatchedCandidatesModal();
+    } else {
+      const s = matchResult.stats.by_method;
+      const methodMsg = [
+        s.exact > 0 ? `정확 ${s.exact}` : '',
+        s.alias > 0 ? `별칭 ${s.alias}` : '',
+        s.typo > 0 ? `오탈자 ${s.typo}` : '',
+        s.paren > 0 ? `괄호제거 ${s.paren}` : '',
+        s.weight_strip > 0 ? `그램제거 ${s.weight_strip}` : ''
+      ].filter(x => x).join(', ');
+      alert(`✅ 엑셀 임포트 완료: ${matchedCount}행 반영\n(${methodMsg})\n\n확인 후 [저장] → [생산일보 반영]을 진행해주세요.`);
     }
-    alert(msg);
   } catch (e) {
     alert('엑셀 파싱 실패: ' + e.message);
+    console.error(e);
+  }
+}
+
+// 컨텍스트의 gridMap을 실제 __orderPlanData.grid에 병합 (덮어쓰기)
+function applyImportContextToGrid() {
+  if (!__orderPlanImportContext) return;
+  const gridMap = __orderPlanImportContext.gridMap;
+  for (const row of __orderPlanData.grid) {
+    const m = gridMap[row.code];
+    if (m) {
+      row.channels = m.channels;
+      row.extra = m.extra;
+      let total = 0;
+      for (const v of Object.values(row.channels)) total += Number(v) || 0;
+      for (const v of Object.values(row.extra)) total += Number(v) || 0;
+      row.total = Math.round(total * 100) / 100;
+    }
+  }
+  renderOrderPlanGrid();
+}
+
+// =====================================================================
+// v3.6.80: 매칭 실패 제품 후보 제안 모달
+// =====================================================================
+function showUnmatchedCandidatesModal() {
+  if (!__orderPlanImportContext) return;
+  const ctx = __orderPlanImportContext;
+  const matched = ctx.matchResult.matched.length;
+  const total = ctx.matchResult.total;
+  const unmatchedList = ctx.matchResult.unmatched;
+
+  // excel_name → 이 이름을 가진 excelRow (수량 정보 표시용)
+  const nameToRow = {};
+  for (const r of ctx.excelRows) {
+    if (!nameToRow[r.name]) nameToRow[r.name] = r;
+  }
+
+  const modalHtml = `
+    <div id="op-unmatched-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div class="px-6 py-4 border-b bg-gradient-to-r from-orange-500 to-red-500 text-white flex items-center justify-between">
+          <div>
+            <h3 class="text-lg font-bold"><i class="fas fa-search-plus mr-2"></i>매칭 실패 제품 - 후보 확인</h3>
+            <p class="text-xs opacity-90 mt-0.5">
+              전체 ${total}개 중 <b>${matched}개 매칭</b> · <b>${unmatchedList.length}개 매칭 실패</b>
+              · 확인한 별칭은 <b>다음번 자동 인식</b>됩니다
+            </p>
+          </div>
+          <button onclick="closeUnmatchedCandidatesModal()" class="text-white hover:text-gray-200">
+            <i class="fas fa-times text-xl"></i>
+          </button>
+        </div>
+
+        <div class="p-4 overflow-y-auto flex-1 bg-gray-50">
+          <div class="bg-blue-50 border-l-4 border-blue-400 p-3 rounded text-sm text-blue-800 mb-3">
+            <i class="fas fa-info-circle mr-1"></i>
+            아래 엑셀 제품명에 대해 <b>후보 중 맞는 것</b>을 클릭하세요.<br>
+            선택한 매칭은 <b>영구 저장</b>되어 다음 업로드에서 자동으로 인식됩니다.<br>
+            해당 제품이 없다면 <b>[건너뛰기]</b> — 나중에 <b>[수기 추가]</b> 사용.
+          </div>
+          <div id="op-unmatched-list" class="space-y-3"></div>
+        </div>
+
+        <div class="px-6 py-3 border-t bg-gray-100 flex justify-between items-center">
+          <div class="text-sm text-gray-600" id="op-unmatched-progress">
+            매칭됨: <b class="text-green-600">${matched}</b>개 / 미매칭: <b class="text-red-600" id="op-unmatched-remain">${unmatchedList.length}</b>개
+          </div>
+          <div class="flex gap-2">
+            <button onclick="closeUnmatchedCandidatesModal()" class="bg-gray-300 hover:bg-gray-400 text-gray-800 px-4 py-2 rounded-lg text-sm">
+              닫기 (매칭된 것만 반영됨)
+            </button>
+            <button onclick="finishUnmatchedResolve()" class="bg-green-500 hover:bg-green-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">
+              <i class="fas fa-check mr-1"></i> 완료
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  renderUnmatchedList();
+}
+
+function renderUnmatchedList() {
+  const ctx = __orderPlanImportContext;
+  if (!ctx) return;
+  const box = document.getElementById('op-unmatched-list');
+  if (!box) return;
+
+  // excel_name → 수량 정보
+  const nameToRow = {};
+  for (const r of ctx.excelRows) {
+    if (!nameToRow[r.name]) nameToRow[r.name] = r;
+  }
+
+  const items = ctx.matchResult.unmatched.map((u, idx) => {
+    const row = nameToRow[u.excel_name];
+    let qtyStr = '';
+    if (row) {
+      const chs = Object.entries(row.channels).map(([k, v]) => `${k}:${v}`).join(', ');
+      const ext = Object.entries(row.extra).map(([k, v]) => `추가${k}:${v}`).join(', ');
+      qtyStr = [chs, ext].filter(x => x).join(' · ');
+    }
+
+    const candidates = (u.candidates || []).slice(0, 5);
+    const candidatesHtml = candidates.length > 0
+      ? candidates.map(c => `
+          <button
+            onclick="confirmUnmatchedCandidate(${idx}, '${c.code}', '${(c.name || '').replace(/'/g, "\\'")}')"
+            class="text-left w-full border rounded-lg px-3 py-2 hover:bg-green-50 hover:border-green-400 transition group flex items-center justify-between gap-2">
+            <div class="flex-1 min-w-0">
+              <div class="font-mono text-xs text-gray-500">${c.code}</div>
+              <div class="text-sm font-medium text-gray-800 truncate">${c.name}</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-purple-600 font-bold">${c.score}%</span>
+              <span class="text-green-600 opacity-0 group-hover:opacity-100 transition"><i class="fas fa-check-circle"></i></span>
+            </div>
+          </button>
+        `).join('')
+      : '<div class="text-sm text-gray-400 italic p-2">비슷한 제품을 찾지 못했습니다. [수기 추가]로 등록해주세요.</div>';
+
+    return `
+      <div id="op-unmatched-item-${idx}" class="bg-white border rounded-lg p-3 shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <div class="flex-1 min-w-0">
+            <div class="text-xs text-gray-400">엑셀 제품명</div>
+            <div class="text-base font-semibold text-gray-800 truncate">${u.excel_name}</div>
+            ${qtyStr ? `<div class="text-xs text-purple-600 mt-0.5">${qtyStr}</div>` : ''}
+          </div>
+          <button
+            onclick="skipUnmatched(${idx})"
+            class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-3 py-1.5 rounded text-xs whitespace-nowrap">
+            <i class="fas fa-forward mr-1"></i> 건너뛰기
+          </button>
+        </div>
+        <div class="text-xs text-gray-500 mb-1">🔍 유사도 후보 (클릭하면 별칭 저장됨):</div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+          ${candidatesHtml}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  box.innerHTML = items || '<div class="text-center py-12 text-gray-400">모두 매칭 완료 ✅</div>';
+}
+
+async function confirmUnmatchedCandidate(idx, code, name) {
+  const ctx = __orderPlanImportContext;
+  if (!ctx) return;
+  const u = ctx.matchResult.unmatched[idx];
+  if (!u) return;
+
+  const el = document.getElementById(`op-unmatched-item-${idx}`);
+  if (el) {
+    el.style.opacity = '0.5';
+    el.innerHTML = `<div class="p-3 text-center text-sm text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>별칭 저장 중...</div>`;
+  }
+
+  // 별칭 저장
+  try {
+    const res = await axios.post('/api/order-plan/alias', {
+      alias_name: u.excel_name,
+      product_code: code
+    });
+    if (!res.data?.success) {
+      if (res.data?.needs_migration) {
+        alert('order_plan_alias 테이블이 없습니다. 마이그레이션을 먼저 실행해주세요.');
+        return;
+      }
+      alert('별칭 저장 실패: ' + res.data?.error);
+      return;
+    }
+  } catch (e) {
+    console.error('alias save error', e);
+    // 서버 실패해도 UI 매칭은 진행
+  }
+
+  // gridMap 업데이트: 이 엑셀 이름을 가진 모든 행의 수량을 code에 합산
+  const gridMap = ctx.gridMap;
+  for (const row of ctx.excelRows) {
+    if (row.name !== u.excel_name) continue;
+    if (!gridMap[code]) gridMap[code] = { channels: {}, extra: {} };
+    for (const [k, v] of Object.entries(row.channels)) {
+      gridMap[code].channels[k] = (gridMap[code].channels[k] || 0) + v;
+    }
+    for (const [k, v] of Object.entries(row.extra)) {
+      gridMap[code].extra[k] = (gridMap[code].extra[k] || 0) + v;
+    }
+  }
+
+  // 매칭 결과 업데이트
+  ctx.matchResult.matched.push({
+    excel_name: u.excel_name,
+    code, name, method: 'alias_new'
+  });
+  ctx.matchResult.unmatched.splice(idx, 1);
+
+  // 그리드 재적용
+  applyImportContextToGrid();
+
+  // 모달 다시 그리기 (인덱스 재정렬)
+  renderUnmatchedList();
+
+  // 진행 상황 갱신
+  const remain = document.getElementById('op-unmatched-remain');
+  if (remain) remain.textContent = ctx.matchResult.unmatched.length;
+  const progress = document.getElementById('op-unmatched-progress');
+  if (progress) {
+    progress.innerHTML = `매칭됨: <b class="text-green-600">${ctx.matchResult.matched.length}</b>개 / 미매칭: <b class="text-red-600" id="op-unmatched-remain">${ctx.matchResult.unmatched.length}</b>개`;
+  }
+}
+
+function skipUnmatched(idx) {
+  const ctx = __orderPlanImportContext;
+  if (!ctx) return;
+  ctx.matchResult.unmatched.splice(idx, 1);
+  renderUnmatchedList();
+  const remain = document.getElementById('op-unmatched-remain');
+  if (remain) remain.textContent = ctx.matchResult.unmatched.length;
+}
+
+function finishUnmatchedResolve() {
+  closeUnmatchedCandidatesModal();
+  const ctx = __orderPlanImportContext;
+  if (!ctx) return;
+  const stats = ctx.matchResult.stats.by_method;
+  const totalMatched = ctx.matchResult.matched.length;
+  alert(`✅ 임포트 완료: ${totalMatched}개 제품 반영\n\n확인 후 [저장] → [생산일보 반영]을 진행해주세요.`);
+}
+
+function closeUnmatchedCandidatesModal() {
+  document.getElementById('op-unmatched-modal')?.remove();
+}
+
+// =====================================================================
+// v3.6.80: 생산일보 반영
+// =====================================================================
+async function applyOrderPlanToDailyReport() {
+  const date = __orderPlanData.date;
+  if (!date) {
+    alert('먼저 계획일을 조회해주세요.');
+    return;
+  }
+
+  // 확인 다이얼로그
+  const confirmMsg = `📋 ${date} 계획을 생산일보에 반영하시겠습니까?\n\n` +
+    `• 저장된 계획 → 생산일보 자동 생성/병합\n` +
+    `• BOM 원재료 kg 자동 집계 (수불 반영)\n` +
+    `• 같은 날 재실행 시 계획표 항목만 업데이트 (다른 발주는 유지)\n\n` +
+    `※ 반영 전에 먼저 [저장] 버튼을 누르셨나요?`;
+  if (!confirm(confirmMsg)) return;
+
+  // 추가 발주 포함 여부
+  const includeExtra = confirm('추가 발주도 포함할까요?\n\n[확인] = 모두 포함 (기본)\n[취소] = 정기 발주만');
+
+  const loading = document.createElement('div');
+  loading.id = 'op-apply-loading';
+  loading.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+  loading.innerHTML = `
+    <div class="bg-white rounded-xl px-8 py-6 shadow-2xl text-center">
+      <i class="fas fa-industry fa-spin text-indigo-500 text-4xl mb-3"></i>
+      <p class="text-base font-semibold text-gray-800">생산일보 반영 중...</p>
+      <p class="text-xs text-gray-500 mt-1">BOM 원재료 집계 중</p>
+    </div>
+  `;
+  document.body.appendChild(loading);
+
+  try {
+    const res = await axios.post('/api/order-plan/apply-to-daily-report', {
+      plan_date: date,
+      include_extra: includeExtra
+    });
+    loading.remove();
+
+    if (!res.data?.success) {
+      alert('❌ 반영 실패: ' + (res.data?.error || '알 수 없는 오류'));
+      return;
+    }
+
+    const d = res.data;
+    const msg =
+      `✅ 생산일보 반영 완료!\n\n` +
+      `• 생산일보 번호: ${d.report_no}\n` +
+      `• 상태: ${d.is_new_report ? '신규 생성' : '기존 병합'}\n` +
+      `• 반영 품목: ${d.items_added}개\n` +
+      `• 총 수량: ${d.total_quantity}개\n` +
+      `• 원재료 종류: ${d.materials_added}종\n\n` +
+      `생산일보 화면으로 이동하시겠습니까?`;
+
+    if (confirm(msg)) {
+      // 생산일보 화면으로 이동 (해시 라우팅)
+      location.hash = '#daily-report';
+    }
+  } catch (e) {
+    loading.remove();
+    alert('❌ 반영 실패: ' + (e.response?.data?.error || e.message));
     console.error(e);
   }
 }
@@ -60308,3 +60672,10 @@ window.saveOrderPlan = saveOrderPlan;
 window.importOrderPlanExcel = importOrderPlanExcel;
 window.toggleOnlyActive = toggleOnlyActive;
 window.exportOrderPlanExcel = exportOrderPlanExcel;
+// v3.6.80
+window.applyOrderPlanToDailyReport = applyOrderPlanToDailyReport;
+window.showUnmatchedCandidatesModal = showUnmatchedCandidatesModal;
+window.closeUnmatchedCandidatesModal = closeUnmatchedCandidatesModal;
+window.confirmUnmatchedCandidate = confirmUnmatchedCandidate;
+window.skipUnmatched = skipUnmatched;
+window.finishUnmatchedResolve = finishUnmatchedResolve;

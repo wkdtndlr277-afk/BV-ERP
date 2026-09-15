@@ -255,6 +255,520 @@ orderPlan.post('/import-excel', async (c) => {
 })
 
 // ============================================================
+// 스마트 매칭 유틸 함수
+// ============================================================
+
+// 오탈자/변형 사전 (엑셀 표기 → 표준 표기)
+const TYPO_MAP: Record<string, string> = {
+  '프레인': '플레인',
+  '크렌베리': '크랜베리',
+  '크랜벨리': '크랜베리',
+  '하라피뇨': '할라피뇨',
+  '프러스': '플러스',
+  '깜빠뉴': '깜바뉴',   // 깜빠뉴 → 깜바뉴 (프로덕션에 둘 다 존재하므로 양방향 매칭)
+  '바케트': '바게트',
+  '바게뜨': '바게트',
+  '쌩식빵': '쌀식빵',    // 흔한 OCR 오류
+}
+
+// 문자열 정규화: 공백 제거 + 소문자
+function normalizeName(s: string): string {
+  return (s || '').replace(/\s+/g, '').toLowerCase()
+}
+
+// 오탈자 보정 후 정규화
+function normalizeWithTypo(s: string): string {
+  let result = String(s || '')
+  for (const [wrong, correct] of Object.entries(TYPO_MAP)) {
+    result = result.split(wrong).join(correct)
+  }
+  return normalizeName(result)
+}
+
+// 괄호 내용 제거 (부가설명 무시)
+function stripParen(s: string): string {
+  return String(s || '').replace(/\([^)]*\)?/g, '').replace(/\s+/g, ' ').trim()
+}
+
+// 그램수 제거 (500g, 250g 등)
+function stripWeight(s: string): string {
+  return String(s || '').replace(/\d+\s*g\b/gi, '').replace(/\s+/g, ' ').trim()
+}
+
+// Longest Common Substring 길이
+function lcsLength(a: string, b: string): number {
+  if (!a || !b) return 0
+  const m = a.length, n = b.length
+  let max = 0
+  let prev = new Array(n + 1).fill(0)
+  let curr = new Array(n + 1).fill(0)
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        curr[j] = prev[j - 1] + 1
+        if (curr[j] > max) max = curr[j]
+      } else {
+        curr[j] = 0
+      }
+    }
+    ;[prev, curr] = [curr, prev]
+    curr.fill(0)
+  }
+  return max
+}
+
+// ============================================================
+// POST /api/order-plan/match
+// 스마트 매칭: 오탈자보정 → 괄호제거 → 그램수제거 → 유사도TOP3
+// body: { names: [string, ...] }
+// 응답: { matched: [{excel_name, code, name, method}], unmatched: [{excel_name, candidates: [{code, name, score}]}] }
+// ============================================================
+orderPlan.post('/match', async (c) => {
+  try {
+    const { names } = await c.req.json()
+    if (!Array.isArray(names) || names.length === 0) {
+      return c.json({ success: false, error: 'names 배열이 필요합니다.' }, 400)
+    }
+
+    // 1. 프로덕션 제품 로드
+    const productsRes = await c.env.DB.prepare(`
+      SELECT production_code as code, production_name as name
+      FROM production_items
+      WHERE is_active = 1 OR is_active IS NULL
+    `).all()
+    const products = (productsRes.results as any[]) || []
+
+    // 2. 저장된 별칭 로드 (있으면)
+    let aliasMap: Record<string, string> = {}   // normalized alias → product_code
+    try {
+      const aliasRes = await c.env.DB.prepare(`SELECT alias_name, product_code FROM order_plan_alias`).all()
+      for (const r of (aliasRes.results as any[])) {
+        aliasMap[normalizeName(r.alias_name)] = r.product_code
+      }
+    } catch (e) {
+      // 테이블 없으면 무시 (마이그레이션 전)
+    }
+
+    // 3. 프로덕션 매칭용 인덱스 3종
+    const exactMap: Record<string, any> = {}      // normalized → product
+    const typoMap: Record<string, any> = {}       // typo-corrected normalized → product
+    const parenStripMap: Record<string, any> = {} // 괄호제거 + 오탈자보정 → product
+    const weightStripMap: Record<string, any> = {} // 그램수제거 + 오탈자보정 → product
+
+    for (const p of products) {
+      const nm = p.name || ''
+      exactMap[normalizeName(nm)] = p
+      typoMap[normalizeWithTypo(nm)] = p
+      parenStripMap[normalizeWithTypo(stripParen(nm))] = p
+      weightStripMap[normalizeWithTypo(stripWeight(stripParen(nm)))] = p
+    }
+
+    const matched: any[] = []
+    const unmatched: any[] = []
+
+    for (const excelName of names) {
+      if (!excelName || !String(excelName).trim()) continue
+      const original = String(excelName).trim()
+
+      // Level 0: 사용자 저장 별칭 (최우선)
+      const aliasKey = normalizeName(original)
+      if (aliasMap[aliasKey]) {
+        const code = aliasMap[aliasKey]
+        const p = products.find((x: any) => x.code === code)
+        if (p) {
+          matched.push({ excel_name: original, code: p.code, name: p.name, method: 'alias' })
+          continue
+        }
+      }
+
+      // Level 1: 완전 일치
+      const key1 = normalizeName(original)
+      if (exactMap[key1]) {
+        const p = exactMap[key1]
+        matched.push({ excel_name: original, code: p.code, name: p.name, method: 'exact' })
+        continue
+      }
+
+      // Level 2: 오탈자 보정
+      const key2 = normalizeWithTypo(original)
+      if (typoMap[key2]) {
+        const p = typoMap[key2]
+        matched.push({ excel_name: original, code: p.code, name: p.name, method: 'typo' })
+        continue
+      }
+
+      // Level 3: 괄호 제거 + 오탈자 보정
+      const key3 = normalizeWithTypo(stripParen(original))
+      if (parenStripMap[key3]) {
+        const p = parenStripMap[key3]
+        matched.push({ excel_name: original, code: p.code, name: p.name, method: 'paren' })
+        continue
+      }
+
+      // Level 4: 그램수 제거 + 괄호 제거 + 오탈자 보정
+      const key4 = normalizeWithTypo(stripWeight(stripParen(original)))
+      if (key4.length >= 3 && weightStripMap[key4]) {
+        const p = weightStripMap[key4]
+        matched.push({ excel_name: original, code: p.code, name: p.name, method: 'weight_strip' })
+        continue
+      }
+
+      // Level 5: 실패 → 유사도 TOP3 후보 계산
+      const normOriginal = normalizeWithTypo(original)
+      const scored = products.map((p: any) => {
+        const normP = normalizeWithTypo(p.name || '')
+        const lcs = lcsLength(normOriginal, normP)
+        // 정규화: LCS / min(len)
+        const minLen = Math.min(normOriginal.length, normP.length) || 1
+        const score = lcs / minLen
+        return { code: p.code, name: p.name, score: Math.round(score * 100), lcs }
+      }).filter(x => x.lcs >= 4).sort((a: any, b: any) => b.score - a.score || b.lcs - a.lcs)
+
+      unmatched.push({
+        excel_name: original,
+        candidates: scored.slice(0, 5)
+      })
+    }
+
+    return c.json({
+      success: true,
+      total: names.length,
+      matched,
+      unmatched,
+      stats: {
+        matched_count: matched.length,
+        unmatched_count: unmatched.length,
+        by_method: {
+          alias: matched.filter(m => m.method === 'alias').length,
+          exact: matched.filter(m => m.method === 'exact').length,
+          typo: matched.filter(m => m.method === 'typo').length,
+          paren: matched.filter(m => m.method === 'paren').length,
+          weight_strip: matched.filter(m => m.method === 'weight_strip').length,
+        }
+      }
+    })
+  } catch (error: any) {
+    console.error('[order-plan/match] error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ============================================================
+// POST /api/order-plan/alias
+// 별칭 저장: 엑셀 이름 → 프로덕션 코드 매핑을 학습
+// body: { alias_name, product_code }
+// ============================================================
+orderPlan.post('/alias', async (c) => {
+  try {
+    const { alias_name, product_code } = await c.req.json()
+    if (!alias_name || !product_code) {
+      return c.json({ success: false, error: 'alias_name과 product_code가 필요합니다.' }, 400)
+    }
+
+    // product_code 유효성 확인
+    const p = await c.env.DB.prepare(`
+      SELECT production_code, production_name FROM production_items WHERE production_code = ?
+    `).bind(product_code).first() as any
+    if (!p) {
+      return c.json({ success: false, error: `제품 코드 ${product_code} 를 찾을 수 없습니다.` }, 404)
+    }
+
+    // upsert
+    await c.env.DB.prepare(`
+      INSERT INTO order_plan_alias (alias_name, product_code, product_name, created_at)
+      VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(alias_name) DO UPDATE SET
+        product_code = excluded.product_code,
+        product_name = excluded.product_name,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(alias_name, product_code, p.production_name).run()
+
+    return c.json({ success: true, alias_name, product_code, product_name: p.production_name })
+  } catch (error: any) {
+    if (error.message?.includes('no such table')) {
+      return c.json({
+        success: false,
+        error: 'order_plan_alias 테이블이 없습니다. 마이그레이션이 필요합니다.',
+        needs_migration: true
+      }, 500)
+    }
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ============================================================
+// GET /api/order-plan/alias
+// 저장된 별칭 목록 조회 (관리용)
+// ============================================================
+orderPlan.get('/alias/list', async (c) => {
+  try {
+    const res = await c.env.DB.prepare(`
+      SELECT id, alias_name, product_code, product_name, created_at, updated_at
+      FROM order_plan_alias
+      ORDER BY updated_at DESC, created_at DESC
+    `).all()
+    return c.json({ success: true, data: res.results || [] })
+  } catch (error: any) {
+    if (error.message?.includes('no such table')) {
+      return c.json({ success: true, data: [] })
+    }
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ============================================================
+// DELETE /api/order-plan/alias/:id
+// ============================================================
+orderPlan.delete('/alias/:id', async (c) => {
+  try {
+    const id = c.req.param('id')
+    await c.env.DB.prepare(`DELETE FROM order_plan_alias WHERE id = ?`).bind(id).run()
+    return c.json({ success: true })
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ============================================================
+// POST /api/order-plan/apply-to-daily-report
+// 저장된 계획을 생산일보에 반영 (발주서 업로드와 동일한 로직 활용)
+// body: { plan_date, report_date? (기본: plan_date), include_extra? (기본: true) }
+// ============================================================
+orderPlan.post('/apply-to-daily-report', async (c) => {
+  try {
+    const { plan_date, report_date, include_extra } = await c.req.json()
+    if (!plan_date || !/^\d{4}-\d{2}-\d{2}$/.test(plan_date)) {
+      return c.json({ success: false, error: 'plan_date(YYYY-MM-DD)가 필요합니다.' }, 400)
+    }
+    const rDate = report_date || plan_date
+    const includeExtra = include_extra !== false
+
+    // 1. 해당 날짜의 order_plan 로드
+    const planRes = await c.env.DB.prepare(`
+      SELECT op.product_code, op.product_name, op.channel, op.quantity, op.is_extra,
+             pi.production_name
+      FROM order_plan op
+      LEFT JOIN production_items pi ON op.product_code = pi.production_code
+      WHERE op.plan_date = ?
+    `).bind(plan_date).all()
+    const planRows = (planRes.results as any[]) || []
+
+    if (planRows.length === 0) {
+      return c.json({ success: false, error: `${plan_date}에 저장된 계획이 없습니다. 먼저 [저장]을 눌러주세요.` }, 400)
+    }
+
+    // 2. include_extra=false면 정기 발주만
+    const filteredRows = includeExtra
+      ? planRows
+      : planRows.filter(r => r.is_extra !== 1)
+
+    // 3. items[] 조립 (from-order와 동일한 구조)
+    //    같은 (product_code, channel) 조합은 합계
+    const itemMap: Record<string, any> = {}
+    for (const r of filteredRows) {
+      const key = `${r.product_code}|${r.channel}`
+      if (!itemMap[key]) {
+        itemMap[key] = {
+          production_code: r.product_code,
+          product_name: r.production_name || r.product_name || r.product_code,
+          channel: r.channel,
+          quantity: 0,
+          barcode: null
+        }
+      }
+      itemMap[key].quantity += Number(r.quantity) || 0
+    }
+    const items = Object.values(itemMap).filter((it: any) => it.quantity > 0)
+      .map((it: any) => ({ ...it, quantity: Math.round(it.quantity) }))
+
+    if (items.length === 0) {
+      return c.json({ success: false, error: '반영할 품목이 없습니다.' }, 400)
+    }
+
+    // 4. daily-report.ts의 /reports/from-order 로직을 인라인으로 실행 (중복 방지)
+    //    → 파일명은 '계획표-YYYYMMDD'로 지정하여 중복 업로드 감지에 활용
+    const orderFileName = `계획표-${plan_date.replace(/-/g, '')}`
+
+    // 기존 생산일보 검색 (병합 가능성)
+    const existingReport = await c.env.DB.prepare(`
+      SELECT id, report_no, order_file_name, total_products, total_quantity
+      FROM production_daily_report
+      WHERE report_date = ? AND status IN ('draft', 'confirmed')
+      ORDER BY created_at ASC
+      LIMIT 1
+    `).bind(rDate).first() as any
+
+    // 중복 업로드 감지: 이미 이 파일명이 있으면 → 기존 생산일보의 계획 관련 항목만 삭제 후 재작성
+    let reportId: number
+    let reportNo: string
+    let isNewReport = false
+
+    if (existingReport) {
+      reportId = existingReport.id
+      reportNo = existingReport.report_no
+
+      // 파일명 병합
+      const existingFileNames = existingReport.order_file_name ? existingReport.order_file_name.split(', ') : []
+      const isRerun = existingFileNames.includes(orderFileName)
+
+      if (isRerun) {
+        // ★ 계획표 재반영: 기존 계획표에서 온 items만 삭제 (order_product_name = '계획표')
+        await c.env.DB.prepare(`
+          DELETE FROM production_daily_items
+          WHERE report_id = ? AND order_product_name = '계획표'
+        `).bind(reportId).run()
+      } else {
+        existingFileNames.push(orderFileName)
+        await c.env.DB.prepare(`
+          UPDATE production_daily_report
+          SET order_file_name = ?, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(existingFileNames.join(', '), reportId).run()
+      }
+    } else {
+      isNewReport = true
+      reportNo = `DR-${rDate.replace(/-/g, '')}-${Date.now().toString().slice(-4)}`
+      const reportResult = await c.env.DB.prepare(`
+        INSERT INTO production_daily_report (report_date, report_no, order_file_name, created_by)
+        VALUES (?, ?, ?, ?)
+      `).bind(rDate, reportNo, orderFileName, '계획표').run()
+      reportId = reportResult.meta.last_row_id as number
+    }
+
+    // 5. 제품 마스터 + BOM 로드 (from-order와 동일)
+    const [productionData, bomData] = await Promise.all([
+      c.env.DB.prepare(`
+        SELECT production_code, production_name, shelf_life_days,
+               (SELECT COUNT(*) FROM production_bom WHERE production_code = production_items.production_code) as bom_count
+        FROM production_items
+      `).all(),
+      c.env.DB.prepare(`
+        SELECT production_code, material_code, material_name, quantity, unit
+        FROM production_bom
+      `).all()
+    ])
+
+    const productionMap = new Map<string, any>()
+    for (const row of (productionData.results as any[])) {
+      productionMap.set(row.production_code, row)
+    }
+    const bomMap = new Map<string, any[]>()
+    for (const row of (bomData.results as any[])) {
+      if (!bomMap.has(row.production_code)) bomMap.set(row.production_code, [])
+      bomMap.get(row.production_code)!.push(row)
+    }
+
+    // 6. items 반영
+    let totalProducts = 0
+    let totalQuantity = 0
+    const allMaterials: Map<string, { material_code: string, material_name: string, quantity: number, unit: string }> = new Map()
+
+    for (const item of items) {
+      const productionInfo = productionMap.get(item.production_code)
+      const productionName = productionInfo?.production_name || item.product_name || '미등록'
+      const bomItems = bomMap.get(item.production_code) || []
+      const hasBom = bomItems.length > 0 ? 1 : 0
+
+      // 소비기한 계산
+      let expiryDate: string | null = null
+      const shelfLifeDays = productionInfo?.shelf_life_days
+      if (shelfLifeDays) {
+        const d = new Date(rDate + 'T00:00:00')
+        d.setDate(d.getDate() + shelfLifeDays)
+        expiryDate = d.toISOString().split('T')[0]
+      }
+
+      await c.env.DB.prepare(`
+        INSERT INTO production_daily_items
+        (report_id, production_code, production_name, barcode, order_product_name, quantity, has_bom, expiry_date, channel, box_quantity)
+        VALUES (?, ?, ?, ?, '계획표', ?, ?, ?, ?, 1)
+      `).bind(
+        reportId, item.production_code, productionName,
+        null, item.quantity, hasBom, expiryDate, item.channel
+      ).run()
+
+      totalProducts++
+      totalQuantity += item.quantity
+
+      // BOM 원재료 집계 (1개당 * quantity)
+      for (const bom of bomItems) {
+        const requiredQty = (bom.quantity || 0) * item.quantity
+        const bomUnit = (bom.unit || 'kg').toLowerCase()
+        const requiredKg = bomUnit === 'g' ? requiredQty / 1000 : requiredQty
+        const key = `${bom.material_code || ''}|${bom.material_name}`
+        const existing = allMaterials.get(key)
+        if (existing) {
+          existing.quantity += requiredKg
+        } else {
+          allMaterials.set(key, {
+            material_code: bom.material_code || '',
+            material_name: bom.material_name,
+            quantity: requiredKg,
+            unit: 'kg'
+          })
+        }
+      }
+    }
+
+    // 7. 원재료 INSERT (기존 계획표 것 지운 후 재작성)
+    await c.env.DB.prepare(`
+      DELETE FROM production_daily_materials
+      WHERE report_id = ? AND source = '계획표'
+    `).bind(reportId).run()
+
+    let materialsInserted = 0
+    for (const [key, mat] of allMaterials.entries()) {
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO production_daily_materials
+          (report_id, material_code, material_name, quantity, unit, source)
+          VALUES (?, ?, ?, ?, ?, '계획표')
+        `).bind(reportId, mat.material_code, mat.material_name, mat.quantity, mat.unit).run()
+        materialsInserted++
+      } catch (e) {
+        // material_code 없거나 source 컬럼 없을 때 fallback
+        try {
+          await c.env.DB.prepare(`
+            INSERT INTO production_daily_materials
+            (report_id, material_code, material_name, quantity, unit)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(reportId, mat.material_code, mat.material_name, mat.quantity, mat.unit).run()
+          materialsInserted++
+        } catch (e2) {
+          console.error('[apply-to-daily-report] material insert failed:', e2)
+        }
+      }
+    }
+
+    // 8. 헤더 total 업데이트
+    const totalsRes = await c.env.DB.prepare(`
+      SELECT COUNT(*) as cnt, COALESCE(SUM(quantity), 0) as qty
+      FROM production_daily_items WHERE report_id = ?
+    `).bind(reportId).first() as any
+    await c.env.DB.prepare(`
+      UPDATE production_daily_report
+      SET total_products = ?, total_quantity = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).bind(totalsRes.cnt, totalsRes.qty, reportId).run()
+
+    return c.json({
+      success: true,
+      message: `생산일보 반영 완료: ${totalProducts}개 품목 (${totalQuantity}개), 원재료 ${materialsInserted}종`,
+      report_id: reportId,
+      report_no: reportNo,
+      is_new_report: isNewReport,
+      report_date: rDate,
+      items_added: totalProducts,
+      total_quantity: totalQuantity,
+      materials_added: materialsInserted
+    })
+  } catch (error: any) {
+    console.error('[order-plan/apply-to-daily-report] error:', error)
+    return c.json({ success: false, error: error.message }, 500)
+  }
+})
+
+// ============================================================
 // GET /api/order-plan/export-json/:date
 // 엑셀 다운로드용 원시 데이터 (프론트에서 SheetJS로 xlsx 생성)
 // ============================================================

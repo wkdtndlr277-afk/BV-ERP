@@ -59744,9 +59744,9 @@ async function renderOrderPlan() {
             <button onclick="showAddManualProductModal()" class="bg-amber-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-amber-600" title="계획표에 없는 제품을 수기로 추가">
               <i class="fas fa-plus mr-1"></i> 수기 추가
             </button>
-            <label class="cursor-pointer bg-blue-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-600">
+            <label class="cursor-pointer bg-blue-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-blue-600" title="지원 형식: xlsx, xls, xlsm (매크로 포함)">
               <i class="fas fa-upload mr-1"></i> 계획표 업로드
-              <input type="file" accept=".xlsx,.xls" onchange="importOrderPlanExcel(event)" class="hidden">
+              <input type="file" accept=".xlsx,.xls,.xlsm,.xlsb,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" onchange="importOrderPlanExcel(event)" class="hidden">
             </label>
             <button onclick="exportOrderPlanExcel()" class="bg-teal-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-teal-600">
               <i class="fas fa-download mr-1"></i> 계획표 다운로드

@@ -61260,9 +61260,18 @@ async function renderDoughMaster() {
           </h2>
           <p class="text-gray-500 text-sm mt-1">발효종·폴리쉬·탕종 배합 관리 · 원료 사용량 자동 산출</p>
         </div>
-        <div class="flex gap-2">
+        <div class="flex gap-2 flex-wrap">
+          <button onclick="importChecksheetDoughs()" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700 font-semibold" title="재료체크시트에서 반죽 8종 이름·영문명 자동 등록">
+            <i class="fas fa-file-import mr-1"></i> 엑셀 반죽 임포트 (8종)
+          </button>
+          <button onclick="importChecksheetMaterials()" class="bg-teal-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-teal-700 font-semibold" title="재료체크시트 90종 원료를 원료 마스터에 자동 등록">
+            <i class="fas fa-boxes mr-1"></i> 엑셀 원료 마스터 임포트 (90종)
+          </button>
+          <button onclick="openProductDoughMapping()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 font-semibold" title="제품별 사용 반죽 g/EA 매핑 관리">
+            <i class="fas fa-project-diagram mr-1"></i> 제품↔반죽 매핑
+          </button>
           <button onclick="seedDoughDefaults()" class="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-amber-600">
-            <i class="fas fa-magic mr-1"></i> 기본 8종 자동 등록
+            <i class="fas fa-magic mr-1"></i> 기본 8종
           </button>
           <button onclick="showDoughEditor()" class="bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-600 font-semibold">
             <i class="fas fa-plus mr-1"></i> 반죽 추가
@@ -61481,3 +61490,356 @@ window.showDoughEditor = showDoughEditor;
 window.addDoughMatRow = addDoughMatRow;
 window.closeDoughEditor = closeDoughEditor;
 window.saveDough = saveDough;
+
+// ============================================================
+// v3.6.82 신규: 엑셀 재료체크시트 자동 임포트 (반죽 8종 / 원료 90종)
+// ============================================================
+
+// 엑셀 반죽 8종 자동 임포트 (재료체크시트 → dough_recipe 이름/영문명)
+// 배합비는 엑셀에 없으므로 이름만 임포트하고 사용자가 나중에 배합 입력
+async function importChecksheetDoughs() {
+  const dList = window.__CHECKSHEET_DOUGHS || [];
+  if (!dList.length) { alert('❌ 엑셀 반죽 데이터가 로드되지 않았습니다 (checksheet-data.js 확인)'); return; }
+
+  const codeMap = {
+    '발효종르방': 'DOUGH_LEVAIN',
+    '폴리쉬': 'DOUGH_POLISH',
+    '통밀르방': 'DOUGH_WW_LEVAIN',
+    '통밀폴리쉬': 'DOUGH_WW_POLISH',
+    '탕종': 'DOUGH_TANGJONG',
+    '통밀 탕종': 'DOUGH_WW_TANGJONG',
+    '통밀탕종': 'DOUGH_WW_TANGJONG',
+    '쌀르방': 'DOUGH_RICE_LEVAIN',
+    '쌀탕종': 'DOUGH_RICE_TANGJONG',
+  };
+
+  const preview = dList.map(d => `• ${d.name_kr} (${d.name_en || '-'})`).join('\n');
+  if (!confirm(`재료체크시트에서 반죽 ${dList.length}종을 임포트합니다:\n\n${preview}\n\n※ 이름·영문명만 등록됩니다. 배합비(원료)는 각 반죽 [수정] 화면에서 직접 입력하세요.\n\n계속할까요?`)) return;
+
+  const doughs = dList.map(d => ({
+    dough_code: codeMap[d.name_kr] || ('DOUGH_' + d.name_kr.replace(/\s/g, '_').toUpperCase()),
+    dough_name: d.name_kr,
+    dough_name_en: d.name_en || null,
+    batch_size_kg: 40,
+    materials: []  // 배합비는 별도 입력
+  }));
+
+  try {
+    const res = await axios.post('/api/dough/bulk-import', { doughs });
+    if (!res.data?.success) {
+      alert('❌ ' + (res.data?.error || '임포트 실패') + (res.data?.needs_migration ? '\n\n마이그레이션 0042를 먼저 실행하세요.' : ''));
+      return;
+    }
+    alert(`✅ 반죽 임포트 완료\n\n신규: ${res.data.created}개\n갱신: ${res.data.updated}개\n\n다음 단계: 각 반죽 [수정] 버튼으로 배합비를 입력하세요.`);
+    await loadDoughList();
+  } catch (e) {
+    alert('❌ ' + (e.response?.data?.error || e.message));
+  }
+}
+
+// 엑셀 원료 마스터 90종 자동 임포트 (재료체크시트 → master 테이블 category='원료')
+async function importChecksheetMaterials() {
+  const mList = window.__CHECKSHEET_MATERIALS || [];
+  if (!mList.length) { alert('❌ 엑셀 원료 데이터가 로드되지 않았습니다'); return; }
+
+  const previewCount = 10;
+  const previewText = mList.slice(0, previewCount).map(m => `• ${m.name}${m.memo ? '  💬 ' + m.memo.slice(0, 30) : ''}`).join('\n');
+  const more = mList.length > previewCount ? `\n... 외 ${mList.length - previewCount}종 더` : '';
+
+  if (!confirm(`재료체크시트에서 원료 마스터 ${mList.length}종을 임포트합니다:\n\n${previewText}${more}\n\n※ 이미 등록된 이름은 스킵됩니다.\n※ 코드는 RM0001~ 로 자동 부여됩니다 (기존 최대 코드 이후부터).\n\n계속할까요?`)) return;
+
+  try {
+    const res = await axios.post('/api/dough/import-materials-master', {
+      materials: mList,
+      prefix: 'RM'
+    });
+    if (!res.data?.success) { alert('❌ ' + (res.data?.error || '임포트 실패')); return; }
+
+    const insList = res.data.inserted_list || [];
+    const skList = res.data.skipped_list || [];
+    let msg = `✅ 원료 마스터 임포트 완료\n\n신규 등록: ${res.data.inserted}종\n중복 스킵: ${res.data.skipped}종\n총 대상: ${res.data.total}종`;
+    if (insList.length > 0) {
+      msg += '\n\n[신규 등록 샘플]\n' + insList.slice(0, 5).map(x => `${x.item_code}  ${x.item_name}`).join('\n');
+      if (insList.length > 5) msg += `\n... 외 ${insList.length - 5}종`;
+    }
+    if (skList.length > 0) {
+      msg += '\n\n[스킵된 원료 (이미 존재)]\n' + skList.slice(0, 5).join(', ');
+      if (skList.length > 5) msg += ` 외 ${skList.length - 5}종`;
+    }
+    alert(msg);
+  } catch (e) {
+    alert('❌ ' + (e.response?.data?.error || e.message));
+  }
+}
+
+// ============================================================
+// v3.6.82 신규: 제품 ↔ 반죽 매핑 화면 (모달)
+// - 제품 목록 좌측, 반죽 선택 + g/EA 입력 우측
+// - 저장 시 /api/dough/product-usage/bulk 로 일괄 저장
+// ============================================================
+let __pdMapping = {
+  products: [],        // production_items
+  doughs: [],          // dough_recipe
+  usage: [],           // product_dough_usage 기존 데이터
+  edits: {},           // { production_code: {dough_code, dough_g_per_product} } 편집 상태
+  filter: ''
+};
+
+async function openProductDoughMapping() {
+  // 데이터 3개 병렬 로드
+  try {
+    const [prodRes, doughRes, usageRes] = await Promise.all([
+      axios.get('/api/admin/production-items'),
+      axios.get('/api/dough/list'),
+      axios.get('/api/dough/product-usage')
+    ]);
+    const products = (prodRes.data?.data || []).filter(p => p.production_code);
+    const doughs = doughRes.data?.data || [];
+    const usage = usageRes.data?.data || [];
+
+    if (doughs.length === 0) {
+      alert('❌ 등록된 반죽이 없습니다. 먼저 [엑셀 반죽 임포트] 또는 [기본 8종]을 실행하세요.');
+      return;
+    }
+    if (products.length === 0) {
+      alert('❌ 등록된 제품이 없습니다. 생산 관리에서 제품을 먼저 등록하세요.');
+      return;
+    }
+
+    __pdMapping.products = products;
+    __pdMapping.doughs = doughs;
+    __pdMapping.usage = usage;
+    __pdMapping.edits = {};
+    __pdMapping.filter = '';
+
+    // 기존 usage 를 edits 시드로
+    for (const u of usage) {
+      __pdMapping.edits[u.production_code] = {
+        dough_code: u.dough_code,
+        dough_g_per_product: u.dough_g_per_product,
+        _existing: true
+      };
+    }
+
+    renderPdMappingModal();
+  } catch (e) {
+    alert('❌ 데이터 로드 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+function renderPdMappingModal() {
+  let modal = document.getElementById('pd-mapping-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'pd-mapping-modal';
+    modal.className = 'fixed inset-0 bg-black/50 z-[9999] flex items-center justify-center p-4';
+    document.body.appendChild(modal);
+  }
+
+  const doughs = __pdMapping.doughs;
+  const doughOptions = doughs.map(d => `<option value="${d.dough_code}">${d.dough_name} (배치 ${d.batch_size_kg}kg)</option>`).join('');
+
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-6xl w-full max-h-[90vh] flex flex-col">
+      <div class="p-4 border-b flex items-center justify-between bg-indigo-600 text-white rounded-t-xl">
+        <div>
+          <h3 class="text-xl font-bold"><i class="fas fa-project-diagram mr-2"></i>제품 ↔ 반죽 매핑</h3>
+          <p class="text-xs text-indigo-100 mt-1">제품마다 사용 반죽과 EA당 반죽 g을 등록하세요. 발주 계획에서 원료 사용량 자동 계산에 사용됩니다.</p>
+        </div>
+        <button onclick="closePdMappingModal()" class="text-2xl hover:bg-indigo-700 w-10 h-10 rounded-lg">×</button>
+      </div>
+
+      <div class="p-4 border-b flex items-center gap-3 flex-wrap">
+        <input type="text" id="pd-filter" placeholder="제품명·코드 검색…"
+          class="border rounded-lg px-3 py-2 text-sm flex-1 min-w-[240px]"
+          oninput="filterPdMapping(this.value)" value="${__pdMapping.filter}">
+        <span class="text-sm text-gray-600">
+          매핑됨: <b id="pd-mapped-count" class="text-indigo-600">${Object.keys(__pdMapping.edits).filter(k => __pdMapping.edits[k].dough_code && __pdMapping.edits[k].dough_g_per_product).length}</b>
+          / 전체: <b>${__pdMapping.products.length}</b>
+        </span>
+        <button onclick="clearAllPdMapping()" class="bg-gray-200 text-gray-700 px-3 py-2 rounded-lg text-sm hover:bg-gray-300">
+          <i class="fas fa-eraser mr-1"></i>화면 편집 초기화
+        </button>
+        <button onclick="savePdMappingBulk()" class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-700 font-semibold">
+          <i class="fas fa-save mr-1"></i>일괄 저장
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 sticky top-0 z-10">
+            <tr>
+              <th class="p-2 border-b text-left w-28">제품코드</th>
+              <th class="p-2 border-b text-left">제품명</th>
+              <th class="p-2 border-b text-left w-64">사용 반죽</th>
+              <th class="p-2 border-b text-right w-32">반죽 g/EA</th>
+              <th class="p-2 border-b text-center w-20">삭제</th>
+            </tr>
+          </thead>
+          <tbody id="pd-mapping-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  renderPdMappingRows();
+}
+
+function renderPdMappingRows() {
+  const tbody = document.getElementById('pd-mapping-tbody');
+  if (!tbody) return;
+  const filter = (__pdMapping.filter || '').trim().toLowerCase();
+  const doughs = __pdMapping.doughs;
+  const doughOptions = ['<option value="">-- 선택 --</option>']
+    .concat(doughs.map(d => `<option value="${d.dough_code}">${d.dough_name}</option>`))
+    .join('');
+
+  const filtered = __pdMapping.products.filter(p => {
+    if (!filter) return true;
+    return (p.production_code || '').toLowerCase().includes(filter)
+      || (p.production_name || '').toLowerCase().includes(filter);
+  });
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="p-8 text-center text-gray-400">일치하는 제품 없음</td></tr>`;
+    return;
+  }
+
+  const rows = filtered.map(p => {
+    const code = p.production_code;
+    const edit = __pdMapping.edits[code] || {};
+    const selDough = edit.dough_code || '';
+    const g = edit.dough_g_per_product || '';
+    const existing = edit._existing;
+    const bg = existing && selDough ? 'bg-indigo-50' : (selDough || g ? 'bg-yellow-50' : '');
+
+    // dough options with selection
+    const opts = doughs.map(d =>
+      `<option value="${d.dough_code}"${d.dough_code === selDough ? ' selected' : ''}>${d.dough_name} · ${d.batch_size_kg}kg</option>`
+    ).join('');
+
+    return `
+      <tr class="hover:bg-gray-50 ${bg}" data-code="${code}">
+        <td class="p-2 border-b font-mono text-xs">${code}</td>
+        <td class="p-2 border-b">${p.production_name || '-'}</td>
+        <td class="p-2 border-b">
+          <select class="border rounded px-2 py-1 text-sm w-full" onchange="onPdMappingChange('${code}', 'dough_code', this.value)">
+            <option value="">-- 선택 --</option>
+            ${opts}
+          </select>
+        </td>
+        <td class="p-2 border-b text-right">
+          <input type="number" step="0.1" min="0" value="${g}"
+            class="border rounded px-2 py-1 text-sm w-28 text-right"
+            placeholder="g/EA"
+            onchange="onPdMappingChange('${code}', 'dough_g_per_product', this.value)">
+        </td>
+        <td class="p-2 border-b text-center">
+          ${existing ? `<button onclick="deletePdMapping('${code}')" class="text-red-500 hover:text-red-700 text-xs" title="DB에서 삭제"><i class="fas fa-trash"></i></button>` : '-'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+  tbody.innerHTML = rows;
+}
+
+function onPdMappingChange(code, field, value) {
+  if (!__pdMapping.edits[code]) __pdMapping.edits[code] = {};
+  if (field === 'dough_g_per_product') {
+    __pdMapping.edits[code][field] = value === '' ? null : parseFloat(value);
+  } else {
+    __pdMapping.edits[code][field] = value || null;
+  }
+  // 카운트 업데이트
+  const mapped = Object.keys(__pdMapping.edits).filter(k =>
+    __pdMapping.edits[k].dough_code && __pdMapping.edits[k].dough_g_per_product
+  ).length;
+  const cnt = document.getElementById('pd-mapped-count');
+  if (cnt) cnt.textContent = mapped;
+}
+
+function filterPdMapping(v) {
+  __pdMapping.filter = v;
+  renderPdMappingRows();
+}
+
+function clearAllPdMapping() {
+  if (!confirm('화면의 편집 내용을 초기화합니다 (DB 저장 X). 계속?')) return;
+  __pdMapping.edits = {};
+  // 기존 DB 데이터로 다시 시드
+  for (const u of __pdMapping.usage) {
+    __pdMapping.edits[u.production_code] = {
+      dough_code: u.dough_code,
+      dough_g_per_product: u.dough_g_per_product,
+      _existing: true
+    };
+  }
+  renderPdMappingRows();
+}
+
+async function deletePdMapping(code) {
+  // find id
+  const u = (__pdMapping.usage || []).find(x => x.production_code === code);
+  if (!u) { alert('DB에 저장되지 않은 항목입니다.'); return; }
+  if (!confirm(`제품 "${code}" 의 반죽 매핑을 DB에서 삭제하시겠습니까?`)) return;
+  try {
+    await axios.delete('/api/dough/product-usage/' + u.id);
+    delete __pdMapping.edits[code];
+    // usage 목록에서도 제거
+    __pdMapping.usage = __pdMapping.usage.filter(x => x.id !== u.id);
+    renderPdMappingRows();
+    alert('✅ 삭제 완료');
+  } catch (e) {
+    alert('❌ ' + (e.response?.data?.error || e.message));
+  }
+}
+
+async function savePdMappingBulk() {
+  const rows = [];
+  for (const [code, e] of Object.entries(__pdMapping.edits)) {
+    if (!e.dough_code || !e.dough_g_per_product) continue;
+    rows.push({
+      production_code: code,
+      dough_code: e.dough_code,
+      dough_g_per_product: e.dough_g_per_product
+    });
+  }
+  if (rows.length === 0) { alert('저장할 매핑이 없습니다.'); return; }
+  if (!confirm(`${rows.length}개 제품↔반죽 매핑을 저장합니다. 계속?`)) return;
+
+  try {
+    const res = await axios.post('/api/dough/product-usage/bulk', { rows });
+    if (!res.data?.success) { alert('❌ ' + res.data?.error); return; }
+    alert(`✅ ${res.data.saved}개 매핑 저장 완료`);
+    // 재로드하여 _existing 상태 갱신
+    const usageRes = await axios.get('/api/dough/product-usage');
+    __pdMapping.usage = usageRes.data?.data || [];
+    __pdMapping.edits = {};
+    for (const u of __pdMapping.usage) {
+      __pdMapping.edits[u.production_code] = {
+        dough_code: u.dough_code,
+        dough_g_per_product: u.dough_g_per_product,
+        _existing: true
+      };
+    }
+    renderPdMappingRows();
+  } catch (e) {
+    alert('❌ ' + (e.response?.data?.error || e.message));
+  }
+}
+
+function closePdMappingModal() {
+  const modal = document.getElementById('pd-mapping-modal');
+  if (modal) modal.remove();
+}
+
+// window exports
+window.importChecksheetDoughs = importChecksheetDoughs;
+window.importChecksheetMaterials = importChecksheetMaterials;
+window.openProductDoughMapping = openProductDoughMapping;
+window.filterPdMapping = filterPdMapping;
+window.onPdMappingChange = onPdMappingChange;
+window.clearAllPdMapping = clearAllPdMapping;
+window.deletePdMapping = deletePdMapping;
+window.savePdMappingBulk = savePdMappingBulk;
+window.closePdMappingModal = closePdMappingModal;

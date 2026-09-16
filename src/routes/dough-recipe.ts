@@ -176,6 +176,154 @@ dough.delete('/product-usage/:id', async (c) => {
 })
 
 // ============================================================
+// 반죽 벌크 임포트 (엑셀 재료체크시트 기반)
+// POST /api/dough/bulk-import
+// body: { doughs: [{dough_code, dough_name, dough_name_en, batch_size_kg, memo, materials:[...]}] }
+// ============================================================
+dough.post('/bulk-import', async (c) => {
+  try {
+    const { doughs } = await c.req.json()
+    if (!Array.isArray(doughs) || doughs.length === 0) {
+      return c.json({ success: false, error: 'doughs 배열 필요' }, 400)
+    }
+    let created = 0, updated = 0, matCount = 0
+    for (const d of doughs) {
+      if (!d.dough_code || !d.dough_name) continue
+      // upsert dough
+      const existing = await c.env.DB.prepare(
+        `SELECT dough_code FROM dough_recipe WHERE dough_code = ?`
+      ).bind(d.dough_code).first()
+
+      await c.env.DB.prepare(`
+        INSERT INTO dough_recipe (dough_code, dough_name, dough_name_en, batch_size_kg, memo, is_active)
+        VALUES (?, ?, ?, ?, ?, 1)
+        ON CONFLICT(dough_code) DO UPDATE SET
+          dough_name = excluded.dough_name,
+          dough_name_en = excluded.dough_name_en,
+          batch_size_kg = excluded.batch_size_kg,
+          memo = COALESCE(excluded.memo, dough_recipe.memo),
+          is_active = 1,
+          updated_at = CURRENT_TIMESTAMP
+      `).bind(
+        d.dough_code,
+        d.dough_name,
+        d.dough_name_en || null,
+        Number(d.batch_size_kg) || 40,
+        d.memo || null
+      ).run()
+      if (existing) updated++; else created++
+
+      // 배합비가 제공된 경우에만 재작성 (없으면 기존 유지)
+      if (Array.isArray(d.materials) && d.materials.length > 0) {
+        await c.env.DB.prepare(
+          `DELETE FROM dough_material WHERE dough_code = ?`
+        ).bind(d.dough_code).run()
+        for (const m of d.materials) {
+          if (!m.material_name) continue
+          const qty = Number(m.quantity_per_kg)
+          if (!qty || qty <= 0) continue
+          await c.env.DB.prepare(`
+            INSERT INTO dough_material (dough_code, material_code, material_name, quantity_per_kg, memo)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(
+            d.dough_code,
+            m.material_code || null,
+            m.material_name,
+            qty,
+            m.memo || null
+          ).run()
+          matCount++
+        }
+      }
+    }
+    return c.json({ success: true, created, updated, materials_saved: matCount })
+  } catch (e: any) {
+    if (e.message?.includes('no such table')) {
+      return c.json({ success: false, error: '테이블 없음. 마이그레이션 0042 필요', needs_migration: true }, 500)
+    }
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// ============================================================
+// 원료 마스터 벌크 임포트 (재료체크시트 기반)
+// POST /api/dough/import-materials-master
+// body: { materials: [{name, memo}], prefix?: 'RM' }
+// - master 테이블에 category='원료'로 저장
+// - 자동 코드 생성 (기존 최대 RMxxxx +1부터)
+// - 중복 이름은 스킵 (이미 등록된 원료명은 건너뛴다)
+// ============================================================
+dough.post('/import-materials-master', async (c) => {
+  try {
+    const { materials, prefix } = await c.req.json()
+    if (!Array.isArray(materials) || materials.length === 0) {
+      return c.json({ success: false, error: 'materials 배열 필요' }, 400)
+    }
+    const codePrefix = (prefix || 'RM').toUpperCase()
+
+    // 기존 원료 목록 조회 (이름/코드 중복 확인용)
+    const existRes = await c.env.DB.prepare(`
+      SELECT item_code, item_name FROM master WHERE category = '원료'
+    `).all()
+    const existRows = (existRes.results as any[]) || []
+    const existNames = new Set(existRows.map(r => (r.item_name || '').trim()))
+    // 다음 코드 번호 산출
+    let maxNum = 0
+    const re = new RegExp('^' + codePrefix + '(\\d+)$')
+    for (const r of existRows) {
+      const m = String(r.item_code || '').match(re)
+      if (m) {
+        const n = parseInt(m[1], 10)
+        if (n > maxNum) maxNum = n
+      }
+    }
+
+    let inserted = 0, skipped = 0
+    const insertedList: Array<{ item_code: string; item_name: string }> = []
+    const skippedList: string[] = []
+
+    for (const m of materials) {
+      const name = String(m.name || '').trim()
+      if (!name) continue
+      if (existNames.has(name)) {
+        skipped++
+        skippedList.push(name)
+        continue
+      }
+      maxNum++
+      const code = codePrefix + String(maxNum).padStart(4, '0')
+      try {
+        await c.env.DB.prepare(`
+          INSERT INTO master (item_code, item_name, category, unit, current_stock, safety_stock, expiry_days)
+          VALUES (?, ?, '원료', 'kg', 0, 0, 365)
+        `).bind(code, name).run()
+        inserted++
+        insertedList.push({ item_code: code, item_name: name })
+        existNames.add(name)
+
+        // memo가 있으면 haccp_variance_threshold의 memo 슬롯에는 넣지 말고 무시.
+        // (원료 마스터 스키마에는 memo 컬럼 없음)
+      } catch (err: any) {
+        skipped++
+        skippedList.push(name + ' (' + err.message + ')')
+        maxNum--  // rollback code counter
+      }
+    }
+
+    return c.json({
+      success: true,
+      inserted,
+      skipped,
+      inserted_list: insertedList,
+      skipped_list: skippedList,
+      total: materials.length
+    })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// ============================================================
 // 초기 반죽 시딩 (엑셀 재료체크시트 기반 8종 반죽 자동 등록)
 // POST /api/dough/seed-defaults - 기본 반죽 8종 (배합 비율 없음, 사용자가 채워야 함)
 // ============================================================

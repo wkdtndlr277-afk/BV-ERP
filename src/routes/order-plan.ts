@@ -890,7 +890,6 @@ orderPlan.post('/material-usage', async (c) => {
     let doughMaterials: any[] = []
     let productDoughUsages: any[] = []
     let productBoms: any[] = []
-    let productBomMaterials: any[] = []  // ★ v3.6.85: 완제품 BOM 기반 원료 배합
     try {
       const [drRes, dmRes, pduRes] = await Promise.all([
         c.env.DB.prepare(`SELECT * FROM dough_recipe WHERE is_active = 1`).all(),
@@ -910,15 +909,10 @@ orderPlan.post('/material-usage', async (c) => {
       }
       throw e
     }
-    // BOM은 옵션 (반죽에 안 잡히는 제품용 fallback)
+    // 제품 BOM (production_bom) - 반죽에 매핑 안 된 제품용 원료 배합
     try {
       const bomRes = await c.env.DB.prepare(`SELECT * FROM production_bom`).all()
       productBoms = (bomRes.results as any[]) || []
-    } catch (e) { /* 옵션 */ }
-    // ★ v3.6.85: 제품 완제품 BOM (product_bom_material) - 우선 사용
-    try {
-      const pbmRes = await c.env.DB.prepare(`SELECT * FROM product_bom_material`).all()
-      productBomMaterials = (pbmRes.results as any[]) || []
     } catch (e) { /* 옵션 */ }
 
     const doughByCode: Record<string, any> = {}
@@ -938,18 +932,12 @@ orderPlan.post('/material-usage', async (c) => {
       if (!bomByProduct[b.production_code]) bomByProduct[b.production_code] = []
       bomByProduct[b.production_code].push(b)
     }
-    // ★ v3.6.85: 제품 완제품 BOM 인덱스
-    const pbmByProduct: Record<string, any[]> = {}
-    for (const b of productBomMaterials) {
-      if (!pbmByProduct[b.production_code]) pbmByProduct[b.production_code] = []
-      pbmByProduct[b.production_code].push(b)
-    }
 
     // 3. 각 제품별로 → 반죽 필요 kg + BOM 원료 g 집계
     const doughUsage: Record<string, number> = {}  // dough_code → total_g
     const productBreakdown: any[] = []
     const productsWithoutRecipe: any[] = []
-    // ★ v3.6.85: BOM 기반 원료 사용량 (반죽 경유 없이 직접)
+    // BOM 기반 원료 사용량 (반죽 경유 없이 직접, production_bom 사용)
     const bomRawUsage: Record<string, number> = {}  // material_name → total_g
     const productsFromBom: string[] = []
 
@@ -957,7 +945,7 @@ orderPlan.post('/material-usage', async (c) => {
       const qty = Number(p.total_qty) || 0
       if (qty <= 0) continue
       const usages = pduByProduct[p.product_code] || []
-      const bomMats = pbmByProduct[p.product_code] || []
+      const bomMats = bomByProduct[p.product_code] || []
 
       if (usages.length > 0) {
         // 반죽 기반 계산
@@ -980,9 +968,9 @@ orderPlan.post('/material-usage', async (c) => {
         }
         productBreakdown.push(rowDetail)
       } else if (bomMats.length > 0) {
-        // ★ v3.6.85: 반죽 매핑 없음이지만 BOM 있음 → BOM 직접 사용
+        // 반죽 매핑 없음 → 기존 production_bom(제품 BOM) 사용
         for (const m of bomMats) {
-          const g = Number(m.quantity_per_unit_g) * qty
+          const g = Number(m.quantity) * qty
           bomRawUsage[m.material_name] = (bomRawUsage[m.material_name] || 0) + g
         }
         productsFromBom.push(p.product_name)
@@ -992,12 +980,9 @@ orderPlan.post('/material-usage', async (c) => {
           product_code: p.product_code,
           product_name: p.product_name,
           quantity: qty,
-          has_bom: (bomByProduct[p.product_code] || []).length > 0
+          has_bom: false
         })
       }
-
-      // ★ v3.6.85: 반죽 매핑 있어도 BOM 있으면 병합 산출 (완전성 위해)
-      //  → 이 로직은 기본 OFF (반죽 우선 기존 로직 유지). BOM 우선 요구시 위 else if를 else로 바꾸면 됨.
     }
 
     // 4. 반죽별 원료 사용량 계산

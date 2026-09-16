@@ -44,7 +44,6 @@ import debugMasterRoutes from './routes/debug-master';
 import levainRoutes from './routes/levain';
 import processTrackingRoutes from './routes/process-tracking';
 import csimportRoutes from './routes/checksheet-import';
-import productBomRoutes from './routes/product-bom';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -93,7 +92,6 @@ app.route('/api/debug-master', debugMasterRoutes);
 app.route('/api/levain', levainRoutes);
 app.route('/api/process-tracking', processTrackingRoutes);
 app.route('/api/checksheet-import', csimportRoutes);
-app.route('/api/product-bom', productBomRoutes);
 
 // ★★★ v3.6.81: 품목 검색 API (바코드 수기등록용) ★★★
 app.get('/api/items/search', async (c) => {
@@ -734,12 +732,6 @@ app.get('/*', (c) => {
                     <i class="fas fa-calendar-week w-5 text-indigo-600"></i>
                     <span class="font-semibold">주간 생산계획표</span>
                     <span class="ml-auto text-xs bg-indigo-500 text-white px-2 py-0.5 rounded">NEW</span>
-                </a>
-
-                <a href="#product-bom-mgr" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="product-bom-mgr">
-                    <i class="fas fa-flask w-5 text-teal-600"></i>
-                    <span class="font-semibold">제품 BOM 관리</span>
-                    <span class="ml-auto text-xs bg-teal-500 text-white px-2 py-0.5 rounded">NEW</span>
                 </a>
 
                 <a href="#dough-master" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="dough-master">

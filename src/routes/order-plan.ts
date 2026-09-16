@@ -769,6 +769,97 @@ orderPlan.post('/apply-to-daily-report', async (c) => {
 })
 
 // ============================================================
+// GET /api/order-plan/weekly/:start_date  (★ v3.6.85)
+// 주간 생산계획 (제품명 + 총수량 + 채널별 수량 + 총합계)
+// start_date: 주 시작일(월요일 권장) → 7일간 aggregate
+// 응답: { start_date, end_date, dates: [...], channels: [...],
+//         products: [{code, name, daily: {date: qty}, channel_totals: {ch: qty}, total}],
+//         daily_totals: {date: qty}, channel_totals: {ch: qty}, grand_total }
+// ============================================================
+orderPlan.get('/weekly/:start_date', async (c) => {
+  try {
+    const start = c.req.param('start_date')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+      return c.json({ success: false, error: 'start_date는 YYYY-MM-DD 형식' }, 400)
+    }
+    // 7일 날짜 배열
+    const d0 = new Date(start + 'T00:00:00')
+    const dates: string[] = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(d0)
+      d.setDate(d.getDate() + i)
+      dates.push(d.toISOString().slice(0, 10))
+    }
+    const end = dates[6]
+
+    // 계획 조회
+    const res = await c.env.DB.prepare(`
+      SELECT plan_date, product_code, product_name, channel, quantity, is_extra
+      FROM order_plan
+      WHERE plan_date >= ? AND plan_date <= ?
+    `).bind(start, end).all()
+    const rows = (res.results as any[]) || []
+
+    // 제품 마스터 (이름 보강)
+    let prodNameMap: Record<string, string> = {}
+    try {
+      const pRes = await c.env.DB.prepare(`
+        SELECT production_code, production_name FROM production_items WHERE is_active = 1 OR is_active IS NULL
+      `).all()
+      for (const p of (pRes.results as any[])) prodNameMap[p.production_code] = p.production_name
+    } catch (_) {}
+
+    // 집계: 제품별 { daily: {date: qty}, channels: {ch: qty}, total }
+    const byProduct: Record<string, any> = {}
+    for (const r of rows) {
+      const code = r.product_code
+      if (!byProduct[code]) {
+        byProduct[code] = {
+          code,
+          name: r.product_name || prodNameMap[code] || code,
+          daily: {} as Record<string, number>,
+          channel_totals: {} as Record<string, number>,
+          total: 0
+        }
+      }
+      const q = Number(r.quantity) || 0
+      byProduct[code].daily[r.plan_date] = (byProduct[code].daily[r.plan_date] || 0) + q
+      byProduct[code].channel_totals[r.channel] = (byProduct[code].channel_totals[r.channel] || 0) + q
+      byProduct[code].total += q
+    }
+
+    // 일별/채널별 합계
+    const dailyTotals: Record<string, number> = {}
+    const channelTotals: Record<string, number> = {}
+    for (const d of dates) dailyTotals[d] = 0
+    for (const ch of PLAN_CHANNELS) channelTotals[ch] = 0
+    let grand = 0
+    for (const p of Object.values(byProduct) as any[]) {
+      for (const [d, q] of Object.entries(p.daily)) dailyTotals[d] = (dailyTotals[d] || 0) + (q as number)
+      for (const [ch, q] of Object.entries(p.channel_totals)) channelTotals[ch] = (channelTotals[ch] || 0) + (q as number)
+      grand += p.total
+    }
+
+    const products = Object.values(byProduct).sort((a: any, b: any) => b.total - a.total || a.code.localeCompare(b.code))
+
+    return c.json({
+      success: true,
+      start_date: start,
+      end_date: end,
+      dates,
+      channels: PLAN_CHANNELS,
+      products,
+      daily_totals: dailyTotals,
+      channel_totals: channelTotals,
+      grand_total: grand,
+      product_count: products.length
+    })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// ============================================================
 // POST /api/order-plan/material-usage
 // 계획표 → 반죽 판수 → 원료 총 사용량 자동 계산
 // body: { plan_date, include_extra? }
@@ -794,11 +885,12 @@ orderPlan.post('/material-usage', async (c) => {
       return c.json({ success: false, error: `${plan_date}에 저장된 계획이 없습니다.` }, 400)
     }
 
-    // 2. 반죽 마스터 + 원료 배합 + 제품별 반죽 사용 매핑
+    // 2. 반죽 마스터 + 원료 배합 + 제품별 반죽 사용 매핑 + 제품 BOM (완제품 배합)
     let doughRecipes: any[] = []
     let doughMaterials: any[] = []
     let productDoughUsages: any[] = []
     let productBoms: any[] = []
+    let productBomMaterials: any[] = []  // ★ v3.6.85: 완제품 BOM 기반 원료 배합
     try {
       const [drRes, dmRes, pduRes] = await Promise.all([
         c.env.DB.prepare(`SELECT * FROM dough_recipe WHERE is_active = 1`).all(),
@@ -823,6 +915,11 @@ orderPlan.post('/material-usage', async (c) => {
       const bomRes = await c.env.DB.prepare(`SELECT * FROM production_bom`).all()
       productBoms = (bomRes.results as any[]) || []
     } catch (e) { /* 옵션 */ }
+    // ★ v3.6.85: 제품 완제품 BOM (product_bom_material) - 우선 사용
+    try {
+      const pbmRes = await c.env.DB.prepare(`SELECT * FROM product_bom_material`).all()
+      productBomMaterials = (pbmRes.results as any[]) || []
+    } catch (e) { /* 옵션 */ }
 
     const doughByCode: Record<string, any> = {}
     for (const dr of doughRecipes) doughByCode[dr.dough_code] = dr
@@ -841,16 +938,26 @@ orderPlan.post('/material-usage', async (c) => {
       if (!bomByProduct[b.production_code]) bomByProduct[b.production_code] = []
       bomByProduct[b.production_code].push(b)
     }
+    // ★ v3.6.85: 제품 완제품 BOM 인덱스
+    const pbmByProduct: Record<string, any[]> = {}
+    for (const b of productBomMaterials) {
+      if (!pbmByProduct[b.production_code]) pbmByProduct[b.production_code] = []
+      pbmByProduct[b.production_code].push(b)
+    }
 
-    // 3. 각 제품별로 → 반죽 필요 kg 집계
+    // 3. 각 제품별로 → 반죽 필요 kg + BOM 원료 g 집계
     const doughUsage: Record<string, number> = {}  // dough_code → total_g
     const productBreakdown: any[] = []
     const productsWithoutRecipe: any[] = []
+    // ★ v3.6.85: BOM 기반 원료 사용량 (반죽 경유 없이 직접)
+    const bomRawUsage: Record<string, number> = {}  // material_name → total_g
+    const productsFromBom: string[] = []
 
     for (const p of plans) {
       const qty = Number(p.total_qty) || 0
       if (qty <= 0) continue
       const usages = pduByProduct[p.product_code] || []
+      const bomMats = pbmByProduct[p.product_code] || []
 
       if (usages.length > 0) {
         // 반죽 기반 계산
@@ -872,8 +979,15 @@ orderPlan.post('/material-usage', async (c) => {
           })
         }
         productBreakdown.push(rowDetail)
+      } else if (bomMats.length > 0) {
+        // ★ v3.6.85: 반죽 매핑 없음이지만 BOM 있음 → BOM 직접 사용
+        for (const m of bomMats) {
+          const g = Number(m.quantity_per_unit_g) * qty
+          bomRawUsage[m.material_name] = (bomRawUsage[m.material_name] || 0) + g
+        }
+        productsFromBom.push(p.product_name)
       } else {
-        // 반죽 매핑 없음 → 표시만
+        // 반죽/BOM 둘 다 매핑 없음
         productsWithoutRecipe.push({
           product_code: p.product_code,
           product_name: p.product_name,
@@ -881,6 +995,9 @@ orderPlan.post('/material-usage', async (c) => {
           has_bom: (bomByProduct[p.product_code] || []).length > 0
         })
       }
+
+      // ★ v3.6.85: 반죽 매핑 있어도 BOM 있으면 병합 산출 (완전성 위해)
+      //  → 이 로직은 기본 OFF (반죽 우선 기존 로직 유지). BOM 우선 요구시 위 else if를 else로 바꾸면 됨.
     }
 
     // 4. 반죽별 원료 사용량 계산
@@ -914,6 +1031,11 @@ orderPlan.post('/material-usage', async (c) => {
       }
     }).sort((a, b) => b.total_kg - a.total_kg)
 
+    // ★ v3.6.85: BOM 기반 원료 사용량을 rawUsage에 병합
+    for (const [name, g] of Object.entries(bomRawUsage)) {
+      rawUsage[name] = (rawUsage[name] || 0) + g
+    }
+
     // 5. 원료 총 사용량 (kg 정렬)
     const rawMaterialSummary = Object.entries(rawUsage).map(([name, totalG]) => ({
       material_name: name,
@@ -928,6 +1050,7 @@ orderPlan.post('/material-usage', async (c) => {
       summary: {
         total_products_planned: plans.length,
         products_with_recipe: productBreakdown.length,
+        products_from_bom: productsFromBom.length,  // ★ v3.6.85
         products_without_recipe: productsWithoutRecipe.length,
         total_dough_kg: Math.round(doughSummary.reduce((s, d) => s + d.total_kg, 0) * 100) / 100,
         total_batches: Math.round(doughSummary.reduce((s, d) => s + d.batch_count, 0) * 100) / 100,
@@ -935,6 +1058,7 @@ orderPlan.post('/material-usage', async (c) => {
       doughs: doughSummary,
       raw_materials: rawMaterialSummary,
       products_breakdown: productBreakdown,
+      products_from_bom: productsFromBom,  // ★ v3.6.85
       products_without_recipe: productsWithoutRecipe
     })
   } catch (e: any) {

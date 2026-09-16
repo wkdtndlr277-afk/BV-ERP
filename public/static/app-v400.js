@@ -1303,6 +1303,8 @@ function renderPage(page) {
     case 'order-plan': renderOrderPlan(); break;
     case 'dough-master': renderDoughMaster(); break;
     case 'haccp-material-check': renderHaccpMaterialCheck(); break;
+    case 'weekly-plan': renderWeeklyPlan(); break;                    // ★ v3.6.85
+    case 'product-bom-mgr': renderProductBomMgr(); break;              // ★ v3.6.85
     default: renderDashboard();
   }
 }
@@ -59745,8 +59747,11 @@ async function renderOrderPlan() {
           <button onclick="applyOrderPlanToDailyReport()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 font-semibold" title="저장된 계획을 생산일보에 반영 (BOM 원재료 자동 집계)">
             <i class="fas fa-industry mr-1"></i> 생산일보 반영
           </button>
-          <button onclick="showMaterialUsageModal()" class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-700 font-semibold" title="반죽 배합 기준 원료 총 사용량 자동 산출 → 생산팀 전달 + HACCP 스냅샷">
+          <button onclick="showMaterialUsageModal()" class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-emerald-700 font-semibold" title="반죽 배합 + 제품 BOM 기준 원료 총 사용량 자동 산출 → 생산팀 전달 + HACCP 스냅샷">
             <i class="fas fa-flask mr-1"></i> 원료 사용량 산출
+          </button>
+          <button onclick="printOrderPlan()" class="bg-slate-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-slate-700" title="A3 가로 인쇄 최적화">
+            <i class="fas fa-print mr-1"></i> 인쇄
           </button>
           <div class="border-l pl-2 flex gap-1">
             <button onclick="showAddManualProductModal()" class="bg-amber-500 text-white px-3 py-2 rounded-lg text-sm hover:bg-amber-600" title="계획표에 없는 제품을 수기로 추가">
@@ -59768,14 +59773,17 @@ async function renderOrderPlan() {
           <input type="checkbox" id="op-only-active" checked onchange="toggleOnlyActive(this.checked)" class="rounded">
           <span class="text-purple-700 font-medium">계획 있는 제품만</span>
         </label>
+        <button onclick="toggleExtraColumnsMode()" class="bg-orange-100 border border-orange-300 text-orange-800 rounded px-2 py-1.5 hover:bg-orange-200" title="추가 발주 컬럼 표시 전환">
+          <i class="fas fa-columns mr-1"></i><span id="op-extra-mode-label">추가 컬럼: 합계 1열</span>
+        </button>
         <span class="text-gray-500" id="op-row-count"></span>
-        <span class="text-gray-500 ml-auto">재고 컬럼은 <b>참고용</b> (저장되지 않음)</span>
+        <span class="text-gray-500 ml-auto">💡 셀 클릭시 편집 · 인쇄는 A3 가로 최적화</span>
       </div>
     </div>
 
     <div id="op-summary" class="mb-4"></div>
 
-    <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+    <div class="bg-white rounded-xl shadow-lg overflow-hidden op-print-area">
       <div id="op-grid-container" class="overflow-auto" style="max-height: calc(100vh - 320px);">
         <div class="text-center py-12 text-gray-400">
           <i class="fas fa-spinner fa-spin text-3xl"></i>
@@ -59783,6 +59791,41 @@ async function renderOrderPlan() {
         </div>
       </div>
     </div>
+
+    <!-- v3.6.85: 발주 계획표 인쇄 스타일 (A3 가로, 셀 크기 확대) -->
+    <style id="op-print-style">
+      /* 화면: 셀 padding/폰트 확대 */
+      .op-cell { min-height: 34px; }
+      #op-grid-table th, #op-grid-table td { border: 1px solid #cbd5e1; }
+      #op-grid-table thead th { background-color: #e2e8f0; }
+
+      @media print {
+        @page { size: A3 landscape; margin: 6mm; }
+        body { background: white !important; }
+        /* 사이드바/헤더/상단 요약/버튼바 숨김 */
+        #sidebar, .sidebar, nav, header, .no-print,
+        #app-header, #app-topbar,
+        .bg-gradient-to-r,
+        .fixed { display: none !important; }
+        /* 검색/필터 바 숨김 */
+        input[type=file], input[type=date], button, .cursor-pointer, .op-cell + button { display: none !important; }
+        /* 인쇄 영역만 표시 */
+        .op-print-area { display: block !important; box-shadow: none !important; border: none !important; overflow: visible !important; page-break-inside: auto; }
+        #op-grid-container { overflow: visible !important; max-height: none !important; }
+        /* 표 밀도 조정 */
+        #op-grid-table { font-size: 10px !important; width: 100% !important; }
+        #op-grid-table th, #op-grid-table td { padding: 3px 4px !important; border: 1px solid #333 !important; white-space: nowrap; }
+        #op-grid-table thead { display: table-header-group; }
+        #op-grid-table tbody tr { page-break-inside: avoid; page-break-after: auto; }
+        /* input 값이 인쇄에도 보이도록 (input 자체 대신 값 표시) */
+        #op-grid-table input[type=number] { border: none !important; background: transparent !important; text-align: right; font-size: 10px !important; padding: 0 !important; }
+        /* 색상 유지 */
+        #op-grid-table thead th, #op-grid-table td[data-role=total] { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        /* 페이지 상단에 요약 표시 */
+        #op-summary { display: block !important; box-shadow: none !important; page-break-after: avoid; }
+        #op-summary > * { box-shadow: none !important; }
+      }
+    </style>
   `;
 
   // SheetJS lazy load
@@ -59791,6 +59834,14 @@ async function renderOrderPlan() {
     script.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
     document.head.appendChild(script);
   }
+
+  // v3.6.85: 추가 컬럼 모드 라벨 초기화 (renderOrderPlanGrid 후에도 유지)
+  setTimeout(() => {
+    const lbl = document.getElementById('op-extra-mode-label');
+    if (lbl && __orderPlanData?.extraMode) {
+      lbl.textContent = __orderPlanData.extraMode === 'compact' ? '추가 컬럼: 합계 1열' : '추가 컬럼: 전체 표시';
+    }
+  }, 100);
 
   await loadOrderPlan();
 }
@@ -59890,19 +59941,39 @@ function renderOrderPlanSummary(_ignoredServerSummary) {
   `;
 }
 
+// v3.6.85: 추가 발주 컬럼 표시 모드 (기본: 통합 추가 열 1개만)
+// 'compact' = 추가 합계 열 1개만 (기본, 셀 크기 확대)
+// 'expanded' = 채널별 추가 열 전체 표시 (기존 방식)
+if (typeof __orderPlanData !== 'undefined' && !__orderPlanData.extraMode) {
+  __orderPlanData.extraMode = 'compact';
+}
+
+function toggleExtraColumnsMode() {
+  __orderPlanData.extraMode = (__orderPlanData.extraMode === 'expanded') ? 'compact' : 'expanded';
+  const lbl = document.getElementById('op-extra-mode-label');
+  if (lbl) lbl.textContent = __orderPlanData.extraMode === 'compact' ? '추가 컬럼: 합계 1열' : '추가 컬럼: 전체 표시';
+  renderOrderPlanGrid();
+}
+window.toggleExtraColumnsMode = toggleExtraColumnsMode;
+
+function printOrderPlan() {
+  window.print();
+}
+window.printOrderPlan = printOrderPlan;
+
 function renderOrderPlanGrid() {
   const container = document.getElementById('op-grid-container');
   const channels = __orderPlanData.channels;
+  const extraMode = __orderPlanData.extraMode || 'compact';
   let grid = __orderPlanData.grid;
   const filter = (__orderPlanData.filterText || '').trim().toLowerCase();
   const onlyActive = __orderPlanData.showOnlyActive;
   const totalProducts = grid.length;
 
-  // 텍스트 필터 (검색어 있으면 우선 적용)
+  // 텍스트 필터
   if (filter) {
     grid = grid.filter(r => (r.code || '').toLowerCase().includes(filter) || (r.name || '').toLowerCase().includes(filter));
   } else if (onlyActive) {
-    // 계획 있는 제품만 (검색어 없을 때만 적용)
     grid = grid.filter(r => {
       const hasChannel = r.channels && Object.keys(r.channels).some(k => Number(r.channels[k]) > 0);
       const hasExtra = r.extra && Object.keys(r.extra).some(k => Number(r.extra[k]) > 0);
@@ -59910,48 +59981,62 @@ function renderOrderPlanGrid() {
     });
   }
 
-  // 행 개수 표시
   const cntBox = document.getElementById('op-row-count');
   if (cntBox) cntBox.textContent = `표시: ${grid.length} / 전체: ${totalProducts}`;
 
-  // sticky header
+  // 헤더: 정기 채널 (넓게)
   const chHeader = channels.map(ch =>
-    `<th class="px-2 py-2 text-xs font-semibold text-gray-700 bg-purple-100 min-w-[70px]" title="${ch}">${ch}</th>`
+    `<th class="px-2 py-2 text-xs font-bold text-purple-800 bg-purple-100 border" style="min-width:78px;" title="${ch}">${ch}</th>`
   ).join('');
-  const chHeaderExtra = channels.map(ch =>
-    `<th class="px-2 py-2 text-xs font-semibold text-gray-700 bg-orange-50 min-w-[70px]" title="추가 ${ch}">추가</th>`
-  ).join('');
+  // 헤더: 추가 (모드에 따라)
+  const chHeaderExtra = extraMode === 'expanded'
+    ? channels.map(ch => `<th class="px-2 py-2 text-xs font-bold text-orange-800 bg-orange-100 border" style="min-width:62px;" title="추가 ${ch}">+${ch}</th>`).join('')
+    : `<th class="px-2 py-2 text-xs font-bold text-orange-800 bg-orange-100 border" style="min-width:90px;" title="추가 발주 합계 (클릭시 상세 편집)">추가 합계 <i class='fas fa-edit text-[10px] opacity-60'></i></th>`;
 
   const rows = grid.map((row, rowIdx) => {
     const regularCells = channels.map(ch => {
       const v = row.channels[ch] || '';
       return `<td class="p-0 border">
-        <input type="number" min="0" step="1" value="${v}" 
+        <input type="number" min="0" step="1" value="${v}"
           data-code="${row.code}" data-channel="${ch}" data-type="regular"
           oninput="onOrderPlanCellChange(this)"
-          class="w-full px-2 py-1.5 text-sm text-right border-0 focus:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-purple-300 ${v ? 'font-semibold text-purple-700' : 'text-gray-400'}">
+          class="op-cell w-full px-2 py-2 text-sm text-right border-0 focus:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-purple-400 ${v ? 'font-bold text-purple-700' : 'text-gray-300'}">
       </td>`;
     }).join('');
-    const extraCells = channels.map(ch => {
-      const v = row.extra[ch] || '';
-      return `<td class="p-0 border">
-        <input type="number" min="0" step="1" value="${v}"
-          data-code="${row.code}" data-channel="${ch}" data-type="extra"
-          oninput="onOrderPlanCellChange(this)"
-          class="w-full px-2 py-1.5 text-sm text-right border-0 bg-orange-50/30 focus:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-orange-300 ${v ? 'font-semibold text-orange-700' : 'text-gray-400'}">
+
+    let extraCells;
+    if (extraMode === 'expanded') {
+      extraCells = channels.map(ch => {
+        const v = row.extra[ch] || '';
+        return `<td class="p-0 border">
+          <input type="number" min="0" step="1" value="${v}"
+            data-code="${row.code}" data-channel="${ch}" data-type="extra"
+            oninput="onOrderPlanCellChange(this)"
+            class="op-cell w-full px-2 py-2 text-sm text-right border-0 bg-orange-50/40 focus:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-orange-300 ${v ? 'font-bold text-orange-700' : 'text-gray-300'}">
+        </td>`;
+      }).join('');
+    } else {
+      // compact: 추가 합계 1열만 (클릭시 상세 모달)
+      const extraSum = Object.values(row.extra || {}).reduce((s,v) => s + (Number(v)||0), 0);
+      extraCells = `<td class="p-0 border">
+        <button type="button" onclick="openExtraDetailModal('${row.code}')"
+          class="op-cell w-full px-2 py-2 text-sm text-right border-0 bg-orange-50/40 hover:bg-orange-100 focus:outline-none focus:ring-2 focus:ring-orange-300 ${extraSum > 0 ? 'font-bold text-orange-700' : 'text-gray-300'}"
+          data-code="${row.code}" data-role="extra-sum">
+          ${extraSum > 0 ? extraSum : '+'}
+        </button>
       </td>`;
-    }).join('');
+    }
 
     const stock = row.stock;
     const stockCell = stock === null || stock === undefined
-      ? '<td class="px-2 py-1.5 text-xs text-gray-300 text-center border bg-gray-50">-</td>'
-      : `<td class="px-2 py-1.5 text-xs text-center border bg-gray-50 ${stock < 0 ? 'text-red-500 font-semibold' : 'text-gray-500'}">${stock}</td>`;
+      ? '<td class="px-2 py-2 text-xs text-gray-300 text-center border bg-gray-50">-</td>'
+      : `<td class="px-2 py-2 text-xs text-center border bg-gray-50 ${stock < 0 ? 'text-red-500 font-bold' : 'text-gray-500'}">${stock}</td>`;
 
-    return `<tr class="hover:bg-purple-50/30">
-      <td class="px-2 py-1.5 text-xs text-gray-400 text-center border sticky left-0 bg-white z-10">${rowIdx + 1}</td>
-      <td class="px-2 py-1.5 text-xs text-gray-600 border sticky left-[36px] bg-white z-10 font-mono">${row.code}</td>
-      <td class="px-2 py-1.5 text-xs text-gray-800 border sticky left-[140px] bg-white z-10 min-w-[280px]" title="${row.name}">${row.name}</td>
-      <td class="px-2 py-1.5 text-sm text-right border bg-purple-50 font-bold text-purple-700" data-code="${row.code}" data-role="total">${row.total || 0}</td>
+    return `<tr class="hover:bg-purple-50/40 op-row">
+      <td class="px-2 py-2 text-xs text-gray-400 text-center border sticky left-0 bg-white z-10">${rowIdx + 1}</td>
+      <td class="px-2 py-2 text-xs text-gray-600 border sticky left-[36px] bg-white z-10 font-mono">${row.code}</td>
+      <td class="px-2 py-2 text-sm text-gray-800 border sticky left-[136px] bg-white z-10 font-medium" style="min-width:280px;max-width:340px;" title="${row.name}">${row.name}</td>
+      <td class="px-2 py-2 text-base text-right border bg-purple-100 font-bold text-purple-800" data-code="${row.code}" data-role="total">${row.total || 0}</td>
       ${stockCell}
       ${regularCells}
       ${extraCells}
@@ -59959,13 +60044,13 @@ function renderOrderPlanGrid() {
   }).join('');
 
   container.innerHTML = `
-    <table class="w-full border-collapse text-xs">
-      <thead class="sticky top-0 z-20 bg-white shadow">
+    <table id="op-grid-table" class="w-full border-collapse text-xs">
+      <thead class="sticky top-0 z-20 bg-white shadow-md">
         <tr class="bg-gray-100">
-          <th class="px-2 py-2 border sticky left-0 bg-gray-100 z-30" style="width:36px;">#</th>
-          <th class="px-2 py-2 border sticky left-[36px] bg-gray-100 z-30 text-xs" style="width:104px;">코드</th>
-          <th class="px-2 py-2 border sticky left-[140px] bg-gray-100 z-30 text-xs">제품명</th>
-          <th class="px-2 py-2 border bg-purple-100 text-xs" style="width:70px;">합계</th>
+          <th class="px-2 py-2 border sticky left-0 bg-gray-200 z-30" style="width:36px;">#</th>
+          <th class="px-2 py-2 border sticky left-[36px] bg-gray-200 z-30 text-xs" style="width:100px;">코드</th>
+          <th class="px-2 py-2 border sticky left-[136px] bg-gray-200 z-30 text-sm" style="min-width:280px;">제품명</th>
+          <th class="px-2 py-2 border bg-purple-200 text-sm font-bold" style="width:80px;">합계</th>
           <th class="px-2 py-2 border bg-gray-50 text-xs" style="width:60px;" title="참고용">재고</th>
           ${chHeader}
           ${chHeaderExtra}
@@ -59980,6 +60065,51 @@ function renderOrderPlanGrid() {
     </div>` : ''}
   `;
 }
+
+// v3.6.85: 추가 발주 상세 편집 모달 (compact 모드에서 사용)
+function openExtraDetailModal(code) {
+  const row = __orderPlanData.grid.find(r => r.code === code);
+  if (!row) return;
+  const channels = __orderPlanData.channels;
+  const rows = channels.map(ch => {
+    const v = row.extra[ch] || '';
+    return `<tr class="border-b">
+      <td class="px-3 py-2 text-sm">${ch}</td>
+      <td class="p-0">
+        <input type="number" min="0" step="1" value="${v}"
+          data-code="${code}" data-channel="${ch}" data-type="extra"
+          oninput="onOrderPlanCellChange(this); document.querySelector('[data-role=extra-sum][data-code=\\'${code}\\']').textContent = Object.values(__orderPlanData.grid.find(r=>r.code==='${code}').extra).reduce((s,v)=>s+(Number(v)||0),0) || '+';"
+          class="w-full px-3 py-2 text-sm text-right border-0 focus:bg-yellow-50 focus:outline-none focus:ring-2 focus:ring-orange-300 ${v ? 'font-bold text-orange-700' : ''}">
+      </td>
+    </tr>`;
+  }).join('');
+  const html = `
+    <div id="op-extra-detail-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div class="bg-white rounded-xl shadow-2xl w-full max-w-md">
+        <div class="px-4 py-3 bg-orange-500 text-white rounded-t-xl flex justify-between items-center">
+          <div>
+            <h3 class="font-bold"><i class="fas fa-plus-circle mr-1"></i>추가 발주 상세 편집</h3>
+            <p class="text-xs opacity-90">${row.code} · ${row.name}</p>
+          </div>
+          <button onclick="document.getElementById('op-extra-detail-modal').remove()" class="text-white hover:text-gray-200"><i class="fas fa-times text-lg"></i></button>
+        </div>
+        <div class="max-h-[70vh] overflow-y-auto">
+          <table class="w-full">
+            <thead class="bg-gray-100 text-xs">
+              <tr><th class="px-3 py-2 text-left">채널</th><th class="px-3 py-2 text-right">추가 수량</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div class="px-4 py-3 bg-gray-50 rounded-b-xl text-right">
+          <button onclick="document.getElementById('op-extra-detail-modal').remove()" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm">닫기</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+window.openExtraDetailModal = openExtraDetailModal;
 
 // 계획 있는 제품만 표시 토글
 function toggleOnlyActive(checked) {
@@ -61843,3 +61973,482 @@ window.clearAllPdMapping = clearAllPdMapping;
 window.deletePdMapping = deletePdMapping;
 window.savePdMappingBulk = savePdMappingBulk;
 window.closePdMappingModal = closePdMappingModal;
+
+// =====================================================================
+// v3.6.85: 주간 생산계획표 (Weekly Production Plan)
+// =====================================================================
+let __weeklyPlanData = null;
+
+function getLocalMonday(dateStr) {
+  const d = dateStr ? new Date(dateStr + 'T00:00:00') : new Date();
+  const day = d.getDay(); // 0=일, 1=월...6=토
+  const diff = (day === 0) ? -6 : (1 - day); // 월요일로
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().slice(0, 10);
+}
+
+async function renderWeeklyPlan() {
+  const content = document.getElementById('page-content');
+  const today = (typeof getLocalDateString === 'function') ? getLocalDateString() : new Date().toISOString().slice(0,10);
+  const monday = getLocalMonday(today);
+
+  content.innerHTML = `
+    <div class="max-w-full">
+      <div class="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl p-4 mb-4 text-white shadow-lg no-print">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-2xl font-bold"><i class="fas fa-calendar-week mr-2"></i>주간 생산계획표</h2>
+            <p class="text-sm opacity-90">채널별 발주 계획을 주 단위로 집계 · 제품명 · 총수량 · 채널별 수량 · 총합계</p>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <label class="text-sm font-medium">시작일(월):</label>
+            <input type="date" id="wp-start-date" value="${monday}" class="px-3 py-1.5 rounded-lg text-gray-800 text-sm">
+            <button onclick="loadWeeklyPlan()" class="bg-white text-indigo-600 px-3 py-1.5 rounded-lg font-bold text-sm hover:bg-gray-100">
+              <i class="fas fa-search mr-1"></i>조회
+            </button>
+            <button onclick="printWeeklyPlan()" class="bg-emerald-500 hover:bg-emerald-600 px-3 py-1.5 rounded-lg font-bold text-sm">
+              <i class="fas fa-print mr-1"></i>인쇄
+            </button>
+            <button onclick="exportWeeklyPlanExcel()" class="bg-teal-500 hover:bg-teal-600 px-3 py-1.5 rounded-lg font-bold text-sm">
+              <i class="fas fa-file-excel mr-1"></i>엑셀
+            </button>
+          </div>
+        </div>
+      </div>
+      <div id="wp-summary" class="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3 no-print"></div>
+      <div id="wp-body" class="bg-white rounded-lg shadow overflow-auto"></div>
+    </div>
+    <style>
+      @media print {
+        @page { size: A3 landscape; margin: 8mm; }
+        .no-print { display: none !important; }
+        body { background: white; }
+        #wp-body { overflow: visible !important; box-shadow: none !important; }
+        #wp-body table { font-size: 10px !important; }
+        #wp-body th, #wp-body td { padding: 3px 4px !important; border: 1px solid #333 !important; }
+        #wp-body thead { background: #4f46e5 !important; -webkit-print-color-adjust: exact; }
+      }
+      #wp-body table th { position: sticky; top: 0; z-index: 5; }
+      #wp-body td { white-space: nowrap; }
+    </style>
+  `;
+
+  await loadWeeklyPlan();
+}
+
+async function loadWeeklyPlan() {
+  const start = document.getElementById('wp-start-date')?.value;
+  if (!start) return;
+  const body = document.getElementById('wp-body');
+  const sum = document.getElementById('wp-summary');
+  body.innerHTML = '<div class="p-8 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>로딩중...</div>';
+
+  try {
+    const res = await axios.get(`/api/order-plan/weekly/${start}`);
+    if (!res.data?.success) {
+      body.innerHTML = `<div class="p-8 text-center text-red-500">${res.data?.error || '조회 실패'}</div>`;
+      return;
+    }
+    __weeklyPlanData = res.data;
+    const d = res.data;
+
+    // 요약
+    const weekdays = ['일','월','화','수','목','금','토'];
+    const dayStr = d.dates.map(dt => {
+      const w = weekdays[new Date(dt + 'T00:00:00').getDay()];
+      return `${dt.slice(5)}(${w})`;
+    });
+
+    sum.innerHTML = `
+      <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-indigo-500 text-center">
+        <p class="text-[10px] text-gray-500">기간</p>
+        <p class="text-sm font-bold text-indigo-700">${d.start_date} ~ ${d.end_date}</p>
+      </div>
+      <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-purple-500 text-center">
+        <p class="text-[10px] text-gray-500">계획 제품수</p>
+        <p class="text-xl font-bold text-purple-700">${d.product_count}</p>
+      </div>
+      <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-emerald-500 text-center">
+        <p class="text-[10px] text-gray-500">주간 총합계</p>
+        <p class="text-xl font-bold text-emerald-700">${d.grand_total.toLocaleString()}</p>
+      </div>
+      <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-blue-500 text-center">
+        <p class="text-[10px] text-gray-500">일평균</p>
+        <p class="text-xl font-bold text-blue-700">${Math.round(d.grand_total/7).toLocaleString()}</p>
+      </div>
+      <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-orange-500 text-center">
+        <p class="text-[10px] text-gray-500">주요 채널</p>
+        <p class="text-sm font-bold text-orange-700">${Object.entries(d.channel_totals).sort((a,b)=>b[1]-a[1])[0]?.[0] || '-'}</p>
+      </div>
+    `;
+
+    // 채널 헤더 (수량 있는 채널만 표시)
+    const activeChannels = d.channels.filter(ch => d.channel_totals[ch] > 0);
+
+    const dailyHeader = d.dates.map((dt,i) => `<th class="px-2 py-2 text-center text-[11px] bg-indigo-600 text-white">${dayStr[i]}</th>`).join('');
+    const chHeader = activeChannels.map(ch => `<th class="px-2 py-2 text-center text-[11px] bg-purple-600 text-white">${ch}</th>`).join('');
+
+    let rows = '';
+    for (const p of d.products) {
+      const dailyCells = d.dates.map(dt => {
+        const q = p.daily[dt] || 0;
+        return `<td class="px-2 py-1 text-right text-xs ${q > 0 ? 'text-gray-800' : 'text-gray-300'}">${q > 0 ? q.toLocaleString() : ''}</td>`;
+      }).join('');
+      const chCells = activeChannels.map(ch => {
+        const q = p.channel_totals[ch] || 0;
+        return `<td class="px-2 py-1 text-right text-xs ${q > 0 ? 'text-purple-700 font-medium' : 'text-gray-300'}">${q > 0 ? q.toLocaleString() : ''}</td>`;
+      }).join('');
+      rows += `<tr class="border-b hover:bg-indigo-50">
+        <td class="px-2 py-1 text-xs font-mono text-gray-500">${p.code}</td>
+        <td class="px-2 py-1 text-sm font-medium text-gray-800">${p.name}</td>
+        <td class="px-2 py-1 text-right text-sm font-bold text-emerald-700 bg-emerald-50">${p.total.toLocaleString()}</td>
+        ${dailyCells}
+        ${chCells}
+      </tr>`;
+    }
+
+    // 합계 행
+    const totalDailyCells = d.dates.map(dt => `<td class="px-2 py-1 text-right text-xs font-bold text-indigo-800">${(d.daily_totals[dt]||0).toLocaleString()}</td>`).join('');
+    const totalChCells = activeChannels.map(ch => `<td class="px-2 py-1 text-right text-xs font-bold text-purple-800">${(d.channel_totals[ch]||0).toLocaleString()}</td>`).join('');
+
+    body.innerHTML = `
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr>
+            <th class="px-2 py-2 text-left text-xs bg-gray-700 text-white">코드</th>
+            <th class="px-2 py-2 text-left text-xs bg-gray-700 text-white min-w-[180px]">제품명</th>
+            <th class="px-2 py-2 text-center text-xs bg-emerald-600 text-white">총 수량</th>
+            ${dailyHeader}
+            ${chHeader}
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || `<tr><td colspan="${3+d.dates.length+activeChannels.length}" class="p-6 text-center text-gray-400">해당 주에 계획된 데이터가 없습니다.</td></tr>`}
+        </tbody>
+        <tfoot class="sticky bottom-0 bg-yellow-100">
+          <tr class="border-t-2 border-yellow-500">
+            <td colspan="2" class="px-2 py-2 text-right text-sm font-bold text-gray-800">📊 총합계</td>
+            <td class="px-2 py-2 text-right text-lg font-bold text-red-700 bg-yellow-200">${d.grand_total.toLocaleString()}</td>
+            ${totalDailyCells}
+            ${totalChCells}
+          </tr>
+        </tfoot>
+      </table>
+    `;
+  } catch (e) {
+    body.innerHTML = `<div class="p-8 text-center text-red-500">오류: ${e.message}</div>`;
+  }
+}
+
+function printWeeklyPlan() {
+  window.print();
+}
+
+function exportWeeklyPlanExcel() {
+  if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리 로드 대기중'); return; }
+  const d = __weeklyPlanData;
+  if (!d) { alert('먼저 조회해주세요.'); return; }
+  const activeChannels = d.channels.filter(ch => d.channel_totals[ch] > 0);
+  const header = ['코드','제품명','총수량', ...d.dates, ...activeChannels];
+  const rows = d.products.map(p => [
+    p.code, p.name, p.total,
+    ...d.dates.map(dt => p.daily[dt]||0),
+    ...activeChannels.map(ch => p.channel_totals[ch]||0)
+  ]);
+  const totalRow = ['','총합계', d.grand_total,
+    ...d.dates.map(dt => d.daily_totals[dt]||0),
+    ...activeChannels.map(ch => d.channel_totals[ch]||0)];
+  const aoa = [header, ...rows, totalRow];
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  XLSX.utils.book_append_sheet(wb, ws, '주간계획');
+  XLSX.writeFile(wb, `주간계획_${d.start_date}_${d.end_date}.xlsx`);
+}
+
+window.loadWeeklyPlan = loadWeeklyPlan;
+window.printWeeklyPlan = printWeeklyPlan;
+window.exportWeeklyPlanExcel = exportWeeklyPlanExcel;
+
+// =====================================================================
+// v3.6.85: 제품 BOM 관리 (Product BOM Manager)
+// =====================================================================
+let __pbmData = null;
+
+async function renderProductBomMgr() {
+  const content = document.getElementById('page-content');
+  content.innerHTML = `
+    <div class="max-w-full">
+      <div class="bg-gradient-to-r from-teal-500 to-cyan-600 rounded-xl p-4 mb-4 text-white shadow-lg">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 class="text-2xl font-bold"><i class="fas fa-flask mr-2"></i>제품 BOM 관리</h2>
+            <p class="text-sm opacity-90">완제품 1개당 원료 배합 (g) - 원료 사용량 자동 산출의 기초 데이터</p>
+          </div>
+          <div class="flex gap-2 flex-wrap">
+            <button onclick="pbmLoad()" class="bg-white text-teal-600 px-3 py-1.5 rounded-lg font-bold text-sm hover:bg-gray-100">
+              <i class="fas fa-sync mr-1"></i>새로고침
+            </button>
+            <button onclick="pbmImportFile()" class="bg-emerald-500 hover:bg-emerald-600 px-3 py-1.5 rounded-lg font-bold text-sm">
+              <i class="fas fa-upload mr-1"></i>JSON 임포트
+            </button>
+            <label class="bg-blue-500 hover:bg-blue-600 px-3 py-1.5 rounded-lg font-bold text-sm cursor-pointer text-white">
+              <i class="fas fa-file-excel mr-1"></i>엑셀 임포트
+              <input type="file" accept=".xlsx,.xls" class="hidden" onchange="pbmImportExcel(event)">
+            </label>
+          </div>
+        </div>
+      </div>
+      <div id="pbm-stats" class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3"></div>
+      <div class="bg-white rounded-lg shadow p-3 mb-3">
+        <div class="flex gap-2 items-center flex-wrap">
+          <label class="text-sm font-medium">검색:</label>
+          <input id="pbm-search" placeholder="제품명 또는 원료명" class="border rounded px-2 py-1 text-sm w-64" oninput="pbmRenderList()">
+          <label class="text-sm font-medium ml-4">매칭 유형:</label>
+          <select id="pbm-filter-type" class="border rounded px-2 py-1 text-sm" onchange="pbmRenderList()">
+            <option value="">전체</option>
+            <option value="exact">정확 매칭</option>
+            <option value="sub">부분 매칭</option>
+            <option value="jaccard">유사 매칭</option>
+            <option value="manual">수동</option>
+            <option value="unmatched">미매칭</option>
+          </select>
+        </div>
+      </div>
+      <div id="pbm-list" class="space-y-2"></div>
+    </div>
+  `;
+  await pbmLoad();
+}
+
+async function pbmLoad() {
+  try {
+    const [statusR, listR, mapR] = await Promise.all([
+      axios.get('/api/product-bom/status'),
+      axios.get('/api/product-bom/list'),
+      axios.get('/api/product-bom/mappings')
+    ]);
+    __pbmData = {
+      status: statusR.data,
+      list: listR.data.data || [],
+      mappings: mapR.data.data || []
+    };
+    pbmRenderStats();
+    pbmRenderList();
+  } catch (e) {
+    document.getElementById('pbm-list').innerHTML = `<div class="bg-red-100 p-4 rounded text-red-700">${e.message}</div>`;
+  }
+}
+
+function pbmRenderStats() {
+  const s = __pbmData.status;
+  document.getElementById('pbm-stats').innerHTML = `
+    <div class="bg-white rounded-lg shadow px-4 py-3 border-t-4 border-teal-500 text-center">
+      <p class="text-xs text-gray-500">등록 제품 (BOM)</p>
+      <p class="text-2xl font-bold text-teal-700">${s.products_with_bom}</p>
+    </div>
+    <div class="bg-white rounded-lg shadow px-4 py-3 border-t-4 border-cyan-500 text-center">
+      <p class="text-xs text-gray-500">원료 행 수</p>
+      <p class="text-2xl font-bold text-cyan-700">${s.total_bom_rows}</p>
+    </div>
+    <div class="bg-white rounded-lg shadow px-4 py-3 border-t-4 border-emerald-500 text-center">
+      <p class="text-xs text-gray-500">매핑 등록</p>
+      <p class="text-2xl font-bold text-emerald-700">${s.total_mappings}</p>
+    </div>
+    <div class="bg-white rounded-lg shadow px-4 py-3 border-t-4 border-purple-500 text-center">
+      <p class="text-xs text-gray-500">매칭 성공</p>
+      <p class="text-2xl font-bold text-purple-700">${s.matched}</p>
+    </div>
+  `;
+}
+
+function pbmRenderList() {
+  const q = (document.getElementById('pbm-search')?.value || '').toLowerCase().trim();
+  const typeFilter = document.getElementById('pbm-filter-type')?.value || '';
+  const list = __pbmData.list || [];
+  const mappings = __pbmData.mappings || [];
+  const mapByCode = {};
+  for (const m of mappings) mapByCode[m.production_code] = m;
+
+  let items = list;
+  if (typeFilter) {
+    items = items.filter(p => (mapByCode[p.production_code]?.match_type || '') === typeFilter);
+  }
+  if (q) {
+    items = items.filter(p => {
+      if ((p.production_name || '').toLowerCase().includes(q)) return true;
+      if ((p.production_code || '').toLowerCase().includes(q)) return true;
+      return (p.materials || []).some(m => (m.material_name || '').toLowerCase().includes(q));
+    });
+  }
+
+  // 미매칭 목록 (BOM 없는 매핑)
+  const unmatched = mappings.filter(m => m.match_type === 'unmatched' && (!typeFilter || typeFilter === 'unmatched') && (!q || (m.production_name||'').toLowerCase().includes(q)));
+
+  let unmatchedHtml = '';
+  if (unmatched.length > 0) {
+    unmatchedHtml = `
+      <div class="bg-orange-50 border border-orange-300 rounded-lg p-3 mb-3">
+        <p class="font-bold text-orange-700 mb-2"><i class="fas fa-exclamation-triangle mr-1"></i>미매칭 제품 (${unmatched.length})</p>
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-1 text-xs">
+          ${unmatched.slice(0, 60).map(m => `<div class="bg-white px-2 py-1 rounded border border-orange-200"><span class="font-mono text-gray-500">${m.production_code}</span> ${m.production_name}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  const listHtml = items.map(p => {
+    const m = mapByCode[p.production_code];
+    const badge = m ? getBomMatchBadge(m.match_type) : '';
+    const matStr = (p.materials || []).slice(0, 6).map(mt => `${mt.material_name} ${mt.quantity_per_unit_g}g`).join(' · ');
+    const more = (p.materials || []).length > 6 ? ` <span class="text-gray-400">(+${(p.materials.length-6)}종)</span>` : '';
+    return `
+      <div class="bg-white rounded-lg shadow p-3 border-l-4 border-teal-400">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <div class="flex-1">
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-mono text-gray-500">${p.production_code}</span>
+              <span class="font-bold text-gray-800">${p.production_name}</span>
+              ${badge}
+              ${m?.bom_source_name && m.bom_source_name !== p.production_name ? `<span class="text-xs text-gray-400">← ${m.bom_source_name}</span>` : ''}
+            </div>
+            <div class="text-xs text-gray-600 mt-1">${matStr}${more}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-gray-500">완제품 1개당</div>
+            <div class="text-lg font-bold text-emerald-700">${p.total_g.toFixed(1)} g</div>
+            <div class="text-xs text-gray-500">${(p.materials||[]).length}종 원료</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  document.getElementById('pbm-list').innerHTML = unmatchedHtml + (listHtml || `<div class="bg-gray-50 rounded p-6 text-center text-gray-400">등록된 BOM이 없습니다. JSON 또는 엑셀 임포트로 시작하세요.</div>`);
+}
+
+function getBomMatchBadge(type) {
+  const map = {
+    'exact': ['정확', 'bg-green-500'],
+    'sub': ['부분', 'bg-blue-500'],
+    'jaccard': ['유사', 'bg-yellow-500'],
+    'manual': ['수동', 'bg-purple-500'],
+    'unmatched': ['미매칭', 'bg-red-500']
+  };
+  const [label, cls] = map[type] || ['-', 'bg-gray-400'];
+  return `<span class="text-[10px] px-2 py-0.5 rounded-full text-white ${cls}">${label}</span>`;
+}
+
+async function pbmImportFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'application/json,.json';
+  input.onchange = async () => {
+    const f = input.files[0];
+    if (!f) return;
+    try {
+      const text = await f.text();
+      const data = JSON.parse(text);
+      const rows = Array.isArray(data) ? data : (data.rows || []);
+      if (rows.length === 0) { alert('빈 데이터'); return; }
+      if (!confirm(`${rows.length}개 제품 BOM을 등록/갱신합니다. 진행?`)) return;
+      const r = await axios.post('/api/product-bom/bulk-import', { rows });
+      alert(`완료: 제품 ${r.data.saved_products}개, 원료 ${r.data.saved_materials}행`);
+      await pbmLoad();
+    } catch (e) {
+      alert('실패: ' + e.message);
+    }
+  };
+  input.click();
+}
+
+async function pbmImportExcel(ev) {
+  const f = ev.target.files[0];
+  if (!f) return;
+  if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리 로드 대기중'); return; }
+  try {
+    const buf = await f.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const aoa = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+    // 기대 헤더: No | 생산명 | 유사명칭1 | 유사명칭2 | 원료명 | 수량(g) | 단위 | 비고
+    // 제품별로 그룹화 (생산명이 채워진 행이 새 제품 시작, 이후 원료 행)
+    const byProd = {};
+    let currentProd = null;
+    for (let i = 1; i < aoa.length; i++) {
+      const row = aoa[i];
+      if (!row) continue;
+      const pname = (row[1] || '').toString().trim();
+      const alias1 = (row[2] || '').toString().trim();
+      const alias2 = (row[3] || '').toString().trim();
+      const mname = (row[4] || '').toString().trim();
+      const qty = Number(row[5]);
+      const unit = (row[6] || 'g').toString().trim();
+      if (pname) {
+        currentProd = pname;
+        if (!byProd[currentProd]) byProd[currentProd] = { production_name: pname, alias1, alias2, materials: [] };
+      }
+      if (currentProd && mname && !isNaN(qty) && qty > 0) {
+        byProd[currentProd].materials.push({ material_name: mname, quantity_per_unit_g: qty, unit, seq: byProd[currentProd].materials.length });
+      }
+    }
+    // production_code 찾기 (기존 production_items에서 이름 매칭)
+    const prodMasterR = await axios.get('/api/master/production-items').catch(() => null);
+    let prodMaster = [];
+    if (prodMasterR?.data?.success) prodMaster = prodMasterR.data.data || prodMasterR.data.items || [];
+    else if (prodMasterR?.data?.data) prodMaster = prodMasterR.data.data;
+
+    const normalize = (s) => (s || '').toString().replace(/\s+/g, '').replace(/[()（）]/g, '').toLowerCase();
+    const masterByNorm = {};
+    for (const p of prodMaster) {
+      masterByNorm[normalize(p.production_name || p.name)] = p;
+    }
+
+    const rows = [];
+    let matched = 0, unmatched = 0;
+    for (const bom of Object.values(byProd)) {
+      const nname = normalize(bom.production_name);
+      let m = masterByNorm[nname];
+      let match_type = 'exact';
+      if (!m) {
+        // sub-string 시도
+        for (const [k, v] of Object.entries(masterByNorm)) {
+          if (k.includes(nname) || nname.includes(k)) { m = v; match_type = 'sub'; break; }
+        }
+      }
+      if (m) {
+        matched++;
+        rows.push({
+          production_code: m.production_code || m.code,
+          production_name: m.production_name || m.name,
+          bom_source_name: bom.production_name,
+          match_type,
+          match_score: match_type === 'exact' ? 1 : 0.7,
+          materials: bom.materials
+        });
+      } else {
+        unmatched++;
+        // 임시 코드로 저장(미매칭 표시)
+        rows.push({
+          production_code: 'UNMATCHED_' + bom.production_name.replace(/[^\wㄱ-ㅎ가-힣]/g, '').slice(0, 30),
+          production_name: bom.production_name,
+          bom_source_name: bom.production_name,
+          match_type: 'unmatched',
+          match_score: 0,
+          materials: bom.materials
+        });
+      }
+    }
+    if (!confirm(`총 ${rows.length}개 제품 (매칭 ${matched} / 미매칭 ${unmatched}). 진행?`)) return;
+    const r = await axios.post('/api/product-bom/bulk-import', { rows });
+    alert(`완료: 제품 ${r.data.saved_products}개, 원료 ${r.data.saved_materials}행`);
+    await pbmLoad();
+    ev.target.value = '';
+  } catch (e) {
+    alert('엑셀 임포트 실패: ' + e.message);
+  }
+}
+
+window.pbmLoad = pbmLoad;
+window.pbmRenderList = pbmRenderList;
+window.pbmImportFile = pbmImportFile;
+window.pbmImportExcel = pbmImportExcel;

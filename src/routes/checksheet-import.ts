@@ -111,6 +111,17 @@ csimport.post('/clear-legacy', async (c) => {
   return c.json({ success: true, results })
 })
 
+// product_dough_usage 전체 삭제 (재삽입용)
+csimport.post('/clear-pdu', async (c) => {
+  try {
+    const before = await c.env.DB.prepare(`SELECT COUNT(*) as n FROM product_dough_usage`).first() as any
+    await c.env.DB.prepare(`DELETE FROM product_dough_usage`).run()
+    return c.json({ success: true, cleared: before?.n || 0 })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
 csimport.get('/status', async (c) => {
   try {
     const tables = ['order_plan_alias', 'dough_recipe', 'dough_material', 'product_dough_usage',

@@ -783,4 +783,218 @@ masterRoutes.delete('/category/:category/all', async (c) => {
   });
 });
 
+// ============================================
+// v3.6.95: 제품 상세 정보 (18컬럼 엑셀 스타일)
+// ============================================
+
+async function initProductDetailsTable(env: any) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS product_details (
+      item_code TEXT PRIMARY KEY,
+      photo_url TEXT DEFAULT '',
+      sales_channel TEXT DEFAULT '',
+      product_name TEXT DEFAULT '',
+      manufacture_report_no TEXT DEFAULT '',
+      storage_method TEXT DEFAULT '',
+      shelf_life TEXT DEFAULT '',
+      shelf_life_condition TEXT DEFAULT '',
+      package_unit TEXT DEFAULT '',
+      package_size TEXT DEFAULT '',
+      package_material TEXT DEFAULT '',
+      box_size TEXT DEFAULT '',
+      box_qty TEXT DEFAULT '',
+      ingredients TEXT DEFAULT '',
+      product_size TEXT DEFAULT '',
+      registered_at TEXT DEFAULT '',
+      memo TEXT DEFAULT '',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run()
+}
+
+// GET /api/master/products/details — 제품 목록 + 상세 정보 조인
+masterRoutes.get('/products/details', async (c) => {
+  try {
+    await initProductDetailsTable(c.env)
+    const q = (c.req.query('q') || '').trim().toLowerCase()
+
+    const res = await c.env.DB.prepare(`
+      SELECT
+        m.id, m.item_code, m.item_name, m.category, m.unit,
+        m.current_stock, m.safety_stock, m.expiry_days,
+        m.created_at, m.updated_at,
+        COALESCE(pd.photo_url, '') AS photo_url,
+        COALESCE(pd.sales_channel, '') AS sales_channel,
+        COALESCE(pd.product_name, '') AS product_name,
+        COALESCE(pd.manufacture_report_no, '') AS manufacture_report_no,
+        COALESCE(pd.storage_method, '') AS storage_method,
+        COALESCE(pd.shelf_life, '') AS shelf_life,
+        COALESCE(pd.shelf_life_condition, '') AS shelf_life_condition,
+        COALESCE(pd.package_unit, '') AS package_unit,
+        COALESCE(pd.package_size, '') AS package_size,
+        COALESCE(pd.package_material, '') AS package_material,
+        COALESCE(pd.box_size, '') AS box_size,
+        COALESCE(pd.box_qty, '') AS box_qty,
+        COALESCE(pd.ingredients, '') AS ingredients,
+        COALESCE(pd.product_size, '') AS product_size,
+        COALESCE(pd.registered_at, '') AS registered_at,
+        COALESCE(pd.memo, '') AS memo
+      FROM master m
+      LEFT JOIN product_details pd ON pd.item_code = m.item_code
+      WHERE m.category = '제품'
+      ORDER BY m.item_code
+    `).all<any>()
+
+    let items = res.results || []
+    if (q) {
+      items = items.filter((it: any) =>
+        (it.item_code || '').toLowerCase().includes(q) ||
+        (it.item_name || '').toLowerCase().includes(q) ||
+        (it.product_name || '').toLowerCase().includes(q)
+      )
+    }
+    return c.json({ success: true, data: items, total: items.length })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// GET /api/master/products/details/:code — 단일 조회
+masterRoutes.get('/products/details/:code', async (c) => {
+  try {
+    await initProductDetailsTable(c.env)
+    const code = c.req.param('code')
+    const res = await c.env.DB.prepare(`
+      SELECT m.*,
+        COALESCE(pd.photo_url, '') AS photo_url,
+        COALESCE(pd.sales_channel, '') AS sales_channel,
+        COALESCE(pd.product_name, '') AS product_name,
+        COALESCE(pd.manufacture_report_no, '') AS manufacture_report_no,
+        COALESCE(pd.storage_method, '') AS storage_method,
+        COALESCE(pd.shelf_life, '') AS shelf_life,
+        COALESCE(pd.shelf_life_condition, '') AS shelf_life_condition,
+        COALESCE(pd.package_unit, '') AS package_unit,
+        COALESCE(pd.package_size, '') AS package_size,
+        COALESCE(pd.package_material, '') AS package_material,
+        COALESCE(pd.box_size, '') AS box_size,
+        COALESCE(pd.box_qty, '') AS box_qty,
+        COALESCE(pd.ingredients, '') AS ingredients,
+        COALESCE(pd.product_size, '') AS product_size,
+        COALESCE(pd.registered_at, '') AS registered_at,
+        COALESCE(pd.memo, '') AS memo
+      FROM master m
+      LEFT JOIN product_details pd ON pd.item_code = m.item_code
+      WHERE m.item_code = ? AND m.category = '제품'
+    `).bind(code).first<any>()
+    if (!res) return c.json({ success: false, error: '제품 없음' }, 404)
+    return c.json({ success: true, data: res })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// PUT /api/master/products/details/:code — 상세 정보 저장(UPSERT)
+masterRoutes.put('/products/details/:code', async (c) => {
+  try {
+    await initProductDetailsTable(c.env)
+    const code = c.req.param('code')
+    const body = await c.req.json()
+
+    // master에 제품 존재 여부 확인
+    const exist = await c.env.DB.prepare(`SELECT item_code FROM master WHERE item_code = ? AND category = '제품'`).bind(code).first()
+    if (!exist) return c.json({ success: false, error: '제품 마스터에 없는 코드' }, 404)
+
+    // item_name 업데이트 (제품명 관리)
+    if (body.item_name !== undefined) {
+      await c.env.DB.prepare(`UPDATE master SET item_name = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?`)
+        .bind(String(body.item_name || '').trim(), code).run()
+    }
+
+    const fields = [
+      'photo_url','sales_channel','product_name','manufacture_report_no','storage_method',
+      'shelf_life','shelf_life_condition','package_unit','package_size','package_material',
+      'box_size','box_qty','ingredients','product_size','registered_at','memo'
+    ]
+    const values: any[] = [code]
+    for (const f of fields) values.push(String(body[f] ?? '').trim())
+
+    await c.env.DB.prepare(`
+      INSERT INTO product_details (
+        item_code, photo_url, sales_channel, product_name, manufacture_report_no,
+        storage_method, shelf_life, shelf_life_condition, package_unit, package_size,
+        package_material, box_size, box_qty, ingredients, product_size, registered_at,
+        memo, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(item_code) DO UPDATE SET
+        photo_url = excluded.photo_url,
+        sales_channel = excluded.sales_channel,
+        product_name = excluded.product_name,
+        manufacture_report_no = excluded.manufacture_report_no,
+        storage_method = excluded.storage_method,
+        shelf_life = excluded.shelf_life,
+        shelf_life_condition = excluded.shelf_life_condition,
+        package_unit = excluded.package_unit,
+        package_size = excluded.package_size,
+        package_material = excluded.package_material,
+        box_size = excluded.box_size,
+        box_qty = excluded.box_qty,
+        ingredients = excluded.ingredients,
+        product_size = excluded.product_size,
+        registered_at = excluded.registered_at,
+        memo = excluded.memo,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(...values).run()
+
+    return c.json({ success: true, item_code: code })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// POST /api/master/products/quick-create — 제품명만 받아서 빠른 생성 (코드 자동 채번)
+masterRoutes.post('/products/quick-create', async (c) => {
+  try {
+    await initProductDetailsTable(c.env)
+    const body = await c.req.json()
+    const name = String(body?.item_name || '').trim()
+    if (!name) return c.json({ success: false, error: '제품명 필수' }, 400)
+    const unit = String(body?.unit || 'EA').trim()
+
+    // PD 코드 채번 (PD001~)
+    const last = await c.env.DB.prepare(`
+      SELECT item_code FROM master WHERE category = '제품' AND item_code LIKE 'PD%'
+      ORDER BY item_code DESC LIMIT 1
+    `).first<{item_code: string}>()
+    let nextNum = 1
+    if (last?.item_code) {
+      const m = last.item_code.match(/PD(\d+)/)
+      if (m) nextNum = parseInt(m[1]) + 1
+    }
+    let code = `PD${String(nextNum).padStart(3, '0')}`
+    // 중복 회피
+    for (let i = 0; i < 100; i++) {
+      const dup = await c.env.DB.prepare(`SELECT item_code FROM master WHERE item_code = ?`).bind(code).first()
+      if (!dup) break
+      nextNum++
+      code = `PD${String(nextNum).padStart(3, '0')}`
+    }
+
+    await c.env.DB.prepare(`
+      INSERT INTO master (item_code, item_name, category, unit)
+      VALUES (?, ?, '제품', ?)
+    `).bind(code, name, unit).run()
+
+    // product_details에도 빈 행 준비 (registered_at 오늘 날짜)
+    const today = new Date().toISOString().slice(0, 10)
+    await c.env.DB.prepare(`
+      INSERT OR IGNORE INTO product_details (item_code, registered_at)
+      VALUES (?, ?)
+    `).bind(code, today).run()
+
+    return c.json({ success: true, item_code: code, item_name: name })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
 export default masterRoutes;

@@ -40260,66 +40260,358 @@ async function deleteSystemMaterial(code) {
   }
 }
 
-// ===== 제품 관리 =====
-function renderProductsManagement(container) {
+// ===== 제품 관리 (v3.6.95: 엑셀 스타일 18컬럼 + 스크롤형 + 인라인 상세) =====
+let __productDetailsCache = [];
+
+async function renderProductsManagement(container) {
   if (!container) { console.error('renderProductsManagement: container is null'); return; }
-  const products = systemManagementData.products || [];
-  
+
   container.innerHTML = `
-    <div class="space-y-4">
-      <div class="flex justify-between items-center">
-        <div class="flex gap-2">
-          <input type="text" id="product-search" placeholder="제품명 검색..." 
-                 class="border rounded-lg px-4 py-2 w-64" oninput="filterSystemProducts()">
+    <div class="space-y-3">
+      <!-- 툴바: 빠른 등록 + 검색 -->
+      <div class="bg-white rounded-lg border p-3">
+        <div class="flex flex-wrap gap-2 items-center">
+          <div class="flex-1 min-w-[240px]">
+            <div class="relative">
+              <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
+              <input type="text" id="pd-search" placeholder="상품코드 또는 제품명 입력 (실시간 검색)"
+                     class="w-full border rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                     oninput="filterProductDetails()">
+            </div>
+          </div>
+          <div class="flex gap-2 items-center">
+            <input type="text" id="pd-quick-name" placeholder="제품명 입력 후 Enter → 자동등록"
+                   class="border rounded-lg px-3 py-2 text-sm w-64"
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();quickCreateProduct();}">
+            <select id="pd-quick-unit" class="border rounded-lg px-2 py-2 text-sm">
+              <option value="EA">EA</option>
+              <option value="BOX">BOX</option>
+              <option value="kg">kg</option>
+            </select>
+            <button onclick="quickCreateProduct()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm font-semibold whitespace-nowrap">
+              <i class="fas fa-plus mr-1"></i>빠른 등록
+            </button>
+          </div>
+          <div class="text-xs text-gray-500 ml-auto">
+            <span id="pd-count">0</span>건 · <span class="text-blue-600">행 클릭 → 상세 편집</span>
+          </div>
         </div>
-        <button onclick="showAddProductModal()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">
-          <i class="fas fa-plus mr-1"></i> 제품 추가
-        </button>
       </div>
-      
-      <div class="overflow-x-auto border rounded-lg">
-        <table class="w-full text-sm">
-          <thead class="bg-gray-50">
-            <tr>
-              <th class="px-4 py-3 text-left">코드</th>
-              <th class="px-4 py-3 text-left">제품명</th>
-              <th class="px-4 py-3 text-center">단위</th>
-              <th class="px-4 py-3 text-center">관리</th>
-            </tr>
-          </thead>
-          <tbody id="products-table-body" class="divide-y">
-            ${products.slice(0, 100).map(p => `
-              <tr class="hover:bg-gray-50 product-row" data-name="${p.item_name?.toLowerCase() || ''}">
-                <td class="px-4 py-3 font-mono text-xs text-gray-500">${p.item_code}</td>
-                <td class="px-4 py-3 font-medium">${p.item_name}</td>
-                <td class="px-4 py-3 text-center">${p.unit || '-'}</td>
-                <td class="px-4 py-3 text-center">
-                  <div class="flex justify-center gap-1">
-                    <button onclick="showEditProductModal('${p.item_code}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded" title="수정">
-                      <i class="fas fa-edit"></i>
-                    </button>
-                    <button onclick="deleteSystemProduct('${p.item_code}')" class="p-1.5 text-red-600 hover:bg-red-50 rounded" title="삭제">
-                      <i class="fas fa-trash"></i>
-                    </button>
-                  </div>
-                </td>
+
+      <!-- 스크롤형 테이블 (엑셀 스타일 18컬럼) -->
+      <div class="bg-white rounded-lg border">
+        <div class="overflow-auto" style="max-height: calc(100vh - 260px);">
+          <table class="text-xs border-collapse" style="min-width: 2400px;">
+            <thead class="sticky top-0 bg-gray-100 z-10">
+              <tr>
+                <th class="border px-2 py-2 text-center bg-gray-200 sticky left-0 z-20" style="min-width:60px">상품<br>번호</th>
+                <th class="border px-2 py-2 text-center" style="min-width:70px">제품사진</th>
+                <th class="border px-2 py-2 text-center bg-blue-50 sticky z-20" style="left:60px;min-width:90px">상품코드</th>
+                <th class="border px-2 py-2 text-center" style="min-width:100px">판매채널</th>
+                <th class="border px-2 py-2 text-center bg-yellow-50" style="min-width:200px">상품명</th>
+                <th class="border px-2 py-2 text-center" style="min-width:140px">품목제조<br>보고번호</th>
+                <th class="border px-2 py-2 text-center" style="min-width:100px">보관방법</th>
+                <th class="border px-2 py-2 text-center" style="min-width:90px">소비기한</th>
+                <th class="border px-2 py-2 text-center" style="min-width:110px">소비기한<br>조건</th>
+                <th class="border px-2 py-2 text-center" style="min-width:90px">포장단위</th>
+                <th class="border px-2 py-2 text-center" style="min-width:110px">포장사이즈</th>
+                <th class="border px-2 py-2 text-center" style="min-width:110px">포장재질</th>
+                <th class="border px-2 py-2 text-center" style="min-width:110px">박스사이즈</th>
+                <th class="border px-2 py-2 text-center" style="min-width:90px">BOX<br>입수량</th>
+                <th class="border px-2 py-2 text-center" style="min-width:240px">원재료명</th>
+                <th class="border px-2 py-2 text-center" style="min-width:110px">제품사이즈</th>
+                <th class="border px-2 py-2 text-center" style="min-width:100px">제품등록일</th>
+                <th class="border px-2 py-2 text-center" style="min-width:160px">비고</th>
+                <th class="border px-2 py-2 text-center bg-gray-200" style="min-width:90px">관리</th>
               </tr>
-            `).join('')}
-          </tbody>
-        </table>
+            </thead>
+            <tbody id="pd-tbody" class="divide-y">
+              <tr><td colspan="19" class="text-center py-8 text-gray-400"><i class="fas fa-spinner fa-spin"></i> 로딩 중...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
-      ${products.length > 100 ? `<p class="text-sm text-gray-500 text-center">처음 100개만 표시됩니다. 검색을 사용하세요.</p>` : ''}
     </div>
   `;
+
+  await loadProductDetailsList();
 }
 
-function filterSystemProducts() {
-  const search = document.getElementById('product-search').value.toLowerCase();
-  document.querySelectorAll('.product-row').forEach(row => {
-    const name = row.dataset.name || '';
-    row.style.display = (!search || name.includes(search)) ? '' : 'none';
-  });
+async function loadProductDetailsList() {
+  try {
+    const res = await axios.get('/api/master/products/details');
+    if (!res.data?.success) throw new Error(res.data?.error || '로드 실패');
+    __productDetailsCache = res.data.data || [];
+    renderProductDetailsRows(__productDetailsCache);
+  } catch (e) {
+    const tbody = document.getElementById('pd-tbody');
+    if (tbody) tbody.innerHTML = `<tr><td colspan="19" class="text-center py-8 text-red-600">에러: ${e.message}</td></tr>`;
+  }
 }
+
+function renderProductDetailsRows(list) {
+  const tbody = document.getElementById('pd-tbody');
+  const cnt = document.getElementById('pd-count');
+  if (cnt) cnt.textContent = list.length;
+  if (!tbody) return;
+  if (list.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="19" class="text-center py-8 text-gray-400">등록된 제품이 없습니다. 상단에서 [빠른 등록]으로 추가하세요.</td></tr>`;
+    return;
+  }
+  const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  tbody.innerHTML = list.map((p, i) => `
+    <tr class="hover:bg-blue-50 cursor-pointer pd-row" data-code="${esc(p.item_code)}"
+        data-search="${esc((p.item_code + ' ' + (p.item_name||'') + ' ' + (p.product_name||'')).toLowerCase())}"
+        onclick="openProductDetailModal('${esc(p.item_code)}')">
+      <td class="border px-2 py-1 text-center bg-gray-50 sticky left-0 font-semibold text-gray-500 text-xs">${i + 1}</td>
+      <td class="border px-1 py-1 text-center">
+        ${p.photo_url
+          ? `<img src="${esc(p.photo_url)}" class="w-12 h-12 object-cover mx-auto rounded" onerror="this.style.display='none'">`
+          : `<div class="w-12 h-12 mx-auto bg-gray-100 rounded flex items-center justify-center text-gray-300"><i class="fas fa-image"></i></div>`}
+      </td>
+      <td class="border px-2 py-1 text-center font-mono text-xs bg-blue-50 sticky font-bold text-blue-700" style="left:60px">${esc(p.item_code)}</td>
+      <td class="border px-2 py-1 text-center">${esc(p.sales_channel) || '-'}</td>
+      <td class="border px-2 py-1 bg-yellow-50 font-medium">${esc(p.item_name || p.product_name)}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.manufacture_report_no) || '-'}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.storage_method) || '-'}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.shelf_life) || '-'}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.shelf_life_condition) || '-'}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.package_unit) || '-'}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.package_size) || '-'}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.package_material) || '-'}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.box_size) || '-'}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.box_qty) || '-'}</td>
+      <td class="border px-2 py-1 text-xs whitespace-normal" style="max-width:240px">
+        <div class="truncate" title="${esc(p.ingredients)}">${esc(p.ingredients) || '-'}</div>
+      </td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.product_size) || '-'}</td>
+      <td class="border px-2 py-1 text-center text-xs">${esc(p.registered_at) || '-'}</td>
+      <td class="border px-2 py-1 text-xs whitespace-normal" style="max-width:160px">
+        <div class="truncate" title="${esc(p.memo)}">${esc(p.memo) || '-'}</div>
+      </td>
+      <td class="border px-2 py-1 text-center bg-gray-50" onclick="event.stopPropagation()">
+        <button onclick="openProductDetailModal('${esc(p.item_code)}')" class="p-1 text-blue-600 hover:bg-blue-100 rounded" title="편집">
+          <i class="fas fa-edit"></i>
+        </button>
+        <button onclick="deleteSystemProduct('${esc(p.item_code)}')" class="p-1 text-red-600 hover:bg-red-100 rounded" title="삭제">
+          <i class="fas fa-trash"></i>
+        </button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function filterProductDetails() {
+  const q = (document.getElementById('pd-search').value || '').toLowerCase().trim();
+  if (!q) {
+    renderProductDetailsRows(__productDetailsCache);
+    return;
+  }
+  const filtered = __productDetailsCache.filter(p =>
+    (p.item_code || '').toLowerCase().includes(q) ||
+    (p.item_name || '').toLowerCase().includes(q) ||
+    (p.product_name || '').toLowerCase().includes(q)
+  );
+  renderProductDetailsRows(filtered);
+}
+
+async function quickCreateProduct() {
+  const nameInput = document.getElementById('pd-quick-name');
+  const unitSel = document.getElementById('pd-quick-unit');
+  const name = (nameInput.value || '').trim();
+  if (!name) {
+    showToast('제품명을 입력하세요', 'warning');
+    nameInput.focus();
+    return;
+  }
+  try {
+    const res = await axios.post('/api/master/products/quick-create', {
+      item_name: name,
+      unit: unitSel.value
+    });
+    if (!res.data?.success) throw new Error(res.data?.error || '등록 실패');
+    showToast(`✅ ${res.data.item_code} · ${name} 등록`, 'success');
+    nameInput.value = '';
+    await loadProductDetailsList();
+    // 검색창 초기화 후 새 제품 강조
+    const searchInput = document.getElementById('pd-search');
+    if (searchInput) { searchInput.value = res.data.item_code; filterProductDetails(); }
+    // 상세 편집 자동 열기
+    setTimeout(() => openProductDetailModal(res.data.item_code), 300);
+  } catch (e) {
+    showToast('등록 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+
+// ===== 제품 상세 편집 모달 (18컬럼) =====
+async function openProductDetailModal(code) {
+  const p = __productDetailsCache.find(x => x.item_code === code);
+  if (!p) { showToast('제품을 찾을 수 없습니다', 'error'); return; }
+
+  const esc = (s) => String(s ?? '').replace(/"/g,'&quot;');
+  let modal = document.getElementById('pd-detail-modal');
+  if (modal) modal.remove();
+  modal = document.createElement('div');
+  modal.id = 'pd-detail-modal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-5xl w-full mx-4 max-h-[95vh] overflow-hidden flex flex-col">
+      <div class="bg-green-600 text-white p-4 flex items-center justify-between">
+        <h3 class="text-lg font-bold">
+          <i class="fas fa-box mr-2"></i>제품 상세 정보 편집
+          <span class="text-sm font-mono ml-3 bg-white bg-opacity-20 px-2 py-1 rounded">${esc(p.item_code)}</span>
+        </h3>
+        <button onclick="document.getElementById('pd-detail-modal').remove()" class="text-white hover:bg-green-700 rounded p-1 px-2">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="p-5 overflow-auto flex-1">
+        <div class="grid grid-cols-12 gap-3 text-sm">
+          <!-- 사진 -->
+          <div class="col-span-12 md:col-span-3">
+            <label class="block text-xs font-semibold text-gray-700 mb-1">제품사진 URL</label>
+            <input type="text" id="f-photo_url" value="${esc(p.photo_url)}" placeholder="https://..."
+                   class="w-full border rounded px-2 py-2 text-xs" oninput="document.getElementById('f-photo-preview').src=this.value">
+            <div class="mt-2 border rounded bg-gray-50 p-2 h-40 flex items-center justify-center">
+              <img id="f-photo-preview" src="${esc(p.photo_url)}" class="max-h-full max-w-full object-contain" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+              <div class="text-gray-300 flex items-center justify-center h-full w-full" style="${p.photo_url ? 'display:none' : ''}"><i class="fas fa-image text-4xl"></i></div>
+            </div>
+          </div>
+
+          <!-- 기본 정보 -->
+          <div class="col-span-12 md:col-span-9 grid grid-cols-12 gap-3">
+            <div class="col-span-4">
+              <label class="block text-xs font-semibold text-gray-700 mb-1">상품코드</label>
+              <input type="text" value="${esc(p.item_code)}" disabled class="w-full border rounded px-2 py-2 bg-gray-100 font-mono text-xs">
+            </div>
+            <div class="col-span-8">
+              <label class="block text-xs font-semibold text-gray-700 mb-1">상품명 <span class="text-red-500">*</span></label>
+              <input type="text" id="f-item_name" value="${esc(p.item_name)}" class="w-full border rounded px-2 py-2">
+            </div>
+            <div class="col-span-6">
+              <label class="block text-xs font-semibold text-gray-700 mb-1">판매채널</label>
+              <input type="text" id="f-sales_channel" value="${esc(p.sales_channel)}" placeholder="자사몰/쿠팡/네이버 등" class="w-full border rounded px-2 py-2 text-xs">
+            </div>
+            <div class="col-span-6">
+              <label class="block text-xs font-semibold text-gray-700 mb-1">품목제조보고번호</label>
+              <input type="text" id="f-manufacture_report_no" value="${esc(p.manufacture_report_no)}" class="w-full border rounded px-2 py-2 text-xs">
+            </div>
+            <div class="col-span-6">
+              <label class="block text-xs font-semibold text-gray-700 mb-1">보관방법</label>
+              <input type="text" id="f-storage_method" value="${esc(p.storage_method)}" placeholder="실온/냉장/냉동" class="w-full border rounded px-2 py-2 text-xs">
+            </div>
+            <div class="col-span-3">
+              <label class="block text-xs font-semibold text-gray-700 mb-1">소비기한</label>
+              <input type="text" id="f-shelf_life" value="${esc(p.shelf_life)}" placeholder="30일" class="w-full border rounded px-2 py-2 text-xs">
+            </div>
+            <div class="col-span-3">
+              <label class="block text-xs font-semibold text-gray-700 mb-1">소비기한 조건</label>
+              <input type="text" id="f-shelf_life_condition" value="${esc(p.shelf_life_condition)}" placeholder="냉동보관 시" class="w-full border rounded px-2 py-2 text-xs">
+            </div>
+          </div>
+
+          <!-- 포장 정보 -->
+          <div class="col-span-12 border-t pt-3 mt-2">
+            <h4 class="text-xs font-bold text-gray-700 mb-2"><i class="fas fa-box-open mr-1 text-amber-600"></i>포장 정보</h4>
+            <div class="grid grid-cols-12 gap-3">
+              <div class="col-span-3">
+                <label class="block text-xs font-semibold text-gray-700 mb-1">포장단위</label>
+                <input type="text" id="f-package_unit" value="${esc(p.package_unit)}" class="w-full border rounded px-2 py-2 text-xs">
+              </div>
+              <div class="col-span-3">
+                <label class="block text-xs font-semibold text-gray-700 mb-1">포장사이즈</label>
+                <input type="text" id="f-package_size" value="${esc(p.package_size)}" placeholder="200×150×50mm" class="w-full border rounded px-2 py-2 text-xs">
+              </div>
+              <div class="col-span-3">
+                <label class="block text-xs font-semibold text-gray-700 mb-1">포장재질</label>
+                <input type="text" id="f-package_material" value="${esc(p.package_material)}" placeholder="OPP/PE" class="w-full border rounded px-2 py-2 text-xs">
+              </div>
+              <div class="col-span-3">
+                <label class="block text-xs font-semibold text-gray-700 mb-1">제품사이즈</label>
+                <input type="text" id="f-product_size" value="${esc(p.product_size)}" class="w-full border rounded px-2 py-2 text-xs">
+              </div>
+              <div class="col-span-4">
+                <label class="block text-xs font-semibold text-gray-700 mb-1">박스사이즈</label>
+                <input type="text" id="f-box_size" value="${esc(p.box_size)}" placeholder="600×400×300mm" class="w-full border rounded px-2 py-2 text-xs">
+              </div>
+              <div class="col-span-4">
+                <label class="block text-xs font-semibold text-gray-700 mb-1">BOX 입수량</label>
+                <input type="text" id="f-box_qty" value="${esc(p.box_qty)}" placeholder="12EA" class="w-full border rounded px-2 py-2 text-xs">
+              </div>
+              <div class="col-span-4">
+                <label class="block text-xs font-semibold text-gray-700 mb-1">제품등록일</label>
+                <input type="date" id="f-registered_at" value="${esc(p.registered_at)}" class="w-full border rounded px-2 py-2 text-xs">
+              </div>
+            </div>
+          </div>
+
+          <!-- 원재료명 & 비고 -->
+          <div class="col-span-12 border-t pt-3">
+            <label class="block text-xs font-semibold text-gray-700 mb-1"><i class="fas fa-leaf mr-1 text-green-600"></i>원재료명</label>
+            <textarea id="f-ingredients" rows="3" placeholder="예: 밀가루(강력분), 물, 소금, 이스트, 설탕..."
+                      class="w-full border rounded px-2 py-2 text-xs">${esc(p.ingredients)}</textarea>
+          </div>
+
+          <div class="col-span-12">
+            <label class="block text-xs font-semibold text-gray-700 mb-1"><i class="fas fa-sticky-note mr-1 text-gray-500"></i>비고</label>
+            <textarea id="f-memo" rows="2" class="w-full border rounded px-2 py-2 text-xs">${esc(p.memo)}</textarea>
+          </div>
+        </div>
+      </div>
+      <div class="p-3 bg-gray-100 flex justify-between items-center">
+        <button onclick="deleteSystemProduct('${esc(p.item_code)}');document.getElementById('pd-detail-modal').remove()"
+                class="px-4 py-2 border border-red-300 text-red-600 rounded hover:bg-red-50 text-sm">
+          <i class="fas fa-trash mr-1"></i>제품 삭제
+        </button>
+        <div class="flex gap-2">
+          <button onclick="document.getElementById('pd-detail-modal').remove()" class="px-4 py-2 border rounded hover:bg-gray-200">취소</button>
+          <button onclick="saveProductDetail('${esc(p.item_code)}')" class="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-semibold">
+            <i class="fas fa-save mr-1"></i>저장
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+async function saveProductDetail(code) {
+  const getVal = (id) => (document.getElementById(id)?.value || '').trim();
+  const item_name = getVal('f-item_name');
+  if (!item_name) { showToast('상품명은 필수입니다', 'warning'); return; }
+
+  const payload = {
+    item_name,
+    photo_url: getVal('f-photo_url'),
+    sales_channel: getVal('f-sales_channel'),
+    product_name: item_name,
+    manufacture_report_no: getVal('f-manufacture_report_no'),
+    storage_method: getVal('f-storage_method'),
+    shelf_life: getVal('f-shelf_life'),
+    shelf_life_condition: getVal('f-shelf_life_condition'),
+    package_unit: getVal('f-package_unit'),
+    package_size: getVal('f-package_size'),
+    package_material: getVal('f-package_material'),
+    box_size: getVal('f-box_size'),
+    box_qty: getVal('f-box_qty'),
+    ingredients: getVal('f-ingredients'),
+    product_size: getVal('f-product_size'),
+    registered_at: getVal('f-registered_at'),
+    memo: getVal('f-memo')
+  };
+  try {
+    const res = await axios.put(`/api/master/products/details/${encodeURIComponent(code)}`, payload);
+    if (!res.data?.success) throw new Error(res.data?.error || '저장 실패');
+    showToast('✅ 저장되었습니다', 'success');
+    document.getElementById('pd-detail-modal').remove();
+    await loadProductDetailsList();
+  } catch (e) {
+    showToast('저장 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+
+// 하위호환: 기존 참조 유지
+function filterSystemProducts() { filterProductDetails(); }
 
 function showAddProductModal() {
   showModal('제품 추가', `
@@ -41481,6 +41773,12 @@ window.saveNewSystemProduct = saveNewSystemProduct;
 window.showEditProductModal = showEditProductModal;
 window.updateProduct = updateProduct;
 window.deleteSystemProduct = deleteSystemProduct;
+// v3.6.95: 제품 관리 새 UI (18컬럼 엑셀 스타일)
+window.loadProductDetailsList = loadProductDetailsList;
+window.filterProductDetails = filterProductDetails;
+window.quickCreateProduct = quickCreateProduct;
+window.openProductDetailModal = openProductDetailModal;
+window.saveProductDetail = saveProductDetail;
 window.filterSystemProductionItems = filterSystemProductionItems;
 window.showEditProductionItemModal = showEditProductionItemModal;
 window.updateProductionItem = updateProductionItem;

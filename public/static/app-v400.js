@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.187';
-const APP_BUILD = '20260917-3';
+const APP_VERSION = '3.6.188';
+const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -40390,13 +40390,32 @@ function getFilteredProductsV2() {
   const channel = document.getElementById('productv2-channel-filter')?.value || '';
   return __productsV2Cache.filter(p => {
     if (brand && p.brand_code !== brand) return false;
-    if (channel && p.sales_channel !== channel) return false;
+    // v3.6.188: 채널 필터는 하위 channels 배열 기준
+    if (channel) {
+      const chs = p.channels || [];
+      if (!chs.some(c => c.channel_name === channel)) return false;
+    }
     if (q) {
-      const hay = `${p.product_code} ${p.brand_code} ${p.brand_name || ''} ${p.product_name} ${p.sales_channel || ''} ${p.barcode_number || ''}`.toLowerCase();
+      const chInfo = (p.channels || []).map(c => `${c.channel_code} ${c.channel_name} ${c.channel_sku || ''} ${c.channel_barcode || ''}`).join(' ');
+      const hay = `${p.product_code} ${p.brand_code} ${p.brand_name || ''} ${p.product_name} ${p.barcode_number || ''} ${chInfo}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
   });
+}
+
+// v3.6.188: 확장된 행 상태 저장 (product_code Set)
+if (typeof window.__expandedProducts === 'undefined') {
+  window.__expandedProducts = new Set();
+}
+
+function toggleProductExpand(productCode) {
+  if (window.__expandedProducts.has(productCode)) {
+    window.__expandedProducts.delete(productCode);
+  } else {
+    window.__expandedProducts.add(productCode);
+  }
+  renderProductsV2Grouped();
 }
 
 function renderProductsV2Grouped() {
@@ -40440,37 +40459,101 @@ function renderProductsV2Grouped() {
         <table class="min-w-full text-sm">
           <thead class="bg-gray-50 text-xs text-gray-600 uppercase">
             <tr>
+              <th class="px-3 py-2 w-8"></th>
               <th class="px-3 py-2 text-left">사진</th>
               <th class="px-3 py-2 text-left">제품코드</th>
               <th class="px-3 py-2 text-left">제품명</th>
-              <th class="px-3 py-2 text-left">판매채널</th>
-              <th class="px-3 py-2 text-left">바코드</th>
+              <th class="px-3 py-2 text-left">채널 수</th>
+              <th class="px-3 py-2 text-left">기본 바코드</th>
               <th class="px-3 py-2 text-left">소비기한</th>
               <th class="px-3 py-2 text-left">포장</th>
               <th class="px-3 py-2 text-center">액션</th>
             </tr>
           </thead>
           <tbody class="divide-y">
-            ${group.items.map(p => `
-              <tr class="hover:bg-gray-50">
-                <td class="px-3 py-2">
+            ${group.items.map(p => {
+              const isExpanded = window.__expandedProducts.has(p.product_code);
+              const channels = p.channels || [];
+              return `
+              <tr class="hover:bg-gray-50 cursor-pointer" onclick="toggleProductExpand('${p.product_code}')">
+                <td class="px-3 py-2 text-center">
+                  <i class="fas fa-chevron-${isExpanded ? 'down' : 'right'} text-gray-400 text-xs"></i>
+                </td>
+                <td class="px-3 py-2" onclick="event.stopPropagation()">
                   ${p.photo_url ? `<img src="${escapeHtml(p.photo_url)}" class="w-12 h-12 object-cover rounded border cursor-pointer" onclick="window.open('${escapeHtml(p.photo_url)}','_blank')">` : '<div class="w-12 h-12 bg-gray-100 rounded border flex items-center justify-center text-gray-300"><i class="fas fa-image"></i></div>'}
                 </td>
                 <td class="px-3 py-2 font-mono text-xs text-gray-600">${escapeHtml(p.product_code)}</td>
                 <td class="px-3 py-2 font-medium">${escapeHtml(p.product_name)}</td>
-                <td class="px-3 py-2"><span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">${escapeHtml(p.sales_channel || '-')}</span></td>
+                <td class="px-3 py-2">
+                  <span class="inline-block px-2 py-0.5 ${channels.length > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'} rounded text-xs">
+                    <i class="fas fa-store mr-1"></i>${channels.length}개 채널
+                  </span>
+                </td>
                 <td class="px-3 py-2">
                   <div class="text-xs">${escapeHtml(p.barcode_number || '-')}</div>
-                  ${p.barcode_image_url ? `<button onclick="window.open('${escapeHtml(p.barcode_image_url)}','_blank')" class="text-blue-600 text-xs hover:underline"><i class="fas fa-image"></i> 이미지</button>` : ''}
+                  ${p.barcode_image_url ? `<button onclick="event.stopPropagation(); window.open('${escapeHtml(p.barcode_image_url)}','_blank')" class="text-blue-600 text-xs hover:underline"><i class="fas fa-image"></i> 이미지</button>` : ''}
                 </td>
                 <td class="px-3 py-2 text-xs">${escapeHtml(p.shelf_life || '-')}</td>
                 <td class="px-3 py-2 text-xs">${escapeHtml(p.package_size || '-')} / ${escapeHtml(p.package_unit || '-')}</td>
-                <td class="px-3 py-2 text-center">
-                  <button onclick="openProductModalV2('${p.product_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="수정"><i class="fas fa-edit"></i></button>
-                  <button onclick="deleteProductV2('${p.product_code}')" class="text-red-600 hover:text-red-800" title="삭제"><i class="fas fa-trash"></i></button>
+                <td class="px-3 py-2 text-center" onclick="event.stopPropagation()">
+                  <button onclick="openProductModalV2('${p.product_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="상품정보 수정"><i class="fas fa-edit"></i></button>
+                  <button onclick="deleteProductV2('${p.product_code}')" class="text-red-600 hover:text-red-800" title="상품 삭제"><i class="fas fa-trash"></i></button>
                 </td>
               </tr>
-            `).join('')}
+              ${isExpanded ? `
+              <tr class="bg-blue-50/40">
+                <td></td>
+                <td colspan="8" class="px-4 py-3">
+                  <div class="flex items-center justify-between mb-2">
+                    <div class="text-sm font-semibold text-blue-800">
+                      <i class="fas fa-store mr-1"></i>채널별 판매 SKU (${channels.length}개)
+                    </div>
+                    <button onclick="event.stopPropagation(); openChannelModal('${p.product_code}')" class="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">
+                      <i class="fas fa-plus mr-1"></i>채널 SKU 추가
+                    </button>
+                  </div>
+                  ${channels.length === 0 ? `
+                    <div class="bg-white border border-dashed rounded p-4 text-center text-gray-400 text-sm">
+                      등록된 채널이 없습니다. "+ 채널 SKU 추가"로 첫 채널을 등록하세요.
+                    </div>
+                  ` : `
+                    <div class="bg-white border rounded overflow-hidden">
+                      <table class="min-w-full text-xs">
+                        <thead class="bg-gray-100 text-gray-600 uppercase text-xs">
+                          <tr>
+                            <th class="px-3 py-2 text-left">채널 코드</th>
+                            <th class="px-3 py-2 text-left">판매채널</th>
+                            <th class="px-3 py-2 text-left">채널 SKU</th>
+                            <th class="px-3 py-2 text-left">채널 바코드</th>
+                            <th class="px-3 py-2 text-right">판매가</th>
+                            <th class="px-3 py-2 text-left">URL</th>
+                            <th class="px-3 py-2 text-center">액션</th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y">
+                          ${channels.map(ch => `
+                            <tr class="hover:bg-gray-50" onclick="event.stopPropagation()">
+                              <td class="px-3 py-2 font-mono text-xs text-purple-700">${escapeHtml(ch.channel_code)}</td>
+                              <td class="px-3 py-2"><span class="inline-block px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-medium">${escapeHtml(ch.channel_name)}</span></td>
+                              <td class="px-3 py-2">${escapeHtml(ch.channel_sku || '-')}</td>
+                              <td class="px-3 py-2">${escapeHtml(ch.channel_barcode || '-')}</td>
+                              <td class="px-3 py-2 text-right">${ch.channel_price != null ? Number(ch.channel_price).toLocaleString() + '원' : '-'}</td>
+                              <td class="px-3 py-2">${ch.channel_url ? `<a href="${escapeHtml(ch.channel_url)}" target="_blank" class="text-blue-600 hover:underline"><i class="fas fa-external-link-alt"></i> 링크</a>` : '-'}</td>
+                              <td class="px-3 py-2 text-center whitespace-nowrap">
+                                <button onclick="event.stopPropagation(); openChannelModal('${p.product_code}', '${ch.channel_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="수정"><i class="fas fa-edit"></i></button>
+                                <button onclick="event.stopPropagation(); deleteChannel('${ch.channel_code}')" class="text-red-600 hover:text-red-800" title="삭제"><i class="fas fa-trash"></i></button>
+                              </td>
+                            </tr>
+                          `).join('')}
+                        </tbody>
+                      </table>
+                    </div>
+                  `}
+                </td>
+              </tr>
+              ` : ''}
+              `;
+            }).join('')}
           </tbody>
         </table>
       </div>
@@ -40480,6 +40563,118 @@ function renderProductsV2Grouped() {
 
 function filterProductsV2() {
   renderProductsV2Grouped();
+}
+
+// ===== v3.6.188: 채널 SKU 모달 =====
+function openChannelModal(productCode, channelCode) {
+  const isEdit = !!channelCode;
+  const product = __productsV2Cache.find(p => p.product_code === productCode);
+  if (!product) { showToast('상품 정보를 찾을 수 없습니다', 'error'); return; }
+
+  let ch = null;
+  if (isEdit) {
+    ch = (product.channels || []).find(c => c.channel_code === channelCode);
+    if (!ch) { showToast('채널 정보를 찾을 수 없습니다', 'error'); return; }
+  }
+
+  const v = (k, d = '') => (ch && ch[k] != null) ? escapeHtml(String(ch[k])) : d;
+
+  showModal(isEdit ? `채널 SKU 수정 (${channelCode})` : `채널 SKU 추가 - ${product.product_name}`, `
+    <div class="space-y-3 max-h-[70vh] overflow-y-auto pr-2">
+      <div class="bg-gray-50 border rounded-lg p-3 text-sm">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs text-gray-500">상품:</span>
+          <span class="font-mono text-xs text-blue-600">${escapeHtml(product.product_code)}</span>
+          <span class="font-medium">${escapeHtml(product.product_name)}</span>
+        </div>
+        ${isEdit ? `<div class="flex items-center gap-2"><span class="text-xs text-gray-500">채널코드:</span><span class="font-mono text-xs text-purple-600">${escapeHtml(channelCode)}</span></div>` : `<div class="text-xs text-blue-800"><i class="fas fa-info-circle mr-1"></i>채널 코드는 <strong>${escapeHtml(productCode)}-01</strong> 형식으로 자동 부여됩니다.</div>`}
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">판매채널 <span class="text-red-500">*</span></label>
+        <input type="text" id="ch-channel-name" value="${v('channel_name')}" list="ch-channel-suggestions" class="w-full border rounded-lg px-3 py-2" placeholder="예: 쿠팡, 네이버, 오프라인, 컬리">
+        <datalist id="ch-channel-suggestions">
+          ${__channelsCache.map(c => `<option value="${escapeHtml(c)}">`).join('')}
+        </datalist>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">채널 SKU / 판매코드</label>
+        <input type="text" id="ch-channel-sku" value="${v('channel_sku')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 쿠팡 상품ID, 네이버 상품번호">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">채널 바코드</label>
+        <input type="text" id="ch-channel-barcode" value="${v('channel_barcode')}" class="w-full border rounded-lg px-3 py-2" placeholder="채널 전용 바코드 (선택)">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">판매가 (원)</label>
+        <input type="number" id="ch-channel-price" value="${v('channel_price')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 12000" min="0" step="100">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">상품 URL</label>
+        <input type="url" id="ch-channel-url" value="${v('channel_url')}" class="w-full border rounded-lg px-3 py-2" placeholder="https://...">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+        <textarea id="ch-channel-memo" rows="2" class="w-full border rounded-lg px-3 py-2" placeholder="채널별 특이사항">${v('channel_memo')}</textarea>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t sticky bottom-0 bg-white">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button onclick="saveChannel('${productCode}', ${isEdit ? `'${channelCode}'` : 'null'})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          <i class="fas fa-save mr-1"></i>${isEdit ? '수정' : '등록'}
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+async function saveChannel(productCode, channelCode) {
+  const channel_name = document.getElementById('ch-channel-name')?.value.trim();
+  if (!channel_name) { showToast('판매채널을 입력하세요', 'error'); return; }
+
+  const payload = {
+    product_code: productCode,
+    channel_name,
+    channel_sku: document.getElementById('ch-channel-sku')?.value.trim() || null,
+    channel_barcode: document.getElementById('ch-channel-barcode')?.value.trim() || null,
+    channel_price: document.getElementById('ch-channel-price')?.value || null,
+    channel_url: document.getElementById('ch-channel-url')?.value.trim() || null,
+    channel_memo: document.getElementById('ch-channel-memo')?.value.trim() || null
+  };
+
+  try {
+    if (channelCode) {
+      // 수정 시 product_code 제외
+      const { product_code, ...updatePayload } = payload;
+      await axios.put(`/api/product-channels/${channelCode}`, updatePayload);
+      showToast('채널 SKU가 수정되었습니다', 'success');
+    } else {
+      const res = await axios.post('/api/product-channels', payload);
+      showToast(`채널 SKU가 등록되었습니다: ${res.data.channel_code}`, 'success');
+      // 등록한 상품을 자동으로 확장 상태로 유지
+      window.__expandedProducts.add(productCode);
+    }
+    closeModal();
+    await loadBrandsAndProducts();
+  } catch (e) {
+    showToast('저장 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+
+async function deleteChannel(channelCode) {
+  if (!confirm(`채널 SKU "${channelCode}"를 삭제하시겠습니까?`)) return;
+  try {
+    await axios.delete(`/api/product-channels/${channelCode}`);
+    showToast('채널 SKU가 삭제되었습니다', 'success');
+    await loadBrandsAndProducts();
+  } catch (e) {
+    showToast('삭제 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
 }
 
 // ===== 브랜드 모달 =====
@@ -40599,13 +40794,10 @@ function openProductModalV2(productCode) {
         <input type="text" id="pv2-product-name" value="${v('product_name')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 발효종 통밀식빵 550g">
       </div>
 
-      <!-- 3. 판매채널 -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">판매채널</label>
-        <input type="text" id="pv2-sales-channel" value="${v('sales_channel')}" list="pv2-channel-suggestions" class="w-full border rounded-lg px-3 py-2" placeholder="예: 온라인, 오프라인, 쿠팡, 네이버">
-        <datalist id="pv2-channel-suggestions">
-          ${__channelsCache.map(c => `<option value="${escapeHtml(c)}">`).join('')}
-        </datalist>
+      <!-- 3. 판매채널 안내 (v3.6.188: 채널은 등록 후 채널 SKU 추가로 관리) -->
+      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800">
+        <i class="fas fa-info-circle mr-1"></i><strong>판매채널</strong>은 상품 등록 후 목록에서 상품 행을 클릭하여 "채널 SKU 추가"로 등록하세요.
+        (쿠팡/네이버/컬리/오프라인 등 채널별로 다른 판매코드와 가격을 관리할 수 있습니다.)
       </div>
 
       <!-- 4. 제품 사진 -->
@@ -40816,7 +41008,7 @@ async function saveProductV2(productCode) {
   const payload = {
     brand_code,
     product_name,
-    sales_channel: document.getElementById('pv2-sales-channel')?.value.trim() || null,
+    // sales_channel은 product_channels 테이블에서 관리 (v3.6.188)
     photo_url: document.getElementById('pv2-photo-url')?.value.trim() || null,
     barcode_number: document.getElementById('pv2-barcode-number')?.value.trim() || null,
     barcode_image_url: document.getElementById('pv2-barcode-url')?.value.trim() || null,
@@ -42040,7 +42232,7 @@ window.saveNewSystemProduct = saveNewSystemProduct;
 window.showEditProductModal = showEditProductModal;
 window.updateProduct = updateProduct;
 window.deleteSystemProduct = deleteSystemProduct;
-// v3.6.185: 제품 관리 v2 (브랜드-제품 계층 + R2 업로드 + 세로 폼)
+// v3.6.185/188: 제품 관리 v2 (브랜드-제품 계층 + 채널별 SKU + R2 업로드)
 window.renderProductsManagement = renderProductsManagement;
 window.loadBrandsAndProducts = loadBrandsAndProducts;
 window.filterProductsV2 = filterProductsV2;
@@ -42052,6 +42244,11 @@ window.saveProductV2 = saveProductV2;
 window.deleteProductV2 = deleteProductV2;
 window.handlePhotoUpload = handlePhotoUpload;
 window.handleBarcodeUpload = handleBarcodeUpload;
+// v3.6.188: 채널 SKU 관리
+window.toggleProductExpand = toggleProductExpand;
+window.openChannelModal = openChannelModal;
+window.saveChannel = saveChannel;
+window.deleteChannel = deleteChannel;
 // 하위호환 exports
 window.loadProductDetailsList = loadProductDetailsList;
 window.filterProductDetails = filterProductDetails;

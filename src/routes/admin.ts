@@ -9672,9 +9672,33 @@ admin.get('/init-product-schema', async (c) => {
     await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_brands_active ON brands(is_active)`).run();
     results.push('✅ 인덱스 5개 생성');
     
-    // 6. 현재 상태 확인
+    // 6. ★★★ v3.6.188: product_channels 테이블 (채널별 SKU) ★★★
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS product_channels (
+        channel_code TEXT PRIMARY KEY,
+        product_code TEXT NOT NULL,
+        channel_name TEXT NOT NULL,
+        channel_sku TEXT,
+        channel_barcode TEXT,
+        channel_price REAL,
+        channel_url TEXT,
+        channel_memo TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    results.push('✅ product_channels 테이블 생성');
+    
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pc_product ON product_channels(product_code)`).run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pc_channel ON product_channels(channel_name)`).run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pc_active ON product_channels(is_active)`).run();
+    results.push('✅ product_channels 인덱스 3개 생성');
+    
+    // 7. 현재 상태 확인
     const brandsCount = await env.DB.prepare(`SELECT COUNT(*) as n FROM brands`).first();
     const productsCount = await env.DB.prepare(`SELECT COUNT(*) as n FROM products_new`).first();
+    const channelsCount = await env.DB.prepare(`SELECT COUNT(*) as n FROM product_channels`).first();
     const sequences = await env.DB.prepare(`SELECT * FROM code_sequences`).all();
     
     return c.json({
@@ -9683,9 +9707,10 @@ admin.get('/init-product-schema', async (c) => {
       status: {
         brands_count: (brandsCount as any).n,
         products_count: (productsCount as any).n,
+        product_channels_count: (channelsCount as any).n,
         sequences: sequences.results
       },
-      message: '✅ v3.6.185 스키마 초기화 완료'
+      message: '✅ v3.6.188 스키마 초기화 완료 (brands + products_new + product_channels)'
     });
   } catch (e: any) {
     return c.json({ success: false, error: e.message, results }, 500);
@@ -9719,6 +9744,58 @@ admin.delete('/brands/:code/hard-delete', async (c) => {
     await env.DB.prepare(`DELETE FROM products_new WHERE brand_code = ?`).bind(code).run();
     const result = await env.DB.prepare(`DELETE FROM brands WHERE brand_code = ?`).bind(code).run();
     return c.json({ success: true, deleted: code, meta: result.meta });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ★★★ v3.6.188: 기존 상품의 sales_channel을 product_channels로 마이그레이션 ★★★
+admin.post('/migrate-sales-channel', async (c) => {
+  try {
+    const { env } = c;
+    const products = await env.DB.prepare(
+      `SELECT product_code, sales_channel FROM products_new WHERE is_active = 1 AND sales_channel IS NOT NULL AND sales_channel != ''`
+    ).all();
+    
+    let migrated = 0;
+    let skipped = 0;
+    const details: any[] = [];
+    
+    for (const p of (products.results || []) as any[]) {
+      const productCode = p.product_code;
+      const channelName = p.sales_channel;
+      
+      // 이미 존재하는지 확인
+      const exists = await env.DB.prepare(
+        `SELECT channel_code FROM product_channels WHERE product_code = ? AND channel_name = ? AND is_active = 1`
+      ).bind(productCode, channelName).first();
+      
+      if (exists) {
+        skipped++;
+        details.push({ product_code: productCode, channel_name: channelName, action: 'skip', existing: (exists as any).channel_code });
+        continue;
+      }
+      
+      // 다음 시퀀스 계산
+      const existing = await env.DB.prepare(
+        `SELECT channel_code FROM product_channels WHERE product_code = ?`
+      ).bind(productCode).all();
+      let maxSeq = 0;
+      for (const r of (existing.results || []) as any[]) {
+        const m = String(r.channel_code).match(/-(\d+)$/);
+        if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
+      }
+      const channelCode = `${productCode}-${String(maxSeq + 1).padStart(2, '0')}`;
+      
+      await env.DB.prepare(
+        `INSERT INTO product_channels (channel_code, product_code, channel_name) VALUES (?, ?, ?)`
+      ).bind(channelCode, productCode, channelName).run();
+      
+      migrated++;
+      details.push({ product_code: productCode, channel_name: channelName, action: 'migrated', channel_code: channelCode });
+    }
+    
+    return c.json({ success: true, migrated, skipped, total: migrated + skipped, details });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }

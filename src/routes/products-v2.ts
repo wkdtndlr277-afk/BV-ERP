@@ -25,24 +25,59 @@ productsV2.get('/', async (c) => {
     
     if (!includeInactive) query += ` AND p.is_active = 1`;
     if (brand) { query += ` AND p.brand_code = ?`; params.push(brand); }
-    if (channel) { query += ` AND p.sales_channel = ?`; params.push(channel); }
+    // v3.6.188: 채널 필터는 product_channels 기준으로 변경 (하위 SKU 존재 여부)
+    if (channel) {
+      query += ` AND EXISTS (
+        SELECT 1 FROM product_channels pc
+        WHERE pc.product_code = p.product_code
+          AND pc.channel_name = ?
+          AND pc.is_active = 1
+      )`;
+      params.push(channel);
+    }
     if (search) {
-      query += ` AND (p.product_code LIKE ? OR p.product_name LIKE ? OR p.barcode_number LIKE ? OR b.brand_name LIKE ?)`;
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      query += ` AND (
+        p.product_code LIKE ? OR p.product_name LIKE ? OR p.barcode_number LIKE ? OR b.brand_name LIKE ?
+        OR EXISTS (SELECT 1 FROM product_channels pc WHERE pc.product_code = p.product_code AND pc.is_active = 1
+          AND (pc.channel_code LIKE ? OR pc.channel_sku LIKE ? OR pc.channel_barcode LIKE ?))
+      )`;
+      const s = `%${search}%`;
+      params.push(s, s, s, s, s, s, s);
     }
     query += ` ORDER BY p.brand_code ASC, p.product_code ASC`;
     
     const result = await c.env.DB.prepare(query).bind(...params).all();
+    const products = (result.results || []) as any[];
     
-    // 판매채널 목록도 함께 반환 (필터용)
+    // 각 상품의 채널 SKU 목록을 첨부
+    if (products.length > 0) {
+      const productCodes = products.map(p => p.product_code);
+      // D1 IN 절: placeholder만들기
+      const placeholders = productCodes.map(() => '?').join(',');
+      const channelRows = await c.env.DB.prepare(
+        `SELECT * FROM product_channels WHERE product_code IN (${placeholders}) AND is_active = 1 ORDER BY channel_code`
+      ).bind(...productCodes).all();
+      
+      // 상품별로 그룹핑
+      const byProduct: Record<string, any[]> = {};
+      for (const c2 of (channelRows.results || []) as any[]) {
+        if (!byProduct[c2.product_code]) byProduct[c2.product_code] = [];
+        byProduct[c2.product_code].push(c2);
+      }
+      for (const p of products) {
+        p.channels = byProduct[p.product_code] || [];
+      }
+    }
+    
+    // 판매채널 필터 목록 (product_channels 기준)
     const channels = await c.env.DB.prepare(
-      `SELECT DISTINCT sales_channel FROM products_new WHERE sales_channel IS NOT NULL AND sales_channel != '' AND is_active = 1 ORDER BY sales_channel`
+      `SELECT DISTINCT channel_name FROM product_channels WHERE channel_name IS NOT NULL AND channel_name != '' AND is_active = 1 ORDER BY channel_name`
     ).all();
     
     return c.json({
       success: true,
-      data: result.results || [],
-      channels: (channels.results || []).map((r: any) => r.sales_channel)
+      data: products,
+      channels: (channels.results || []).map((r: any) => r.channel_name)
     });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);

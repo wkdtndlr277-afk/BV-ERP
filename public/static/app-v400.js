@@ -1304,7 +1304,7 @@ function renderPage(page) {
     case 'dough-master': renderDoughMaster(); break;
     case 'haccp-material-check': renderHaccpMaterialCheck(); break;
     case 'weekly-plan': renderWeeklyPlan(); break;                    // ★ v3.6.85
-    case 'weekly-materials': renderWeeklyMaterials(); break;          // ★ v3.6.90 (A안)
+    // v3.6.91: weekly-materials는 사이드바에서 제거, 발주 계획표 내 탭으로 통합됨
     default: renderDashboard();
   }
 }
@@ -59783,11 +59783,38 @@ async function renderOrderPlan() {
 
     <div id="op-summary" class="mb-4"></div>
 
-    <div class="bg-white rounded-xl shadow-lg overflow-hidden op-print-area">
-      <div id="op-grid-container" class="overflow-auto" style="max-height: calc(100vh - 320px);">
+    <!-- v3.6.91: 탭 헤더 - 발주 계획표 / 주간 원료 필요량 (재고 연동) -->
+    <div class="bg-white rounded-t-xl shadow-lg border-b-2 border-purple-500">
+      <div class="flex items-center gap-1 px-4 pt-3">
+        <button id="op-tab-btn-plan" onclick="switchOrderPlanTab('plan')"
+                class="op-tab-btn active px-4 py-2 rounded-t-lg text-sm font-semibold bg-purple-500 text-white">
+          <i class="fas fa-table mr-1"></i> 발주 계획표
+        </button>
+        <button id="op-tab-btn-materials" onclick="switchOrderPlanTab('materials')"
+                class="op-tab-btn px-4 py-2 rounded-t-lg text-sm font-semibold bg-gray-100 text-gray-600 hover:bg-teal-100">
+          <i class="fas fa-boxes-stacked mr-1"></i> 원료 필요량 · 재고 · 부족량 발주
+          <span class="ml-1 text-xs bg-teal-500 text-white px-1.5 py-0.5 rounded">NEW</span>
+        </button>
+        <div class="ml-auto text-xs text-gray-500 pb-2">💡 계획일 기준 주 (월~일) 원료 소요량 → 실재고와 비교 → 부족량 자동 발주</div>
+      </div>
+    </div>
+
+    <!-- 탭 컨텐츠 1: 발주 계획표 (기존) -->
+    <div id="op-tab-plan" class="op-tab-content bg-white rounded-b-xl shadow-lg overflow-hidden op-print-area">
+      <div id="op-grid-container" class="overflow-auto" style="max-height: calc(100vh - 380px);">
         <div class="text-center py-12 text-gray-400">
           <i class="fas fa-spinner fa-spin text-3xl"></i>
           <p class="mt-2">계획표 로딩 중...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 탭 컨텐츠 2: 주간 원료 필요량 (신규 v3.6.91) -->
+    <div id="op-tab-materials" class="op-tab-content bg-white rounded-b-xl shadow-lg overflow-hidden" style="display:none;">
+      <div id="op-materials-container" class="p-4">
+        <div class="text-center py-8 text-gray-400">
+          <i class="fas fa-info-circle text-2xl"></i>
+          <p class="mt-2">[원료 필요량] 탭 클릭 시 자동 로딩됩니다</p>
         </div>
       </div>
     </div>
@@ -61437,6 +61464,9 @@ async function renderDoughMaster() {
           <button onclick="importChecksheetMaterials()" class="bg-teal-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-teal-700 font-semibold" title="재료체크시트 90종 원료를 원료 마스터에 자동 등록">
             <i class="fas fa-boxes mr-1"></i> 엑셀 원료 마스터 임포트 (90종)
           </button>
+          <button onclick="showDoughRecipePasteImport()" class="bg-red-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-700 font-semibold" title="구글시트에서 반죽 배합비 표를 복사(Ctrl+C)해 붙여넣기 → 8종 배합비 일괄 등록">
+            <i class="fas fa-paste mr-1"></i> 구글시트 배합비 붙여넣기
+          </button>
           <button onclick="openProductDoughMapping()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-indigo-700 font-semibold" title="제품별 사용 반죽 g/EA 매핑 관리">
             <i class="fas fa-project-diagram mr-1"></i> 제품↔반죽 매핑
           </button>
@@ -61469,6 +61499,183 @@ async function loadDoughList() {
     document.getElementById('dough-container').innerHTML = `<div class="p-6 text-red-600">에러: ${e.message}</div>`;
   }
 }
+
+// ===== v3.6.91: 구글시트 배합비 붙여넣기 임포트 =====
+function showDoughRecipePasteImport() {
+  // 모달 오버레이
+  let modal = document.getElementById('dough-paste-modal');
+  if (modal) modal.remove();
+  modal = document.createElement('div');
+  modal.id = 'dough-paste-modal';
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-5xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+      <div class="bg-red-600 text-white p-4 flex items-center justify-between">
+        <h3 class="text-lg font-bold"><i class="fas fa-paste mr-2"></i>구글시트 배합비 붙여넣기 임포트</h3>
+        <button onclick="closeDoughPasteModal()" class="text-white hover:bg-red-700 rounded p-1 px-2"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="p-4 overflow-auto flex-1">
+        <div class="bg-yellow-50 border border-yellow-300 rounded p-3 mb-3 text-xs">
+          <p class="font-bold text-yellow-800 mb-1"><i class="fas fa-info-circle mr-1"></i>사용법</p>
+          <ol class="list-decimal list-inside text-yellow-800 space-y-0.5">
+            <li>구글시트에서 배합비 표를 <b>Ctrl+A → Ctrl+C</b>로 복사하세요.</li>
+            <li>아래 입력창에 <b>Ctrl+V</b>로 붙여넣기 하세요 (탭 구분 자동 인식).</li>
+            <li>아래 예시처럼 <b>첫 행은 반죽코드</b>(D001~D008), <b>둘째 행은 반죽명</b>, <b>이후는 원료명 + 각 반죽별 수량</b> 형식이어야 합니다.</li>
+            <li><b>수량은 반죽 1kg 당 원료 g</b>으로 입력하세요 (예: 물 600 = 반죽 1kg당 물 600g).</li>
+          </ol>
+        </div>
+        <div class="mb-3">
+          <label class="text-xs font-bold text-gray-700 block mb-1">예시 형식:</label>
+          <pre class="bg-gray-100 p-2 rounded text-[10px] font-mono overflow-x-auto">원료명	D001	D002	D003	D004	D005	D006	D007	D008
+반죽명	발효종르방	폴리쉬	통밀르방	통밀폴리쉬	탕종	통밀탕종	쌀르방	쌀탕종
+유기농T55	500	500				
+정제수	400	500	400	500	1000	1000	400	1000
+통밀	100			400				
+소금	10	10	10	10	10	10	10	10
+...</pre>
+        </div>
+        <textarea id="dough-paste-data" rows="15" class="w-full border-2 border-red-300 rounded-lg px-3 py-2 text-xs font-mono focus:border-red-500 focus:ring-2 focus:ring-red-200" placeholder="여기에 구글시트 배합비 표를 Ctrl+V로 붙여넣기..."></textarea>
+        <div class="mt-3 flex justify-between items-center">
+          <div class="text-xs text-gray-500">💡 반죽코드가 없는 열은 무시됩니다.</div>
+          <div class="flex gap-2">
+            <button onclick="previewDoughRecipePaste()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold">
+              <i class="fas fa-eye mr-1"></i> 미리보기
+            </button>
+            <button onclick="submitDoughRecipePaste()" class="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-bold">
+              <i class="fas fa-save mr-1"></i> 등록
+            </button>
+          </div>
+        </div>
+        <div id="dough-paste-preview" class="mt-3"></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+
+function closeDoughPasteModal() {
+  const m = document.getElementById('dough-paste-modal');
+  if (m) m.remove();
+}
+
+// TSV 파싱: 반죽코드 헤더 형식 (원료명 | D001 | D002 | ... 또는 반죽명이 첫 행 + 코드가 둘째 행 등 유연 처리)
+function parseDoughRecipePaste(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n').map(l => l.trimEnd()).filter(l => l.trim().length > 0);
+  if (lines.length < 3) return { error: '최소 3행 필요 (헤더 2행 + 원료 1행 이상)' };
+
+  // 각 줄을 탭으로 분리 (탭이 없으면 다중 공백)
+  const split = (l) => l.includes('\t') ? l.split('\t') : l.split(/\s{2,}/);
+
+  const row0 = split(lines[0]).map(c => c.trim());
+  const row1 = split(lines[1]).map(c => c.trim());
+
+  // 첫 번째 컬럼(원료명 헤더)은 스킵, 나머지 컬럼에서 반죽코드 판별
+  // 코드는 D001~D008 패턴 또는 알파벳+숫자
+  const codeRe = /^D0?\d{1,3}$/i;
+  let codes = [], names = [];
+  // Case A: row0가 코드행, row1이 반죽명
+  if (row0.slice(1).some(c => codeRe.test(c))) {
+    codes = row0.slice(1);
+    names = row1.slice(1);
+  }
+  // Case B: row0가 반죽명, row1이 코드
+  else if (row1.slice(1).some(c => codeRe.test(c))) {
+    names = row0.slice(1);
+    codes = row1.slice(1);
+  } else {
+    return { error: '반죽코드(D001~D008 형태)를 첫 행 또는 둘째 행에서 찾지 못했습니다.' };
+  }
+
+  // 반죽별 재료 맵
+  const doughs = {};
+  for (let i = 0; i < codes.length; i++) {
+    const code = (codes[i] || '').trim().toUpperCase();
+    if (!codeRe.test(code)) continue;
+    doughs[code] = {
+      dough_code: code,
+      dough_name: (names[i] || code).trim(),
+      batch_size_kg: 20,
+      materials: []
+    };
+  }
+  if (Object.keys(doughs).length === 0) return { error: '유효한 반죽코드가 없습니다.' };
+
+  // 3행부터 원료 데이터
+  const startIdx = 2;
+  let warnings = [];
+  for (let li = startIdx; li < lines.length; li++) {
+    const cells = split(lines[li]).map(c => c.trim());
+    const matName = cells[0];
+    if (!matName || matName.startsWith('#') || /^합\s*계|^total|^sum/i.test(matName)) continue;
+    for (let i = 0; i < codes.length; i++) {
+      const code = (codes[i] || '').trim().toUpperCase();
+      if (!doughs[code]) continue;
+      const raw = cells[i + 1] || '';
+      if (!raw || raw === '-') continue;
+      const num = parseFloat(raw.replace(/[,\s]/g, ''));
+      if (isNaN(num) || num <= 0) continue;
+      doughs[code].materials.push({
+        material_name: matName,
+        quantity_per_kg: num  // 반죽 1kg당 원료 g
+      });
+    }
+  }
+
+  const arr = Object.values(doughs).filter(d => d.materials.length > 0);
+  if (arr.length === 0) return { error: '유효한 배합비 데이터가 없습니다.', warnings };
+  return { doughs: arr, warnings };
+}
+
+function previewDoughRecipePaste() {
+  const text = document.getElementById('dough-paste-data').value;
+  const preview = document.getElementById('dough-paste-preview');
+  const result = parseDoughRecipePaste(text);
+  if (result.error) {
+    preview.innerHTML = `<div class="bg-red-50 border border-red-300 rounded p-3 text-sm text-red-700">
+      <i class="fas fa-exclamation-triangle mr-1"></i> ${result.error}
+    </div>`;
+    return;
+  }
+  const html = result.doughs.map(d => `
+    <div class="border rounded p-2 mb-2">
+      <div class="font-bold text-red-700">${d.dough_code} - ${d.dough_name} <span class="text-xs text-gray-500 ml-2">${d.materials.length}종</span></div>
+      <div class="text-xs mt-1">
+        ${d.materials.map(m => `<span class="inline-block bg-blue-50 text-blue-700 px-2 py-0.5 rounded mr-1 mb-1">${m.material_name}: ${m.quantity_per_kg}g/kg</span>`).join('')}
+      </div>
+    </div>
+  `).join('');
+  preview.innerHTML = `
+    <div class="bg-emerald-50 border border-emerald-300 rounded p-3">
+      <div class="font-bold text-emerald-800 mb-2"><i class="fas fa-check-circle mr-1"></i>파싱 완료: 반죽 ${result.doughs.length}종, 원료 총 ${result.doughs.reduce((s,d)=>s+d.materials.length,0)}건</div>
+      <div class="max-h-72 overflow-auto">${html}</div>
+    </div>
+  `;
+}
+
+async function submitDoughRecipePaste() {
+  const text = document.getElementById('dough-paste-data').value;
+  const result = parseDoughRecipePaste(text);
+  const preview = document.getElementById('dough-paste-preview');
+  if (result.error) {
+    preview.innerHTML = `<div class="bg-red-50 border border-red-300 rounded p-3 text-sm text-red-700"><i class="fas fa-exclamation-triangle mr-1"></i> ${result.error}</div>`;
+    return;
+  }
+  if (!confirm(`반죽 ${result.doughs.length}종의 배합비를 등록합니다.\n\n⚠️ 기존 반죽의 배합비는 <b>전부 덮어쓰기</b>됩니다.\n\n계속하시겠습니까?`.replace(/<[^>]+>/g,''))) return;
+  try {
+    const res = await axios.post('/api/dough/bulk-import', { doughs: result.doughs });
+    if (!res.data?.success) throw new Error(res.data?.error || '실패');
+    alert(`✅ 배합비 등록 완료\n\n· 신규: ${res.data.created}건\n· 업데이트: ${res.data.updated}건\n· 원료 저장: ${res.data.materials_saved}건`);
+    closeDoughPasteModal();
+    await loadDoughList();
+  } catch (e) {
+    alert('등록 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+window.showDoughRecipePasteImport = showDoughRecipePasteImport;
+window.closeDoughPasteModal = closeDoughPasteModal;
+window.previewDoughRecipePaste = previewDoughRecipePaste;
+window.submitDoughRecipePaste = submitDoughRecipePaste;
 
 function renderDoughTable(needsMigration) {
   const container = document.getElementById('dough-container');
@@ -62334,116 +62541,141 @@ window.printWeeklyPlan = printWeeklyPlan;
 window.exportWeeklyPlanExcel = exportWeeklyPlanExcel;
 
 // =====================================================================
-// ★ v3.6.90: A안 - 주간 원료 필요량 (관리자 조정)
+// ★ v3.6.91: 원료 필요량 · 실재고 · 부족량 발주 (발주 계획표 내 탭)
 // =====================================================================
 let __weeklyMaterialsData = null;
 let __weeklyMaterialsEdits = {};  // material_key → { adjust_qty, memo }
+let __weeklyMaterialsOrder = {};  // material_key → { order_qty }  (부족량 기반 발주)
 
-async function renderWeeklyMaterials() {
-  const content = document.getElementById('page-content');
-  // 지난 월요일을 기본 시작일로
-  const today = new Date();
-  const dow = today.getDay(); // 0=일, 1=월
-  const daysFromMon = (dow + 6) % 7;  // 월요일까지 며칠 뺄지
-  const mon = new Date(today); mon.setDate(today.getDate() - daysFromMon);
-  const defaultStart = mon.toISOString().slice(0, 10);
+// 탭 스위치 (v3.6.91): 발주 계획표 ↔ 원료 필요량
+function switchOrderPlanTab(which) {
+  const planTab = document.getElementById('op-tab-plan');
+  const matsTab = document.getElementById('op-tab-materials');
+  const planBtn = document.getElementById('op-tab-btn-plan');
+  const matsBtn = document.getElementById('op-tab-btn-materials');
+  if (!planTab || !matsTab) return;
+  if (which === 'plan') {
+    planTab.style.display = '';
+    matsTab.style.display = 'none';
+    planBtn.classList.add('bg-purple-500','text-white'); planBtn.classList.remove('bg-gray-100','text-gray-600');
+    matsBtn.classList.add('bg-gray-100','text-gray-600'); matsBtn.classList.remove('bg-teal-500','text-white');
+  } else {
+    planTab.style.display = 'none';
+    matsTab.style.display = '';
+    matsBtn.classList.add('bg-teal-500','text-white'); matsBtn.classList.remove('bg-gray-100','text-gray-600');
+    planBtn.classList.add('bg-gray-100','text-gray-600'); planBtn.classList.remove('bg-purple-500','text-white');
+    // 최초 진입 시 자동 로드
+    if (!__weeklyMaterialsData) initOrderPlanMaterialsTab();
+  }
+}
 
-  content.innerHTML = `
-    <div class="max-w-full">
-      <div class="bg-gradient-to-r from-teal-600 to-cyan-600 text-white rounded-lg p-4 mb-4 no-print">
-        <div class="flex items-center justify-between flex-wrap gap-2">
-          <div>
-            <h2 class="text-2xl font-bold"><i class="fas fa-boxes-stacked mr-2"></i>주간 원료 필요량</h2>
-            <p class="text-teal-100 text-sm mt-1">발주 계획표(월~일) → 반죽 판수 → 원료·반죽 총 필요량 자동 계산 · 관리자 조정 가능</p>
-          </div>
-          <div class="flex items-center gap-2">
-            <label class="text-white text-sm font-medium">주 시작일(월):</label>
-            <input id="wm-start-date" type="date" value="${defaultStart}"
-              class="text-gray-800 rounded-lg px-3 py-1.5 text-sm font-semibold">
-            <label class="text-white text-sm">
-              <input type="checkbox" id="wm-include-extra" checked class="mr-1"> 추가발주 포함
-            </label>
-            <button onclick="loadWeeklyMaterials()" class="bg-white text-teal-600 px-3 py-1.5 rounded-lg font-bold text-sm hover:bg-gray-100">
-              <i class="fas fa-search mr-1"></i> 조회
-            </button>
-            <button onclick="saveWeeklyMaterialsAdjust()" class="bg-emerald-500 hover:bg-emerald-600 px-3 py-1.5 rounded-lg font-bold text-sm">
-              <i class="fas fa-save mr-1"></i> 조정 저장
-            </button>
-            <button onclick="resetWeeklyMaterialsAdjust()" class="bg-orange-500 hover:bg-orange-600 px-3 py-1.5 rounded-lg font-bold text-sm">
-              <i class="fas fa-undo mr-1"></i> 자동값 초기화
-            </button>
-            <button onclick="printWeeklyMaterials()" class="bg-gray-700 hover:bg-gray-800 px-3 py-1.5 rounded-lg font-bold text-sm">
-              <i class="fas fa-print mr-1"></i> 인쇄
-            </button>
-          </div>
+// 발주 계획표의 현재 계획일(op-date)을 기준으로, 그 날짜가 포함된 주(월~일)를 구함
+function getWeekStartFromOpDate() {
+  const opDateEl = document.getElementById('op-date');
+  const base = opDateEl?.value || new Date().toISOString().slice(0,10);
+  const d = new Date(base + 'T00:00:00');
+  const dow = d.getDay(); // 0=일, 1=월
+  const daysFromMon = (dow + 6) % 7;
+  const mon = new Date(d); mon.setDate(d.getDate() - daysFromMon);
+  return mon.toISOString().slice(0,10);
+}
+
+function initOrderPlanMaterialsTab() {
+  const c = document.getElementById('op-materials-container');
+  if (!c) return;
+  const defaultStart = getWeekStartFromOpDate();
+  c.innerHTML = `
+    <div class="bg-gradient-to-r from-teal-600 to-cyan-600 text-white rounded-lg p-3 mb-3">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 class="text-lg font-bold"><i class="fas fa-flask mr-1"></i>주간 원료 필요량 · 실재고 · 부족량</h3>
+          <p class="text-teal-100 text-xs mt-0.5">계획일이 포함된 주(월~일) 자동 계산 · 실재고 대비 부족량 → ERP 발주 등록</p>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          <label class="text-white text-xs font-medium">주 시작일(월):</label>
+          <input id="wm-start-date" type="date" value="${defaultStart}"
+            class="text-gray-800 rounded-lg px-2 py-1 text-xs font-semibold">
+          <label class="text-white text-xs">
+            <input type="checkbox" id="wm-include-extra" checked class="mr-1"> 추가발주 포함
+          </label>
+          <button onclick="loadWeeklyMaterials()" class="bg-white text-teal-600 px-3 py-1 rounded-lg font-bold text-xs hover:bg-gray-100">
+            <i class="fas fa-search mr-1"></i> 조회
+          </button>
+          <button onclick="saveWeeklyMaterialsAdjust()" class="bg-emerald-500 hover:bg-emerald-600 px-3 py-1 rounded-lg font-bold text-xs">
+            <i class="fas fa-save mr-1"></i> 조정 저장
+          </button>
+          <button onclick="resetWeeklyMaterialsAdjust()" class="bg-orange-500 hover:bg-orange-600 px-3 py-1 rounded-lg font-bold text-xs">
+            <i class="fas fa-undo mr-1"></i> 자동값 복귀
+          </button>
+          <button onclick="registerOrderPurchase()" class="bg-red-500 hover:bg-red-600 px-3 py-1 rounded-lg font-bold text-xs" title="부족량 기반 발주서를 ERP에 등록">
+            <i class="fas fa-shopping-cart mr-1"></i> ERP 발주 등록
+          </button>
+          <button onclick="printWeeklyMaterials()" class="bg-gray-700 hover:bg-gray-800 px-3 py-1 rounded-lg font-bold text-xs">
+            <i class="fas fa-print mr-1"></i> 인쇄
+          </button>
         </div>
       </div>
-
-      <div id="wm-summary" class="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3 no-print"></div>
-
-      <!-- 인쇄용 헤더 (HACCP 결재방 + 제목) -->
-      <div id="wm-print-header" class="print-only" style="display:none;">
-        <table style="width:100%; border-collapse:collapse; margin-bottom:6mm; table-layout:fixed;">
-          <tr>
-            <td style="width:88mm; padding:0;"></td>
-            <td style="vertical-align:middle; padding:0; text-align:center;">
-              <div style="font-size:20pt; font-weight:900; letter-spacing:2px; color:#000;">주간 원료 필요량</div>
-              <div id="wm-print-period" style="font-size:11pt; margin-top:3mm; color:#333;"></div>
-            </td>
-            <td style="width:88mm; vertical-align:top; padding:0;">
-              <table style="border-collapse:collapse; border:1.5px solid #000; margin-left:auto;">
-                <tr>
-                  <td rowspan="2" style="border:1.5px solid #000; padding:4mm 3mm; font-size:10pt; font-weight:700; text-align:center; background:#f3f3f3;">결<br/>재</td>
-                  <td style="border:1.5px solid #000; padding:2mm 8mm; font-size:9pt; text-align:center; background:#f3f3f3; font-weight:700;">담&nbsp;당</td>
-                  <td style="border:1.5px solid #000; padding:2mm 8mm; font-size:9pt; text-align:center; background:#f3f3f3; font-weight:700;">검&nbsp;토</td>
-                  <td style="border:1.5px solid #000; padding:2mm 8mm; font-size:9pt; text-align:center; background:#f3f3f3; font-weight:700;">승&nbsp;인</td>
-                </tr>
-                <tr>
-                  <td style="border:1.5px solid #000; padding:0; height:16mm; width:22mm;"></td>
-                  <td style="border:1.5px solid #000; padding:0; height:16mm; width:22mm;"></td>
-                  <td style="border:1.5px solid #000; padding:0; height:16mm; width:22mm;"></td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
-      </div>
-
-      <div id="wm-body" class="bg-white rounded-lg shadow overflow-hidden"></div>
     </div>
+
+    <div id="wm-summary" class="grid grid-cols-2 md:grid-cols-6 gap-2 mb-3 no-print"></div>
+
+    <!-- 인쇄용 헤더 -->
+    <div id="wm-print-header" class="print-only" style="display:none;">
+      <table style="width:100%; border-collapse:collapse; margin-bottom:6mm; table-layout:fixed;">
+        <tr>
+          <td style="width:88mm; padding:0;"></td>
+          <td style="vertical-align:middle; padding:0; text-align:center;">
+            <div style="font-size:20pt; font-weight:900; letter-spacing:2px; color:#000;">주간 원료 발주 계획표</div>
+            <div id="wm-print-period" style="font-size:11pt; margin-top:3mm; color:#333;"></div>
+          </td>
+          <td style="width:88mm; vertical-align:top; padding:0;">
+            <table style="border-collapse:collapse; border:1.5px solid #000; margin-left:auto;">
+              <tr>
+                <td rowspan="2" style="border:1.5px solid #000; padding:4mm 3mm; font-size:10pt; font-weight:700; text-align:center; background:#f3f3f3;">결<br/>재</td>
+                <td style="border:1.5px solid #000; padding:2mm 8mm; font-size:9pt; text-align:center; background:#f3f3f3; font-weight:700;">담&nbsp;당</td>
+                <td style="border:1.5px solid #000; padding:2mm 8mm; font-size:9pt; text-align:center; background:#f3f3f3; font-weight:700;">검&nbsp;토</td>
+                <td style="border:1.5px solid #000; padding:2mm 8mm; font-size:9pt; text-align:center; background:#f3f3f3; font-weight:700;">승&nbsp;인</td>
+              </tr>
+              <tr>
+                <td style="border:1.5px solid #000; padding:0; height:16mm; width:22mm;"></td>
+                <td style="border:1.5px solid #000; padding:0; height:16mm; width:22mm;"></td>
+                <td style="border:1.5px solid #000; padding:0; height:16mm; width:22mm;"></td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <div id="wm-body" class="bg-white rounded-lg shadow overflow-hidden"></div>
+
     <style>
       .print-only { display: none !important; }
       @media print {
-        @page { size: A4 portrait; margin: 10mm; }
-        aside, header, nav, .no-print,
+        @page { size: A4 landscape; margin: 10mm; }
+        aside, header, nav, .no-print, .op-tab-btn,
         #sidebar-toggle, #notification-count,
         [class*="sidebar"] { display: none !important; }
         main { margin-left: 0 !important; }
         #page-content { padding: 0 !important; }
         body { background: white !important; margin: 0 !important; padding: 0 !important; }
         #wm-print-header, .print-only { display: block !important; }
-
         #wm-body { overflow: visible !important; box-shadow: none !important; border-radius: 0 !important; }
         #wm-body table { font-size: 9pt !important; width: 100% !important; border-collapse: collapse !important; }
         #wm-body th, #wm-body td { padding: 3px 5px !important; border: 1px solid #333 !important; }
         #wm-body thead { background: #14b8a6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         #wm-body tr { page-break-inside: avoid; }
-        /* 인쇄 시 input을 텍스트로 보이도록 */
         #wm-body input[type="number"] {
-          border: none !important;
-          background: transparent !important;
-          font-weight: bold;
-          width: 100% !important;
-          text-align: right;
-          padding: 0 !important;
+          border: none !important; background: transparent !important;
+          font-weight: bold; width: 100% !important; text-align: right; padding: 0 !important;
         }
-        #wm-body .adjust-btn, #wm-body .memo-input { display: none !important; }
+        #wm-body .adjust-btn, #wm-body .memo-input, #op-tab-plan { display: none !important; }
       }
     </style>
   `;
-
   __weeklyMaterialsEdits = {};
-  await loadWeeklyMaterials();
+  __weeklyMaterialsOrder = {};
+  loadWeeklyMaterials();
 }
 
 async function loadWeeklyMaterials() {
@@ -62451,17 +62683,18 @@ async function loadWeeklyMaterials() {
   if (!start) return;
   const includeExtra = document.getElementById('wm-include-extra')?.checked !== false;
   const body = document.getElementById('wm-body');
-  const sum = document.getElementById('wm-summary');
   body.innerHTML = '<div class="p-8 text-center text-gray-400"><i class="fas fa-spinner fa-spin mr-2"></i>계산 중...</div>';
 
   try {
-    const res = await axios.get(`/api/order-plan/weekly-materials/${start}?include_extra=${includeExtra}`);
+    // v3.6.91: with_stock=1 로 재고 및 부족량 함께 요청
+    const res = await axios.get(`/api/order-plan/weekly-materials/${start}?include_extra=${includeExtra}&with_stock=1`);
     if (!res.data?.success) {
       body.innerHTML = `<div class="p-8 text-center text-red-500">${res.data?.error || '조회 실패'}</div>`;
       return;
     }
     __weeklyMaterialsData = res.data;
-    __weeklyMaterialsEdits = {};  // 새 조회 시 편집 상태 초기화
+    __weeklyMaterialsEdits = {};
+    __weeklyMaterialsOrder = {};
     renderWeeklyMaterialsBody();
   } catch (e) {
     body.innerHTML = `<div class="p-8 text-center text-red-500">오류: ${e.response?.data?.error || e.message}</div>`;
@@ -62476,10 +62709,7 @@ function renderWeeklyMaterialsBody() {
 
   // 인쇄용 기간 헤더
   const weekdays = ['일','월','화','수','목','금','토'];
-  const fmt = (s) => {
-    const [y, m, dd] = s.split('-');
-    return `${parseInt(m,10)}월 ${parseInt(dd,10)}일`;
-  };
+  const fmt = (s) => { const [y, m, dd] = s.split('-'); return `${parseInt(m,10)}월 ${parseInt(dd,10)}일`; };
   const printPeriodEl = document.getElementById('wm-print-period');
   if (printPeriodEl) {
     const sw = weekdays[new Date(d.start_date + 'T00:00:00').getDay()];
@@ -62492,49 +62722,91 @@ function renderWeeklyMaterialsBody() {
     body.innerHTML = `<div class="p-10 text-center text-gray-400">
       <i class="fas fa-inbox text-4xl mb-3"></i>
       <p class="text-base">${d.message || '기간 내 발주 계획이 없습니다.'}</p>
-      <p class="text-xs mt-2">먼저 [발주 계획표]에서 계획을 입력·저장해주세요.</p>
+      <p class="text-xs mt-2">먼저 [발주 계획표] 탭에서 계획을 입력·저장해주세요.</p>
     </div>`;
     return;
   }
 
-  // 요약 카드
+  // 배합비 데이터 부재 경고 (핵심 진단 메시지)
+  const noRecipeWarn = (d.summary.total_raw_kg < 1 && d.summary.total_dough_kg > 100) ? `
+    <div class="mb-3 bg-red-50 border-2 border-red-400 rounded-lg p-3 no-print">
+      <div class="flex items-start gap-2">
+        <i class="fas fa-triangle-exclamation text-red-600 text-xl mt-0.5"></i>
+        <div class="text-sm text-red-800">
+          <b>⚠️ 반죽 배합비(BOM) 데이터가 등록되지 않았습니다.</b><br>
+          현재 반죽 총량은 <b>${d.summary.total_dough_kg.toLocaleString()} kg</b> 이지만 원료 계산이 <b>${d.summary.total_raw_kg.toLocaleString()} kg</b>만 나옵니다. 이는 반죽 마스터(D001~D008)에 배합비가 비어있기 때문입니다.<br>
+          <span class="text-xs text-red-700">→ [사이드바 > 반죽 관리] 페이지에서 각 반죽별 배합비(원료명 · kg 단위 수량)를 등록하시거나, 구글시트 배합BOM을 CSV로 저장해 임포트하세요.</span>
+        </div>
+      </div>
+    </div>
+  ` : '';
+
+  // 부족량 자동 발주 제안 계산
+  let shortageCount = 0;
+  let totalOrderKg = 0;
+  const rows = (d.raw_materials || []);
+  rows.forEach(r => {
+    const need = Number(r.adjust_kg);
+    const stock = Number(r.stock_kg || 0);
+    const shortage = Math.max(0, need - stock);
+    r._shortage_kg = shortage;
+    if (shortage > 0) shortageCount++;
+    // 발주 초기값: 부족량 (관리자가 수정 가능)
+    if (__weeklyMaterialsOrder[r.material_key] === undefined) {
+      __weeklyMaterialsOrder[r.material_key] = { order_qty: shortage };
+    }
+    totalOrderKg += Number(__weeklyMaterialsOrder[r.material_key].order_qty) || 0;
+  });
+
+  // 요약 카드 (6개)
   const s = d.summary;
   sum.innerHTML = `
     <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-teal-500 text-center">
       <p class="text-[10px] text-gray-500">기간</p>
-      <p class="text-sm font-bold text-teal-700">${d.start_date} ~ ${d.end_date}</p>
+      <p class="text-xs font-bold text-teal-700">${d.start_date.slice(5)} ~ ${d.end_date.slice(5)}</p>
     </div>
     <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-indigo-500 text-center">
       <p class="text-[10px] text-gray-500">계획 제품</p>
-      <p class="text-xl font-bold text-indigo-700">${s.total_products_planned}</p>
+      <p class="text-lg font-bold text-indigo-700">${s.total_products_planned}</p>
     </div>
     <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-amber-500 text-center">
-      <p class="text-[10px] text-gray-500">주간 반죽 총 kg</p>
-      <p class="text-xl font-bold text-amber-700">${s.total_dough_kg.toLocaleString()}</p>
+      <p class="text-[10px] text-gray-500">반죽 총 kg</p>
+      <p class="text-lg font-bold text-amber-700">${s.total_dough_kg.toLocaleString()}</p>
     </div>
     <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-emerald-500 text-center">
-      <p class="text-[10px] text-gray-500">원료 자동합 (kg)</p>
-      <p class="text-xl font-bold text-emerald-700">${s.total_raw_kg.toLocaleString()}</p>
+      <p class="text-[10px] text-gray-500">원료 필요 (kg)</p>
+      <p class="text-lg font-bold text-emerald-700">${s.total_raw_adjust_kg.toLocaleString()}</p>
     </div>
-    <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-rose-500 text-center">
-      <p class="text-[10px] text-gray-500">관리자 조정 후 (kg)</p>
-      <p class="text-xl font-bold text-rose-700">${s.total_raw_adjust_kg.toLocaleString()}</p>
-      <p class="text-[10px] text-gray-400">조정 건수: ${s.adjust_count}</p>
+    <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-orange-500 text-center">
+      <p class="text-[10px] text-gray-500">부족 원료 (건)</p>
+      <p class="text-lg font-bold text-orange-700">${shortageCount}</p>
+    </div>
+    <div class="bg-white rounded-lg shadow px-3 py-2 border-t-4 border-red-500 text-center">
+      <p class="text-[10px] text-gray-500">발주 예정 (kg)</p>
+      <p class="text-lg font-bold text-red-700">${totalOrderKg.toLocaleString(undefined,{maximumFractionDigits:2})}</p>
     </div>
   `;
 
-  // 원료 행 렌더 (편집 가능)
-  const rawRows = d.raw_materials.map((r, i) => {
+  // 원료 행 (재고 · 부족 · 발주 컬럼 포함)
+  const rawRows = rows.map((r, i) => {
     const edit = __weeklyMaterialsEdits[r.material_key];
     const curAdjust = edit ? edit.adjust_qty : r.adjust_kg;
     const curMemo   = edit ? (edit.memo || '') : (r.memo || '');
     const delta = Math.round((Number(curAdjust) - r.auto_kg) * 1000) / 1000;
     const deltaClass = delta > 0 ? 'text-red-600 font-bold' : delta < 0 ? 'text-blue-600 font-bold' : 'text-gray-400';
     const deltaStr = delta === 0 ? '±0' : (delta > 0 ? '+' : '') + delta.toLocaleString();
+    const stock = Number(r.stock_kg || 0);
+    const shortage = r._shortage_kg || 0;
+    const shortageClass = shortage > 0 ? 'text-red-700 font-bold bg-red-50' : 'text-emerald-700';
+    const orderQty = (__weeklyMaterialsOrder[r.material_key]?.order_qty) || 0;
+    const stockCode = r.stock_material_code || '';
     return `
       <tr class="border-b hover:bg-teal-50">
         <td class="px-2 py-1 text-center text-[11px] text-gray-500">${i+1}</td>
-        <td class="px-2 py-1 text-sm font-medium text-gray-800">${r.material_name}</td>
+        <td class="px-2 py-1 text-sm font-medium text-gray-800">
+          ${r.material_name}
+          ${stockCode ? `<span class="ml-1 text-[10px] text-gray-400">(${stockCode})</span>` : `<span class="ml-1 text-[10px] text-orange-500" title="원료 마스터 미매핑">⚠</span>`}
+        </td>
         <td class="px-2 py-1 text-right text-sm text-gray-700 font-mono">${r.auto_kg.toLocaleString()}</td>
         <td class="px-1 py-1 text-right">
           <input type="number" step="0.001" min="0"
@@ -62547,6 +62819,15 @@ function renderWeeklyMaterialsBody() {
             class="w-24 text-right px-2 py-1 border border-teal-300 rounded font-bold text-teal-700 bg-teal-50 focus:bg-yellow-50 focus:border-yellow-500">
         </td>
         <td class="px-2 py-1 text-right text-xs ${deltaClass}">${deltaStr}</td>
+        <td class="px-2 py-1 text-right text-sm font-mono ${stock < r.adjust_kg ? 'text-orange-700' : 'text-gray-600'}">${stock.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+        <td class="px-2 py-1 text-right text-sm font-mono ${shortageClass}">${shortage > 0 ? shortage.toLocaleString(undefined,{maximumFractionDigits:2}) : '충분'}</td>
+        <td class="px-1 py-1 text-right">
+          <input type="number" step="0.001" min="0"
+            value="${orderQty}"
+            data-key="${r.material_key}"
+            onchange="onOrderQtyEdit(this)"
+            class="w-24 text-right px-2 py-1 border ${orderQty > 0 ? 'border-red-300 bg-red-50 text-red-700 font-bold' : 'border-gray-200 text-gray-500'} rounded focus:bg-yellow-50 focus:border-yellow-500">
+        </td>
         <td class="px-1 py-1">
           <input type="text" class="memo-input w-full px-2 py-1 border border-gray-300 rounded text-xs"
             value="${curMemo.replace(/"/g,'&quot;')}"
@@ -62554,24 +62835,24 @@ function renderWeeklyMaterialsBody() {
             onchange="onWeeklyMaterialsMemo(this)"
             placeholder="사유(선택)">
         </td>
-        <td class="px-2 py-1 text-[10px] text-gray-400 text-center">${r.updated_at ? r.updated_at.slice(5,16).replace('T',' ') : '-'}</td>
       </tr>
     `;
   }).join('');
 
-  // 반죽 행 (참고용 - 편집 가능하지만 실무 조정은 원료 위주)
+  // 반죽 참고 행
   const doughRows = d.doughs.map((dg, i) => {
     const edit = __weeklyMaterialsEdits[dg.material_key];
     const curAdjust = edit ? edit.adjust_qty : dg.adjust_kg;
-    const curMemo   = edit ? (edit.memo || '') : (dg.memo || '');
     const delta = Math.round((Number(curAdjust) - dg.auto_kg) * 1000) / 1000;
     const deltaClass = delta > 0 ? 'text-red-600 font-bold' : delta < 0 ? 'text-blue-600 font-bold' : 'text-gray-400';
     const deltaStr = delta === 0 ? '±0' : (delta > 0 ? '+' : '') + delta.toLocaleString();
+    const hasRecipe = dg.has_recipe;
     return `
-      <tr class="border-b hover:bg-amber-50">
+      <tr class="border-b hover:bg-amber-50 ${!hasRecipe ? 'bg-red-50' : ''}">
         <td class="px-2 py-1 text-center text-[11px] text-gray-500">${i+1}</td>
         <td class="px-2 py-1 text-sm font-medium text-gray-800">
           <span class="text-xs text-gray-400 mr-1">${dg.dough_code}</span>${dg.dough_name}
+          ${!hasRecipe ? `<span class="ml-1 text-[10px] text-red-600 font-bold">배합비 없음!</span>` : ''}
         </td>
         <td class="px-2 py-1 text-right text-sm text-gray-700 font-mono">${dg.auto_kg.toLocaleString()}</td>
         <td class="px-1 py-1 text-right">
@@ -62586,50 +62867,60 @@ function renderWeeklyMaterialsBody() {
         </td>
         <td class="px-2 py-1 text-right text-xs ${deltaClass}">${deltaStr}</td>
         <td class="px-2 py-1 text-center text-xs text-gray-500">${Number(dg.batch_count||0).toFixed(2)}판</td>
-        <td class="px-2 py-1 text-[10px] text-gray-400 text-center">${dg.updated_at ? dg.updated_at.slice(5,16).replace('T',' ') : '-'}</td>
       </tr>
     `;
   }).join('');
 
   body.innerHTML = `
-    <!-- 원료 테이블 -->
+    ${noRecipeWarn}
+    <!-- 원료 테이블 (재고·부족량·발주) -->
     <div class="p-3 bg-teal-100 border-b border-teal-300">
       <h3 class="text-base font-bold text-teal-800">
-        <i class="fas fa-flask mr-1"></i> 원료 필요량 (kg) — ${d.raw_materials.length}종
+        <i class="fas fa-flask mr-1"></i> 원료 필요량 · 실재고 · 부족량 · 발주 (kg) — ${d.raw_materials.length}종
       </h3>
-      <p class="text-xs text-teal-700 mt-1">자동값을 참고해 필요 시 우측 [조정후 필요량]을 수정하고 [조정 저장]을 눌러주세요.</p>
+      <p class="text-xs text-teal-700 mt-1">
+        [조정 후 필요량] 수정 → [조정 저장] · [부족량] 자동 감지 → [발주 예정 수량] 수정 가능 → [ERP 발주 등록]
+      </p>
     </div>
+    <div class="overflow-auto" style="max-height: calc(100vh - 500px);">
     <table class="w-full text-sm border-collapse">
-      <thead class="bg-teal-600 text-white">
+      <thead class="bg-teal-600 text-white sticky top-0">
         <tr>
           <th class="px-2 py-2 text-center text-xs w-10">#</th>
           <th class="px-2 py-2 text-left text-xs">원료명</th>
-          <th class="px-2 py-2 text-right text-xs w-24" title="발주 계획 × BOM">자동 계산 (kg)</th>
-          <th class="px-2 py-2 text-center text-xs w-32">조정 후 필요량 (kg)</th>
-          <th class="px-2 py-2 text-right text-xs w-20">증감</th>
+          <th class="px-2 py-2 text-right text-xs w-24" title="발주계획 × BOM">자동계산</th>
+          <th class="px-2 py-2 text-center text-xs w-28">조정 후 필요량</th>
+          <th class="px-2 py-2 text-right text-xs w-16">증감</th>
+          <th class="px-2 py-2 text-right text-xs w-20 bg-blue-700" title="바코드 재고관리 실재고">실재고</th>
+          <th class="px-2 py-2 text-right text-xs w-20 bg-orange-700">부족량</th>
+          <th class="px-2 py-2 text-center text-xs w-28 bg-red-700">발주 예정 (kg)</th>
           <th class="px-2 py-2 text-left text-xs">조정 사유</th>
-          <th class="px-2 py-2 text-center text-xs w-24">마지막 저장</th>
         </tr>
       </thead>
       <tbody>
-        ${rawRows || `<tr><td colspan="7" class="p-6 text-center text-gray-400">원료 사용량 데이터가 없습니다.</td></tr>`}
+        ${rawRows || `<tr><td colspan="9" class="p-6 text-center text-gray-400">원료 사용량 데이터가 없습니다.</td></tr>`}
       </tbody>
-      <tfoot class="bg-yellow-50 border-t-2 border-yellow-400">
+      <tfoot class="bg-yellow-50 border-t-2 border-yellow-400 sticky bottom-0">
         <tr>
           <td colspan="2" class="px-2 py-2 text-right font-bold text-sm">합계</td>
           <td class="px-2 py-2 text-right font-bold text-emerald-800">${d.summary.total_raw_kg.toLocaleString()}</td>
           <td class="px-2 py-2 text-right font-bold text-rose-800 text-base">${d.summary.total_raw_adjust_kg.toLocaleString()}</td>
-          <td colspan="3"></td>
+          <td></td>
+          <td class="px-2 py-2 text-right font-bold text-blue-800">${(d.summary.total_stock_kg || 0).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+          <td class="px-2 py-2 text-right font-bold text-orange-800">${rows.reduce((s,r)=>s+(r._shortage_kg||0),0).toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+          <td class="px-2 py-2 text-right font-bold text-red-800 text-base">${totalOrderKg.toLocaleString(undefined,{maximumFractionDigits:2})}</td>
+          <td></td>
         </tr>
       </tfoot>
     </table>
+    </div>
 
-    <!-- 반죽 테이블 -->
+    <!-- 반죽 참고 테이블 -->
     <div class="p-3 bg-amber-100 border-b border-t-2 border-amber-300">
       <h3 class="text-base font-bold text-amber-800">
         <i class="fas fa-bread-slice mr-1"></i> 반죽 필요량 (kg) — ${d.doughs.length}종
       </h3>
-      <p class="text-xs text-amber-700 mt-1">반죽별 총 필요량 및 판수. 원료는 위 표에서 조정되므로 반죽 조정은 참고용입니다.</p>
+      <p class="text-xs text-amber-700 mt-1">반죽별 총 필요량 및 판수. <b>[배합비 없음!]</b> 표시 시 위 원료 계산에 반영되지 않습니다.</p>
     </div>
     <table class="w-full text-sm border-collapse">
       <thead class="bg-amber-600 text-white">
@@ -62637,20 +62928,19 @@ function renderWeeklyMaterialsBody() {
           <th class="px-2 py-2 text-center text-xs w-10">#</th>
           <th class="px-2 py-2 text-left text-xs">반죽</th>
           <th class="px-2 py-2 text-right text-xs w-24">자동 계산 (kg)</th>
-          <th class="px-2 py-2 text-center text-xs w-32">조정 후 필요량 (kg)</th>
+          <th class="px-2 py-2 text-center text-xs w-28">조정 후 필요량 (kg)</th>
           <th class="px-2 py-2 text-right text-xs w-20">증감</th>
           <th class="px-2 py-2 text-center text-xs w-20">판수</th>
-          <th class="px-2 py-2 text-center text-xs w-24">마지막 저장</th>
         </tr>
       </thead>
       <tbody>
-        ${doughRows || `<tr><td colspan="7" class="p-6 text-center text-gray-400">반죽 사용량 데이터가 없습니다.</td></tr>`}
+        ${doughRows || `<tr><td colspan="6" class="p-6 text-center text-gray-400">반죽 데이터가 없습니다.</td></tr>`}
       </tbody>
       <tfoot class="bg-yellow-50 border-t-2 border-yellow-400">
         <tr>
           <td colspan="2" class="px-2 py-2 text-right font-bold text-sm">합계</td>
           <td class="px-2 py-2 text-right font-bold text-emerald-800">${d.summary.total_dough_kg.toLocaleString()}</td>
-          <td colspan="4"></td>
+          <td colspan="3"></td>
         </tr>
       </tfoot>
     </table>
@@ -62672,19 +62962,23 @@ function onWeeklyMaterialsEdit(inputEl) {
   const name = inputEl.dataset.name;
   const auto = Number(inputEl.dataset.auto);
   const newVal = Number(inputEl.value);
-  if (isNaN(newVal) || newVal < 0) {
-    inputEl.value = auto;
-    return;
-  }
+  if (isNaN(newVal) || newVal < 0) { inputEl.value = auto; return; }
   if (!__weeklyMaterialsEdits[key]) __weeklyMaterialsEdits[key] = {};
   __weeklyMaterialsEdits[key].material_type = type;
   __weeklyMaterialsEdits[key].material_name = name;
   __weeklyMaterialsEdits[key].auto_qty = auto;
   __weeklyMaterialsEdits[key].adjust_qty = newVal;
-  // 증감 재계산 위해 전체 렌더 (편집한 셀 포커스는 잃음 - trade-off)
+  // 데이터 반영 (내부 상태 업데이트)
+  if (type === 'raw' && __weeklyMaterialsData?.raw_materials) {
+    const r = __weeklyMaterialsData.raw_materials.find(x => x.material_key === key);
+    if (r) {
+      r.adjust_kg = newVal;
+      // 부족량/발주량 재계산 트리거를 위해 order 초기화
+      delete __weeklyMaterialsOrder[key];
+    }
+  }
   renderWeeklyMaterialsBody();
-  // 방금 편집한 input을 다시 포커스
-  const next = document.querySelector(`input[data-key="${CSS.escape(key)}"]`);
+  const next = document.querySelector(`input[data-key="${CSS.escape(key)}"][data-type]`);
   if (next) { next.focus(); next.select(); }
 }
 
@@ -62692,6 +62986,15 @@ function onWeeklyMaterialsMemo(inputEl) {
   const key = inputEl.dataset.key;
   if (!__weeklyMaterialsEdits[key]) __weeklyMaterialsEdits[key] = {};
   __weeklyMaterialsEdits[key].memo = inputEl.value;
+}
+
+function onOrderQtyEdit(inputEl) {
+  const key = inputEl.dataset.key;
+  const v = Number(inputEl.value);
+  if (isNaN(v) || v < 0) { inputEl.value = 0; return; }
+  if (!__weeklyMaterialsOrder[key]) __weeklyMaterialsOrder[key] = {};
+  __weeklyMaterialsOrder[key].order_qty = v;
+  renderWeeklyMaterialsBody();
 }
 
 async function saveWeeklyMaterialsAdjust() {
@@ -62734,9 +63037,7 @@ async function saveWeeklyMaterialsAdjust() {
 async function resetWeeklyMaterialsAdjust() {
   const d = __weeklyMaterialsData;
   if (!d) { alert('먼저 조회해주세요.'); return; }
-  if (!confirm(`⚠️ ${d.start_date} ~ ${d.end_date} 기간의 모든 관리자 조정값을 삭제하고 자동 계산값으로 복귀하시겠습니까?\n(이 작업은 되돌릴 수 없습니다.)`)) return;
-
-  // 모든 원료+반죽을 auto_qty와 동일한 adjust_qty로 저장 → 서버가 delete 처리
+  if (!confirm(`⚠️ ${d.start_date} ~ ${d.end_date} 기간의 모든 관리자 조정값을 삭제하고 자동 계산값으로 복귀하시겠습니까?`)) return;
   const all = [
     ...d.raw_materials.map(r => ({
       material_key: r.material_key, material_type: 'raw', material_name: r.material_name,
@@ -62747,31 +63048,78 @@ async function resetWeeklyMaterialsAdjust() {
       auto_qty: dg.auto_kg, adjust_qty: dg.auto_kg
     }))
   ];
-
   try {
     const res = await axios.post('/api/order-plan/weekly-materials/adjust', {
-      start_date: d.start_date,
-      adjustments: all
+      start_date: d.start_date, adjustments: all
     });
     if (!res.data?.success) throw new Error(res.data?.error || '초기화 실패');
     alert(`✅ 초기화 완료 · 삭제: ${res.data.deleted}건`);
     __weeklyMaterialsEdits = {};
+    __weeklyMaterialsOrder = {};
     await loadWeeklyMaterials();
   } catch (e) {
     alert('초기화 실패: ' + (e.response?.data?.error || e.message));
   }
 }
 
-function printWeeklyMaterials() {
-  window.print();
+// v3.6.91: ERP 발주 등록 (부족량 기반 발주서 저장)
+async function registerOrderPurchase() {
+  const d = __weeklyMaterialsData;
+  if (!d) { alert('먼저 조회해주세요.'); return; }
+  const items = [];
+  for (const r of (d.raw_materials || [])) {
+    const qty = Number(__weeklyMaterialsOrder[r.material_key]?.order_qty) || 0;
+    if (qty > 0) {
+      items.push({
+        material_key: r.material_key,
+        material_name: r.material_name,
+        material_code: r.stock_material_code || null,
+        need_kg: Number(r.adjust_kg) || 0,
+        stock_kg: Number(r.stock_kg || 0),
+        shortage_kg: Number(r._shortage_kg || 0),
+        order_qty: qty,
+        unit: 'kg'
+      });
+    }
+  }
+  if (items.length === 0) {
+    alert('발주할 항목이 없습니다.\n부족량이 있거나 [발주 예정 수량]을 입력한 원료가 없습니다.');
+    return;
+  }
+  const totalKg = items.reduce((s,i)=>s+i.order_qty, 0);
+  if (!confirm(`ERP 발주서를 등록하시겠습니까?\n\n· 대상 기간: ${d.start_date} ~ ${d.end_date}\n· 발주 원료: ${items.length}종\n· 발주 총량: ${totalKg.toLocaleString(undefined,{maximumFractionDigits:2})} kg\n\n등록 후 발주서 번호가 발급됩니다.`)) return;
+
+  try {
+    const res = await axios.post('/api/order-plan/purchase-order/register', {
+      start_date: d.start_date,
+      end_date: d.end_date,
+      items,
+      registered_by: (typeof currentUser !== 'undefined' && currentUser?.name) ? currentUser.name : null
+    });
+    if (!res.data?.success) throw new Error(res.data?.error || '등록 실패');
+    alert(`✅ ERP 발주 등록 완료\n\n발주번호: ${res.data.purchase_no}\n등록 항목: ${res.data.item_count}건\n총 수량: ${res.data.total_kg.toLocaleString(undefined,{maximumFractionDigits:2})} kg\n\n[발주 이력] 페이지에서 확인할 수 있습니다.`);
+    __weeklyMaterialsOrder = {};
+    await loadWeeklyMaterials();
+  } catch (e) {
+    alert('등록 실패: ' + (e.response?.data?.error || e.message));
+  }
 }
 
-window.renderWeeklyMaterials = renderWeeklyMaterials;
+function printWeeklyMaterials() {
+  // 원료 필요량 탭이 활성화된 상태에서 인쇄
+  switchOrderPlanTab('materials');
+  setTimeout(() => window.print(), 200);
+}
+
+window.switchOrderPlanTab = switchOrderPlanTab;
+window.initOrderPlanMaterialsTab = initOrderPlanMaterialsTab;
 window.loadWeeklyMaterials = loadWeeklyMaterials;
 window.onWeeklyMaterialsEdit = onWeeklyMaterialsEdit;
 window.onWeeklyMaterialsMemo = onWeeklyMaterialsMemo;
+window.onOrderQtyEdit = onOrderQtyEdit;
 window.saveWeeklyMaterialsAdjust = saveWeeklyMaterialsAdjust;
 window.resetWeeklyMaterialsAdjust = resetWeeklyMaterialsAdjust;
+window.registerOrderPurchase = registerOrderPurchase;
 window.printWeeklyMaterials = printWeeklyMaterials;
 
 // =====================================================================

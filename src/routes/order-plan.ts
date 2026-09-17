@@ -1424,24 +1424,57 @@ orderPlan.get('/weekly-materials/:start_date', async (c) => {
       for (const a of (aRes.results as any[])) adjustMap[a.material_key] = a
     } catch (_) { /* table missing */ }
 
-    // 6. 원료 목록 (관리자 조정값 병합)
+    // v3.6.91: 5-b. 재고 연동 (with_stock=1 옵션)
+    // - master 테이블에서 원료명(item_name) 매칭 → item_code + safety_stock
+    // - inbound에서 remain_qty(합격 LOT) 합계 = 실재고
+    const withStock = c.req.query('with_stock') === '1' || c.req.query('with_stock') === 'true'
+    let stockByName: Record<string, { item_code: string; unit: string; stock_kg: number; safety_stock: number }> = {}
+    if (withStock) {
+      try {
+        const sRes = await c.env.DB.prepare(`
+          SELECT
+            m.item_code, m.item_name, m.unit, COALESCE(m.safety_stock, 0) as safety_stock,
+            COALESCE(SUM(CASE WHEN i.remain_qty > 0 AND (i.quality_status = '합격' OR i.quality_status IS NULL OR i.quality_status = '') THEN i.remain_qty ELSE 0 END), 0) as stock_kg
+          FROM master m
+          LEFT JOIN inbound i ON m.item_code = i.item_code
+          WHERE m.category = '원료' OR m.category IS NULL OR m.category = ''
+          GROUP BY m.item_code, m.item_name, m.unit, m.safety_stock
+        `).all<{ item_code: string; item_name: string; unit: string; safety_stock: number; stock_kg: number }>()
+        for (const row of (sRes.results || [])) {
+          stockByName[row.item_name] = {
+            item_code: row.item_code,
+            unit: row.unit || 'kg',
+            stock_kg: Number(row.stock_kg) || 0,
+            safety_stock: Number(row.safety_stock) || 0
+          }
+        }
+      } catch (e) { console.warn('[weekly-materials] stock lookup failed:', (e as any).message) }
+    }
+
+    // 6. 원료 목록 (관리자 조정값 + 재고 병합)
     const rawMaterialSummary = Object.entries(rawUsage).map(([name, totalG]) => {
       const autoKg = totalG / 1000
       const key = `raw|${name}`
       const adj = adjustMap[key]
+      const stockInfo = stockByName[name]
       return {
         material_key: key,
         material_type: 'raw',
         material_name: name,
         auto_kg: Math.round(autoKg * 1000) / 1000,
         auto_g: totalG,
-        adjust_kg: adj ? Number(adj.adjust_qty) : autoKg,     // 조정 없으면 자동값 그대로
+        adjust_kg: adj ? Number(adj.adjust_qty) : Math.round(autoKg * 1000) / 1000,
         is_adjusted: !!adj,
         adjust_delta: adj ? Number(adj.adjust_delta) : 0,
         unit: adj?.unit || 'kg',
         memo: adj?.memo || null,
         adjusted_by: adj?.adjusted_by || null,
-        updated_at: adj?.updated_at || null
+        updated_at: adj?.updated_at || null,
+        // v3.6.91: 재고 연동
+        stock_material_code: stockInfo?.item_code || null,
+        stock_kg: stockInfo ? Math.round(stockInfo.stock_kg * 100) / 100 : 0,
+        safety_stock: stockInfo?.safety_stock || 0,
+        stock_unit: stockInfo?.unit || 'kg'
       }
     }).sort((a, b) => b.auto_kg - a.auto_kg)
 
@@ -1478,7 +1511,10 @@ orderPlan.get('/weekly-materials/:start_date', async (c) => {
         total_batches: Math.round(doughSummary.reduce((s, d) => s + d.batch_count, 0) * 100) / 100,
         total_raw_kg: Math.round(rawMaterialSummary.reduce((s, r) => s + r.auto_kg, 0) * 100) / 100,
         total_raw_adjust_kg: Math.round(rawMaterialSummary.reduce((s, r) => s + r.adjust_kg, 0) * 100) / 100,
-        adjust_count: Object.keys(adjustMap).length
+        total_stock_kg: Math.round(rawMaterialSummary.reduce((s, r) => s + (r.stock_kg || 0), 0) * 100) / 100,
+        total_shortage_kg: Math.round(rawMaterialSummary.reduce((s, r) => s + Math.max(0, r.adjust_kg - (r.stock_kg || 0)), 0) * 100) / 100,
+        adjust_count: Object.keys(adjustMap).length,
+        with_stock: withStock
       },
       doughs: doughSummaryWithAdjust,
       raw_materials: rawMaterialSummary,
@@ -1586,6 +1622,143 @@ orderPlan.post('/weekly-materials/adjust', async (c) => {
     return c.json({ success: true, upserted, deleted, start_date })
   } catch (e: any) {
     console.error('[order-plan/weekly-materials/adjust] error:', e)
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// ============================================================
+// ★ v3.6.91: ERP 발주 등록 (부족량 기반 원료 구매 요청서)
+// ============================================================
+// POST /api/order-plan/purchase-order/register
+orderPlan.post('/purchase-order/register', async (c) => {
+  try {
+    const body = await c.req.json()
+    const { start_date, end_date, items, registered_by } = body
+    if (!start_date || !end_date || !Array.isArray(items) || items.length === 0) {
+      return c.json({ success: false, error: 'start_date, end_date, items[] 필수' }, 400)
+    }
+
+    // 테이블 자동 생성 (프로덕션 자가 초기화)
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS purchase_order (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        purchase_no TEXT UNIQUE NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        item_count INTEGER DEFAULT 0,
+        total_kg REAL DEFAULT 0,
+        status TEXT DEFAULT 'draft',
+        registered_by TEXT,
+        note TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS purchase_order_item (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        purchase_no TEXT NOT NULL,
+        material_key TEXT,
+        material_name TEXT NOT NULL,
+        material_code TEXT,
+        need_kg REAL DEFAULT 0,
+        stock_kg REAL DEFAULT 0,
+        shortage_kg REAL DEFAULT 0,
+        order_qty REAL NOT NULL,
+        unit TEXT DEFAULT 'kg',
+        supplier TEXT,
+        memo TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_poi_purchase_no ON purchase_order_item(purchase_no)`).run()
+
+    // 발주번호 발급: PO-YYYYMMDD-NNN
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    const cntRes = await c.env.DB.prepare(
+      `SELECT COUNT(*) as cnt FROM purchase_order WHERE purchase_no LIKE ?`
+    ).bind(`PO-${today}-%`).first<{ cnt: number }>()
+    const seq = ((cntRes?.cnt || 0) + 1).toString().padStart(3, '0')
+    const purchaseNo = `PO-${today}-${seq}`
+
+    const totalKg = items.reduce((s: number, it: any) => s + (Number(it.order_qty) || 0), 0)
+
+    // 헤더 INSERT
+    await c.env.DB.prepare(`
+      INSERT INTO purchase_order (purchase_no, start_date, end_date, item_count, total_kg, status, registered_by)
+      VALUES (?, ?, ?, ?, ?, 'draft', ?)
+    `).bind(purchaseNo, start_date, end_date, items.length, Math.round(totalKg * 1000) / 1000, registered_by || null).run()
+
+    // 라인 INSERT
+    for (const it of items) {
+      const qty = Number(it.order_qty) || 0
+      if (qty <= 0) continue
+      await c.env.DB.prepare(`
+        INSERT INTO purchase_order_item
+          (purchase_no, material_key, material_name, material_code, need_kg, stock_kg, shortage_kg, order_qty, unit)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        purchaseNo,
+        it.material_key || null,
+        it.material_name,
+        it.material_code || null,
+        Number(it.need_kg) || 0,
+        Number(it.stock_kg) || 0,
+        Number(it.shortage_kg) || 0,
+        qty,
+        it.unit || 'kg'
+      ).run()
+    }
+
+    return c.json({
+      success: true,
+      purchase_no: purchaseNo,
+      item_count: items.length,
+      total_kg: Math.round(totalKg * 1000) / 1000,
+      status: 'draft'
+    })
+  } catch (e: any) {
+    console.error('[order-plan/purchase-order/register] error:', e)
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// GET /api/order-plan/purchase-order/list?limit=50
+orderPlan.get('/purchase-order/list', async (c) => {
+  try {
+    const limit = Math.min(200, parseInt(c.req.query('limit') || '50', 10))
+    try {
+      const res = await c.env.DB.prepare(`
+        SELECT purchase_no, start_date, end_date, item_count, total_kg, status, registered_by, created_at
+        FROM purchase_order
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).bind(limit).all()
+      return c.json({ success: true, orders: res.results || [] })
+    } catch (e: any) {
+      if (e.message?.includes('no such table')) {
+        return c.json({ success: true, orders: [] })
+      }
+      throw e
+    }
+  } catch (e: any) {
+    console.error('[order-plan/purchase-order/list] error:', e)
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// GET /api/order-plan/purchase-order/:purchase_no
+orderPlan.get('/purchase-order/:purchase_no', async (c) => {
+  try {
+    const purchaseNo = c.req.param('purchase_no')
+    const [hdr, items] = await Promise.all([
+      c.env.DB.prepare(`SELECT * FROM purchase_order WHERE purchase_no = ?`).bind(purchaseNo).first(),
+      c.env.DB.prepare(`SELECT * FROM purchase_order_item WHERE purchase_no = ? ORDER BY id`).bind(purchaseNo).all()
+    ])
+    if (!hdr) return c.json({ success: false, error: 'not found' }, 404)
+    return c.json({ success: true, order: hdr, items: items.results || [] })
+  } catch (e: any) {
+    console.error('[order-plan/purchase-order/detail] error:', e)
     return c.json({ success: false, error: e.message }, 500)
   }
 })

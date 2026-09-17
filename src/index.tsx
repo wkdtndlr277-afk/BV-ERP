@@ -734,12 +734,6 @@ app.get('/*', (c) => {
                     <span class="ml-auto text-xs bg-indigo-500 text-white px-2 py-0.5 rounded">NEW</span>
                 </a>
 
-                <a href="#weekly-materials" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="weekly-materials">
-                    <i class="fas fa-boxes-stacked w-5 text-teal-600"></i>
-                    <span class="font-semibold">주간 원료 필요량</span>
-                    <span class="ml-auto text-xs bg-teal-500 text-white px-2 py-0.5 rounded">NEW</span>
-                </a>
-
                 <a href="#dough-master" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="dough-master">
                     <i class="fas fa-bread-slice w-5 text-amber-600"></i>
                     <span>반죽 마스터</span>

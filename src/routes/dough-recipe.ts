@@ -503,4 +503,396 @@ dough.post('/import-product-bom', async (c) => {
   }
 })
 
+// ============================================================
+// ★ v3.6.94: 구글시트 연동 (CSV 게시 URL 방식)
+// ============================================================
+// 저장소: bom_sheet_source (single row, id=1)
+// 흐름: 
+//   1) 사용자가 구글시트를 "웹에 게시(CSV)"로 발급받은 URL 저장
+//   2) [지금 동기화] → 서버가 URL fetch → CSV 파싱 → production_bom 자동 갱신
+
+async function initSheetSourceTable(env: any) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS bom_sheet_source (
+      id INTEGER PRIMARY KEY,
+      sheet_url TEXT NOT NULL,
+      unit_override TEXT DEFAULT '',
+      auto_register_materials INTEGER DEFAULT 1,
+      last_synced_at DATETIME,
+      last_status TEXT,
+      last_message TEXT,
+      last_products INTEGER DEFAULT 0,
+      last_rows INTEGER DEFAULT 0,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `).run()
+}
+
+// URL → CSV fetch URL 정규화
+// 사용자가 아래 형식 중 어느 것을 넣어도 CSV 다운로드 URL로 변환
+//   - https://docs.google.com/spreadsheets/d/{ID}/edit#gid=0
+//   - https://docs.google.com/spreadsheets/d/{ID}
+//   - https://docs.google.com/spreadsheets/d/e/{PUB_ID}/pub?output=csv    (게시된 CSV)
+//   - https://docs.google.com/spreadsheets/d/{ID}/pub?output=csv
+//   - 이미 CSV export URL도 그대로 통과
+function normalizeSheetUrl(inputUrl: string): { csvUrl: string; sheetId: string; gid: string | null } {
+  const url = String(inputUrl).trim()
+
+  // 이미 명시적으로 output=csv 붙어있는 경우 → 그대로
+  if (/[?&]output=csv/i.test(url)) {
+    return { csvUrl: url, sheetId: '', gid: null }
+  }
+  if (/[?&]format=csv/i.test(url)) {
+    return { csvUrl: url, sheetId: '', gid: null }
+  }
+
+  // /pub 뒤에 output 없이 오는 경우
+  const pubMatch = url.match(/spreadsheets\/d\/e\/([^/]+)\/pub/i)
+  if (pubMatch) {
+    const gidMatch = url.match(/[#?&]gid=(\d+)/)
+    const gid = gidMatch ? gidMatch[1] : null
+    let csv = `https://docs.google.com/spreadsheets/d/e/${pubMatch[1]}/pub?output=csv`
+    if (gid) csv += `&gid=${gid}`
+    return { csvUrl: csv, sheetId: pubMatch[1], gid }
+  }
+
+  // 일반 편집 URL: /spreadsheets/d/{ID}
+  const idMatch = url.match(/spreadsheets\/d\/([a-zA-Z0-9_-]+)/)
+  if (idMatch) {
+    const id = idMatch[1]
+    const gidMatch = url.match(/[#?&]gid=(\d+)/)
+    const gid = gidMatch ? gidMatch[1] : null
+    // export URL 사용 (게시 필요하지만 공개 시트도 이 URL로 접근 가능)
+    let csv = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv`
+    if (gid) csv += `&gid=${gid}`
+    return { csvUrl: csv, sheetId: id, gid }
+  }
+
+  // 매치 안됨: 그대로 반환 (사용자 책임)
+  return { csvUrl: url, sheetId: '', gid: null }
+}
+
+// 견고한 CSV 파서: 따옴표 안 콤마·개행 처리
+function parseCSV(text: string): string[][] {
+  const rows: string[][] = []
+  let cur: string[] = []
+  let field = ''
+  let inQuotes = false
+  const n = text.length
+  for (let i = 0; i < n; i++) {
+    const ch = text[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        // 이스케이프된 따옴표 ""
+        if (i + 1 < n && text[i+1] === '"') { field += '"'; i++ }
+        else { inQuotes = false }
+      } else {
+        field += ch
+      }
+    } else {
+      if (ch === '"') { inQuotes = true }
+      else if (ch === ',') { cur.push(field); field = '' }
+      else if (ch === '\n') { cur.push(field); rows.push(cur); cur = []; field = '' }
+      else if (ch === '\r') { /* skip - handle at \n */ }
+      else { field += ch }
+    }
+  }
+  // 마지막 필드 flush
+  if (field.length > 0 || cur.length > 0) {
+    cur.push(field)
+    rows.push(cur)
+  }
+  // 빈 행 제거
+  return rows.filter(r => r.some(c => (c || '').trim().length > 0))
+}
+
+// GET /api/dough/sheet-source — 등록된 시트 정보 조회
+dough.get('/sheet-source', async (c) => {
+  try {
+    await initSheetSourceTable(c.env)
+    const res = await c.env.DB.prepare(`SELECT * FROM bom_sheet_source WHERE id = 1`).first<any>()
+    if (!res) return c.json({ success: true, registered: false })
+    return c.json({ success: true, registered: true, source: res })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// POST /api/dough/sheet-source/register — 시트 URL 등록/수정
+// body: { sheet_url, unit_override?: ''|'g'|'kg', auto_register_materials?: boolean }
+dough.post('/sheet-source/register', async (c) => {
+  try {
+    await initSheetSourceTable(c.env)
+    const body = await c.req.json()
+    const rawUrl = String(body?.sheet_url || '').trim()
+    if (!rawUrl) return c.json({ success: false, error: 'sheet_url 필요' }, 400)
+    if (!/docs\.google\.com\/spreadsheets/i.test(rawUrl)) {
+      return c.json({ success: false, error: '구글시트 URL이 아닙니다.' }, 400)
+    }
+    const unitOverride = String(body?.unit_override || '')
+    if (unitOverride && !['g','kg'].includes(unitOverride)) {
+      return c.json({ success: false, error: 'unit_override는 g 또는 kg' }, 400)
+    }
+    const autoReg = body?.auto_register_materials !== false ? 1 : 0
+
+    // upsert (id=1 고정)
+    await c.env.DB.prepare(`
+      INSERT INTO bom_sheet_source (id, sheet_url, unit_override, auto_register_materials, updated_at)
+      VALUES (1, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET
+        sheet_url = excluded.sheet_url,
+        unit_override = excluded.unit_override,
+        auto_register_materials = excluded.auto_register_materials,
+        updated_at = CURRENT_TIMESTAMP
+    `).bind(rawUrl, unitOverride, autoReg).run()
+
+    return c.json({ success: true, sheet_url: rawUrl })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// POST /api/dough/sheet-source/sync — 등록된 시트에서 CSV fetch → 파싱 → import-product-bom
+dough.post('/sheet-source/sync', async (c) => {
+  try {
+    await initSheetSourceTable(c.env)
+    const src = await c.env.DB.prepare(`SELECT * FROM bom_sheet_source WHERE id = 1`).first<any>()
+    if (!src) return c.json({ success: false, error: '먼저 시트 URL을 등록해주세요.' }, 400)
+
+    const { csvUrl, sheetId } = normalizeSheetUrl(src.sheet_url)
+
+    // Fetch CSV (Cloudflare Workers fetch)
+    let csvText = ''
+    let fetchStatus = 0
+    let finalUrl = csvUrl
+    try {
+      const res = await fetch(csvUrl, {
+        redirect: 'follow',
+        headers: { 'User-Agent': 'Mozilla/5.0 BV-ERP-SheetSync' }
+      })
+      fetchStatus = res.status
+      finalUrl = res.url || csvUrl
+      csvText = await res.text()
+    } catch (fe: any) {
+      const msg = `구글시트 fetch 실패: ${fe.message}`
+      await c.env.DB.prepare(`
+        UPDATE bom_sheet_source SET last_synced_at=CURRENT_TIMESTAMP, last_status='error', last_message=?, last_products=0, last_rows=0 WHERE id=1
+      `).bind(msg).run()
+      return c.json({ success: false, error: msg }, 500)
+    }
+
+    // 상태 코드 검증
+    if (fetchStatus >= 400 || csvText.length === 0) {
+      const msg = `시트 접근 실패 (HTTP ${fetchStatus}). 구글시트가 "웹에 게시(CSV)"되어 있는지 확인하세요.`
+      await c.env.DB.prepare(`
+        UPDATE bom_sheet_source SET last_synced_at=CURRENT_TIMESTAMP, last_status='error', last_message=?, last_products=0, last_rows=0 WHERE id=1
+      `).bind(msg).run()
+      return c.json({ success: false, error: msg, fetch_status: fetchStatus, csv_url: csvUrl, final_url: finalUrl }, 400)
+    }
+
+    // HTML 응답 감지 (로그인 페이지 등)
+    if (csvText.trimStart().startsWith('<')) {
+      const msg = 'CSV가 아닌 HTML 응답 수신. 시트가 "웹에 게시(CSV)"되어 있지 않거나 비공개입니다. 시트 → 파일 → 공유 → 웹에 게시 → CSV 형식으로 게시해주세요.'
+      await c.env.DB.prepare(`
+        UPDATE bom_sheet_source SET last_synced_at=CURRENT_TIMESTAMP, last_status='error', last_message=?, last_products=0, last_rows=0 WHERE id=1
+      `).bind(msg).run()
+      return c.json({ success: false, error: msg, csv_url: csvUrl, final_url: finalUrl }, 400)
+    }
+
+    // CSV 파싱
+    const table = parseCSV(csvText)
+    if (table.length === 0) {
+      const msg = 'CSV 파싱 결과 데이터가 없습니다.'
+      await c.env.DB.prepare(`
+        UPDATE bom_sheet_source SET last_synced_at=CURRENT_TIMESTAMP, last_status='error', last_message=?, last_products=0, last_rows=0 WHERE id=1
+      `).bind(msg).run()
+      return c.json({ success: false, error: msg }, 400)
+    }
+
+    // 6열 제품 BOM 형식 파싱 (파싱 로직은 프론트와 동일)
+    const productCodeRe = /^(PR|SF|PF|FG)\d{2,6}$/i
+    const unitRe = /^(g|kg|G|KG|Kg)$/
+    const unitOverride = String(src.unit_override || '').toLowerCase()
+
+    const rows: any[] = []
+    let headerSkipped = false
+    const skipped: any[] = []
+
+    for (let li = 0; li < table.length; li++) {
+      const cells = table[li].map(c => (c || '').trim())
+      if (cells.length < 5) { skipped.push({ line: li+1, reason: '컬럼 부족(<5)' }); continue }
+      const [c0, c1, c2, c3, c4, c5] = cells
+      // 헤더 스킵
+      if (!headerSkipped && /^제품\s*코드$|^품목\s*코드$|^코드$/.test(c0) && /^제품명$|^품목명$/.test(c1)) {
+        headerSkipped = true; continue
+      }
+      // 주석
+      if (c0.startsWith('#')) continue
+      if (!productCodeRe.test(c0)) { skipped.push({ line: li+1, reason: '제품코드 형식 아님', text: c0 }); continue }
+      const matName = c3 || ''
+      if (!matName) { skipped.push({ line: li+1, reason: '원료명 누락' }); continue }
+      const qty = parseFloat(String(c4 || '').replace(/[,\s]/g, ''))
+      if (isNaN(qty) || qty <= 0) { skipped.push({ line: li+1, reason: '수량 무효', text: c4 }); continue }
+      // 단위: override 우선, 없으면 시트값, 못 알아보면 g
+      let unit: string
+      if (unitOverride === 'g' || unitOverride === 'kg') unit = unitOverride
+      else if (unitRe.test(c5 || '')) unit = (c5 || 'g').toLowerCase()
+      else unit = 'g'
+      rows.push({
+        production_code: c0,
+        production_name: c1 || c0,
+        material_code: c2 || '',
+        material_name: matName,
+        quantity: qty,
+        unit
+      })
+    }
+
+    if (rows.length === 0) {
+      const msg = `유효한 데이터가 없습니다. 총 ${table.length}행 중 0행 파싱 성공, ${skipped.length}행 스킵.`
+      await c.env.DB.prepare(`
+        UPDATE bom_sheet_source SET last_synced_at=CURRENT_TIMESTAMP, last_status='empty', last_message=?, last_products=0, last_rows=0 WHERE id=1
+      `).bind(msg).run()
+      return c.json({ success: false, error: msg, total_lines: table.length, skipped: skipped.slice(0, 20) }, 400)
+    }
+
+    // === production_bom 저장 (import-product-bom과 동일 로직) ===
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        production_code TEXT UNIQUE NOT NULL,
+        production_name TEXT NOT NULL,
+        alias1 TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_bom (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        production_code TEXT NOT NULL,
+        material_code TEXT NOT NULL,
+        material_name TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        unit TEXT DEFAULT 'g',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_bom_code ON production_bom(production_code)`).run()
+
+    const autoRegisterMaterials = src.auto_register_materials !== 0
+    const byProduct: Record<string, any[]> = {}
+    const productNames: Record<string, string> = {}
+    for (const r of rows) {
+      const pc = r.production_code
+      if (!byProduct[pc]) byProduct[pc] = []
+      byProduct[pc].push(r)
+      if (r.production_name && !productNames[pc]) productNames[pc] = r.production_name
+    }
+    const productCodes = Object.keys(byProduct)
+
+    const existingMats: Record<string, string> = {}
+    const existingCodes: Set<string> = new Set()
+    if (autoRegisterMaterials) {
+      try {
+        const mRes = await c.env.DB.prepare(`SELECT item_code, item_name FROM master`).all<{item_code: string; item_name: string}>()
+        for (const m of (mRes.results || [])) {
+          existingMats[m.item_name] = m.item_code
+          existingCodes.add(m.item_code)
+        }
+      } catch (_) {}
+    }
+
+    let productsUpserted = 0, bomInserted = 0, materialsCreated = 0
+    let nextCodeNum = 1
+
+    for (const pc of productCodes) {
+      const pName = productNames[pc] || pc
+      await c.env.DB.prepare(`
+        INSERT INTO production_items (production_code, production_name)
+        VALUES (?, ?)
+        ON CONFLICT(production_code) DO UPDATE SET
+          production_name = excluded.production_name,
+          updated_at = CURRENT_TIMESTAMP
+      `).bind(pc, pName).run()
+      productsUpserted++
+
+      await c.env.DB.prepare(`DELETE FROM production_bom WHERE production_code = ?`).bind(pc).run()
+
+      for (const r of byProduct[pc]) {
+        const mName = r.material_name
+        const qty = Number(r.quantity)
+        if (!mName || !qty || qty <= 0) continue
+        let mCode = r.material_code
+
+        if (autoRegisterMaterials) {
+          if (!mCode && existingMats[mName]) mCode = existingMats[mName]
+          if (mCode && !existingCodes.has(mCode)) {
+            try {
+              await c.env.DB.prepare(`
+                INSERT OR IGNORE INTO master (item_code, item_name, category, unit)
+                VALUES (?, ?, '원료', ?)
+              `).bind(mCode, mName, r.unit).run()
+              existingCodes.add(mCode)
+              existingMats[mName] = mCode
+              materialsCreated++
+            } catch (_) {}
+          }
+          if (!mCode) {
+            while (existingCodes.has(`AUTO${String(nextCodeNum).padStart(4, '0')}`)) nextCodeNum++
+            mCode = `AUTO${String(nextCodeNum).padStart(4, '0')}`
+            try {
+              await c.env.DB.prepare(`
+                INSERT OR IGNORE INTO master (item_code, item_name, category, unit)
+                VALUES (?, ?, '원료', ?)
+              `).bind(mCode, mName, r.unit).run()
+              existingCodes.add(mCode)
+              existingMats[mName] = mCode
+              materialsCreated++
+              nextCodeNum++
+            } catch (_) {}
+          }
+        }
+        if (!mCode) mCode = 'UNK'
+
+        await c.env.DB.prepare(`
+          INSERT INTO production_bom (production_code, material_code, material_name, quantity, unit)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(pc, mCode, mName, qty, r.unit).run()
+        bomInserted++
+      }
+    }
+
+    const msg = `제품 ${productsUpserted}종, 원료라인 ${bomInserted}건 저장 완료 (원료 신규 등록 ${materialsCreated}건, 스킵 ${skipped.length}행).`
+    await c.env.DB.prepare(`
+      UPDATE bom_sheet_source SET
+        last_synced_at=CURRENT_TIMESTAMP,
+        last_status='success',
+        last_message=?,
+        last_products=?,
+        last_rows=?
+      WHERE id=1
+    `).bind(msg, productsUpserted, bomInserted).run()
+
+    return c.json({
+      success: true,
+      products_upserted: productsUpserted,
+      bom_inserted: bomInserted,
+      materials_created: materialsCreated,
+      total_lines: table.length,
+      skipped_count: skipped.length,
+      message: msg,
+      csv_url: csvUrl
+    })
+  } catch (e: any) {
+    console.error('[sheet-source/sync] error:', e)
+    try {
+      await c.env.DB.prepare(`
+        UPDATE bom_sheet_source SET last_synced_at=CURRENT_TIMESTAMP, last_status='error', last_message=? WHERE id=1
+      `).bind(e.message).run()
+    } catch (_) {}
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
 export default dough

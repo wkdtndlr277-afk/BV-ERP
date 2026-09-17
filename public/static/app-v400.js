@@ -61478,6 +61478,52 @@ async function renderDoughMaster() {
         </div>
       </div>
     </div>
+    <!-- v3.6.94: 구글시트 CSV 자동 동기화 -->
+    <div class="bg-white rounded-xl shadow-lg p-4 mb-4 border-l-4 border-green-500">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-lg font-bold text-gray-800">
+          <i class="fas fa-cloud-download-alt text-green-600 mr-2"></i>구글시트 자동 동기화 (제품 BOM)
+          <span class="ml-2 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">v3.6.94</span>
+        </h3>
+        <span id="sheet-source-status-badge" class="text-xs px-3 py-1 rounded-full bg-gray-200 text-gray-600">불러오는 중...</span>
+      </div>
+
+      <div class="grid grid-cols-12 gap-3 items-end">
+        <div class="col-span-12 md:col-span-7">
+          <label class="block text-xs text-gray-600 mb-1">시트 URL (docs.google.com/spreadsheets/...)</label>
+          <input id="sheet-source-url" type="text" placeholder="https://docs.google.com/spreadsheets/d/{ID}/pub?output=csv 또는 편집 URL"
+                 class="w-full border border-gray-300 rounded px-3 py-2 text-sm">
+        </div>
+        <div class="col-span-6 md:col-span-2">
+          <label class="block text-xs text-gray-600 mb-1">단위 강제</label>
+          <select id="sheet-source-unit" class="w-full border border-gray-300 rounded px-2 py-2 text-sm">
+            <option value="">시트 값 사용</option>
+            <option value="g">g로 강제</option>
+            <option value="kg">kg로 강제 (×1000)</option>
+          </select>
+        </div>
+        <div class="col-span-6 md:col-span-3 flex items-center gap-2 pb-1">
+          <input id="sheet-source-auto-reg" type="checkbox" checked class="w-4 h-4">
+          <label for="sheet-source-auto-reg" class="text-xs text-gray-700">누락 원료 자동 등록</label>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap gap-2 mt-3">
+        <button onclick="saveSheetSource()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 font-semibold">
+          <i class="fas fa-save mr-1"></i> 저장
+        </button>
+        <button onclick="syncSheetSourceNow()" id="sheet-sync-btn" class="bg-green-600 text-white px-4 py-2 rounded text-sm hover:bg-green-700 font-semibold">
+          <i class="fas fa-sync mr-1"></i> 지금 동기화
+        </button>
+        <button onclick="showSheetHelp()" class="bg-gray-200 text-gray-700 px-3 py-2 rounded text-xs hover:bg-gray-300">
+          <i class="fas fa-question-circle mr-1"></i> 시트 게시 방법
+        </button>
+        <div id="sheet-source-last-info" class="ml-auto text-xs text-gray-500 self-center"></div>
+      </div>
+
+      <div id="sheet-source-result" class="mt-3 hidden"></div>
+    </div>
+
     <div id="dough-container" class="bg-white rounded-xl shadow-lg overflow-hidden">
       <div class="text-center py-12 text-gray-400">
         <i class="fas fa-spinner fa-spin text-3xl"></i>
@@ -61486,6 +61532,230 @@ async function renderDoughMaster() {
     </div>
   `;
   await loadDoughList();
+  loadSheetSource(); // v3.6.94: 등록된 시트 정보 조회
+}
+
+// ===== v3.6.94: 구글시트 CSV 자동 동기화 =====
+async function loadSheetSource() {
+  try {
+    const res = await axios.get('/api/dough/sheet-source');
+    const badge = document.getElementById('sheet-source-status-badge');
+    const info = document.getElementById('sheet-source-last-info');
+    if (!res.data?.success) {
+      if (badge) { badge.className = 'text-xs px-3 py-1 rounded-full bg-gray-200 text-gray-600'; badge.textContent = '미등록'; }
+      return;
+    }
+    const src = res.data.source;
+    if (!res.data.registered || !src || !src.sheet_url) {
+      if (badge) { badge.className = 'text-xs px-3 py-1 rounded-full bg-gray-200 text-gray-600'; badge.textContent = '미등록'; }
+      if (info) info.textContent = '';
+      return;
+    }
+    // 필드 채우기
+    const urlInput = document.getElementById('sheet-source-url');
+    const unitSel = document.getElementById('sheet-source-unit');
+    const autoReg = document.getElementById('sheet-source-auto-reg');
+    if (urlInput) urlInput.value = src.sheet_url || '';
+    if (unitSel) unitSel.value = src.unit_override || '';
+    if (autoReg) autoReg.checked = !!src.auto_register_materials;
+
+    // 상태 배지
+    if (badge) {
+      if (src.last_status === 'success') {
+        badge.className = 'text-xs px-3 py-1 rounded-full bg-green-100 text-green-800';
+        badge.textContent = '✅ 마지막 성공';
+      } else if (src.last_status === 'error') {
+        badge.className = 'text-xs px-3 py-1 rounded-full bg-red-100 text-red-800';
+        badge.textContent = '❌ 마지막 실패';
+      } else if (src.last_status === 'empty') {
+        badge.className = 'text-xs px-3 py-1 rounded-full bg-yellow-100 text-yellow-800';
+        badge.textContent = '⚠ 빈 응답';
+      } else {
+        badge.className = 'text-xs px-3 py-1 rounded-full bg-blue-100 text-blue-800';
+        badge.textContent = '등록됨 (미동기화)';
+      }
+    }
+    if (info) {
+      const t = src.last_synced_at ? new Date(src.last_synced_at.replace(' ', 'T') + 'Z').toLocaleString('ko-KR') : '없음';
+      const msg = src.last_message ? ` · ${src.last_message}` : '';
+      const cnt = (src.last_products || src.last_rows)
+        ? ` · 제품 ${src.last_products || 0}종 / ${src.last_rows || 0}행`
+        : '';
+      info.textContent = `마지막 동기화: ${t}${cnt}${msg}`;
+    }
+  } catch (e) {
+    console.error('[loadSheetSource]', e);
+  }
+}
+
+async function saveSheetSource() {
+  const url = (document.getElementById('sheet-source-url').value || '').trim();
+  const unit = document.getElementById('sheet-source-unit').value || '';
+  const autoReg = document.getElementById('sheet-source-auto-reg').checked ? 1 : 0;
+
+  if (!url) {
+    alert('시트 URL을 입력해주세요.');
+    return;
+  }
+  try {
+    const res = await axios.post('/api/dough/sheet-source/register', {
+      sheet_url: url,
+      unit_override: unit,
+      auto_register_materials: autoReg
+    });
+    if (res.data?.success) {
+      alert('✅ 시트 URL이 저장되었습니다.\n[지금 동기화] 버튼으로 데이터를 가져오세요.');
+      loadSheetSource();
+    } else {
+      alert('❌ 저장 실패: ' + (res.data?.error || '알 수 없는 오류'));
+    }
+  } catch (e) {
+    alert('❌ 저장 실패: ' + (e.response?.data?.error || e.message));
+  }
+}
+
+async function syncSheetSourceNow() {
+  const btn = document.getElementById('sheet-sync-btn');
+  const result = document.getElementById('sheet-source-result');
+  if (!btn) return;
+
+  const url = (document.getElementById('sheet-source-url').value || '').trim();
+  if (!url) {
+    alert('먼저 시트 URL을 저장해주세요.');
+    return;
+  }
+
+  // URL이 변경됐다면 먼저 저장
+  const originalBtn = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> 저장 중...';
+
+  try {
+    // 항상 최신값으로 등록 후 동기화
+    const unit = document.getElementById('sheet-source-unit').value || '';
+    const autoReg = document.getElementById('sheet-source-auto-reg').checked ? 1 : 0;
+    await axios.post('/api/dough/sheet-source/register', {
+      sheet_url: url,
+      unit_override: unit,
+      auto_register_materials: autoReg
+    });
+
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> 동기화 중... (최대 30초)';
+    const res = await axios.post('/api/dough/sheet-source/sync', {});
+
+    if (res.data?.success) {
+      const d = res.data;
+      const html = `
+        <div class="bg-green-50 border border-green-300 rounded p-3 text-sm">
+          <div class="font-bold text-green-800 mb-2"><i class="fas fa-check-circle mr-1"></i> 동기화 완료</div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+            <div><span class="text-gray-600">제품 등록/수정:</span> <b>${d.products_upserted || 0}</b>종</div>
+            <div><span class="text-gray-600">BOM 행:</span> <b>${d.bom_inserted || 0}</b></div>
+            <div><span class="text-gray-600">원료 자동 등록:</span> <b>${d.materials_created || 0}</b></div>
+            <div><span class="text-gray-600">스킵된 행:</span> <b>${d.skipped_count || 0}</b></div>
+          </div>
+          ${d.message ? `<div class="mt-2 text-xs text-green-700">${d.message}</div>` : ''}
+        </div>
+      `;
+      result.innerHTML = html;
+      result.classList.remove('hidden');
+    } else {
+      const err = res.data?.error || '알 수 없는 오류';
+      result.innerHTML = `
+        <div class="bg-red-50 border border-red-300 rounded p-3 text-sm">
+          <div class="font-bold text-red-800 mb-1"><i class="fas fa-times-circle mr-1"></i> 동기화 실패</div>
+          <div class="text-red-700 text-xs">${err}</div>
+          ${err.includes('CSV') || err.includes('HTML') || err.includes('공개') || err.includes('게시') ? `
+            <div class="mt-2 text-xs text-gray-700 border-t border-red-200 pt-2">
+              <b>해결방법:</b> 시트 열기 → <b>파일</b> → <b>공유</b> → <b>웹에 게시</b> → <b>CSV 형식</b>으로 게시 → 나온 URL을 다시 입력
+              <button onclick="showSheetHelp()" class="ml-2 text-blue-600 underline">자세한 안내</button>
+            </div>
+          ` : ''}
+        </div>
+      `;
+      result.classList.remove('hidden');
+    }
+  } catch (e) {
+    const err = e.response?.data?.error || e.message;
+    result.innerHTML = `
+      <div class="bg-red-50 border border-red-300 rounded p-3 text-sm">
+        <div class="font-bold text-red-800 mb-1"><i class="fas fa-times-circle mr-1"></i> 동기화 오류</div>
+        <div class="text-red-700 text-xs">${err}</div>
+      </div>
+    `;
+    result.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalBtn;
+    loadSheetSource(); // 상태 배지 갱신
+  }
+}
+
+function showSheetHelp() {
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+      <div class="bg-blue-600 text-white p-4 flex items-center justify-between">
+        <h3 class="text-lg font-bold"><i class="fas fa-question-circle mr-2"></i>구글시트 CSV 게시 방법</h3>
+        <button onclick="this.closest('.fixed').remove()" class="text-white hover:bg-blue-700 rounded p-1 px-2"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="p-6 overflow-auto flex-1 text-sm text-gray-800">
+        <div class="bg-yellow-50 border-l-4 border-yellow-500 p-3 mb-4">
+          <b>⚠ 중요:</b> 구글시트를 "웹에 게시"하지 않으면 시스템이 데이터를 읽을 수 없습니다.
+          (단순히 "링크가 있는 모든 사용자와 공유"만으로는 부족합니다)
+        </div>
+
+        <div class="mb-4">
+          <h4 class="font-bold text-base mb-2 text-blue-800">📋 단계별 안내</h4>
+          <ol class="list-decimal list-inside space-y-2 pl-2">
+            <li>구글시트를 엽니다</li>
+            <li>상단 메뉴에서 <b>파일(File)</b> → <b>공유(Share)</b> → <b>웹에 게시(Publish to web)</b> 클릭</li>
+            <li>왼쪽 드롭다운: <b>"전체 문서"</b> 또는 원하는 <b>특정 시트</b> 선택</li>
+            <li>오른쪽 드롭다운: <b>"쉼표로 구분된 값(.csv)"</b> 선택 ⭐️</li>
+            <li><b>[게시]</b> 버튼 클릭 → 확인 대화상자에서 <b>[확인]</b></li>
+            <li>나오는 URL을 복사 (예: <code class="bg-gray-100 px-1">.../pub?output=csv</code>)</li>
+            <li>이 시스템의 <b>시트 URL 입력창</b>에 붙여넣고 [저장] → [지금 동기화]</li>
+          </ol>
+        </div>
+
+        <div class="mb-4">
+          <h4 class="font-bold text-base mb-2 text-blue-800">📊 시트 열 형식 (6열)</h4>
+          <table class="w-full text-xs border-collapse border">
+            <thead class="bg-gray-100">
+              <tr>
+                <th class="border p-2">A: 제품코드</th>
+                <th class="border p-2">B: 제품명</th>
+                <th class="border p-2">C: 원료코드</th>
+                <th class="border p-2">D: 원료명</th>
+                <th class="border p-2">E: 수량</th>
+                <th class="border p-2">F: 단위</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="border p-2">PR273</td>
+                <td class="border p-2">치아바타</td>
+                <td class="border p-2">M001</td>
+                <td class="border p-2">강력분</td>
+                <td class="border p-2">50</td>
+                <td class="border p-2">g</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="text-xs text-gray-600 mt-2">첫 행은 헤더로 자동 감지되어 건너뜁니다.</p>
+        </div>
+
+        <div class="bg-green-50 border-l-4 border-green-500 p-3">
+          <b>✅ 팁:</b> 게시된 URL은 <b>공개적으로 읽기 가능</b>합니다. 시트 내용을 편집하는 것은 여전히 "편집자"만 가능합니다.
+        </div>
+      </div>
+      <div class="p-3 bg-gray-100 flex justify-end">
+        <button onclick="this.closest('.fixed').remove()" class="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700 font-semibold">확인</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
 }
 
 async function loadDoughList() {
@@ -62074,6 +62344,11 @@ async function saveDough() {
 window.renderDoughMaster = renderDoughMaster;
 window.loadDoughList = loadDoughList;
 window.seedDoughDefaults = seedDoughDefaults;
+// v3.6.94: 구글시트 동기화
+window.loadSheetSource = loadSheetSource;
+window.saveSheetSource = saveSheetSource;
+window.syncSheetSourceNow = syncSheetSourceNow;
+window.showSheetHelp = showSheetHelp;
 window.showDoughEditor = showDoughEditor;
 window.addDoughMatRow = addDoughMatRow;
 window.closeDoughEditor = closeDoughEditor;

@@ -832,7 +832,9 @@ barcodeRoutes.get('/inventory', async (c) => {
   const lowStock = c.req.query('low_stock'); // 안전재고 미달 필터
   
   try {
-    // barcode_inventory와 inbound를 JOIN하여 실재고(remain_qty SUM) 반환
+    // v3.6.96 [A안]: 진실 원천 통일 - safety_stock은 master 테이블에서만 조회
+    // current_stock = inbound.remain_qty SUM (기존과 동일)
+    // safety_stock  = master.safety_stock (기존 bi.safety_stock 무시)
     let query = `
       SELECT 
         bi.id,
@@ -842,13 +844,15 @@ barcodeRoutes.get('/inventory', async (c) => {
         bi.category,
         bi.unit,
         COALESCE(inb.real_stock, 0) as current_stock,
-        bi.safety_stock,
+        COALESCE(m.safety_stock, 0) as safety_stock,
+        bi.safety_stock as legacy_safety_stock,
         bi.location,
         bi.table_type,
         bi.is_active,
         bi.created_at,
         bi.updated_at
       FROM barcode_inventory bi
+      LEFT JOIN master m ON bi.item_code = m.item_code
       LEFT JOIN (
         SELECT item_code, SUM(remain_qty) as real_stock
         FROM inbound
@@ -870,20 +874,22 @@ barcodeRoutes.get('/inventory', async (c) => {
     }
     
     if (lowStock === 'true') {
-      query += ` AND COALESCE(inb.real_stock, 0) < bi.safety_stock`;
+      // v3.6.96: master.safety_stock 기준
+      query += ` AND COALESCE(inb.real_stock, 0) < COALESCE(m.safety_stock, 0) AND COALESCE(m.safety_stock, 0) > 0`;
     }
     
     query += ` ORDER BY bi.item_name ASC`;
     
     const result = await c.env.DB.prepare(query).bind(...params).all();
     
-    // 통계 - inbound.remain_qty SUM 기반
+    // 통계 - v3.6.96: master.safety_stock 기준으로 통일
     const stats = await c.env.DB.prepare(`
       SELECT 
         COUNT(*) as total_items,
-        SUM(CASE WHEN COALESCE(inb.real_stock, 0) < bi.safety_stock THEN 1 ELSE 0 END) as low_stock_count,
+        SUM(CASE WHEN COALESCE(inb.real_stock, 0) < COALESCE(m.safety_stock, 0) AND COALESCE(m.safety_stock, 0) > 0 THEN 1 ELSE 0 END) as low_stock_count,
         SUM(CASE WHEN COALESCE(inb.real_stock, 0) = 0 THEN 1 ELSE 0 END) as zero_stock_count
       FROM barcode_inventory bi
+      LEFT JOIN master m ON bi.item_code = m.item_code
       LEFT JOIN (
         SELECT item_code, SUM(remain_qty) as real_stock
         FROM inbound
@@ -904,12 +910,19 @@ barcodeRoutes.get('/inventory', async (c) => {
 });
 
 // 바코드 재고 상세 조회
+// v3.6.96 [A안]: safety_stock은 master에서 가져옴 (단일 진실 원천)
 barcodeRoutes.get('/inventory/:barcode', async (c) => {
   const barcode = c.req.param('barcode');
   
   try {
     const item = await c.env.DB.prepare(`
-      SELECT * FROM barcode_inventory WHERE barcode = ? AND is_active = 1
+      SELECT 
+        bi.*,
+        COALESCE(m.safety_stock, 0) as safety_stock,
+        bi.safety_stock as legacy_safety_stock
+      FROM barcode_inventory bi
+      LEFT JOIN master m ON bi.item_code = m.item_code
+      WHERE bi.barcode = ? AND bi.is_active = 1
     `).bind(barcode).first();
     
     if (!item) {
@@ -971,6 +984,15 @@ barcodeRoutes.post('/inventory', async (c) => {
       table_type || 'master'
     ).run();
     
+    // v3.6.96 [A안]: master 테이블에도 safety_stock 동기화 (단일 진실 원천)
+    if (safety_stock !== undefined && safety_stock !== null && Number(safety_stock) > 0) {
+      try {
+        await c.env.DB.prepare(`
+          UPDATE master SET safety_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+        `).bind(Number(safety_stock), item_code).run();
+      } catch (_) { /* master에 없으면 무시 */ }
+    }
+    
     // 초기 재고가 있으면 이력 기록
     if (initial_stock && initial_stock > 0) {
       await c.env.DB.prepare(`
@@ -987,6 +1009,7 @@ barcodeRoutes.post('/inventory', async (c) => {
 });
 
 // 바코드 재고 수정
+// v3.6.96 [A안]: safety_stock은 master 테이블에도 동기 반영 (단일 진실 원천)
 barcodeRoutes.put('/inventory/:barcode', async (c) => {
   const barcode = c.req.param('barcode');
   
@@ -994,6 +1017,7 @@ barcodeRoutes.put('/inventory/:barcode', async (c) => {
     const body = await c.req.json();
     const { item_name, category, unit, safety_stock, location } = body;
     
+    // 1) barcode_inventory (하위호환 유지)
     await c.env.DB.prepare(`
       UPDATE barcode_inventory SET
         item_name = COALESCE(?, item_name),
@@ -1005,7 +1029,19 @@ barcodeRoutes.put('/inventory/:barcode', async (c) => {
       WHERE barcode = ?
     `).bind(item_name, category, unit, safety_stock, location, barcode).run();
     
-    return c.json({ success: true, message: '수정되었습니다.' });
+    // 2) master 테이블에도 동기화 (safety_stock 진실 원천)
+    if (safety_stock !== undefined && safety_stock !== null) {
+      const biRow = await c.env.DB.prepare(`
+        SELECT item_code FROM barcode_inventory WHERE barcode = ?
+      `).bind(barcode).first<{item_code: string}>();
+      if (biRow?.item_code) {
+        await c.env.DB.prepare(`
+          UPDATE master SET safety_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+        `).bind(Number(safety_stock), biRow.item_code).run();
+      }
+    }
+    
+    return c.json({ success: true, message: '수정되었습니다. (master 안전재고 동기화 완료)' });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }

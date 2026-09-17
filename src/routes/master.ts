@@ -311,6 +311,15 @@ masterRoutes.put('/:item_code', async (c) => {
         ).run();
       }
       
+      // v3.6.96 [A안]: barcode_inventory에도 safety_stock 역동기화 (진실 원천 정합성 유지)
+      if (safety_stock !== undefined && safety_stock !== null) {
+        try {
+          await c.env.DB.prepare(`
+            UPDATE barcode_inventory SET safety_stock = ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?
+          `).bind(Number(safety_stock), item_code).run();
+        } catch (_) { /* barcode_inventory 없거나 무관하면 무시 */ }
+      }
+      
       return c.json({ success: true, message: '품목이 수정되었습니다.' });
     }
   } catch (error: any) {
@@ -782,6 +791,71 @@ masterRoutes.delete('/category/:category/all', async (c) => {
     message: `${category} ${itemCodes.length}개 및 관련 데이터가 삭제되었습니다.`
   });
 });
+
+// ============================================
+// v3.6.96 [A안]: 안전재고 진실 원천 통일 마이그레이션
+// ============================================
+
+// GET /api/master/safety-stock/diff — 현재 master vs barcode_inventory 불일치 조회
+masterRoutes.get('/safety-stock/diff', async (c) => {
+  try {
+    const res = await c.env.DB.prepare(`
+      SELECT 
+        m.item_code, m.item_name, m.category,
+        COALESCE(m.safety_stock, 0) as master_safety,
+        COALESCE(bi.safety_stock, 0) as barcode_safety,
+        (COALESCE(m.safety_stock, 0) - COALESCE(bi.safety_stock, 0)) as diff
+      FROM master m
+      INNER JOIN barcode_inventory bi ON m.item_code = bi.item_code AND bi.is_active = 1
+      WHERE ABS(COALESCE(m.safety_stock, 0) - COALESCE(bi.safety_stock, 0)) > 0.001
+      ORDER BY ABS(COALESCE(m.safety_stock, 0) - COALESCE(bi.safety_stock, 0)) DESC
+    `).all()
+    return c.json({ success: true, data: res.results || [], total: (res.results || []).length })
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// POST /api/master/safety-stock/sync — master → barcode_inventory 일괄 동기화
+// body: { direction?: 'master-to-barcode' | 'barcode-to-master' } (기본 master-to-barcode)
+masterRoutes.post('/safety-stock/sync', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}))
+    const direction = body?.direction === 'barcode-to-master' ? 'barcode-to-master' : 'master-to-barcode'
+    
+    if (direction === 'master-to-barcode') {
+      // master.safety_stock을 barcode_inventory.safety_stock으로 복사
+      const result = await c.env.DB.prepare(`
+        UPDATE barcode_inventory
+        SET safety_stock = COALESCE((SELECT safety_stock FROM master WHERE master.item_code = barcode_inventory.item_code), safety_stock),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE EXISTS (SELECT 1 FROM master WHERE master.item_code = barcode_inventory.item_code)
+      `).run()
+      return c.json({
+        success: true,
+        direction: 'master → barcode_inventory',
+        rows_affected: result.meta?.changes || 0,
+        message: 'master.safety_stock을 barcode_inventory에 복사했습니다.'
+      })
+    } else {
+      // barcode_inventory.safety_stock → master.safety_stock (역방향, 특수한 경우만)
+      const result = await c.env.DB.prepare(`
+        UPDATE master
+        SET safety_stock = COALESCE((SELECT safety_stock FROM barcode_inventory WHERE barcode_inventory.item_code = master.item_code AND barcode_inventory.is_active = 1), safety_stock),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE EXISTS (SELECT 1 FROM barcode_inventory WHERE barcode_inventory.item_code = master.item_code AND barcode_inventory.is_active = 1)
+      `).run()
+      return c.json({
+        success: true,
+        direction: 'barcode_inventory → master',
+        rows_affected: result.meta?.changes || 0,
+        message: 'barcode_inventory.safety_stock을 master에 복사했습니다.'
+      })
+    }
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
 
 // ============================================
 // v3.6.95: 제품 상세 정보 (18컬럼 엑셀 스타일)

@@ -1284,7 +1284,7 @@ function renderPage(page) {
     case 'suppliers': renderSuppliers(); break;
     case 'admin': renderAdmin(); break;
     case 'process-quality': renderProcessQuality(); break;
-    case 'product-catalog': renderProductCatalog(); break;
+    case 'product-catalog': renderProductsManagement(document.getElementById('page-content')); break;
     case 'microbial-test': renderMicrobialTest(); break;
     case 'levain-monitor': renderLevainMonitor(); break;
     case 'system-management': renderSystemManagement(); break;
@@ -41775,6 +41775,7 @@ window.showEditProductModal = showEditProductModal;
 window.updateProduct = updateProduct;
 window.deleteSystemProduct = deleteSystemProduct;
 // v3.6.95: 제품 관리 새 UI (18컬럼 엑셀 스타일)
+window.renderProductsManagement = renderProductsManagement;
 window.loadProductDetailsList = loadProductDetailsList;
 window.filterProductDetails = filterProductDetails;
 window.quickCreateProduct = quickCreateProduct;

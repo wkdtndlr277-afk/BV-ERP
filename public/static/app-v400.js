@@ -40280,10 +40280,11 @@ async function renderProductsManagement(container) {
             </div>
           </div>
           <div class="flex gap-2 items-center">
-            <input type="text" id="pd-quick-name" placeholder="제품명 입력 후 Enter → 자동등록"
+            <input type="text" id="pd-quick-name" placeholder="제품명 입력 → Enter → 단위 선택 → Enter → 등록"
                    class="border rounded-lg px-3 py-2 text-sm w-64"
-                   onkeydown="if(event.key==='Enter'){event.preventDefault();quickCreateProduct();}">
-            <select id="pd-quick-unit" class="border rounded-lg px-2 py-2 text-sm">
+                   onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('pd-quick-unit').focus();}">
+            <select id="pd-quick-unit" class="border rounded-lg px-2 py-2 text-sm"
+                    onkeydown="if(event.key==='Enter'){event.preventDefault();quickCreateProduct();}">
               <option value="EA">EA</option>
               <option value="BOX">BOX</option>
               <option value="kg">kg</option>

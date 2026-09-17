@@ -51,7 +51,10 @@ dashboardRoutes.get('/', async (c) => {
   let expiringCount = 0;
   
   try {
-    // 1. ★★★ D1 inbound 테이블에서 원료별 실재고(잔량 합계) 조회 ★★★
+    // 1. ★★★ v3.6.183: 바코드 재고관리(material-inventory)와 필터 통일 ★★★
+    //   - 제외 코드: R169~R172 (구형/무효), RM184(정제수), RM266, RM267 (입고대상 아님)
+    //   - R*/RM* 원료만, RT* 제외, is_active=1인 원료만
+    //   - inbound.remain_qty SUM (합격 LOT의 잔량 합계)를 실재고로 사용
     const realStockResult = await c.env.DB.prepare(`
       SELECT 
         m.item_code,
@@ -63,7 +66,12 @@ dashboardRoutes.get('/', async (c) => {
       LEFT JOIN inbound i ON m.item_code = i.item_code 
         AND i.remain_qty > 0 
         AND i.quality_status = '합격'
-      WHERE m.category = '원료' AND m.safety_stock > 0
+      WHERE m.category = '원료' 
+        AND m.safety_stock > 0
+        AND (m.item_code LIKE 'R%' OR m.item_code LIKE 'RM%')
+        AND m.item_code NOT LIKE 'RT%'
+        AND m.item_code NOT IN ('R169','R170','R171','R172','RM184','RM266','RM267')
+        AND COALESCE(m.is_active, 1) = 1
       GROUP BY m.item_code, m.item_name, m.unit, m.safety_stock
       HAVING real_stock < m.safety_stock
       ORDER BY (m.safety_stock - real_stock) DESC

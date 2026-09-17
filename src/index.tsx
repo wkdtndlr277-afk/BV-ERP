@@ -44,6 +44,10 @@ import debugMasterRoutes from './routes/debug-master';
 import levainRoutes from './routes/levain';
 import processTrackingRoutes from './routes/process-tracking';
 import csimportRoutes from './routes/checksheet-import';
+// ★★★ v3.6.185: 새 제품 관리 구조 ★★★
+import brandsRoutes from './routes/brands';
+import productsV2Routes from './routes/products-v2';
+import uploadsRoutes from './routes/uploads';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -92,6 +96,10 @@ app.route('/api/debug-master', debugMasterRoutes);
 app.route('/api/levain', levainRoutes);
 app.route('/api/process-tracking', processTrackingRoutes);
 app.route('/api/checksheet-import', csimportRoutes);
+// ★★★ v3.6.185: 새 제품 관리 구조 ★★★
+app.route('/api/brands', brandsRoutes);
+app.route('/api/products-v2', productsV2Routes);
+app.route('/api/uploads', uploadsRoutes);
 
 // ★★★ v3.6.81: 품목 검색 API (바코드 수기등록용) ★★★
 app.get('/api/items/search', async (c) => {

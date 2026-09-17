@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.182';
-const APP_BUILD = '20260807-3';
+const APP_VERSION = '3.6.185';
+const APP_BUILD = '20260917-1';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -40260,359 +40260,622 @@ async function deleteSystemMaterial(code) {
   }
 }
 
-// ===== 제품 관리 (v3.6.95: 엑셀 스타일 18컬럼 + 스크롤형 + 인라인 상세) =====
-let __productDetailsCache = [];
+// ===== 제품 관리 v2 (v3.6.185: 브랜드-제품 계층 + R2 업로드 + 세로 정렬 폼) =====
+let __brandsCache = [];
+let __productsV2Cache = [];
+let __channelsCache = [];
 
 async function renderProductsManagement(container) {
   if (!container) { console.error('renderProductsManagement: container is null'); return; }
 
   container.innerHTML = `
-    <div class="space-y-3">
-      <!-- 툴바: 빠른 등록 + 검색 -->
+    <div class="space-y-4">
+      <!-- 브랜드 관리 섹션 -->
+      <div class="bg-white rounded-lg border p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-lg font-semibold text-gray-800">
+            <i class="fas fa-tags mr-2 text-purple-600"></i>브랜드 관리
+          </h3>
+          <button onclick="openBrandModal()" class="px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm">
+            <i class="fas fa-plus mr-1"></i>새 브랜드
+          </button>
+        </div>
+        <div id="brands-list" class="flex flex-wrap gap-2">
+          <div class="text-gray-400 text-sm">로딩 중...</div>
+        </div>
+      </div>
+
+      <!-- 제품 필터 -->
       <div class="bg-white rounded-lg border p-3">
         <div class="flex flex-wrap gap-2 items-center">
           <div class="flex-1 min-w-[240px]">
             <div class="relative">
-              <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm"></i>
-              <input type="text" id="pd-search" placeholder="상품코드 또는 제품명 입력 (실시간 검색)"
-                     class="w-full border rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
-                     oninput="filterProductDetails()">
+              <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
+              <input id="productv2-search" type="text" placeholder="대표코드/브랜드/제품명 검색..."
+                     class="w-full pl-9 pr-3 py-2 border rounded-lg" oninput="filterProductsV2()">
             </div>
           </div>
-          <div class="flex gap-2 items-center">
-            <input type="text" id="pd-quick-name" placeholder="제품명 입력 → Enter → 단위 선택 → Enter → 등록"
-                   class="border rounded-lg px-3 py-2 text-sm w-64"
-                   onkeydown="if(event.key==='Enter'){event.preventDefault();document.getElementById('pd-quick-unit').focus();}">
-            <select id="pd-quick-unit" class="border rounded-lg px-2 py-2 text-sm"
-                    onkeydown="if(event.key==='Enter'){event.preventDefault();quickCreateProduct();}">
-              <option value="EA">EA</option>
-              <option value="BOX">BOX</option>
-              <option value="kg">kg</option>
-            </select>
-            <button onclick="quickCreateProduct()" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 text-sm font-semibold whitespace-nowrap">
-              <i class="fas fa-plus mr-1"></i>빠른 등록
-            </button>
-          </div>
-          <div class="text-xs text-gray-500 ml-auto">
-            <span id="pd-count">0</span>건 · <span class="text-blue-600">행 클릭 → 상세 편집</span>
-          </div>
+          <select id="productv2-brand-filter" onchange="filterProductsV2()" class="border rounded-lg px-3 py-2">
+            <option value="">전체 브랜드</option>
+          </select>
+          <select id="productv2-channel-filter" onchange="filterProductsV2()" class="border rounded-lg px-3 py-2">
+            <option value="">전체 채널</option>
+          </select>
+          <button onclick="openProductModalV2()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <i class="fas fa-plus mr-1"></i>신규 제품 등록
+          </button>
+        </div>
+        <div class="mt-2 text-xs text-gray-500">
+          <span id="productv2-count">0</span>개 제품 · 
+          <span id="brandv2-count">0</span>개 브랜드
         </div>
       </div>
 
-      <!-- 스크롤형 테이블 (엑셀 스타일 18컬럼) -->
-      <div class="bg-white rounded-lg border">
-        <div class="overflow-auto" style="max-height: calc(100vh - 260px);">
-          <table class="text-xs border-collapse" style="min-width: 2400px;">
-            <thead class="sticky top-0 bg-gray-100 z-10">
-              <tr>
-                <th class="border px-2 py-2 text-center bg-gray-200 sticky left-0 z-20" style="min-width:60px">상품<br>번호</th>
-                <th class="border px-2 py-2 text-center" style="min-width:70px">제품사진</th>
-                <th class="border px-2 py-2 text-center bg-blue-50 sticky z-20" style="left:60px;min-width:90px">상품코드</th>
-                <th class="border px-2 py-2 text-center" style="min-width:100px">판매채널</th>
-                <th class="border px-2 py-2 text-center bg-yellow-50" style="min-width:200px">상품명</th>
-                <th class="border px-2 py-2 text-center" style="min-width:140px">품목제조<br>보고번호</th>
-                <th class="border px-2 py-2 text-center" style="min-width:100px">보관방법</th>
-                <th class="border px-2 py-2 text-center" style="min-width:90px">소비기한</th>
-                <th class="border px-2 py-2 text-center" style="min-width:110px">소비기한<br>조건</th>
-                <th class="border px-2 py-2 text-center" style="min-width:90px">포장단위</th>
-                <th class="border px-2 py-2 text-center" style="min-width:110px">포장사이즈</th>
-                <th class="border px-2 py-2 text-center" style="min-width:110px">포장재질</th>
-                <th class="border px-2 py-2 text-center" style="min-width:110px">박스사이즈</th>
-                <th class="border px-2 py-2 text-center" style="min-width:90px">BOX<br>입수량</th>
-                <th class="border px-2 py-2 text-center" style="min-width:240px">원재료명</th>
-                <th class="border px-2 py-2 text-center" style="min-width:110px">제품사이즈</th>
-                <th class="border px-2 py-2 text-center" style="min-width:100px">제품등록일</th>
-                <th class="border px-2 py-2 text-center" style="min-width:160px">비고</th>
-                <th class="border px-2 py-2 text-center bg-gray-200" style="min-width:90px">관리</th>
-              </tr>
-            </thead>
-            <tbody id="pd-tbody" class="divide-y">
-              <tr><td colspan="19" class="text-center py-8 text-gray-400"><i class="fas fa-spinner fa-spin"></i> 로딩 중...</td></tr>
-            </tbody>
-          </table>
-        </div>
+      <!-- 제품 목록 (브랜드별 그룹) -->
+      <div id="products-v2-container" class="space-y-3">
+        <div class="bg-white rounded-lg border p-6 text-center text-gray-400">로딩 중...</div>
       </div>
     </div>
   `;
 
-  await loadProductDetailsList();
+  await loadBrandsAndProducts();
 }
 
-async function loadProductDetailsList() {
+async function loadBrandsAndProducts() {
   try {
-    const res = await axios.get('/api/master/products/details');
-    if (!res.data?.success) throw new Error(res.data?.error || '로드 실패');
-    __productDetailsCache = res.data.data || [];
-    renderProductDetailsRows(__productDetailsCache);
+    const [brandsRes, productsRes] = await Promise.all([
+      axios.get('/api/brands'),
+      axios.get('/api/products-v2')
+    ]);
+    __brandsCache = brandsRes.data.data || brandsRes.data.brands || [];
+    __productsV2Cache = productsRes.data.data || productsRes.data.products || [];
+    __channelsCache = productsRes.data.channels || [];
+
+    renderBrandsList();
+    renderBrandFilterOptions();
+    renderChannelFilterOptions();
+    renderProductsV2Grouped();
   } catch (e) {
-    const tbody = document.getElementById('pd-tbody');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="19" class="text-center py-8 text-red-600">에러: ${e.message}</td></tr>`;
+    console.error('loadBrandsAndProducts error:', e);
+    const container = document.getElementById('products-v2-container');
+    if (container) container.innerHTML = '<div class="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">데이터 로드 실패: ' + (e.response?.data?.error || e.message) + '</div>';
   }
 }
 
-function renderProductDetailsRows(list) {
-  const tbody = document.getElementById('pd-tbody');
-  const cnt = document.getElementById('pd-count');
-  if (cnt) cnt.textContent = list.length;
-  if (!tbody) return;
-  if (list.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="19" class="text-center py-8 text-gray-400">등록된 제품이 없습니다. 상단에서 [빠른 등록]으로 추가하세요.</td></tr>`;
+function renderBrandsList() {
+  const el = document.getElementById('brands-list');
+  if (!el) return;
+  if (__brandsCache.length === 0) {
+    el.innerHTML = '<div class="text-gray-400 text-sm">등록된 브랜드가 없습니다. "새 브랜드" 버튼으로 추가하세요.</div>';
     return;
   }
-  const esc = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-  tbody.innerHTML = list.map((p, i) => `
-    <tr class="hover:bg-blue-50 cursor-pointer pd-row" data-code="${esc(p.item_code)}"
-        data-search="${esc((p.item_code + ' ' + (p.item_name||'') + ' ' + (p.product_name||'')).toLowerCase())}"
-        onclick="openProductDetailModal('${esc(p.item_code)}')">
-      <td class="border px-2 py-1 text-center bg-gray-50 sticky left-0 font-semibold text-gray-500 text-xs">${i + 1}</td>
-      <td class="border px-1 py-1 text-center">
-        ${p.photo_url
-          ? `<img src="${esc(p.photo_url)}" class="w-12 h-12 object-cover mx-auto rounded" onerror="this.style.display='none'">`
-          : `<div class="w-12 h-12 mx-auto bg-gray-100 rounded flex items-center justify-center text-gray-300"><i class="fas fa-image"></i></div>`}
-      </td>
-      <td class="border px-2 py-1 text-center font-mono text-xs bg-blue-50 sticky font-bold text-blue-700" style="left:60px">${esc(p.item_code)}</td>
-      <td class="border px-2 py-1 text-center">${esc(p.sales_channel) || '-'}</td>
-      <td class="border px-2 py-1 bg-yellow-50 font-medium">${esc(p.item_name || p.product_name)}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.manufacture_report_no) || '-'}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.storage_method) || '-'}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.shelf_life) || '-'}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.shelf_life_condition) || '-'}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.package_unit) || '-'}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.package_size) || '-'}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.package_material) || '-'}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.box_size) || '-'}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.box_qty) || '-'}</td>
-      <td class="border px-2 py-1 text-xs whitespace-normal" style="max-width:240px">
-        <div class="truncate" title="${esc(p.ingredients)}">${esc(p.ingredients) || '-'}</div>
-      </td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.product_size) || '-'}</td>
-      <td class="border px-2 py-1 text-center text-xs">${esc(p.registered_at) || '-'}</td>
-      <td class="border px-2 py-1 text-xs whitespace-normal" style="max-width:160px">
-        <div class="truncate" title="${esc(p.memo)}">${esc(p.memo) || '-'}</div>
-      </td>
-      <td class="border px-2 py-1 text-center bg-gray-50" onclick="event.stopPropagation()">
-        <button onclick="openProductDetailModal('${esc(p.item_code)}')" class="p-1 text-blue-600 hover:bg-blue-100 rounded" title="편집">
-          <i class="fas fa-edit"></i>
-        </button>
-        <button onclick="deleteSystemProduct('${esc(p.item_code)}')" class="p-1 text-red-600 hover:bg-red-100 rounded" title="삭제">
-          <i class="fas fa-trash"></i>
-        </button>
-      </td>
-    </tr>
+  el.innerHTML = __brandsCache.map(b => `
+    <div class="inline-flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-lg px-3 py-1.5">
+      <span class="text-xs font-mono text-purple-600">${escapeHtml(b.brand_code)}</span>
+      <span class="font-medium text-purple-900">${escapeHtml(b.brand_name)}</span>
+      <span class="text-xs text-gray-500">(${b.product_count || 0})</span>
+      <button onclick="openBrandModal('${b.brand_code}')" class="text-blue-600 hover:text-blue-800" title="수정">
+        <i class="fas fa-edit text-xs"></i>
+      </button>
+      <button onclick="deleteBrand('${b.brand_code}')" class="text-red-600 hover:text-red-800" title="삭제">
+        <i class="fas fa-trash text-xs"></i>
+      </button>
+    </div>
+  `).join('');
+  const countEl = document.getElementById('brandv2-count');
+  if (countEl) countEl.textContent = __brandsCache.length;
+}
+
+function renderBrandFilterOptions() {
+  const sel = document.getElementById('productv2-brand-filter');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">전체 브랜드</option>' +
+    __brandsCache.map(b => `<option value="${escapeHtml(b.brand_code)}">${escapeHtml(b.brand_name)} (${b.brand_code})</option>`).join('');
+  sel.value = current;
+}
+
+function renderChannelFilterOptions() {
+  const sel = document.getElementById('productv2-channel-filter');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">전체 채널</option>' +
+    __channelsCache.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  sel.value = current;
+}
+
+function getFilteredProductsV2() {
+  const q = (document.getElementById('productv2-search')?.value || '').toLowerCase().trim();
+  const brand = document.getElementById('productv2-brand-filter')?.value || '';
+  const channel = document.getElementById('productv2-channel-filter')?.value || '';
+  return __productsV2Cache.filter(p => {
+    if (brand && p.brand_code !== brand) return false;
+    if (channel && p.sales_channel !== channel) return false;
+    if (q) {
+      const hay = `${p.product_code} ${p.brand_code} ${p.brand_name || ''} ${p.product_name} ${p.sales_channel || ''} ${p.barcode_number || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderProductsV2Grouped() {
+  const container = document.getElementById('products-v2-container');
+  if (!container) return;
+
+  const filtered = getFilteredProductsV2();
+  const countEl = document.getElementById('productv2-count');
+  if (countEl) countEl.textContent = filtered.length;
+
+  if (filtered.length === 0) {
+    container.innerHTML = `
+      <div class="bg-white rounded-lg border p-8 text-center text-gray-400">
+        <i class="fas fa-box-open text-4xl mb-2"></i>
+        <div>등록된 제품이 없습니다.</div>
+        <div class="text-sm mt-1">"신규 제품 등록" 버튼으로 첫 제품을 추가하세요.</div>
+      </div>
+    `;
+    return;
+  }
+
+  // 브랜드별 그룹핑
+  const groupMap = new Map();
+  filtered.forEach(p => {
+    const key = p.brand_code || '__none__';
+    if (!groupMap.has(key)) groupMap.set(key, { brand_code: p.brand_code, brand_name: p.brand_name || '(브랜드 없음)', items: [] });
+    groupMap.get(key).items.push(p);
+  });
+
+  container.innerHTML = Array.from(groupMap.values()).map(group => `
+    <div class="bg-white rounded-lg border overflow-hidden">
+      <div class="bg-purple-50 border-b border-purple-200 px-4 py-2 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <i class="fas fa-tag text-purple-600"></i>
+          <span class="font-mono text-xs text-purple-700">${escapeHtml(group.brand_code || '-')}</span>
+          <span class="font-semibold text-purple-900">${escapeHtml(group.brand_name)}</span>
+          <span class="text-xs text-gray-500">· ${group.items.length}개 제품</span>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-gray-50 text-xs text-gray-600 uppercase">
+            <tr>
+              <th class="px-3 py-2 text-left">사진</th>
+              <th class="px-3 py-2 text-left">제품코드</th>
+              <th class="px-3 py-2 text-left">제품명</th>
+              <th class="px-3 py-2 text-left">판매채널</th>
+              <th class="px-3 py-2 text-left">바코드</th>
+              <th class="px-3 py-2 text-left">유통기한</th>
+              <th class="px-3 py-2 text-left">포장</th>
+              <th class="px-3 py-2 text-center">액션</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y">
+            ${group.items.map(p => `
+              <tr class="hover:bg-gray-50">
+                <td class="px-3 py-2">
+                  ${p.photo_url ? `<img src="${escapeHtml(p.photo_url)}" class="w-12 h-12 object-cover rounded border cursor-pointer" onclick="window.open('${escapeHtml(p.photo_url)}','_blank')">` : '<div class="w-12 h-12 bg-gray-100 rounded border flex items-center justify-center text-gray-300"><i class="fas fa-image"></i></div>'}
+                </td>
+                <td class="px-3 py-2 font-mono text-xs text-gray-600">${escapeHtml(p.product_code)}</td>
+                <td class="px-3 py-2 font-medium">${escapeHtml(p.product_name)}</td>
+                <td class="px-3 py-2"><span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">${escapeHtml(p.sales_channel || '-')}</span></td>
+                <td class="px-3 py-2">
+                  <div class="text-xs">${escapeHtml(p.barcode_number || '-')}</div>
+                  ${p.barcode_image_url ? `<button onclick="window.open('${escapeHtml(p.barcode_image_url)}','_blank')" class="text-blue-600 text-xs hover:underline"><i class="fas fa-image"></i> 이미지</button>` : ''}
+                </td>
+                <td class="px-3 py-2 text-xs">${escapeHtml(p.shelf_life || '-')}</td>
+                <td class="px-3 py-2 text-xs">${escapeHtml(p.package_size || '-')} / ${escapeHtml(p.package_unit || '-')}</td>
+                <td class="px-3 py-2 text-center">
+                  <button onclick="openProductModalV2('${p.product_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="수정"><i class="fas fa-edit"></i></button>
+                  <button onclick="deleteProductV2('${p.product_code}')" class="text-red-600 hover:text-red-800" title="삭제"><i class="fas fa-trash"></i></button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
   `).join('');
 }
 
-function filterProductDetails() {
-  const q = (document.getElementById('pd-search').value || '').toLowerCase().trim();
-  if (!q) {
-    renderProductDetailsRows(__productDetailsCache);
-    return;
-  }
-  const filtered = __productDetailsCache.filter(p =>
-    (p.item_code || '').toLowerCase().includes(q) ||
-    (p.item_name || '').toLowerCase().includes(q) ||
-    (p.product_name || '').toLowerCase().includes(q)
-  );
-  renderProductDetailsRows(filtered);
+function filterProductsV2() {
+  renderProductsV2Grouped();
 }
 
-async function quickCreateProduct() {
-  const nameInput = document.getElementById('pd-quick-name');
-  const unitSel = document.getElementById('pd-quick-unit');
-  const name = (nameInput.value || '').trim();
-  if (!name) {
-    showToast('제품명을 입력하세요', 'warning');
-    nameInput.focus();
-    return;
-  }
-  try {
-    const res = await axios.post('/api/master/products/quick-create', {
-      item_name: name,
-      unit: unitSel.value
-    });
-    if (!res.data?.success) throw new Error(res.data?.error || '등록 실패');
-    showToast(`✅ ${res.data.item_code} · ${name} 등록`, 'success');
-    nameInput.value = '';
-    await loadProductDetailsList();
-    // 검색창 초기화 후 새 제품 강조
-    const searchInput = document.getElementById('pd-search');
-    if (searchInput) { searchInput.value = res.data.item_code; filterProductDetails(); }
-    // 상세 편집 자동 열기
-    setTimeout(() => openProductDetailModal(res.data.item_code), 300);
-  } catch (e) {
-    showToast('등록 실패: ' + (e.response?.data?.error || e.message), 'error');
-  }
-}
+// ===== 브랜드 모달 =====
+function openBrandModal(brandCode) {
+  const isEdit = !!brandCode;
+  const brand = isEdit ? __brandsCache.find(b => b.brand_code === brandCode) : null;
+  if (isEdit && !brand) { showToast('브랜드를 찾을 수 없습니다', 'error'); return; }
 
-// ===== 제품 상세 편집 모달 (18컬럼) =====
-async function openProductDetailModal(code) {
-  const p = __productDetailsCache.find(x => x.item_code === code);
-  if (!p) { showToast('제품을 찾을 수 없습니다', 'error'); return; }
-
-  const esc = (s) => String(s ?? '').replace(/"/g,'&quot;');
-  let modal = document.getElementById('pd-detail-modal');
-  if (modal) modal.remove();
-  modal = document.createElement('div');
-  modal.id = 'pd-detail-modal';
-  modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
-  modal.innerHTML = `
-    <div class="bg-white rounded-xl shadow-2xl max-w-5xl w-full mx-4 max-h-[95vh] overflow-hidden flex flex-col">
-      <div class="bg-green-600 text-white p-4 flex items-center justify-between">
-        <h3 class="text-lg font-bold">
-          <i class="fas fa-box mr-2"></i>제품 상세 정보 편집
-          <span class="text-sm font-mono ml-3 bg-white bg-opacity-20 px-2 py-1 rounded">${esc(p.item_code)}</span>
-        </h3>
-        <button onclick="document.getElementById('pd-detail-modal').remove()" class="text-white hover:bg-green-700 rounded p-1 px-2">
-          <i class="fas fa-times"></i>
-        </button>
-      </div>
-      <div class="p-5 overflow-auto flex-1">
-        <div class="grid grid-cols-12 gap-3 text-sm">
-          <!-- 사진 -->
-          <div class="col-span-12 md:col-span-3">
-            <label class="block text-xs font-semibold text-gray-700 mb-1">제품사진 URL</label>
-            <input type="text" id="f-photo_url" value="${esc(p.photo_url)}" placeholder="https://..."
-                   class="w-full border rounded px-2 py-2 text-xs" oninput="document.getElementById('f-photo-preview').src=this.value">
-            <div class="mt-2 border rounded bg-gray-50 p-2 h-40 flex items-center justify-center">
-              <img id="f-photo-preview" src="${esc(p.photo_url)}" class="max-h-full max-w-full object-contain" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
-              <div class="text-gray-300 flex items-center justify-center h-full w-full" style="${p.photo_url ? 'display:none' : ''}"><i class="fas fa-image text-4xl"></i></div>
-            </div>
-          </div>
-
-          <!-- 기본 정보 -->
-          <div class="col-span-12 md:col-span-9 grid grid-cols-12 gap-3">
-            <div class="col-span-4">
-              <label class="block text-xs font-semibold text-gray-700 mb-1">상품코드</label>
-              <input type="text" value="${esc(p.item_code)}" disabled class="w-full border rounded px-2 py-2 bg-gray-100 font-mono text-xs">
-            </div>
-            <div class="col-span-8">
-              <label class="block text-xs font-semibold text-gray-700 mb-1">상품명 <span class="text-red-500">*</span></label>
-              <input type="text" id="f-item_name" value="${esc(p.item_name)}" class="w-full border rounded px-2 py-2">
-            </div>
-            <div class="col-span-6">
-              <label class="block text-xs font-semibold text-gray-700 mb-1">판매채널</label>
-              <input type="text" id="f-sales_channel" value="${esc(p.sales_channel)}" placeholder="자사몰/쿠팡/네이버 등" class="w-full border rounded px-2 py-2 text-xs">
-            </div>
-            <div class="col-span-6">
-              <label class="block text-xs font-semibold text-gray-700 mb-1">품목제조보고번호</label>
-              <input type="text" id="f-manufacture_report_no" value="${esc(p.manufacture_report_no)}" class="w-full border rounded px-2 py-2 text-xs">
-            </div>
-            <div class="col-span-6">
-              <label class="block text-xs font-semibold text-gray-700 mb-1">보관방법</label>
-              <input type="text" id="f-storage_method" value="${esc(p.storage_method)}" placeholder="실온/냉장/냉동" class="w-full border rounded px-2 py-2 text-xs">
-            </div>
-            <div class="col-span-3">
-              <label class="block text-xs font-semibold text-gray-700 mb-1">소비기한</label>
-              <input type="text" id="f-shelf_life" value="${esc(p.shelf_life)}" placeholder="30일" class="w-full border rounded px-2 py-2 text-xs">
-            </div>
-            <div class="col-span-3">
-              <label class="block text-xs font-semibold text-gray-700 mb-1">소비기한 조건</label>
-              <input type="text" id="f-shelf_life_condition" value="${esc(p.shelf_life_condition)}" placeholder="냉동보관 시" class="w-full border rounded px-2 py-2 text-xs">
-            </div>
-          </div>
-
-          <!-- 포장 정보 -->
-          <div class="col-span-12 border-t pt-3 mt-2">
-            <h4 class="text-xs font-bold text-gray-700 mb-2"><i class="fas fa-box-open mr-1 text-amber-600"></i>포장 정보</h4>
-            <div class="grid grid-cols-12 gap-3">
-              <div class="col-span-3">
-                <label class="block text-xs font-semibold text-gray-700 mb-1">포장단위</label>
-                <input type="text" id="f-package_unit" value="${esc(p.package_unit)}" class="w-full border rounded px-2 py-2 text-xs">
-              </div>
-              <div class="col-span-3">
-                <label class="block text-xs font-semibold text-gray-700 mb-1">포장사이즈</label>
-                <input type="text" id="f-package_size" value="${esc(p.package_size)}" placeholder="200×150×50mm" class="w-full border rounded px-2 py-2 text-xs">
-              </div>
-              <div class="col-span-3">
-                <label class="block text-xs font-semibold text-gray-700 mb-1">포장재질</label>
-                <input type="text" id="f-package_material" value="${esc(p.package_material)}" placeholder="OPP/PE" class="w-full border rounded px-2 py-2 text-xs">
-              </div>
-              <div class="col-span-3">
-                <label class="block text-xs font-semibold text-gray-700 mb-1">제품사이즈</label>
-                <input type="text" id="f-product_size" value="${esc(p.product_size)}" class="w-full border rounded px-2 py-2 text-xs">
-              </div>
-              <div class="col-span-4">
-                <label class="block text-xs font-semibold text-gray-700 mb-1">박스사이즈</label>
-                <input type="text" id="f-box_size" value="${esc(p.box_size)}" placeholder="600×400×300mm" class="w-full border rounded px-2 py-2 text-xs">
-              </div>
-              <div class="col-span-4">
-                <label class="block text-xs font-semibold text-gray-700 mb-1">BOX 입수량</label>
-                <input type="text" id="f-box_qty" value="${esc(p.box_qty)}" placeholder="12EA" class="w-full border rounded px-2 py-2 text-xs">
-              </div>
-              <div class="col-span-4">
-                <label class="block text-xs font-semibold text-gray-700 mb-1">제품등록일</label>
-                <input type="date" id="f-registered_at" value="${esc(p.registered_at)}" class="w-full border rounded px-2 py-2 text-xs">
-              </div>
-            </div>
-          </div>
-
-          <!-- 원재료명 & 비고 -->
-          <div class="col-span-12 border-t pt-3">
-            <label class="block text-xs font-semibold text-gray-700 mb-1"><i class="fas fa-leaf mr-1 text-green-600"></i>원재료명</label>
-            <textarea id="f-ingredients" rows="3" placeholder="예: 밀가루(강력분), 물, 소금, 이스트, 설탕..."
-                      class="w-full border rounded px-2 py-2 text-xs">${esc(p.ingredients)}</textarea>
-          </div>
-
-          <div class="col-span-12">
-            <label class="block text-xs font-semibold text-gray-700 mb-1"><i class="fas fa-sticky-note mr-1 text-gray-500"></i>비고</label>
-            <textarea id="f-memo" rows="2" class="w-full border rounded px-2 py-2 text-xs">${esc(p.memo)}</textarea>
-          </div>
+  showModal(isEdit ? `브랜드 수정 (${brandCode})` : '새 브랜드 등록', `
+    <div class="space-y-4">
+      ${isEdit ? `
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">브랜드 코드</label>
+          <input type="text" value="${escapeHtml(brand.brand_code)}" disabled class="w-full border rounded-lg px-3 py-2 bg-gray-100 font-mono">
         </div>
-      </div>
-      <div class="p-3 bg-gray-100 flex justify-between items-center">
-        <button onclick="deleteSystemProduct('${esc(p.item_code)}');document.getElementById('pd-detail-modal').remove()"
-                class="px-4 py-2 border border-red-300 text-red-600 rounded hover:bg-red-50 text-sm">
-          <i class="fas fa-trash mr-1"></i>제품 삭제
-        </button>
-        <div class="flex gap-2">
-          <button onclick="document.getElementById('pd-detail-modal').remove()" class="px-4 py-2 border rounded hover:bg-gray-200">취소</button>
-          <button onclick="saveProductDetail('${esc(p.item_code)}')" class="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-semibold">
-            <i class="fas fa-save mr-1"></i>저장
-          </button>
+      ` : `
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+          <i class="fas fa-info-circle mr-1"></i>브랜드 코드는 <strong>BRD001</strong> 형식으로 자동 부여됩니다.
         </div>
+      `}
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">브랜드명 <span class="text-red-500">*</span></label>
+        <input type="text" id="brand-name-input" value="${isEdit ? escapeHtml(brand.brand_name) : ''}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 발효종, 본비반트">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">설명 (선택)</label>
+        <textarea id="brand-description-input" rows="2" class="w-full border rounded-lg px-3 py-2" placeholder="브랜드 설명">${isEdit ? escapeHtml(brand.description || '') : ''}</textarea>
+      </div>
+      <div class="flex justify-end gap-2 pt-2 border-t">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button onclick="saveBrand(${isEdit ? `'${brandCode}'` : 'null'})" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+          <i class="fas fa-save mr-1"></i>${isEdit ? '수정' : '등록'}
+        </button>
       </div>
     </div>
-  `;
-  document.body.appendChild(modal);
+  `);
 }
 
-async function saveProductDetail(code) {
-  const getVal = (id) => (document.getElementById(id)?.value || '').trim();
-  const item_name = getVal('f-item_name');
-  if (!item_name) { showToast('상품명은 필수입니다', 'warning'); return; }
+async function saveBrand(brandCode) {
+  const brand_name = document.getElementById('brand-name-input')?.value.trim();
+  const description = document.getElementById('brand-description-input')?.value.trim();
+  if (!brand_name) { showToast('브랜드명을 입력하세요', 'error'); return; }
 
-  const payload = {
-    item_name,
-    photo_url: getVal('f-photo_url'),
-    sales_channel: getVal('f-sales_channel'),
-    product_name: item_name,
-    manufacture_report_no: getVal('f-manufacture_report_no'),
-    storage_method: getVal('f-storage_method'),
-    shelf_life: getVal('f-shelf_life'),
-    shelf_life_condition: getVal('f-shelf_life_condition'),
-    package_unit: getVal('f-package_unit'),
-    package_size: getVal('f-package_size'),
-    package_material: getVal('f-package_material'),
-    box_size: getVal('f-box_size'),
-    box_qty: getVal('f-box_qty'),
-    ingredients: getVal('f-ingredients'),
-    product_size: getVal('f-product_size'),
-    registered_at: getVal('f-registered_at'),
-    memo: getVal('f-memo')
-  };
   try {
-    const res = await axios.put(`/api/master/products/details/${encodeURIComponent(code)}`, payload);
-    if (!res.data?.success) throw new Error(res.data?.error || '저장 실패');
-    showToast('✅ 저장되었습니다', 'success');
-    document.getElementById('pd-detail-modal').remove();
-    await loadProductDetailsList();
+    if (brandCode) {
+      await axios.put(`/api/brands/${brandCode}`, { brand_name, description });
+      showToast('브랜드가 수정되었습니다', 'success');
+    } else {
+      const res = await axios.post('/api/brands', { brand_name, description });
+      showToast(`브랜드가 등록되었습니다: ${res.data.brand_code}`, 'success');
+    }
+    closeModal();
+    await loadBrandsAndProducts();
   } catch (e) {
     showToast('저장 실패: ' + (e.response?.data?.error || e.message), 'error');
   }
 }
 
+async function deleteBrand(brandCode) {
+  const brand = __brandsCache.find(b => b.brand_code === brandCode);
+  if (!brand) return;
+  if (!confirm(`브랜드 "${brand.brand_name}" (${brandCode})를 삭제하시겠습니까?\n※ 소속 제품이 있으면 삭제할 수 없습니다.`)) return;
+  try {
+    await axios.delete(`/api/brands/${brandCode}`);
+    showToast('브랜드가 삭제되었습니다', 'success');
+    await loadBrandsAndProducts();
+  } catch (e) {
+    showToast('삭제 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+
+// ===== 제품 모달 (세로 정렬 폼) =====
+function openProductModalV2(productCode) {
+  const isEdit = !!productCode;
+  const p = isEdit ? __productsV2Cache.find(x => x.product_code === productCode) : null;
+  if (isEdit && !p) { showToast('제품을 찾을 수 없습니다', 'error'); return; }
+
+  if (__brandsCache.length === 0) {
+    showToast('먼저 브랜드를 등록하세요', 'warning');
+    return;
+  }
+
+  const brandOptions = __brandsCache.map(b =>
+    `<option value="${escapeHtml(b.brand_code)}" ${isEdit && p.brand_code === b.brand_code ? 'selected' : ''}>${escapeHtml(b.brand_name)} (${b.brand_code})</option>`
+  ).join('');
+
+  const v = (k, d = '') => isEdit ? escapeHtml(p[k] ?? d) : d;
+
+  showLargeModal(isEdit ? `제품 수정 (${productCode})` : '신규 제품 등록', `
+    <div class="space-y-3 max-h-[70vh] overflow-y-auto pr-2">
+      ${isEdit ? `
+        <div class="flex items-center gap-2 pb-2 border-b">
+          <span class="text-xs text-gray-500">제품코드</span>
+          <span class="font-mono font-bold text-blue-600">${escapeHtml(p.product_code)}</span>
+        </div>
+      ` : `
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+          <i class="fas fa-info-circle mr-1"></i>제품 코드는 <strong>PD001</strong> 형식으로 자동 부여됩니다.
+        </div>
+      `}
+
+      <!-- 1. 브랜드 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">브랜드 <span class="text-red-500">*</span></label>
+        <select id="pv2-brand-code" class="w-full border rounded-lg px-3 py-2">
+          <option value="">브랜드 선택</option>
+          ${brandOptions}
+        </select>
+      </div>
+
+      <!-- 2. 제품명 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제품명 <span class="text-red-500">*</span></label>
+        <input type="text" id="pv2-product-name" value="${v('product_name')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 발효종 통밀식빵 550g">
+      </div>
+
+      <!-- 3. 판매채널 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">판매채널</label>
+        <input type="text" id="pv2-sales-channel" value="${v('sales_channel')}" list="pv2-channel-suggestions" class="w-full border rounded-lg px-3 py-2" placeholder="예: 온라인, 오프라인, 쿠팡, 네이버">
+        <datalist id="pv2-channel-suggestions">
+          ${__channelsCache.map(c => `<option value="${escapeHtml(c)}">`).join('')}
+        </datalist>
+      </div>
+
+      <!-- 4. 제품 사진 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제품 사진 <span class="text-xs text-gray-500">(PC 파일 업로드, 최대 5MB)</span></label>
+        <div class="flex items-start gap-3">
+          <div id="pv2-photo-preview" class="w-24 h-24 bg-gray-100 border rounded-lg flex items-center justify-center overflow-hidden">
+            ${isEdit && p.photo_url ? `<img src="${escapeHtml(p.photo_url)}" class="w-full h-full object-cover">` : '<i class="fas fa-image text-gray-300 text-2xl"></i>'}
+          </div>
+          <div class="flex-1">
+            <input type="file" id="pv2-photo-file" accept="image/*" onchange="handlePhotoUpload(event)" class="text-sm">
+            <input type="hidden" id="pv2-photo-url" value="${v('photo_url')}">
+            <div id="pv2-photo-status" class="text-xs text-gray-500 mt-1">${isEdit && p.photo_url ? '기존 이미지가 있습니다' : '파일을 선택하면 자동 업로드됩니다'}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. 바코드 번호 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">바코드 번호</label>
+        <input type="text" id="pv2-barcode-number" value="${v('barcode_number')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 8801234567890">
+      </div>
+
+      <!-- 6. 바코드 이미지 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">바코드 이미지 <span class="text-xs text-gray-500">(PC 파일 업로드)</span></label>
+        <div class="flex items-start gap-3">
+          <div id="pv2-barcode-preview" class="w-32 h-24 bg-gray-100 border rounded-lg flex items-center justify-center overflow-hidden">
+            ${isEdit && p.barcode_image_url ? `<img src="${escapeHtml(p.barcode_image_url)}" class="w-full h-full object-contain">` : '<i class="fas fa-barcode text-gray-300 text-2xl"></i>'}
+          </div>
+          <div class="flex-1">
+            <input type="file" id="pv2-barcode-file" accept="image/*" onchange="handleBarcodeUpload(event)" class="text-sm">
+            <input type="hidden" id="pv2-barcode-url" value="${v('barcode_image_url')}">
+            <div id="pv2-barcode-status" class="text-xs text-gray-500 mt-1">${isEdit && p.barcode_image_url ? '기존 이미지가 있습니다' : '파일을 선택하면 자동 업로드됩니다'}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 7. 품목제조보고번호 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">품목제조보고번호</label>
+        <input type="text" id="pv2-manufacture-report-no" value="${v('manufacture_report_no')}" class="w-full border rounded-lg px-3 py-2">
+      </div>
+
+      <!-- 8. 보관방법 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">보관방법</label>
+        <input type="text" id="pv2-storage-method" value="${v('storage_method')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 냉장, 냉동, 실온">
+      </div>
+
+      <!-- 9. 유통기한 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">유통기한</label>
+        <input type="text" id="pv2-shelf-life" value="${v('shelf_life')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 제조일로부터 7일">
+      </div>
+
+      <!-- 10. 유통기한 조건 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">유통기한 조건</label>
+        <input type="text" id="pv2-shelf-life-condition" value="${v('shelf_life_condition')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 냉장보관 시">
+      </div>
+
+      <!-- 11. 포장 단위 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">포장 단위</label>
+        <input type="text" id="pv2-package-unit" value="${v('package_unit')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 개, 봉, 박스">
+      </div>
+
+      <!-- 12. 포장 규격 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">포장 규격</label>
+        <input type="text" id="pv2-package-size" value="${v('package_size')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 550g, 1kg">
+      </div>
+
+      <!-- 13. 포장재질 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">포장재질</label>
+        <input type="text" id="pv2-package-material" value="${v('package_material')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: PE, PP">
+      </div>
+
+      <!-- 14. 박스 규격 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">박스 규격</label>
+        <input type="text" id="pv2-box-size" value="${v('box_size')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 30cm x 20cm x 15cm">
+      </div>
+
+      <!-- 15. 박스당 수량 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">박스당 수량</label>
+        <input type="text" id="pv2-box-qty" value="${v('box_qty')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 12개">
+      </div>
+
+      <!-- 16. 원재료 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">원재료</label>
+        <textarea id="pv2-ingredients" rows="3" class="w-full border rounded-lg px-3 py-2" placeholder="예: 통밀가루, 물, 소금, 발효종...">${v('ingredients')}</textarea>
+      </div>
+
+      <!-- 17. 제품 크기 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">제품 크기</label>
+        <input type="text" id="pv2-product-size" value="${v('product_size')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 직경 15cm">
+      </div>
+
+      <!-- 18. 메모 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
+        <textarea id="pv2-memo" rows="2" class="w-full border rounded-lg px-3 py-2" placeholder="기타 참고사항">${v('memo')}</textarea>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t sticky bottom-0 bg-white">
+        <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">취소</button>
+        <button onclick="saveProductV2(${isEdit ? `'${productCode}'` : 'null'})" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          <i class="fas fa-save mr-1"></i>${isEdit ? '수정' : '등록'}
+        </button>
+      </div>
+    </div>
+  `);
+}
+
+// 큰 모달 헬퍼 (없으면 showModal 사용)
+function showLargeModal(title, content) {
+  if (typeof window.showModal === 'function') {
+    window.showModal(title, content);
+    // 모달 크기 조정
+    setTimeout(() => {
+      const modal = document.querySelector('#global-modal .bg-white') || document.querySelector('[id*="modal"] .bg-white');
+      if (modal) {
+        modal.style.maxWidth = '640px';
+        modal.style.width = '95%';
+      }
+    }, 0);
+  } else {
+    console.error('showModal not available');
+  }
+}
+
+async function handlePhotoUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('pv2-photo-status');
+  const previewEl = document.getElementById('pv2-photo-preview');
+  const urlInput = document.getElementById('pv2-photo-url');
+
+  if (file.size > 5 * 1024 * 1024) {
+    statusEl.textContent = '❌ 파일이 너무 큽니다 (최대 5MB)';
+    statusEl.className = 'text-xs text-red-600 mt-1';
+    return;
+  }
+
+  statusEl.textContent = '⏳ 업로드 중...';
+  statusEl.className = 'text-xs text-blue-600 mt-1';
+
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await axios.post('/api/uploads/product-photo', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    urlInput.value = res.data.url;
+    previewEl.innerHTML = `<img src="${res.data.url}" class="w-full h-full object-cover">`;
+    statusEl.textContent = '✅ 업로드 완료';
+    statusEl.className = 'text-xs text-green-600 mt-1';
+  } catch (e) {
+    statusEl.textContent = '❌ 업로드 실패: ' + (e.response?.data?.error || e.message);
+    statusEl.className = 'text-xs text-red-600 mt-1';
+  }
+}
+
+async function handleBarcodeUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('pv2-barcode-status');
+  const previewEl = document.getElementById('pv2-barcode-preview');
+  const urlInput = document.getElementById('pv2-barcode-url');
+
+  if (file.size > 5 * 1024 * 1024) {
+    statusEl.textContent = '❌ 파일이 너무 큽니다 (최대 5MB)';
+    statusEl.className = 'text-xs text-red-600 mt-1';
+    return;
+  }
+
+  statusEl.textContent = '⏳ 업로드 중...';
+  statusEl.className = 'text-xs text-blue-600 mt-1';
+
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await axios.post('/api/uploads/barcode', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    urlInput.value = res.data.url;
+    previewEl.innerHTML = `<img src="${res.data.url}" class="w-full h-full object-contain">`;
+    statusEl.textContent = '✅ 업로드 완료';
+    statusEl.className = 'text-xs text-green-600 mt-1';
+  } catch (e) {
+    statusEl.textContent = '❌ 업로드 실패: ' + (e.response?.data?.error || e.message);
+    statusEl.className = 'text-xs text-red-600 mt-1';
+  }
+}
+
+async function saveProductV2(productCode) {
+  const brand_code = document.getElementById('pv2-brand-code')?.value;
+  const product_name = document.getElementById('pv2-product-name')?.value.trim();
+  if (!brand_code) { showToast('브랜드를 선택하세요', 'error'); return; }
+  if (!product_name) { showToast('제품명을 입력하세요', 'error'); return; }
+
+  const payload = {
+    brand_code,
+    product_name,
+    sales_channel: document.getElementById('pv2-sales-channel')?.value.trim() || null,
+    photo_url: document.getElementById('pv2-photo-url')?.value.trim() || null,
+    barcode_number: document.getElementById('pv2-barcode-number')?.value.trim() || null,
+    barcode_image_url: document.getElementById('pv2-barcode-url')?.value.trim() || null,
+    manufacture_report_no: document.getElementById('pv2-manufacture-report-no')?.value.trim() || null,
+    storage_method: document.getElementById('pv2-storage-method')?.value.trim() || null,
+    shelf_life: document.getElementById('pv2-shelf-life')?.value.trim() || null,
+    shelf_life_condition: document.getElementById('pv2-shelf-life-condition')?.value.trim() || null,
+    package_unit: document.getElementById('pv2-package-unit')?.value.trim() || null,
+    package_size: document.getElementById('pv2-package-size')?.value.trim() || null,
+    package_material: document.getElementById('pv2-package-material')?.value.trim() || null,
+    box_size: document.getElementById('pv2-box-size')?.value.trim() || null,
+    box_qty: document.getElementById('pv2-box-qty')?.value.trim() || null,
+    ingredients: document.getElementById('pv2-ingredients')?.value.trim() || null,
+    product_size: document.getElementById('pv2-product-size')?.value.trim() || null,
+    memo: document.getElementById('pv2-memo')?.value.trim() || null
+  };
+
+  try {
+    if (productCode) {
+      await axios.put(`/api/products-v2/${productCode}`, payload);
+      showToast('제품이 수정되었습니다', 'success');
+    } else {
+      const res = await axios.post('/api/products-v2', payload);
+      showToast(`제품이 등록되었습니다: ${res.data.product_code}`, 'success');
+    }
+    closeModal();
+    await loadBrandsAndProducts();
+  } catch (e) {
+    showToast('저장 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+
+async function deleteProductV2(productCode) {
+  const p = __productsV2Cache.find(x => x.product_code === productCode);
+  if (!p) return;
+  if (!confirm(`제품 "${p.product_name}" (${productCode})를 삭제하시겠습니까?`)) return;
+  try {
+    await axios.delete(`/api/products-v2/${productCode}`);
+    showToast('제품이 삭제되었습니다', 'success');
+    await loadBrandsAndProducts();
+  } catch (e) {
+    showToast('삭제 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+
+// escapeHtml 헬퍼 (전역에 없으면 정의)
+if (typeof escapeHtml !== 'function') {
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+}
+
 // 하위호환: 기존 참조 유지
-function filterSystemProducts() { filterProductDetails(); }
+function filterSystemProducts() { filterProductsV2(); }
+function filterProductDetails() { filterProductsV2(); }
+function loadProductDetailsList() { return loadBrandsAndProducts(); }
+function renderProductDetailsRows() { renderProductsV2Grouped(); }
+function quickCreateProduct() { openProductModalV2(); }
+function openProductDetailModal(code) { openProductModalV2(code); }
+function saveProductDetail() { /* deprecated */ }
+
 
 function showAddProductModal() {
   showModal('제품 추가', `
@@ -41774,8 +42037,19 @@ window.saveNewSystemProduct = saveNewSystemProduct;
 window.showEditProductModal = showEditProductModal;
 window.updateProduct = updateProduct;
 window.deleteSystemProduct = deleteSystemProduct;
-// v3.6.95: 제품 관리 새 UI (18컬럼 엑셀 스타일)
+// v3.6.185: 제품 관리 v2 (브랜드-제품 계층 + R2 업로드 + 세로 폼)
 window.renderProductsManagement = renderProductsManagement;
+window.loadBrandsAndProducts = loadBrandsAndProducts;
+window.filterProductsV2 = filterProductsV2;
+window.openBrandModal = openBrandModal;
+window.saveBrand = saveBrand;
+window.deleteBrand = deleteBrand;
+window.openProductModalV2 = openProductModalV2;
+window.saveProductV2 = saveProductV2;
+window.deleteProductV2 = deleteProductV2;
+window.handlePhotoUpload = handlePhotoUpload;
+window.handleBarcodeUpload = handleBarcodeUpload;
+// 하위호환 exports
 window.loadProductDetailsList = loadProductDetailsList;
 window.filterProductDetails = filterProductDetails;
 window.quickCreateProduct = quickCreateProduct;

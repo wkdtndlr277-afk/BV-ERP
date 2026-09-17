@@ -131,4 +131,8 @@ export interface InventoryReport {
 export type Bindings = {
   DB: D1Database;
   ASSETS: Fetcher;
+  R2: R2Bucket;
+  // ★ v3.6.185: Google Sheets 서비스 계정 (도우기록/시트동기화용)
+  GOOGLE_CLIENT_EMAIL?: string;
+  GOOGLE_PRIVATE_KEY?: string;
 }

@@ -11,6 +11,13 @@
       "database_id": "596dc841-d436-4555-a774-5aa647455162"
     }
   ],
+  // R2 버킷: 제품 사진, 바코드 이미지 등 업로드 파일 저장
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "bv-erp-uploads"
+    }
+  ],
   // 매일 자정(한국시간) 재고 감사 스케줄
   // Cloudflare Pages Functions에서는 cron triggers 직접 지원하지 않음
   // 대신 외부 스케줄러나 Cloudflare Workers에서 /api/audit/run-all 호출 필요

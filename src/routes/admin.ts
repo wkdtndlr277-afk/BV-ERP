@@ -9597,4 +9597,99 @@ admin.get('/enhanced-stats/:item_code', async (c) => {
   }
 });
 
+// ★★★ v3.6.185: 새 제품 관리 구조 스키마 자동 생성 ★★★
+// 마이그레이션 우회 - GET으로 브라우저에서 한 번만 실행하면 됨
+admin.get('/init-product-schema', async (c) => {
+  const results: string[] = [];
+  try {
+    const { env } = c;
+    
+    // 1. brands 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS brands (
+        brand_code TEXT PRIMARY KEY,
+        brand_name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    results.push('✅ brands 테이블 생성');
+    
+    // 2. products_new 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS products_new (
+        product_code TEXT PRIMARY KEY,
+        brand_code TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        sales_channel TEXT,
+        photo_url TEXT,
+        barcode_number TEXT,
+        barcode_image_url TEXT,
+        manufacture_report_no TEXT,
+        storage_method TEXT,
+        shelf_life TEXT,
+        shelf_life_condition TEXT,
+        package_unit TEXT,
+        package_size TEXT,
+        package_material TEXT,
+        box_size TEXT,
+        box_qty TEXT,
+        ingredients TEXT,
+        product_size TEXT,
+        memo TEXT,
+        is_active INTEGER DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+    results.push('✅ products_new 테이블 생성');
+    
+    // 3. code_sequences 테이블
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS code_sequences (
+        prefix TEXT PRIMARY KEY,
+        last_number INTEGER DEFAULT 0
+      )
+    `).run();
+    results.push('✅ code_sequences 테이블 생성');
+    
+    // 4. 시퀀스 초기값
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO code_sequences (prefix, last_number) VALUES (?, 0)`
+    ).bind('BRD').run();
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO code_sequences (prefix, last_number) VALUES (?, 0)`
+    ).bind('PD').run();
+    results.push('✅ 시퀀스 초기값 (BRD=0, PD=0)');
+    
+    // 5. 인덱스
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_products_new_brand ON products_new(brand_code)`).run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_products_new_channel ON products_new(sales_channel)`).run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_products_new_active ON products_new(is_active)`).run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_products_new_name ON products_new(product_name)`).run();
+    await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_brands_active ON brands(is_active)`).run();
+    results.push('✅ 인덱스 5개 생성');
+    
+    // 6. 현재 상태 확인
+    const brandsCount = await env.DB.prepare(`SELECT COUNT(*) as n FROM brands`).first();
+    const productsCount = await env.DB.prepare(`SELECT COUNT(*) as n FROM products_new`).first();
+    const sequences = await env.DB.prepare(`SELECT * FROM code_sequences`).all();
+    
+    return c.json({
+      success: true,
+      results,
+      status: {
+        brands_count: (brandsCount as any).n,
+        products_count: (productsCount as any).n,
+        sequences: sequences.results
+      },
+      message: '✅ v3.6.185 스키마 초기화 완료'
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message, results }, 500);
+  }
+});
+
 export default admin

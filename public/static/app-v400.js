@@ -61992,7 +61992,8 @@ async function renderWeeklyPlan() {
   const monday = getLocalMonday(today);
 
   content.innerHTML = `
-    <div class="max-w-full">
+    <div class="max-w-full weekly-plan-wrap">
+      <!-- 조회 컨트롤바 (화면 전용) -->
       <div class="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl p-4 mb-4 text-white shadow-lg no-print">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -62015,20 +62016,74 @@ async function renderWeeklyPlan() {
         </div>
       </div>
       <div id="wp-summary" class="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3 no-print"></div>
+
+      <!-- ★ HACCP 결재방 + 제목 (인쇄 1페이지 상단에만 표시) -->
+      <div id="wp-print-header" class="print-only" style="display:none;">
+        <table style="width:100%; border-collapse:collapse; margin-bottom:6mm;">
+          <tr>
+            <td style="width:60%; vertical-align:middle; padding:0;">
+              <div style="font-size:20pt; font-weight:900; letter-spacing:2px; color:#000;">주간 생산계획표</div>
+              <div id="wp-print-period" style="font-size:11pt; margin-top:3mm; color:#333;"></div>
+            </td>
+            <td style="width:40%; vertical-align:top; padding:0;">
+              <table style="border-collapse:collapse; border:1.5px solid #000; margin-left:auto;">
+                <tr>
+                  <td rowspan="2" style="border:1.5px solid #000; padding:4mm 3mm; font-size:10pt; font-weight:700; text-align:center; background:#f3f3f3;">결<br/>재</td>
+                  <td style="border:1.5px solid #000; padding:2mm 8mm; font-size:9pt; text-align:center; background:#f3f3f3; font-weight:700;">담&nbsp;당</td>
+                  <td style="border:1.5px solid #000; padding:2mm 8mm; font-size:9pt; text-align:center; background:#f3f3f3; font-weight:700;">검&nbsp;토</td>
+                  <td style="border:1.5px solid #000; padding:2mm 8mm; font-size:9pt; text-align:center; background:#f3f3f3; font-weight:700;">승&nbsp;인</td>
+                </tr>
+                <tr>
+                  <td style="border:1.5px solid #000; padding:0; height:16mm; width:22mm;"></td>
+                  <td style="border:1.5px solid #000; padding:0; height:16mm; width:22mm;"></td>
+                  <td style="border:1.5px solid #000; padding:0; height:16mm; width:22mm;"></td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </div>
+
       <div id="wp-body" class="bg-white rounded-lg shadow overflow-auto"></div>
     </div>
     <style>
-      @media print {
-        @page { size: A3 landscape; margin: 8mm; }
-        .no-print { display: none !important; }
-        body { background: white; }
-        #wp-body { overflow: visible !important; box-shadow: none !important; }
-        #wp-body table { font-size: 10px !important; }
-        #wp-body th, #wp-body td { padding: 3px 4px !important; border: 1px solid #333 !important; }
-        #wp-body thead { background: #4f46e5 !important; -webkit-print-color-adjust: exact; }
-      }
+      /* 화면 기본: 결재방/제목 헤더 숨김 */
+      .print-only { display: none !important; }
+
+      /* 화면에서 sticky 헤더 */
       #wp-body table th { position: sticky; top: 0; z-index: 5; }
       #wp-body td { white-space: nowrap; }
+
+      @media print {
+        @page { size: A3 landscape; margin: 8mm; }
+
+        /* ★ ERP 프레임 완전 숨김 (사이드바, 상단 헤더, 알림 등) */
+        aside, header, nav, .no-print,
+        #sidebar-toggle, #notification-count,
+        [class*="sidebar"] { display: none !important; }
+
+        /* 메인 영역 좌측 마진 초기화 (lg:ml-64 무력화) */
+        main { margin-left: 0 !important; }
+        #page-content { padding: 0 !important; }
+        body { background: white !important; margin: 0 !important; padding: 0 !important; }
+
+        /* 결재방/제목 헤더: 1페이지 상단에만 (반복 방지) */
+        #wp-print-header { display: block !important; }
+        .print-only { display: block !important; }
+
+        /* 테이블 인쇄 스타일 */
+        #wp-body { overflow: visible !important; box-shadow: none !important; border-radius: 0 !important; }
+        #wp-body table { font-size: 9pt !important; width: 100% !important; border-collapse: collapse !important; }
+        #wp-body th, #wp-body td { padding: 2px 4px !important; border: 1px solid #333 !important; }
+        #wp-body thead { background: #4f46e5 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+        /* thead 반복 방지 - 1페이지에만 헤더 나오도록 */
+        #wp-body thead { display: table-header-group; }
+        #wp-body tfoot { display: table-row-group; }
+
+        /* 각 행의 페이지 넘김 방지 */
+        #wp-body tr { page-break-inside: avoid; }
+      }
     </style>
   `;
 
@@ -62080,6 +62135,18 @@ async function loadWeeklyPlan() {
         <p class="text-sm font-bold text-orange-700">${Object.entries(d.channel_totals).sort((a,b)=>b[1]-a[1])[0]?.[0] || '-'}</p>
       </div>
     `;
+
+    // ★ 인쇄용 헤더 기간 텍스트 채우기 (MM월 DD일 ~ MM월 DD일)
+    const printPeriodEl = document.getElementById('wp-print-period');
+    if (printPeriodEl) {
+      const fmt = (s) => {
+        const [y, m, dd] = s.split('-');
+        return `${parseInt(m,10)}월 ${parseInt(dd,10)}일`;
+      };
+      const startW = weekdays[new Date(d.start_date + 'T00:00:00').getDay()];
+      const endW = weekdays[new Date(d.end_date + 'T00:00:00').getDay()];
+      printPeriodEl.innerHTML = `조회 기간: <b>${d.start_date.slice(0,4)}년 ${fmt(d.start_date)}(${startW}) ~ ${fmt(d.end_date)}(${endW})</b>`;
+    }
 
     // 채널 헤더 (수량 있는 채널만 표시)
     const activeChannels = d.channels.filter(ch => d.channel_totals[ch] > 0);

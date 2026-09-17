@@ -62059,13 +62059,17 @@ async function renderWeeklyPlan() {
 
       <!-- ★ HACCP 결재방 + 제목 (인쇄 1페이지 상단에만 표시) -->
       <div id="wp-print-header" class="print-only" style="display:none;">
-        <table style="width:100%; border-collapse:collapse; margin-bottom:6mm;">
+        <table style="width:100%; border-collapse:collapse; margin-bottom:6mm; table-layout:fixed;">
           <tr>
-            <td style="width:60%; vertical-align:middle; padding:0;">
-              <div style="font-size:20pt; font-weight:900; letter-spacing:2px; color:#000;">주간 생산계획표</div>
-              <div id="wp-print-period" style="font-size:11pt; margin-top:3mm; color:#333;"></div>
+            <!-- 좌측: 결재방과 균형 맞추기 위한 빈 공간 (약 88mm - 결재방과 동일 폭) -->
+            <td style="width:88mm; padding:0;"></td>
+            <!-- 가운데: 제목 + 조회기간 (진짜 가운데 정렬) -->
+            <td style="vertical-align:middle; padding:0; text-align:center;">
+              <div style="font-size:20pt; font-weight:900; letter-spacing:2px; color:#000; text-align:center;">주간 생산계획표</div>
+              <div id="wp-print-period" style="font-size:11pt; margin-top:3mm; color:#333; text-align:center;"></div>
             </td>
-            <td style="width:40%; vertical-align:top; padding:0;">
+            <!-- 우측: 결재방 (담당/검토/승인) -->
+            <td style="width:88mm; vertical-align:top; padding:0;">
               <table style="border-collapse:collapse; border:1.5px solid #000; margin-left:auto;">
                 <tr>
                   <td rowspan="2" style="border:1.5px solid #000; padding:4mm 3mm; font-size:10pt; font-weight:700; text-align:center; background:#f3f3f3;">결<br/>재</td>
@@ -62123,6 +62127,20 @@ async function renderWeeklyPlan() {
 
         /* 각 행의 페이지 넘김 방지 */
         #wp-body tr { page-break-inside: avoid; }
+
+        /* ★ v3.6.89: 인쇄에서 코드/제품명/채널합 가운데 정렬
+           - thead 1,2,3번 (코드, 제품명, 채널합 헤더)
+           - tbody 1,2,3번 (코드, 제품명, 채널합 데이터)
+           - tfoot 2번 (채널합 총계 - 1번은 colspan=2 라벨셀이므로 제외) */
+        #wp-body thead th:nth-child(1),
+        #wp-body thead th:nth-child(2),
+        #wp-body thead th:nth-child(3),
+        #wp-body tbody td:nth-child(1),
+        #wp-body tbody td:nth-child(2),
+        #wp-body tbody td:nth-child(3),
+        #wp-body tfoot td:nth-child(2) {
+          text-align: center !important;
+        }
       }
     </style>
   `;

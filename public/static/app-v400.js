@@ -60165,7 +60165,12 @@ async function saveOrderPlan() {
   const date = __orderPlanData.date;
   if (!date) { alert('계획일을 선택하세요.'); return; }
   const grid = __orderPlanData.grid;
-  const rowsWithData = grid.filter(r => Object.keys(r.channels).length > 0 || Object.keys(r.extra).length > 0);
+  // ★ v3.6.88: final_qty만 있고 채널이 없는 경우도 저장 대상에 포함
+  const rowsWithData = grid.filter(r =>
+    Object.keys(r.channels).length > 0 ||
+    Object.keys(r.extra).length > 0 ||
+    (Number(r.final_qty) > 0)
+  );
 
   if (rowsWithData.length === 0) {
     if (!confirm('입력된 발주가 하나도 없습니다. 그래도 저장(=해당 날짜 전체 삭제)하시겠습니까?')) return;
@@ -60180,11 +60185,14 @@ async function saveOrderPlan() {
         product_code: r.code,
         product_name: r.name,
         channels: r.channels,
-        extra: r.extra
+        extra: r.extra,
+        final_qty: Number(r.final_qty) || 0,       // ★ v3.6.88: E열 최종수량
+        formula_note: r.formula_note || null       // ★ v3.6.88: 수식 원본 (참고용)
       }))
     });
     if (!res.data.success) throw new Error(res.data.error || '저장 실패');
-    alert(`✅ 저장 완료\n계획표 ${res.data.plan_inserted}건 · 발주서 ${res.data.orders_inserted}건 생성됨`);
+    const finalMsg = res.data.final_inserted > 0 ? ` · 최종수량 ${res.data.final_inserted}건` : '';
+    alert(`✅ 저장 완료\n계획표 ${res.data.plan_inserted}건 · 발주서 ${res.data.orders_inserted}건${finalMsg} 생성됨`);
     await loadOrderPlan();
   } catch (e) {
     alert('저장 실패: ' + (e.response?.data?.error || e.message));
@@ -60217,6 +60225,7 @@ async function importOrderPlanExcel(event) {
     // 계획표.xlsx 구조:
     // 2행(index=1) = 헤더, 5행부터 데이터
     const COL = {
+      final: 4,          // ★ v3.6.88: E열 (최종 생산 수량 - 수식값)
       name: 3,           // D열
       쿠팡: 6,           // G열
       오아시스: 7,       // H열
@@ -60235,8 +60244,17 @@ async function importOrderPlanExcel(event) {
       추가합계: 22       // W열
     };
 
+    // ★ v3.6.88: E열 수식 원본 문자열 추출용 헬퍼
+    // XLSX의 rowMap 방식: 시트 셀 주소(E5, E6, ...)로 직접 접근하여 f(수식) 필드 조회
+    // sheet_to_json은 v(값)만 반환하므로 수식은 별도로 뽑아야 함
+    function getCellFormula(rowIdx1based, colLetter) {
+      const addr = colLetter + rowIdx1based;
+      const cell = ws[addr];
+      return (cell && cell.f) ? String(cell.f) : null;
+    }
+
     // 1단계: 엑셀 행 → 원본 이름 + 수량 데이터 추출
-    const excelRows = [];  // [{ name, channels: {...}, extra: {...} }]
+    const excelRows = [];  // [{ name, channels: {...}, extra: {...}, final_qty, formula_note }]
     const uniqueNames = new Set();
 
     for (let i = 4; i < rows.length; i++) {
@@ -60258,6 +60276,11 @@ async function importOrderPlanExcel(event) {
       const 샌드위치 = num(r[COL.샌드위치]);
       const 추가합계 = num(r[COL.추가합계]);
 
+      // ★ v3.6.88: E열 수식값(최종 생산 수량) + 수식 원본
+      // 예: E5 = SUM(G5)*3+(Q5+P5+L5+R5)+M5+N5+O5 → 쿠팡×3+재고+추가조정
+      const finalQty = num(r[COL.final]);
+      const formulaNote = getCellFormula(i + 1, 'E');  // i는 0-based, 엑셀은 1-based
+
       const channels = {};
       const extra = {};
       if (쿠팡) channels['쿠팡'] = 쿠팡;
@@ -60273,10 +60296,16 @@ async function importOrderPlanExcel(event) {
       if (샌드위치) channels['샌드위치'] = 샌드위치;
       if (추가합계) extra['쿠팡'] = 추가합계;
 
-      // 수량이 하나도 없는 행은 skip
-      if (Object.keys(channels).length === 0 && Object.keys(extra).length === 0) continue;
+      // 수량이 하나도 없는 행은 skip (final_qty가 있어도 채널이 전부 0이면 skip)
+      if (Object.keys(channels).length === 0 && Object.keys(extra).length === 0 && !finalQty) continue;
 
-      excelRows.push({ name: String(name).trim(), channels, extra });
+      excelRows.push({
+        name: String(name).trim(),
+        channels,
+        extra,
+        final_qty: finalQty,      // ★ v3.6.88
+        formula_note: formulaNote // ★ v3.6.88
+      });
       uniqueNames.add(String(name).trim());
     }
 
@@ -60332,13 +60361,21 @@ async function importOrderPlanExcel(event) {
         unmatchedRows.push(row);
         continue;
       }
-      if (!gridMap[code]) gridMap[code] = { channels: {}, extra: {} };
+      if (!gridMap[code]) gridMap[code] = { channels: {}, extra: {}, final_qty: 0, formula_note: null };
       // 같은 코드가 여러 행에 있으면 합산
       for (const [k, v] of Object.entries(row.channels)) {
         gridMap[code].channels[k] = (gridMap[code].channels[k] || 0) + v;
       }
       for (const [k, v] of Object.entries(row.extra)) {
         gridMap[code].extra[k] = (gridMap[code].extra[k] || 0) + v;
+      }
+      // ★ v3.6.88: E열 최종수량은 SUM (같은 코드 여러 행 합산 케이스 대응)
+      if (row.final_qty) {
+        gridMap[code].final_qty = (gridMap[code].final_qty || 0) + row.final_qty;
+      }
+      // formula_note는 첫 번째 것만 보관 (참고용)
+      if (row.formula_note && !gridMap[code].formula_note) {
+        gridMap[code].formula_note = row.formula_note;
       }
       matchedCount++;
     }
@@ -60384,6 +60421,9 @@ function applyImportContextToGrid() {
     if (m) {
       row.channels = m.channels;
       row.extra = m.extra;
+      // ★ v3.6.88: E열 최종수량 + 수식 원본 전파
+      row.final_qty = m.final_qty || 0;
+      row.formula_note = m.formula_note || null;
       let total = 0;
       for (const v of Object.values(row.channels)) total += Number(v) || 0;
       for (const v of Object.values(row.extra)) total += Number(v) || 0;
@@ -62148,34 +62188,49 @@ async function loadWeeklyPlan() {
       printPeriodEl.innerHTML = `조회 기간: <b>${d.start_date.slice(0,4)}년 ${fmt(d.start_date)}(${startW}) ~ ${fmt(d.end_date)}(${endW})</b>`;
     }
 
-    // 채널 헤더 (수량 있는 채널만 표시)
-    const activeChannels = d.channels.filter(ch => d.channel_totals[ch] > 0);
+    // ★ v3.6.88 (P3): 항상 모든 채널 표시 (0이라도 숨기지 않음)
+    // 채널 순서는 PLAN_CHANNELS(서버) 그대로: 쿠팡,오아시스,컬리 냉동,컬리 상온,매장용,가맹점,GS,배민,롯데,CJ,샌드위치
+    const activeChannels = d.channels;
 
     const dailyHeader = d.dates.map((dt,i) => `<th class="px-2 py-2 text-center text-[11px] bg-indigo-600 text-white">${dayStr[i]}</th>`).join('');
-    const chHeader = activeChannels.map(ch => `<th class="px-2 py-2 text-center text-[11px] bg-purple-600 text-white">${ch}</th>`).join('');
+    const chHeader = activeChannels.map(ch => `<th class="px-2 py-2 text-center text-[11px] bg-purple-600 text-white whitespace-nowrap">${ch}</th>`).join('');
 
     let rows = '';
     for (const p of d.products) {
       const dailyCells = d.dates.map(dt => {
         const q = p.daily[dt] || 0;
-        return `<td class="px-2 py-1 text-right text-xs ${q > 0 ? 'text-gray-800' : 'text-gray-300'}">${q > 0 ? q.toLocaleString() : ''}</td>`;
+        return `<td class="px-2 py-1 text-right text-xs ${q > 0 ? 'text-gray-800' : 'text-gray-300'}">${q > 0 ? q.toLocaleString() : '-'}</td>`;
       }).join('');
       const chCells = activeChannels.map(ch => {
         const q = p.channel_totals[ch] || 0;
-        return `<td class="px-2 py-1 text-right text-xs ${q > 0 ? 'text-purple-700 font-medium' : 'text-gray-300'}">${q > 0 ? q.toLocaleString() : ''}</td>`;
+        return `<td class="px-2 py-1 text-right text-xs ${q > 0 ? 'text-purple-700 font-medium' : 'text-gray-300'}">${q > 0 ? q.toLocaleString() : '-'}</td>`;
       }).join('');
+      // ★ v3.6.88 (P4): 추가 컬럼 + 총합계(final_qty) 컬럼
+      const extraQty = Number(p.extra_total) || 0;
+      const finalQty = Number(p.final_qty) || 0;
+      const extraCell = `<td class="px-2 py-1 text-right text-xs ${extraQty > 0 ? 'text-amber-700 font-bold bg-amber-50' : 'text-gray-300'}">${extraQty > 0 ? extraQty.toLocaleString() : '-'}</td>`;
+      const finalCell = `<td class="px-2 py-1 text-right text-base font-bold ${finalQty > 0 ? 'text-red-700 bg-red-50' : 'text-gray-300 bg-gray-50'}">${finalQty > 0 ? finalQty.toLocaleString() : '-'}</td>`;
       rows += `<tr class="border-b hover:bg-indigo-50">
         <td class="px-2 py-1 text-xs font-mono text-gray-500">${p.code}</td>
         <td class="px-2 py-1 text-sm font-medium text-gray-800">${p.name}</td>
         <td class="px-2 py-1 text-right text-sm font-bold text-emerald-700 bg-emerald-50">${p.total.toLocaleString()}</td>
         ${dailyCells}
         ${chCells}
+        ${extraCell}
+        ${finalCell}
       </tr>`;
     }
 
     // 합계 행
     const totalDailyCells = d.dates.map(dt => `<td class="px-2 py-1 text-right text-xs font-bold text-indigo-800">${(d.daily_totals[dt]||0).toLocaleString()}</td>`).join('');
     const totalChCells = activeChannels.map(ch => `<td class="px-2 py-1 text-right text-xs font-bold text-purple-800">${(d.channel_totals[ch]||0).toLocaleString()}</td>`).join('');
+    // ★ v3.6.88 (P4): 추가/총합계 합계 셀
+    const grandExtra = Number(d.grand_extra_total) || 0;
+    const grandFinal = Number(d.grand_final_total) || 0;
+    const totalExtraCell = `<td class="px-2 py-2 text-right text-sm font-bold text-amber-900 bg-amber-200">${grandExtra.toLocaleString()}</td>`;
+    const totalFinalCell = `<td class="px-2 py-2 text-right text-lg font-bold text-white bg-red-700">${grandFinal.toLocaleString()}</td>`;
+
+    const totalCols = 3 + d.dates.length + activeChannels.length + 2; // +2 = 추가/총합계
 
     body.innerHTML = `
       <table class="w-full text-sm border-collapse">
@@ -62183,20 +62238,24 @@ async function loadWeeklyPlan() {
           <tr>
             <th class="px-2 py-2 text-left text-xs bg-gray-700 text-white">코드</th>
             <th class="px-2 py-2 text-left text-xs bg-gray-700 text-white min-w-[180px]">제품명</th>
-            <th class="px-2 py-2 text-center text-xs bg-emerald-600 text-white">총 수량</th>
+            <th class="px-2 py-2 text-center text-xs bg-emerald-600 text-white">채널합</th>
             ${dailyHeader}
             ${chHeader}
+            <th class="px-2 py-2 text-center text-xs bg-amber-600 text-white" title="추가 발주 합계">추가</th>
+            <th class="px-2 py-2 text-center text-xs bg-red-700 text-white" title="E열 최종 생산 수량 (쿠팡×3+재고+조정)">총합계</th>
           </tr>
         </thead>
         <tbody>
-          ${rows || `<tr><td colspan="${3+d.dates.length+activeChannels.length}" class="p-6 text-center text-gray-400">해당 주에 계획된 데이터가 없습니다.</td></tr>`}
+          ${rows || `<tr><td colspan="${totalCols}" class="p-6 text-center text-gray-400">해당 주에 계획된 데이터가 없습니다.</td></tr>`}
         </tbody>
         <tfoot class="sticky bottom-0 bg-yellow-100">
           <tr class="border-t-2 border-yellow-500">
             <td colspan="2" class="px-2 py-2 text-right text-sm font-bold text-gray-800">📊 총합계</td>
-            <td class="px-2 py-2 text-right text-lg font-bold text-red-700 bg-yellow-200">${d.grand_total.toLocaleString()}</td>
+            <td class="px-2 py-2 text-right text-sm font-bold text-emerald-800 bg-yellow-200">${d.grand_total.toLocaleString()}</td>
             ${totalDailyCells}
             ${totalChCells}
+            ${totalExtraCell}
+            ${totalFinalCell}
           </tr>
         </tfoot>
       </table>
@@ -62214,16 +62273,22 @@ function exportWeeklyPlanExcel() {
   if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리 로드 대기중'); return; }
   const d = __weeklyPlanData;
   if (!d) { alert('먼저 조회해주세요.'); return; }
-  const activeChannels = d.channels.filter(ch => d.channel_totals[ch] > 0);
-  const header = ['코드','제품명','총수량', ...d.dates, ...activeChannels];
+  // ★ v3.6.88 (P3+P4): 모든 채널 항상 + 추가/총합계 컬럼
+  const activeChannels = d.channels;
+  const header = ['코드','제품명','채널합', ...d.dates, ...activeChannels, '추가', '총합계'];
   const rows = d.products.map(p => [
     p.code, p.name, p.total,
     ...d.dates.map(dt => p.daily[dt]||0),
-    ...activeChannels.map(ch => p.channel_totals[ch]||0)
+    ...activeChannels.map(ch => p.channel_totals[ch]||0),
+    Number(p.extra_total)||0,
+    Number(p.final_qty)||0
   ]);
   const totalRow = ['','총합계', d.grand_total,
     ...d.dates.map(dt => d.daily_totals[dt]||0),
-    ...activeChannels.map(ch => d.channel_totals[ch]||0)];
+    ...activeChannels.map(ch => d.channel_totals[ch]||0),
+    Number(d.grand_extra_total)||0,
+    Number(d.grand_final_total)||0
+  ];
   const aoa = [header, ...rows, totalRow];
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(aoa);

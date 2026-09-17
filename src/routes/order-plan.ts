@@ -133,7 +133,8 @@ orderPlan.get('/:date', async (c) => {
 // ============================================================
 // POST /api/order-plan/save
 // 격자 데이터 저장 (upsert) + orders 자동 동기화
-// body: { plan_date, rows: [{product_code, channels: {쿠팡: N}, extra: {}, memo}] }
+// body: { plan_date, rows: [{product_code, channels: {쿠팡: N}, extra: {}, memo, final_qty?, formula_note?}] }
+// v3.6.88: row.final_qty가 있으면 order_plan_final 테이블에도 저장 (E열 수식값)
 // ============================================================
 orderPlan.post('/save', async (c) => {
   try {
@@ -145,8 +146,27 @@ orderPlan.post('/save', async (c) => {
       return c.json({ success: false, error: 'rows 배열이 필요합니다.' }, 400)
     }
 
-    // 1. 해당 날짜의 기존 order_plan 삭제 (전체 rewrite 방식)
+    // order_plan_final 테이블 자동 생성 (마이그레이션 미적용 환경 대응)
+    try {
+      await c.env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS order_plan_final (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          plan_date TEXT NOT NULL,
+          product_code TEXT NOT NULL,
+          product_name TEXT,
+          final_qty REAL NOT NULL DEFAULT 0,
+          channel_sum REAL DEFAULT 0,
+          formula_note TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(plan_date, product_code)
+        )
+      `).run()
+    } catch (_) { /* ignore */ }
+
+    // 1. 해당 날짜의 기존 order_plan / order_plan_final 삭제 (전체 rewrite 방식)
     await c.env.DB.prepare('DELETE FROM order_plan WHERE plan_date = ?').bind(plan_date).run()
+    try { await c.env.DB.prepare('DELETE FROM order_plan_final WHERE plan_date = ?').bind(plan_date).run() } catch (_) {}
 
     // 2. 해당 날짜의 orders 중 order_plan_id가 있는 것도 삭제 (동기 재생성)
     await c.env.DB.prepare(`
@@ -157,6 +177,7 @@ orderPlan.post('/save', async (c) => {
     // 3. 신규 row INSERT
     let planInserted = 0
     let ordersInserted = 0
+    let finalInserted = 0
 
     for (const row of rows) {
       const code = row.product_code
@@ -164,10 +185,12 @@ orderPlan.post('/save', async (c) => {
       if (!code) continue
 
       // 정기 발주
+      let channelSum = 0
       for (const [channel, qty] of Object.entries(row.channels || {})) {
         const q = Number(qty)
         if (!q || q === 0) continue
         if (!PLAN_CHANNELS.includes(channel as any)) continue
+        channelSum += q
 
         const planResult = await c.env.DB.prepare(`
           INSERT INTO order_plan (plan_date, product_code, product_name, channel, quantity, is_extra, memo)
@@ -189,6 +212,7 @@ orderPlan.post('/save', async (c) => {
         const q = Number(qty)
         if (!q || q === 0) continue
         if (!PLAN_CHANNELS.includes(channel as any)) continue
+        channelSum += q
 
         const planResult = await c.env.DB.prepare(`
           INSERT INTO order_plan (plan_date, product_code, product_name, channel, quantity, is_extra, memo)
@@ -203,13 +227,26 @@ orderPlan.post('/save', async (c) => {
         `).bind(plan_date, channel, code, name, Math.round(q), planId, '추가발주').run()
         ordersInserted++
       }
+
+      // ★ v3.6.88: E열 최종수량이 있으면 order_plan_final에 저장
+      const finalQty = Number(row.final_qty)
+      if (finalQty && finalQty > 0) {
+        try {
+          await c.env.DB.prepare(`
+            INSERT INTO order_plan_final (plan_date, product_code, product_name, final_qty, channel_sum, formula_note)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).bind(plan_date, code, name, finalQty, channelSum, row.formula_note || null).run()
+          finalInserted++
+        } catch (_) { /* ignore duplicates or table missing */ }
+      }
     }
 
     return c.json({
       success: true,
-      message: `계획표 저장 완료: order_plan ${planInserted}건, orders ${ordersInserted}건 생성`,
+      message: `계획표 저장 완료: order_plan ${planInserted}건, orders ${ordersInserted}건, 최종수량 ${finalInserted}건`,
       plan_inserted: planInserted,
-      orders_inserted: ordersInserted
+      orders_inserted: ordersInserted,
+      final_inserted: finalInserted
     })
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500)
@@ -792,6 +829,24 @@ orderPlan.get('/weekly/:start_date', async (c) => {
     }
     const end = dates[6]
 
+    // order_plan_final 테이블 자동 생성 (마이그레이션 미적용 환경 대응)
+    try {
+      await c.env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS order_plan_final (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          plan_date TEXT NOT NULL,
+          product_code TEXT NOT NULL,
+          product_name TEXT,
+          final_qty REAL NOT NULL DEFAULT 0,
+          channel_sum REAL DEFAULT 0,
+          formula_note TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(plan_date, product_code)
+        )
+      `).run()
+    } catch (_) { /* ignore */ }
+
     // 계획 조회
     const res = await c.env.DB.prepare(`
       SELECT plan_date, product_code, product_name, channel, quantity, is_extra
@@ -800,14 +855,55 @@ orderPlan.get('/weekly/:start_date', async (c) => {
     `).bind(start, end).all()
     const rows = (res.results as any[]) || []
 
-    // 제품 마스터 (이름 보강)
+    // ★ v3.6.88: E열 최종수량(order_plan_final) 조회 - 제품별 합계
+    let finalMap: Record<string, number> = {}
+    let grandFinalTotal = 0
+    try {
+      const finalRes = await c.env.DB.prepare(`
+        SELECT product_code, SUM(final_qty) as total_final
+        FROM order_plan_final
+        WHERE plan_date >= ? AND plan_date <= ?
+        GROUP BY product_code
+      `).bind(start, end).all()
+      for (const f of (finalRes.results as any[])) {
+        const q = Number(f.total_final) || 0
+        finalMap[f.product_code] = q
+        grandFinalTotal += q
+      }
+    } catch (_) { /* table missing - ignore */ }
+
+    // 제품 마스터 (이름 보강 + 정렬 순서용 sort_order)
     let prodNameMap: Record<string, string> = {}
+    let prodOrderMap: Record<string, number> = {}
     try {
       const pRes = await c.env.DB.prepare(`
-        SELECT production_code, production_name FROM production_items WHERE is_active = 1 OR is_active IS NULL
+        SELECT production_code, production_name, sort_order
+        FROM production_items
+        WHERE is_active = 1 OR is_active IS NULL
       `).all()
-      for (const p of (pRes.results as any[])) prodNameMap[p.production_code] = p.production_name
-    } catch (_) {}
+      let idx = 0
+      for (const p of (pRes.results as any[])) {
+        prodNameMap[p.production_code] = p.production_name
+        // sort_order가 없으면 마스터의 로드 순서(idx)를 사용 (production_code 순번 보존)
+        prodOrderMap[p.production_code] = (p.sort_order != null && p.sort_order !== '')
+          ? Number(p.sort_order) : idx
+        idx++
+      }
+    } catch (_) {
+      // sort_order 컬럼이 없는 경우 fallback
+      try {
+        const pRes = await c.env.DB.prepare(`
+          SELECT production_code, production_name
+          FROM production_items
+          WHERE is_active = 1 OR is_active IS NULL
+        `).all()
+        let idx = 0
+        for (const p of (pRes.results as any[])) {
+          prodNameMap[p.production_code] = p.production_name
+          prodOrderMap[p.production_code] = idx++
+        }
+      } catch (_) {}
+    }
 
     // 집계: 제품별 { daily: {date: qty}, channels: {ch: qty}, total }
     const byProduct: Record<string, any> = {}
@@ -819,13 +915,34 @@ orderPlan.get('/weekly/:start_date', async (c) => {
           name: r.product_name || prodNameMap[code] || code,
           daily: {} as Record<string, number>,
           channel_totals: {} as Record<string, number>,
-          total: 0
+          extra_total: 0,           // ★ v3.6.88: 추가 발주 합계
+          total: 0,                 // 채널 합계
+          final_qty: 0              // ★ v3.6.88: E열 최종수량
         }
       }
       const q = Number(r.quantity) || 0
       byProduct[code].daily[r.plan_date] = (byProduct[code].daily[r.plan_date] || 0) + q
       byProduct[code].channel_totals[r.channel] = (byProduct[code].channel_totals[r.channel] || 0) + q
       byProduct[code].total += q
+      if (Number(r.is_extra) === 1) {
+        byProduct[code].extra_total += q
+      }
+    }
+
+    // ★ v3.6.88: final_qty 병합 (order_plan에 없는 제품도 order_plan_final에는 있을 수 있음)
+    for (const [code, q] of Object.entries(finalMap)) {
+      if (!byProduct[code]) {
+        byProduct[code] = {
+          code,
+          name: prodNameMap[code] || code,
+          daily: {} as Record<string, number>,
+          channel_totals: {} as Record<string, number>,
+          extra_total: 0,
+          total: 0,
+          final_qty: 0
+        }
+      }
+      byProduct[code].final_qty = q as number
     }
 
     // 일별/채널별 합계
@@ -834,13 +951,26 @@ orderPlan.get('/weekly/:start_date', async (c) => {
     for (const d of dates) dailyTotals[d] = 0
     for (const ch of PLAN_CHANNELS) channelTotals[ch] = 0
     let grand = 0
+    let grandExtra = 0
     for (const p of Object.values(byProduct) as any[]) {
       for (const [d, q] of Object.entries(p.daily)) dailyTotals[d] = (dailyTotals[d] || 0) + (q as number)
       for (const [ch, q] of Object.entries(p.channel_totals)) channelTotals[ch] = (channelTotals[ch] || 0) + (q as number)
       grand += p.total
+      grandExtra += (p.extra_total || 0)
     }
 
-    const products = Object.values(byProduct).sort((a: any, b: any) => b.total - a.total || a.code.localeCompare(b.code))
+    // ★ v3.6.88 (P5): 정렬 - production_items 마스터 sort_order 기준
+    // (기존: total DESC → 신규: production_code 순번 ASC)
+    const products = Object.values(byProduct).sort((a: any, b: any) => {
+      const oa = prodOrderMap[a.code]
+      const ob = prodOrderMap[b.code]
+      const hasA = oa != null
+      const hasB = ob != null
+      if (hasA && hasB) return oa - ob
+      if (hasA) return -1
+      if (hasB) return 1
+      return String(a.code).localeCompare(String(b.code))
+    })
 
     return c.json({
       success: true,
@@ -852,6 +982,8 @@ orderPlan.get('/weekly/:start_date', async (c) => {
       daily_totals: dailyTotals,
       channel_totals: channelTotals,
       grand_total: grand,
+      grand_extra_total: grandExtra,      // ★ v3.6.88
+      grand_final_total: grandFinalTotal, // ★ v3.6.88
       product_count: products.length
     })
   } catch (e: any) {

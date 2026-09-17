@@ -1102,7 +1102,10 @@ orderPlan.post('/material-usage', async (c) => {
       } else if (bomMats.length > 0) {
         // 반죽 매핑 없음 → 기존 production_bom(제품 BOM) 사용
         for (const m of bomMats) {
-          const g = Number(m.quantity) * qty
+          // v3.6.92: unit 반영 (kg → g 환산). 기본 g.
+          const unit = String(m.unit || 'g').toLowerCase()
+          const factor = (unit === 'kg') ? 1000 : 1
+          const g = Number(m.quantity) * qty * factor
           bomRawUsage[m.material_name] = (bomRawUsage[m.material_name] || 0) + g
         }
         productsFromBom.push(p.product_name)
@@ -1363,7 +1366,10 @@ orderPlan.get('/weekly-materials/:start_date', async (c) => {
         productBreakdown.push(rowDetail)
       } else if (bomMats.length > 0) {
         for (const m of bomMats) {
-          const g = Number(m.quantity) * qty
+          // v3.6.92: unit 반영 (kg → g 환산). 기본 g.
+          const unit = String(m.unit || 'g').toLowerCase()
+          const factor = (unit === 'kg') ? 1000 : 1
+          const g = Number(m.quantity) * qty * factor
           bomRawUsage[m.material_name] = (bomRawUsage[m.material_name] || 0) + g
         }
         productsFromBom.push(p.product_name)

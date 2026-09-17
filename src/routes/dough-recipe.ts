@@ -356,4 +356,151 @@ dough.post('/seed-defaults', async (c) => {
   }
 })
 
+// ============================================================
+// ★ v3.6.92: 제품 BOM 벌크 임포트 (구글시트 붙여넣기)
+// POST /api/dough/import-product-bom
+// body: { rows: [{ production_code, production_name?, material_code, material_name, quantity, unit }] }
+// - production_bom 테이블에 저장 (기존 production_code는 덮어쓰기)
+// - production_items에도 production_name upsert (있을 때만)
+// - 원료명이 원료 마스터(master)에 없으면 자동 등록 옵션
+// ============================================================
+dough.post('/import-product-bom', async (c) => {
+  try {
+    const body = await c.req.json()
+    const rows: any[] = Array.isArray(body?.rows) ? body.rows : []
+    if (rows.length === 0) return c.json({ success: false, error: 'rows[] 필요' }, 400)
+    const autoRegisterMaterials = body?.auto_register_materials !== false // 기본 true
+
+    // 테이블 자가 초기화
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        production_code TEXT UNIQUE NOT NULL,
+        production_name TEXT NOT NULL,
+        alias1 TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    await c.env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS production_bom (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        production_code TEXT NOT NULL,
+        material_code TEXT NOT NULL,
+        material_name TEXT NOT NULL,
+        quantity REAL NOT NULL,
+        unit TEXT DEFAULT 'g',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run()
+    await c.env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_production_bom_code ON production_bom(production_code)`).run()
+
+    // 제품별 그룹핑 (기존 데이터 덮어쓰기 시 안전)
+    const byProduct: Record<string, any[]> = {}
+    const productNames: Record<string, string> = {}
+    for (const r of rows) {
+      const pc = String(r.production_code || '').trim()
+      if (!pc) continue
+      if (!byProduct[pc]) byProduct[pc] = []
+      byProduct[pc].push(r)
+      if (r.production_name && !productNames[pc]) productNames[pc] = String(r.production_name).trim()
+    }
+
+    const productCodes = Object.keys(byProduct)
+    if (productCodes.length === 0) return c.json({ success: false, error: '유효한 제품이 없습니다.' }, 400)
+
+    // 원료 마스터 자동 등록용
+    let materialCodePrefix = 'AUTO'
+    let nextCodeNum = 1
+    const existingMats: Record<string, string> = {}  // material_name → item_code
+    const existingCodes: Set<string> = new Set()
+    if (autoRegisterMaterials) {
+      try {
+        const mRes = await c.env.DB.prepare(`SELECT item_code, item_name FROM master`).all<{item_code: string; item_name: string}>()
+        for (const m of (mRes.results || [])) {
+          existingMats[m.item_name] = m.item_code
+          existingCodes.add(m.item_code)
+        }
+      } catch (_) { /* master 테이블 없을 수도 */ }
+    }
+
+    let productsUpserted = 0, bomInserted = 0, materialsCreated = 0
+
+    for (const pc of productCodes) {
+      // 1) production_items upsert
+      const pName = productNames[pc] || pc
+      await c.env.DB.prepare(`
+        INSERT INTO production_items (production_code, production_name)
+        VALUES (?, ?)
+        ON CONFLICT(production_code) DO UPDATE SET
+          production_name = excluded.production_name,
+          updated_at = CURRENT_TIMESTAMP
+      `).bind(pc, pName).run()
+      productsUpserted++
+
+      // 2) 기존 BOM 삭제 후 재작성
+      await c.env.DB.prepare(`DELETE FROM production_bom WHERE production_code = ?`).bind(pc).run()
+
+      for (const r of byProduct[pc]) {
+        const mName = String(r.material_name || '').trim()
+        const qty = Number(r.quantity)
+        if (!mName || !qty || qty <= 0) continue
+        let mCode = String(r.material_code || '').trim()
+
+        // 원료 마스터 자동 등록
+        if (autoRegisterMaterials) {
+          if (!mCode && existingMats[mName]) {
+            mCode = existingMats[mName]
+          }
+          if (mCode && !existingCodes.has(mCode)) {
+            // 새 코드 등록
+            try {
+              await c.env.DB.prepare(`
+                INSERT OR IGNORE INTO master (item_code, item_name, category, unit)
+                VALUES (?, ?, '원료', ?)
+              `).bind(mCode, mName, String(r.unit || 'g')).run()
+              existingCodes.add(mCode)
+              existingMats[mName] = mCode
+              materialsCreated++
+            } catch (_) { /* ignore */ }
+          }
+          if (!mCode) {
+            // 코드 완전 없음 → AUTO### 발급
+            while (existingCodes.has(`${materialCodePrefix}${String(nextCodeNum).padStart(4, '0')}`)) nextCodeNum++
+            mCode = `${materialCodePrefix}${String(nextCodeNum).padStart(4, '0')}`
+            try {
+              await c.env.DB.prepare(`
+                INSERT OR IGNORE INTO master (item_code, item_name, category, unit)
+                VALUES (?, ?, '원료', ?)
+              `).bind(mCode, mName, String(r.unit || 'g')).run()
+              existingCodes.add(mCode)
+              existingMats[mName] = mCode
+              materialsCreated++
+              nextCodeNum++
+            } catch (_) { /* ignore */ }
+          }
+        }
+        if (!mCode) mCode = 'UNK'
+
+        await c.env.DB.prepare(`
+          INSERT INTO production_bom (production_code, material_code, material_name, quantity, unit)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(pc, mCode, mName, qty, String(r.unit || 'g')).run()
+        bomInserted++
+      }
+    }
+
+    return c.json({
+      success: true,
+      products_upserted: productsUpserted,
+      bom_inserted: bomInserted,
+      materials_created: materialsCreated,
+      total_rows: rows.length
+    })
+  } catch (e: any) {
+    console.error('[import-product-bom] error:', e)
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
 export default dough

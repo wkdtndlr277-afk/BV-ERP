@@ -61509,34 +61509,71 @@ function showDoughRecipePasteImport() {
   modal.id = 'dough-paste-modal';
   modal.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
   modal.innerHTML = `
-    <div class="bg-white rounded-xl shadow-2xl max-w-5xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+    <div class="bg-white rounded-xl shadow-2xl max-w-6xl w-full mx-4 max-h-[95vh] overflow-hidden flex flex-col">
       <div class="bg-red-600 text-white p-4 flex items-center justify-between">
-        <h3 class="text-lg font-bold"><i class="fas fa-paste mr-2"></i>구글시트 배합비 붙여넣기 임포트</h3>
+        <h3 class="text-lg font-bold"><i class="fas fa-paste mr-2"></i>구글시트 BOM/배합비 붙여넣기 임포트</h3>
         <button onclick="closeDoughPasteModal()" class="text-white hover:bg-red-700 rounded p-1 px-2"><i class="fas fa-times"></i></button>
       </div>
       <div class="p-4 overflow-auto flex-1">
-        <div class="bg-yellow-50 border border-yellow-300 rounded p-3 mb-3 text-xs">
-          <p class="font-bold text-yellow-800 mb-1"><i class="fas fa-info-circle mr-1"></i>사용법</p>
-          <ol class="list-decimal list-inside text-yellow-800 space-y-0.5">
-            <li>구글시트에서 배합비 표를 <b>Ctrl+A → Ctrl+C</b>로 복사하세요.</li>
-            <li>아래 입력창에 <b>Ctrl+V</b>로 붙여넣기 하세요 (탭 구분 자동 인식).</li>
-            <li>아래 예시처럼 <b>첫 행은 반죽코드</b>(D001~D008), <b>둘째 행은 반죽명</b>, <b>이후는 원료명 + 각 반죽별 수량</b> 형식이어야 합니다.</li>
-            <li><b>수량은 반죽 1kg 당 원료 g</b>으로 입력하세요 (예: 물 600 = 반죽 1kg당 물 600g).</li>
-          </ol>
+        <!-- 형식 선택 탭 -->
+        <div class="flex gap-1 mb-3 border-b-2 border-gray-200">
+          <button id="paste-fmt-tab-product" onclick="switchPasteFmt('product')"
+            class="px-4 py-2 text-sm font-bold bg-emerald-500 text-white rounded-t-lg">
+            <i class="fas fa-list mr-1"></i> 제품 BOM 리스트 (제품코드/원료 세로형)
+          </button>
+          <button id="paste-fmt-tab-dough" onclick="switchPasteFmt('dough')"
+            class="px-4 py-2 text-sm font-bold bg-gray-100 text-gray-600 rounded-t-lg hover:bg-gray-200">
+            <i class="fas fa-table mr-1"></i> 반죽 배합비 매트릭스 (D001~D008 가로형)
+          </button>
         </div>
-        <div class="mb-3">
-          <label class="text-xs font-bold text-gray-700 block mb-1">예시 형식:</label>
-          <pre class="bg-gray-100 p-2 rounded text-[10px] font-mono overflow-x-auto">원료명	D001	D002	D003	D004	D005	D006	D007	D008
+
+        <!-- 제품 BOM 리스트 형식 안내 -->
+        <div id="paste-fmt-help-product" class="bg-emerald-50 border border-emerald-300 rounded p-3 mb-3 text-xs">
+          <p class="font-bold text-emerald-800 mb-1"><i class="fas fa-info-circle mr-1"></i>제품 BOM 리스트 형식</p>
+          <ol class="list-decimal list-inside text-emerald-800 space-y-0.5">
+            <li>구글시트에서 표를 <b>선택 → Ctrl+C</b>로 복사 → 아래에 <b>Ctrl+V</b>로 붙여넣기</li>
+            <li>각 행 = <code>제품코드 · 제품명 · 원료코드 · 원료명 · 수량 · 단위</code> (6열)</li>
+            <li>단위(g/kg)에 맞게 원료 사용량이 자동 환산됩니다.</li>
+            <li>원료 마스터에 없는 원료는 <b>자동 등록</b>됩니다.</li>
+          </ol>
+          <label class="text-xs font-bold text-emerald-800 block mt-2 mb-1">예시:</label>
+          <pre class="bg-white p-2 rounded text-[10px] font-mono overflow-x-auto">PR273	리얼무화과파운드	R007	건조무화과	0.03	g
+PR273	리얼무화과파운드	R047	곽설탕	0.0126	g
+PR274	쌀할라피뇨플렛브레드105g	R005	햇방아쌀가루	0.037	g
+PR274	쌀할라피뇨플렛브레드105g	R871	소금	0.00082	g
+...</pre>
+          <div class="mt-2 flex items-center gap-3">
+            <label class="text-xs font-bold text-emerald-800">단위 강제 지정:</label>
+            <select id="paste-unit-override" class="border border-emerald-400 rounded px-2 py-1 text-xs">
+              <option value="">시트의 단위 그대로 사용</option>
+              <option value="g">모두 g로 처리</option>
+              <option value="kg">모두 kg로 처리 (⚠️ 시트 값이 kg 단위인 경우)</option>
+            </select>
+            <label class="text-xs text-emerald-800 ml-2">
+              <input type="checkbox" id="paste-auto-mat" checked class="mr-1">원료 마스터 자동 등록
+            </label>
+          </div>
+        </div>
+
+        <!-- 반죽 매트릭스 형식 안내 -->
+        <div id="paste-fmt-help-dough" class="bg-yellow-50 border border-yellow-300 rounded p-3 mb-3 text-xs" style="display:none;">
+          <p class="font-bold text-yellow-800 mb-1"><i class="fas fa-info-circle mr-1"></i>반죽 매트릭스 형식</p>
+          <ol class="list-decimal list-inside text-yellow-800 space-y-0.5">
+            <li>첫 행: 반죽코드 (D001~D008)</li>
+            <li>둘째 행: 반죽명</li>
+            <li>이후 행: 원료명 + 각 반죽별 수량(반죽 1kg당 g)</li>
+          </ol>
+          <label class="text-xs font-bold text-yellow-800 block mt-2 mb-1">예시:</label>
+          <pre class="bg-white p-2 rounded text-[10px] font-mono overflow-x-auto">원료명	D001	D002	D003	D004	D005	D006	D007	D008
 반죽명	발효종르방	폴리쉬	통밀르방	통밀폴리쉬	탕종	통밀탕종	쌀르방	쌀탕종
 유기농T55	500	500				
 정제수	400	500	400	500	1000	1000	400	1000
-통밀	100			400				
-소금	10	10	10	10	10	10	10	10
-...</pre>
+소금	10	10	10	10	10	10	10	10</pre>
         </div>
-        <textarea id="dough-paste-data" rows="15" class="w-full border-2 border-red-300 rounded-lg px-3 py-2 text-xs font-mono focus:border-red-500 focus:ring-2 focus:ring-red-200" placeholder="여기에 구글시트 배합비 표를 Ctrl+V로 붙여넣기..."></textarea>
+
+        <textarea id="dough-paste-data" rows="14" class="w-full border-2 border-red-300 rounded-lg px-3 py-2 text-xs font-mono focus:border-red-500 focus:ring-2 focus:ring-red-200" placeholder="여기에 시트를 Ctrl+V로 붙여넣기..."></textarea>
         <div class="mt-3 flex justify-between items-center">
-          <div class="text-xs text-gray-500">💡 반죽코드가 없는 열은 무시됩니다.</div>
+          <div class="text-xs text-gray-500">💡 두 형식은 상단 탭으로 전환하세요.</div>
           <div class="flex gap-2">
             <button onclick="previewDoughRecipePaste()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold">
               <i class="fas fa-eye mr-1"></i> 미리보기
@@ -61551,6 +61588,25 @@ function showDoughRecipePasteImport() {
     </div>
   `;
   document.body.appendChild(modal);
+  window.__pasteFmt = 'product'; // 기본
+}
+
+function switchPasteFmt(fmt) {
+  window.__pasteFmt = fmt;
+  const btnP = document.getElementById('paste-fmt-tab-product');
+  const btnD = document.getElementById('paste-fmt-tab-dough');
+  const helpP = document.getElementById('paste-fmt-help-product');
+  const helpD = document.getElementById('paste-fmt-help-dough');
+  if (fmt === 'product') {
+    btnP.className = 'px-4 py-2 text-sm font-bold bg-emerald-500 text-white rounded-t-lg';
+    btnD.className = 'px-4 py-2 text-sm font-bold bg-gray-100 text-gray-600 rounded-t-lg hover:bg-gray-200';
+    helpP.style.display = ''; helpD.style.display = 'none';
+  } else {
+    btnD.className = 'px-4 py-2 text-sm font-bold bg-amber-500 text-white rounded-t-lg';
+    btnP.className = 'px-4 py-2 text-sm font-bold bg-gray-100 text-gray-600 rounded-t-lg hover:bg-gray-200';
+    helpD.style.display = ''; helpP.style.display = 'none';
+  }
+  document.getElementById('dough-paste-preview').innerHTML = '';
 }
 
 function closeDoughPasteModal() {
@@ -61558,35 +61614,104 @@ function closeDoughPasteModal() {
   if (m) m.remove();
 }
 
-// TSV 파싱: 반죽코드 헤더 형식 (원료명 | D001 | D002 | ... 또는 반죽명이 첫 행 + 코드가 둘째 행 등 유연 처리)
-function parseDoughRecipePaste(text) {
+// ===== v3.6.92: 형식별 분기 파서 =====
+// 셀 분리: 탭 우선, 없으면 2칸 이상 공백
+function __splitTsv(l) { return l.includes('\t') ? l.split('\t') : l.split(/\s{2,}/); }
+
+// 형식 A: 제품 BOM 리스트 (6열)
+// 컬럼: 제품코드 | 제품명 | 원료코드 | 원료명 | 수량 | 단위
+function parseProductBomPaste(text, unitOverride) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n').map(l => l.trimEnd()).filter(l => l.trim().length > 0);
+  if (lines.length < 1) return { error: '데이터가 없습니다.' };
+
+  const productCodeRe = /^(PR|SF|PF|FG)\d{2,6}$/i;
+  const materialCodeRe = /^(R|M|RM|MAT)\d{2,6}$/i;
+  const unitRe = /^(g|kg|G|KG|Kg)$/;
+
+  const products = {};   // { code: { production_code, production_name, materials:[] } }
+  const skipped = [];
+  const warnings = [];
+  let headerSkipped = false;
+
+  for (let li = 0; li < lines.length; li++) {
+    const raw = lines[li];
+    if (raw.startsWith('#')) continue;
+    const cells = __splitTsv(raw).map(c => c.trim());
+    if (cells.length < 5) { skipped.push({ line: li+1, reason: '컬럼 부족(<5)', text: raw }); continue; }
+
+    const [c0, c1, c2, c3, c4, c5] = cells;
+
+    // 헤더 행 스킵 (한글 헤더 감지: '제품코드','원료코드','수량' 등)
+    if (!headerSkipped && /^제품\s*코드$|^품목\s*코드$|^코드$/.test(c0) && /^제품명$|^품목명$/.test(c1)) {
+      headerSkipped = true;
+      continue;
+    }
+
+    // 제품 코드 검증
+    if (!productCodeRe.test(c0)) { skipped.push({ line: li+1, reason: '제품코드 형식 아님', text: c0 }); continue; }
+
+    // 원료 코드 검증 (없어도 가능하나 형식은 R로 시작)
+    const matCode = c2 || '';
+    const matName = c3 || '';
+    if (!matName) { skipped.push({ line: li+1, reason: '원료명 누락', text: raw }); continue; }
+
+    // 수량 파싱
+    const qtyStr = String(c4 || '').replace(/[,\s]/g, '');
+    const qty = parseFloat(qtyStr);
+    if (isNaN(qty) || qty <= 0) { skipped.push({ line: li+1, reason: '수량 무효', text: c4 }); continue; }
+
+    // 단위: override 있으면 강제, 없으면 시트 값
+    let unit = (c5 || 'g').toLowerCase();
+    if (unitOverride === 'g' || unitOverride === 'kg') unit = unitOverride;
+    else if (!unitRe.test(c5 || '')) {
+      // 단위 컬럼이 없거나 이상하면 g로 가정 + 경고
+      unit = 'g';
+      if (c5) warnings.push(`행 ${li+1}: 단위 "${c5}" 인식 불가 → g로 처리`);
+    } else {
+      unit = unit.toLowerCase();
+    }
+
+    if (!products[c0]) {
+      products[c0] = {
+        production_code: c0,
+        production_name: c1 || c0,
+        materials: []
+      };
+    }
+    products[c0].materials.push({
+      material_code: matCode || '',
+      material_name: matName,
+      quantity: qty,
+      unit
+    });
+  }
+
+  const arr = Object.values(products);
+  if (arr.length === 0) return { error: '유효한 제품 BOM 데이터가 없습니다.', skipped, warnings };
+  return { products: arr, skipped, warnings };
+}
+
+// 형식 B: 반죽 배합비 매트릭스 (기존 로직)
+function parseDoughMatrixPaste(text) {
   const lines = text.replace(/\r\n/g, '\n').split('\n').map(l => l.trimEnd()).filter(l => l.trim().length > 0);
   if (lines.length < 3) return { error: '최소 3행 필요 (헤더 2행 + 원료 1행 이상)' };
 
-  // 각 줄을 탭으로 분리 (탭이 없으면 다중 공백)
-  const split = (l) => l.includes('\t') ? l.split('\t') : l.split(/\s{2,}/);
-
+  const split = __splitTsv;
   const row0 = split(lines[0]).map(c => c.trim());
   const row1 = split(lines[1]).map(c => c.trim());
 
-  // 첫 번째 컬럼(원료명 헤더)은 스킵, 나머지 컬럼에서 반죽코드 판별
-  // 코드는 D001~D008 패턴 또는 알파벳+숫자
   const codeRe = /^D0?\d{1,3}$/i;
   let codes = [], names = [];
-  // Case A: row0가 코드행, row1이 반죽명
   if (row0.slice(1).some(c => codeRe.test(c))) {
     codes = row0.slice(1);
     names = row1.slice(1);
-  }
-  // Case B: row0가 반죽명, row1이 코드
-  else if (row1.slice(1).some(c => codeRe.test(c))) {
+  } else if (row1.slice(1).some(c => codeRe.test(c))) {
     names = row0.slice(1);
     codes = row1.slice(1);
   } else {
     return { error: '반죽코드(D001~D008 형태)를 첫 행 또는 둘째 행에서 찾지 못했습니다.' };
   }
 
-  // 반죽별 재료 맵
   const doughs = {};
   for (let i = 0; i < codes.length; i++) {
     const code = (codes[i] || '').trim().toUpperCase();
@@ -61600,7 +61725,6 @@ function parseDoughRecipePaste(text) {
   }
   if (Object.keys(doughs).length === 0) return { error: '유효한 반죽코드가 없습니다.' };
 
-  // 3행부터 원료 데이터
   const startIdx = 2;
   let warnings = [];
   for (let li = startIdx; li < lines.length; li++) {
@@ -61614,10 +61738,7 @@ function parseDoughRecipePaste(text) {
       if (!raw || raw === '-') continue;
       const num = parseFloat(raw.replace(/[,\s]/g, ''));
       if (isNaN(num) || num <= 0) continue;
-      doughs[code].materials.push({
-        material_name: matName,
-        quantity_per_kg: num  // 반죽 1kg당 원료 g
-      });
+      doughs[code].materials.push({ material_name: matName, quantity_per_kg: num });
     }
   }
 
@@ -61626,41 +61747,128 @@ function parseDoughRecipePaste(text) {
   return { doughs: arr, warnings };
 }
 
+// 형식 분기 진입점 (하위 호환용)
+function parseDoughRecipePaste(text) {
+  const fmt = window.__pasteFmt || 'product';
+  if (fmt === 'product') {
+    const unitOverride = document.getElementById('paste-unit-override')?.value || '';
+    return parseProductBomPaste(text, unitOverride);
+  }
+  return parseDoughMatrixPaste(text);
+}
+
 function previewDoughRecipePaste() {
   const text = document.getElementById('dough-paste-data').value;
   const preview = document.getElementById('dough-paste-preview');
+  const fmt = window.__pasteFmt || 'product';
   const result = parseDoughRecipePaste(text);
   if (result.error) {
     preview.innerHTML = `<div class="bg-red-50 border border-red-300 rounded p-3 text-sm text-red-700">
       <i class="fas fa-exclamation-triangle mr-1"></i> ${result.error}
+      ${result.skipped && result.skipped.length ? `<div class="mt-2 text-xs">스킵된 행: ${result.skipped.length}건</div>` : ''}
     </div>`;
     return;
   }
-  const html = result.doughs.map(d => `
-    <div class="border rounded p-2 mb-2">
-      <div class="font-bold text-red-700">${d.dough_code} - ${d.dough_name} <span class="text-xs text-gray-500 ml-2">${d.materials.length}종</span></div>
-      <div class="text-xs mt-1">
-        ${d.materials.map(m => `<span class="inline-block bg-blue-50 text-blue-700 px-2 py-0.5 rounded mr-1 mb-1">${m.material_name}: ${m.quantity_per_kg}g/kg</span>`).join('')}
+
+  if (fmt === 'product') {
+    // 제품 BOM 미리보기
+    const products = result.products;
+    const totalMat = products.reduce((s,p)=>s+p.materials.length,0);
+    const warnHtml = (result.warnings && result.warnings.length) ? `
+      <div class="mt-2 bg-yellow-50 border border-yellow-300 rounded p-2 text-xs text-yellow-800 max-h-24 overflow-auto">
+        ⚠️ 경고 ${result.warnings.length}건:<br>${result.warnings.slice(0,10).map(w=>`· ${w}`).join('<br>')}
+      </div>` : '';
+    const skipHtml = (result.skipped && result.skipped.length) ? `
+      <div class="mt-2 bg-orange-50 border border-orange-300 rounded p-2 text-xs text-orange-800 max-h-24 overflow-auto">
+        ⏭️ 스킵된 행 ${result.skipped.length}건 (첫 5건):<br>${result.skipped.slice(0,5).map(s=>`· 행${s.line} — ${s.reason}: ${s.text}`).join('<br>')}
+      </div>` : '';
+    const html = products.map(p => {
+      const totalG = p.materials.reduce((s,m)=> s + (m.unit==='kg'? m.quantity*1000 : m.quantity), 0);
+      return `
+      <div class="border rounded p-2 mb-2">
+        <div class="font-bold text-emerald-700">
+          ${p.production_code} · ${p.production_name}
+          <span class="text-xs text-gray-500 ml-2">${p.materials.length}종 · 총 ${totalG.toFixed(2)}g</span>
+        </div>
+        <div class="text-xs mt-1">
+          ${p.materials.map(m => `<span class="inline-block bg-blue-50 text-blue-700 px-2 py-0.5 rounded mr-1 mb-1">${m.material_code? m.material_code+' ' : ''}${m.material_name}: ${m.quantity}${m.unit}</span>`).join('')}
+        </div>
+      </div>`;
+    }).join('');
+    preview.innerHTML = `
+      <div class="bg-emerald-50 border border-emerald-300 rounded p-3">
+        <div class="font-bold text-emerald-800 mb-2">
+          <i class="fas fa-check-circle mr-1"></i>파싱 완료: 제품 ${products.length}종, 원료 라인 총 ${totalMat}건
+        </div>
+        ${warnHtml}
+        ${skipHtml}
+        <div class="max-h-72 overflow-auto mt-2">${html}</div>
       </div>
-    </div>
-  `).join('');
-  preview.innerHTML = `
-    <div class="bg-emerald-50 border border-emerald-300 rounded p-3">
-      <div class="font-bold text-emerald-800 mb-2"><i class="fas fa-check-circle mr-1"></i>파싱 완료: 반죽 ${result.doughs.length}종, 원료 총 ${result.doughs.reduce((s,d)=>s+d.materials.length,0)}건</div>
-      <div class="max-h-72 overflow-auto">${html}</div>
-    </div>
-  `;
+    `;
+  } else {
+    // 반죽 매트릭스 미리보기 (기존)
+    const html = result.doughs.map(d => `
+      <div class="border rounded p-2 mb-2">
+        <div class="font-bold text-red-700">${d.dough_code} - ${d.dough_name} <span class="text-xs text-gray-500 ml-2">${d.materials.length}종</span></div>
+        <div class="text-xs mt-1">
+          ${d.materials.map(m => `<span class="inline-block bg-blue-50 text-blue-700 px-2 py-0.5 rounded mr-1 mb-1">${m.material_name}: ${m.quantity_per_kg}g/kg</span>`).join('')}
+        </div>
+      </div>
+    `).join('');
+    preview.innerHTML = `
+      <div class="bg-amber-50 border border-amber-300 rounded p-3">
+        <div class="font-bold text-amber-800 mb-2"><i class="fas fa-check-circle mr-1"></i>파싱 완료: 반죽 ${result.doughs.length}종, 원료 총 ${result.doughs.reduce((s,d)=>s+d.materials.length,0)}건</div>
+        <div class="max-h-72 overflow-auto">${html}</div>
+      </div>
+    `;
+  }
 }
 
 async function submitDoughRecipePaste() {
   const text = document.getElementById('dough-paste-data').value;
+  const fmt = window.__pasteFmt || 'product';
   const result = parseDoughRecipePaste(text);
   const preview = document.getElementById('dough-paste-preview');
   if (result.error) {
     preview.innerHTML = `<div class="bg-red-50 border border-red-300 rounded p-3 text-sm text-red-700"><i class="fas fa-exclamation-triangle mr-1"></i> ${result.error}</div>`;
     return;
   }
-  if (!confirm(`반죽 ${result.doughs.length}종의 배합비를 등록합니다.\n\n⚠️ 기존 반죽의 배합비는 <b>전부 덮어쓰기</b>됩니다.\n\n계속하시겠습니까?`.replace(/<[^>]+>/g,''))) return;
+
+  if (fmt === 'product') {
+    const products = result.products;
+    const autoMat = document.getElementById('paste-auto-mat')?.checked !== false;
+    const totalRows = products.reduce((s,p)=>s+p.materials.length,0);
+    if (!confirm(`제품 ${products.length}종, 원료라인 ${totalRows}건을 production_bom에 등록합니다.\n\n⚠️ 각 제품 기존 BOM은 삭제 후 재입력됩니다.\n${autoMat?'✓ 원료 마스터 미등록 원료는 자동 등록됩니다.\n':''}\n계속하시겠습니까?`)) return;
+
+    // 서버 payload: 평탄화된 rows 배열
+    const rows = [];
+    for (const p of products) {
+      for (const m of p.materials) {
+        rows.push({
+          production_code: p.production_code,
+          production_name: p.production_name,
+          material_code: m.material_code || '',
+          material_name: m.material_name,
+          quantity: m.quantity,
+          unit: m.unit
+        });
+      }
+    }
+
+    try {
+      const res = await axios.post('/api/dough/import-product-bom', { rows, auto_register_materials: autoMat });
+      if (!res.data?.success) throw new Error(res.data?.error || '실패');
+      alert(`✅ 제품 BOM 등록 완료\n\n· 제품 upsert: ${res.data.products_upserted}건\n· BOM 라인 저장: ${res.data.bom_inserted}건\n· 원료 마스터 신규 등록: ${res.data.materials_created}건\n· 총 처리 행: ${res.data.total_rows}건`);
+      closeDoughPasteModal();
+      if (typeof loadDoughList === 'function') { try { await loadDoughList(); } catch(e){} }
+    } catch (e) {
+      alert('등록 실패: ' + (e.response?.data?.error || e.message));
+    }
+    return;
+  }
+
+  // 반죽 매트릭스 모드 (기존)
+  if (!confirm(`반죽 ${result.doughs.length}종의 배합비를 등록합니다.\n\n⚠️ 기존 반죽의 배합비는 전부 덮어쓰기됩니다.\n\n계속하시겠습니까?`)) return;
   try {
     const res = await axios.post('/api/dough/bulk-import', { doughs: result.doughs });
     if (!res.data?.success) throw new Error(res.data?.error || '실패');
@@ -61676,6 +61884,10 @@ window.showDoughRecipePasteImport = showDoughRecipePasteImport;
 window.closeDoughPasteModal = closeDoughPasteModal;
 window.previewDoughRecipePaste = previewDoughRecipePaste;
 window.submitDoughRecipePaste = submitDoughRecipePaste;
+window.switchPasteFmt = switchPasteFmt;
+window.parseProductBomPaste = parseProductBomPaste;
+window.parseDoughMatrixPaste = parseDoughMatrixPaste;
+window.parseDoughRecipePaste = parseDoughRecipePaste;
 
 function renderDoughTable(needsMigration) {
   const container = document.getElementById('dough-container');

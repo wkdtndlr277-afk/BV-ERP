@@ -9695,6 +9695,33 @@ admin.get('/init-product-schema', async (c) => {
     await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pc_active ON product_channels(is_active)`).run();
     results.push('✅ product_channels 인덱스 3개 생성');
     
+    // v3.6.189: products_new 확장 컴럼 (recipe_name, barcode_filename)
+    // ALTER TABLE ADD COLUMN은 이미 존재하면 에러가 나므로 try-catch로 감싸기
+    try {
+      await env.DB.prepare(`ALTER TABLE products_new ADD COLUMN recipe_name TEXT`).run();
+      results.push('✅ products_new.recipe_name 컴럼 추가');
+    } catch (e: any) {
+      if (String(e.message).includes('duplicate column')) {
+        results.push('ℹ️ products_new.recipe_name 이미 존재');
+      } else throw e;
+    }
+    try {
+      await env.DB.prepare(`ALTER TABLE products_new ADD COLUMN barcode_filename TEXT`).run();
+      results.push('✅ products_new.barcode_filename 컴럼 추가');
+    } catch (e: any) {
+      if (String(e.message).includes('duplicate column')) {
+        results.push('ℹ️ products_new.barcode_filename 이미 존재');
+      } else throw e;
+    }
+    try {
+      await env.DB.prepare(`ALTER TABLE products_new ADD COLUMN photo_filename TEXT`).run();
+      results.push('✅ products_new.photo_filename 컴럼 추가');
+    } catch (e: any) {
+      if (String(e.message).includes('duplicate column')) {
+        results.push('ℹ️ products_new.photo_filename 이미 존재');
+      } else throw e;
+    }
+    
     // 7. 현재 상태 확인
     const brandsCount = await env.DB.prepare(`SELECT COUNT(*) as n FROM brands`).first();
     const productsCount = await env.DB.prepare(`SELECT COUNT(*) as n FROM products_new`).first();

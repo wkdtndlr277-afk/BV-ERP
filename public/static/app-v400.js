@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.188';
+const APP_VERSION = '3.6.189';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -40456,54 +40456,84 @@ function renderProductsV2Grouped() {
         </div>
       </div>
       <div class="overflow-x-auto">
-        <table class="min-w-full text-sm">
+        <table class="min-w-full text-xs">
           <thead class="bg-gray-50 text-xs text-gray-600 uppercase">
             <tr>
-              <th class="px-3 py-2 w-8"></th>
-              <th class="px-3 py-2 text-left">사진</th>
-              <th class="px-3 py-2 text-left">제품코드</th>
-              <th class="px-3 py-2 text-left">제품명</th>
-              <th class="px-3 py-2 text-left">채널 수</th>
-              <th class="px-3 py-2 text-left">기본 바코드</th>
-              <th class="px-3 py-2 text-left">소비기한</th>
-              <th class="px-3 py-2 text-left">포장</th>
-              <th class="px-3 py-2 text-center">액션</th>
+              <th class="px-2 py-2 w-8"></th>
+              <th class="px-2 py-2 text-left">사진</th>
+              <th class="px-2 py-2 text-left">제품코드</th>
+              <th class="px-2 py-2 text-left">판매채널</th>
+              <th class="px-2 py-2 text-left">레시피명</th>
+              <th class="px-2 py-2 text-left">상품명</th>
+              <th class="px-2 py-2 text-left">소비기한</th>
+              <th class="px-2 py-2 text-left">포장단위</th>
+              <th class="px-2 py-2 text-left">포장규격</th>
+              <th class="px-2 py-2 text-left">포장재질</th>
+              <th class="px-2 py-2 text-left">박스규격</th>
+              <th class="px-2 py-2 text-left">박스당 수량</th>
+              <th class="px-2 py-2 text-left">원재료명</th>
+              <th class="px-2 py-2 text-left">제품크기</th>
+              <th class="px-2 py-2 text-left">바코드</th>
+              <th class="px-2 py-2 text-center">액션</th>
             </tr>
           </thead>
           <tbody class="divide-y">
             ${group.items.map(p => {
               const isExpanded = window.__expandedProducts.has(p.product_code);
               const channels = p.channels || [];
+              // 판매채널 요약 (첫 채널 + 개수)
+              const channelSummary = channels.length === 0 
+                ? '<span class="text-gray-400">-</span>' 
+                : channels.length === 1
+                  ? `<span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 rounded">${escapeHtml(channels[0].channel_name)}</span>`
+                  : `<span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 rounded">${escapeHtml(channels[0].channel_name)}</span> <span class="text-xs text-gray-500">+${channels.length - 1}</span>`;
+              // 원재료명은 길므로 요약
+              const ingredientsShort = p.ingredients 
+                ? (p.ingredients.length > 30 ? escapeHtml(p.ingredients.substring(0, 30)) + '…' : escapeHtml(p.ingredients))
+                : '-';
+              // 바코드 다운로드 링크
+              const barcodeDownloadBtn = p.barcode_image_url 
+                ? `<button onclick="event.stopPropagation(); downloadBarcode('${p.product_code}')" class="text-purple-600 hover:text-purple-800 ml-1" title="다운로드"><i class="fas fa-download"></i></button>` 
+                : '';
+              const barcodeImgBtn = p.barcode_image_url 
+                ? `<button onclick="event.stopPropagation(); window.open('${escapeHtml(p.barcode_image_url)}','_blank')" class="text-blue-600 hover:text-blue-800" title="이미지 보기"><i class="fas fa-image"></i></button>` 
+                : '';
               return `
               <tr class="hover:bg-gray-50 cursor-pointer" onclick="toggleProductExpand('${p.product_code}')">
-                <td class="px-3 py-2 text-center">
+                <td class="px-2 py-2 text-center">
                   <i class="fas fa-chevron-${isExpanded ? 'down' : 'right'} text-gray-400 text-xs"></i>
                 </td>
-                <td class="px-3 py-2" onclick="event.stopPropagation()">
-                  ${p.photo_url ? `<img src="${escapeHtml(p.photo_url)}" class="w-12 h-12 object-cover rounded border cursor-pointer" onclick="window.open('${escapeHtml(p.photo_url)}','_blank')">` : '<div class="w-12 h-12 bg-gray-100 rounded border flex items-center justify-center text-gray-300"><i class="fas fa-image"></i></div>'}
+                <td class="px-2 py-2" onclick="event.stopPropagation()">
+                  ${p.photo_url ? `<img src="${escapeHtml(p.photo_url)}" class="w-10 h-10 object-cover rounded border cursor-pointer" onclick="window.open('${escapeHtml(p.photo_url)}','_blank')">` : '<div class="w-10 h-10 bg-gray-100 rounded border flex items-center justify-center text-gray-300"><i class="fas fa-image text-xs"></i></div>'}
                 </td>
-                <td class="px-3 py-2 font-mono text-xs text-gray-600">${escapeHtml(p.product_code)}</td>
-                <td class="px-3 py-2 font-medium">${escapeHtml(p.product_name)}</td>
-                <td class="px-3 py-2">
-                  <span class="inline-block px-2 py-0.5 ${channels.length > 0 ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'} rounded text-xs">
-                    <i class="fas fa-store mr-1"></i>${channels.length}개 채널
-                  </span>
+                <td class="px-2 py-2 font-mono text-gray-600 whitespace-nowrap">${escapeHtml(p.product_code)}</td>
+                <td class="px-2 py-2 whitespace-nowrap">${channelSummary}</td>
+                <td class="px-2 py-2 text-gray-700">${escapeHtml(p.recipe_name || '-')}</td>
+                <td class="px-2 py-2 font-medium text-gray-900 whitespace-nowrap">${escapeHtml(p.product_name)}</td>
+                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.shelf_life || '-')}</td>
+                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_unit || '-')}</td>
+                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_size || '-')}</td>
+                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_material || '-')}</td>
+                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.box_size || '-')}</td>
+                <td class="px-2 py-2 text-gray-600 text-center">${escapeHtml(p.box_qty || '-')}</td>
+                <td class="px-2 py-2 text-gray-600 max-w-[200px]" title="${escapeHtml(p.ingredients || '')}">${ingredientsShort}</td>
+                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.product_size || '-')}</td>
+                <td class="px-2 py-2 whitespace-nowrap">
+                  <div class="text-gray-600">${escapeHtml(p.barcode_number || '-')}</div>
+                  <div class="flex gap-1 mt-0.5">
+                    ${barcodeImgBtn}
+                    ${barcodeDownloadBtn}
+                  </div>
                 </td>
-                <td class="px-3 py-2">
-                  <div class="text-xs">${escapeHtml(p.barcode_number || '-')}</div>
-                  ${p.barcode_image_url ? `<button onclick="event.stopPropagation(); window.open('${escapeHtml(p.barcode_image_url)}','_blank')" class="text-blue-600 text-xs hover:underline"><i class="fas fa-image"></i> 이미지</button>` : ''}
-                </td>
-                <td class="px-3 py-2 text-xs">${escapeHtml(p.shelf_life || '-')}</td>
-                <td class="px-3 py-2 text-xs">${escapeHtml(p.package_size || '-')} / ${escapeHtml(p.package_unit || '-')}</td>
-                <td class="px-3 py-2 text-center" onclick="event.stopPropagation()">
-                  <button onclick="openProductModalV2('${p.product_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="상품정보 수정"><i class="fas fa-edit"></i></button>
+                <td class="px-2 py-2 text-center whitespace-nowrap" onclick="event.stopPropagation()">
+                  <button onclick="openProductModalV2('${p.product_code}')" class="text-blue-600 hover:text-blue-800 mr-1" title="상품정보 수정"><i class="fas fa-edit"></i></button>
                   <button onclick="deleteProductV2('${p.product_code}')" class="text-red-600 hover:text-red-800" title="상품 삭제"><i class="fas fa-trash"></i></button>
                 </td>
               </tr>
               ${isExpanded ? `
               <tr class="bg-blue-50/40">
                 <td></td>
-                <td colspan="8" class="px-4 py-3">
+                <td colspan="15" class="px-4 py-3">
                   <div class="flex items-center justify-between mb-2">
                     <div class="text-sm font-semibold text-blue-800">
                       <i class="fas fa-store mr-1"></i>채널별 판매 SKU (${channels.length}개)
@@ -40788,13 +40818,19 @@ function openProductModalV2(productCode) {
         </select>
       </div>
 
-      <!-- 2. 제품명 -->
+      <!-- 2. 레시피명 -->
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">제품명 <span class="text-red-500">*</span></label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">레시피명 <span class="text-xs text-gray-500">(생산 레시피 이름)</span></label>
+        <input type="text" id="pv2-recipe-name" value="${v('recipe_name')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 발효종 저당 치아바타">
+      </div>
+
+      <!-- 3. 제품명 (상품명) -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">상품명 <span class="text-red-500">*</span></label>
         <input type="text" id="pv2-product-name" value="${v('product_name')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 발효종 통밀식빵 550g">
       </div>
 
-      <!-- 3. 판매채널 안내 (v3.6.188: 채널은 등록 후 채널 SKU 추가로 관리) -->
+      <!-- 4. 판매채널 안내 (v3.6.188: 채널은 등록 후 채널 SKU 추가로 관리) -->
       <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800">
         <i class="fas fa-info-circle mr-1"></i><strong>판매채널</strong>은 상품 등록 후 목록에서 상품 행을 클릭하여 "채널 SKU 추가"로 등록하세요.
         (쿠팡/네이버/컬리/오프라인 등 채널별로 다른 판매코드와 가격을 관리할 수 있습니다.)
@@ -40810,7 +40846,8 @@ function openProductModalV2(productCode) {
           <div class="flex-1">
             <input type="file" id="pv2-photo-file" accept="image/*" onchange="handlePhotoUpload(event)" class="text-sm">
             <input type="hidden" id="pv2-photo-url" value="${v('photo_url')}">
-            <div id="pv2-photo-status" class="text-xs text-gray-500 mt-1">${isEdit && p.photo_url ? '기존 이미지가 있습니다' : '파일을 선택하면 자동 업로드됩니다'}</div>
+            <input type="hidden" id="pv2-photo-filename" value="${v('photo_filename')}">
+            <div id="pv2-photo-status" class="text-xs text-gray-500 mt-1">${isEdit && p.photo_url ? '기존 이미지가 있습니다' + (p.photo_filename ? ` (${escapeHtml(p.photo_filename)})` : '') : '파일을 선택하면 자동 업로드됩니다'}</div>
           </div>
         </div>
       </div>
@@ -40829,9 +40866,11 @@ function openProductModalV2(productCode) {
             ${isEdit && p.barcode_image_url ? `<img src="${escapeHtml(p.barcode_image_url)}" class="w-full h-full object-contain">` : '<i class="fas fa-barcode text-gray-300 text-2xl"></i>'}
           </div>
           <div class="flex-1">
-            <input type="file" id="pv2-barcode-file" accept="image/*" onchange="handleBarcodeUpload(event)" class="text-sm">
+            <input type="file" id="pv2-barcode-file" accept="image/*,application/pdf" onchange="handleBarcodeUpload(event)" class="text-sm">
             <input type="hidden" id="pv2-barcode-url" value="${v('barcode_image_url')}">
-            <div id="pv2-barcode-status" class="text-xs text-gray-500 mt-1">${isEdit && p.barcode_image_url ? '기존 이미지가 있습니다' : '파일을 선택하면 자동 업로드됩니다'}</div>
+            <input type="hidden" id="pv2-barcode-filename" value="${v('barcode_filename')}">
+            <div id="pv2-barcode-status" class="text-xs text-gray-500 mt-1">${isEdit && p.barcode_image_url ? '기존 이미지가 있습니다' + (p.barcode_filename ? ` (${escapeHtml(p.barcode_filename)})` : '') : '파일을 선택하면 자동 업로드됩니다 (이미지/PDF)'}</div>
+            ${isEdit && p.barcode_image_url ? `<button type="button" onclick="downloadBarcode('${p.product_code}')" class="mt-2 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded px-2 py-1 hover:bg-blue-100"><i class="fas fa-download mr-1"></i>바코드 다운로드</button>` : ''}
           </div>
         </div>
       </div>
@@ -40958,8 +40997,10 @@ async function handlePhotoUpload(event) {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
     urlInput.value = res.data.url;
+    const filenameInput = document.getElementById('pv2-photo-filename');
+    if (filenameInput) filenameInput.value = res.data.filename || file.name || '';
     previewEl.innerHTML = `<img src="${res.data.url}" class="w-full h-full object-cover">`;
-    statusEl.textContent = '✅ 업로드 완료';
+    statusEl.textContent = `✅ 업로드 완료${res.data.filename ? ` (${res.data.filename})` : ''}`;
     statusEl.className = 'text-xs text-green-600 mt-1';
   } catch (e) {
     statusEl.textContent = '❌ 업로드 실패: ' + (e.response?.data?.error || e.message);
@@ -40990,12 +41031,46 @@ async function handleBarcodeUpload(event) {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
     urlInput.value = res.data.url;
-    previewEl.innerHTML = `<img src="${res.data.url}" class="w-full h-full object-contain">`;
-    statusEl.textContent = '✅ 업로드 완료';
+    const filenameInput = document.getElementById('pv2-barcode-filename');
+    if (filenameInput) filenameInput.value = res.data.filename || file.name || '';
+    const ext = (res.data.extension || (file.name.split('.').pop() || '')).toLowerCase();
+    if (ext === 'pdf') {
+      previewEl.innerHTML = '<div class="text-center"><i class="fas fa-file-pdf text-red-500 text-3xl"></i><div class="text-xs mt-1">PDF</div></div>';
+    } else {
+      previewEl.innerHTML = `<img src="${res.data.url}" class="w-full h-full object-contain">`;
+    }
+    statusEl.textContent = `✅ 업로드 완료${res.data.filename ? ` (${res.data.filename})` : ''}`;
     statusEl.className = 'text-xs text-green-600 mt-1';
   } catch (e) {
     statusEl.textContent = '❌ 업로드 실패: ' + (e.response?.data?.error || e.message);
     statusEl.className = 'text-xs text-red-600 mt-1';
+  }
+}
+
+function downloadBarcode(productCode) {
+  const p = (typeof __productsV2Cache !== 'undefined' ? __productsV2Cache : []).find(x => x.product_code === productCode);
+  if (!p || !p.barcode_image_url) {
+    showToast('바코드 이미지가 없습니다', 'error');
+    return;
+  }
+  try {
+    const url = new URL(p.barcode_image_url);
+    const parts = url.pathname.split('/').filter(Boolean);
+    // 예: /barcodes/xxx.png → folder='barcodes', filename='xxx.png'
+    // R2 public URL 구조에 따라 마지막 2개를 folder/filename 으로 사용
+    let folder = 'barcodes';
+    let filename = parts[parts.length - 1];
+    if (parts.length >= 2) {
+      folder = parts[parts.length - 2];
+      filename = parts[parts.length - 1];
+    }
+    const downloadName = p.barcode_filename || filename;
+    const dl = `/api/uploads/download/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}?name=${encodeURIComponent(downloadName)}`;
+    window.open(dl, '_blank');
+  } catch (e) {
+    console.error('downloadBarcode error', e);
+    // fallback: 그냥 원본 URL 열기
+    window.open(p.barcode_image_url, '_blank');
   }
 }
 
@@ -41008,10 +41083,13 @@ async function saveProductV2(productCode) {
   const payload = {
     brand_code,
     product_name,
+    recipe_name: document.getElementById('pv2-recipe-name')?.value.trim() || null,
     // sales_channel은 product_channels 테이블에서 관리 (v3.6.188)
     photo_url: document.getElementById('pv2-photo-url')?.value.trim() || null,
+    photo_filename: document.getElementById('pv2-photo-filename')?.value.trim() || null,
     barcode_number: document.getElementById('pv2-barcode-number')?.value.trim() || null,
     barcode_image_url: document.getElementById('pv2-barcode-url')?.value.trim() || null,
+    barcode_filename: document.getElementById('pv2-barcode-filename')?.value.trim() || null,
     manufacture_report_no: document.getElementById('pv2-manufacture-report-no')?.value.trim() || null,
     storage_method: document.getElementById('pv2-storage-method')?.value.trim() || null,
     shelf_life: document.getElementById('pv2-shelf-life')?.value.trim() || null,
@@ -42244,6 +42322,7 @@ window.saveProductV2 = saveProductV2;
 window.deleteProductV2 = deleteProductV2;
 window.handlePhotoUpload = handlePhotoUpload;
 window.handleBarcodeUpload = handleBarcodeUpload;
+window.downloadBarcode = downloadBarcode;
 // v3.6.188: 채널 SKU 관리
 window.toggleProductExpand = toggleProductExpand;
 window.openChannelModal = openChannelModal;

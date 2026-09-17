@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.186';
-const APP_BUILD = '20260917-2';
+const APP_VERSION = '3.6.187';
+const APP_BUILD = '20260917-3';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -40445,7 +40445,7 @@ function renderProductsV2Grouped() {
               <th class="px-3 py-2 text-left">제품명</th>
               <th class="px-3 py-2 text-left">판매채널</th>
               <th class="px-3 py-2 text-left">바코드</th>
-              <th class="px-3 py-2 text-left">유통기한</th>
+              <th class="px-3 py-2 text-left">소비기한</th>
               <th class="px-3 py-2 text-left">포장</th>
               <th class="px-3 py-2 text-center">액션</th>
             </tr>
@@ -40656,15 +40656,15 @@ function openProductModalV2(productCode) {
         <input type="text" id="pv2-storage-method" value="${v('storage_method')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 냉장, 냉동, 실온">
       </div>
 
-      <!-- 9. 유통기한 -->
+      <!-- 9. 소비기한 -->
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">유통기한</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">소비기한</label>
         <input type="text" id="pv2-shelf-life" value="${v('shelf_life')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 제조일로부터 7일">
       </div>
 
-      <!-- 10. 유통기한 조건 -->
+      <!-- 10. 소비기한 조건 -->
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">유통기한 조건</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 조건</label>
         <input type="text" id="pv2-shelf-life-condition" value="${v('shelf_life_condition')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 냉장보관 시">
       </div>
 

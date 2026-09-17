@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.185';
-const APP_BUILD = '20260917-1';
+const APP_VERSION = '3.6.186';
+const APP_BUILD = '20260917-2';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -40529,12 +40529,15 @@ async function saveBrand(brandCode) {
       showToast('브랜드가 수정되었습니다', 'success');
     } else {
       const res = await axios.post('/api/brands', { brand_name, description });
-      showToast(`브랜드가 등록되었습니다: ${res.data.brand_code}`, 'success');
+      const reactivated = res.data.reactivated ? ' (기존 코드 재활성화)' : '';
+      showToast(`브랜드가 등록되었습니다: ${res.data.brand_code}${reactivated}`, 'success');
     }
     closeModal();
     await loadBrandsAndProducts();
   } catch (e) {
     showToast('저장 실패: ' + (e.response?.data?.error || e.message), 'error');
+    // 실패 시에도 목록 새로고침 (상태 일관성 유지)
+    await loadBrandsAndProducts();
   }
 }
 

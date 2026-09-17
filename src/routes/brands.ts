@@ -63,11 +63,23 @@ brands.post('/', async (c) => {
     const name = (brand_name || '').trim();
     if (!name) return c.json({ success: false, error: '브랜드명은 필수입니다' }, 400);
     
-    // 중복 체크
-    const dup = await c.env.DB.prepare(
-      `SELECT brand_code FROM brands WHERE brand_name = ?`
+    // 중복 체크: 활성 브랜드는 진짜 중복
+    const activeDup = await c.env.DB.prepare(
+      `SELECT brand_code FROM brands WHERE brand_name = ? AND is_active = 1`
     ).bind(name).first();
-    if (dup) return c.json({ success: false, error: `이미 등록된 브랜드입니다: ${(dup as any).brand_code}` }, 409);
+    if (activeDup) return c.json({ success: false, error: `이미 등록된 브랜드입니다: ${(activeDup as any).brand_code}` }, 409);
+    
+    // 비활성 브랜드가 있으면 재활성화 (같은 코드 유지)
+    const inactiveDup = await c.env.DB.prepare(
+      `SELECT brand_code FROM brands WHERE brand_name = ? AND is_active = 0`
+    ).bind(name).first();
+    if (inactiveDup) {
+      const oldCode = (inactiveDup as any).brand_code;
+      await c.env.DB.prepare(
+        `UPDATE brands SET is_active = 1, description = ?, updated_at = CURRENT_TIMESTAMP WHERE brand_code = ?`
+      ).bind(description || null, oldCode).run();
+      return c.json({ success: true, brand_code: oldCode, brand_name: name, reactivated: true });
+    }
     
     // 채번: BRD001, BRD002...
     const nextCode = await getNextCode(c.env.DB, 'BRD');

@@ -9692,4 +9692,54 @@ admin.get('/init-product-schema', async (c) => {
   }
 });
 
+// ★★★ v3.6.185 디버그: 브랜드/제품 데이터 직접 조회 ★★★
+admin.get('/debug-brands', async (c) => {
+  try {
+    const { env } = c;
+    const allBrands = await env.DB.prepare(`SELECT * FROM brands ORDER BY brand_code`).all();
+    const allProducts = await env.DB.prepare(`SELECT * FROM products_new ORDER BY product_code`).all();
+    const sequences = await env.DB.prepare(`SELECT * FROM code_sequences`).all();
+    return c.json({
+      success: true,
+      brands: allBrands.results,
+      products: allProducts.results,
+      sequences: sequences.results
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ★★★ v3.6.185: 브랜드 완전 삭제 (관리자용 - is_active 무관) ★★★
+admin.delete('/brands/:code/hard-delete', async (c) => {
+  try {
+    const code = c.req.param('code');
+    const { env } = c;
+    // 소속 제품도 함께 삭제
+    await env.DB.prepare(`DELETE FROM products_new WHERE brand_code = ?`).bind(code).run();
+    const result = await env.DB.prepare(`DELETE FROM brands WHERE brand_code = ?`).bind(code).run();
+    return c.json({ success: true, deleted: code, meta: result.meta });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ★★★ v3.6.185: 브랜드 시퀀스 리셋 ★★★
+admin.post('/reset-brand-sequence', async (c) => {
+  try {
+    const { env } = c;
+    // 실제 최대 브랜드 코드 번호 확인
+    const rows = await env.DB.prepare(`SELECT brand_code FROM brands`).all();
+    let maxN = 0;
+    for (const r of (rows.results || [])) {
+      const m = String((r as any).brand_code).match(/BRD(\d+)/);
+      if (m) maxN = Math.max(maxN, parseInt(m[1], 10));
+    }
+    await env.DB.prepare(`UPDATE code_sequences SET last_number = ? WHERE prefix = 'BRD'`).bind(maxN).run();
+    return c.json({ success: true, new_last_number: maxN });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
 export default admin

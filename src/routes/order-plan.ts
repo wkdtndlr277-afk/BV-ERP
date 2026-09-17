@@ -1209,4 +1209,385 @@ orderPlan.get('/export-json/:date', async (c) => {
   }
 })
 
+// ============================================================
+// ★ v3.6.90: A안 - 주간 원료 필요수량 (관리자 조정 지원)
+// GET /api/order-plan/weekly-materials/:start_date
+// - start_date(월요일 권장) 기준 7일간의 order_plan을 SUM하여
+//   /material-usage 로직을 그대로 재사용해 원료·반죽 주간 총 필요량 산출
+// - weekly_material_adjust(관리자 조정값)를 LEFT JOIN하여 함께 반환
+// ============================================================
+orderPlan.get('/weekly-materials/:start_date', async (c) => {
+  try {
+    const start = c.req.param('start_date')
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+      return c.json({ success: false, error: 'start_date(YYYY-MM-DD) 필요' }, 400)
+    }
+    const includeExtra = c.req.query('include_extra') !== 'false'
+
+    // 7일 날짜 배열
+    const d0 = new Date(start + 'T00:00:00')
+    const dates: string[] = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(d0); d.setDate(d.getDate() + i)
+      dates.push(d.toISOString().slice(0, 10))
+    }
+    const end = dates[6]
+
+    // 조정 테이블 자동 생성 (프로덕션 자가 초기화)
+    try {
+      await c.env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS weekly_material_adjust (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          start_date TEXT NOT NULL,
+          material_key TEXT NOT NULL,
+          material_type TEXT NOT NULL,
+          material_name TEXT,
+          auto_qty REAL DEFAULT 0,
+          adjust_qty REAL NOT NULL DEFAULT 0,
+          adjust_delta REAL DEFAULT 0,
+          unit TEXT DEFAULT 'kg',
+          memo TEXT,
+          adjusted_by TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(start_date, material_key)
+        )
+      `).run()
+    } catch (_) { /* ignore */ }
+
+    // 1. 주간 order_plan 로드 → 제품별 총 수량 (7일 SUM)
+    const planRes = await c.env.DB.prepare(`
+      SELECT product_code, product_name, SUM(quantity) as total_qty
+      FROM order_plan
+      WHERE plan_date >= ? AND plan_date <= ?
+        ${includeExtra ? '' : 'AND is_extra = 0'}
+      GROUP BY product_code, product_name
+    `).bind(start, end).all()
+    const plans = (planRes.results as any[]) || []
+
+    if (plans.length === 0) {
+      return c.json({
+        success: true,
+        start_date: start, end_date: end, dates,
+        include_extra: includeExtra,
+        empty: true,
+        message: `${start} ~ ${end} 기간에 저장된 발주 계획이 없습니다.`,
+        summary: {
+          total_products_planned: 0, products_with_recipe: 0,
+          products_from_bom: 0, products_without_recipe: 0,
+          total_dough_kg: 0, total_batches: 0
+        },
+        doughs: [], raw_materials: [],
+        products_breakdown: [], products_from_bom: [], products_without_recipe: []
+      })
+    }
+
+    // 2. 반죽/BOM 마스터 로드 (material-usage와 동일)
+    let doughRecipes: any[] = []
+    let doughMaterials: any[] = []
+    let productDoughUsages: any[] = []
+    let productBoms: any[] = []
+    try {
+      const [drRes, dmRes, pduRes] = await Promise.all([
+        c.env.DB.prepare(`SELECT * FROM dough_recipe WHERE is_active = 1`).all(),
+        c.env.DB.prepare(`SELECT * FROM dough_material`).all(),
+        c.env.DB.prepare(`SELECT * FROM product_dough_usage`).all(),
+      ])
+      doughRecipes = (drRes.results as any[]) || []
+      doughMaterials = (dmRes.results as any[]) || []
+      productDoughUsages = (pduRes.results as any[]) || []
+    } catch (e: any) {
+      if (e.message?.includes('no such table')) {
+        return c.json({
+          success: false,
+          error: '반죽 마스터 테이블이 없습니다. 마이그레이션 0042 실행이 필요합니다.',
+          needs_migration: true
+        }, 500)
+      }
+      throw e
+    }
+    try {
+      const bomRes = await c.env.DB.prepare(`SELECT * FROM production_bom`).all()
+      productBoms = (bomRes.results as any[]) || []
+    } catch (_) { /* optional */ }
+
+    const doughByCode: Record<string, any> = {}
+    for (const dr of doughRecipes) doughByCode[dr.dough_code] = dr
+    const doughMatByCode: Record<string, any[]> = {}
+    for (const dm of doughMaterials) {
+      if (!doughMatByCode[dm.dough_code]) doughMatByCode[dm.dough_code] = []
+      doughMatByCode[dm.dough_code].push(dm)
+    }
+    const pduByProduct: Record<string, any[]> = {}
+    for (const p of productDoughUsages) {
+      if (!pduByProduct[p.production_code]) pduByProduct[p.production_code] = []
+      pduByProduct[p.production_code].push(p)
+    }
+    const bomByProduct: Record<string, any[]> = {}
+    for (const b of productBoms) {
+      if (!bomByProduct[b.production_code]) bomByProduct[b.production_code] = []
+      bomByProduct[b.production_code].push(b)
+    }
+
+    // 3. 제품별 반죽 사용량 g 집계 + BOM 원료 집계
+    const doughUsage: Record<string, number> = {}   // dough_code → total_g
+    const productBreakdown: any[] = []
+    const productsWithoutRecipe: any[] = []
+    const bomRawUsage: Record<string, number> = {}  // material_name → total_g
+    const productsFromBom: string[] = []
+
+    for (const p of plans) {
+      const qty = Number(p.total_qty) || 0
+      if (qty <= 0) continue
+      const usages = pduByProduct[p.product_code] || []
+      const bomMats = bomByProduct[p.product_code] || []
+
+      if (usages.length > 0) {
+        const rowDetail: any = {
+          product_code: p.product_code,
+          product_name: p.product_name,
+          quantity: qty,
+          doughs: [] as any[],
+          has_recipe: true
+        }
+        for (const u of usages) {
+          const gTotal = (u.dough_g_per_product || 0) * qty
+          doughUsage[u.dough_code] = (doughUsage[u.dough_code] || 0) + gTotal
+          rowDetail.doughs.push({
+            dough_code: u.dough_code,
+            dough_name: doughByCode[u.dough_code]?.dough_name || u.dough_code,
+            g_per_product: u.dough_g_per_product,
+            total_g: gTotal
+          })
+        }
+        productBreakdown.push(rowDetail)
+      } else if (bomMats.length > 0) {
+        for (const m of bomMats) {
+          const g = Number(m.quantity) * qty
+          bomRawUsage[m.material_name] = (bomRawUsage[m.material_name] || 0) + g
+        }
+        productsFromBom.push(p.product_name)
+      } else {
+        productsWithoutRecipe.push({
+          product_code: p.product_code,
+          product_name: p.product_name,
+          quantity: qty,
+          has_bom: false
+        })
+      }
+    }
+
+    // 4. 반죽별 원료 사용량 계산
+    const rawUsage: Record<string, number> = {}  // material_name → total_g
+    const doughSummary = Object.entries(doughUsage).map(([code, totalG]) => {
+      const dr = doughByCode[code]
+      const batchKg = dr?.batch_size_kg || 40
+      const totalKg = totalG / 1000
+      const batchCount = totalKg / batchKg
+      const mats = doughMatByCode[code] || []
+      const matBreakdown = mats.map((m: any) => {
+        const gTotal = (m.quantity_per_kg || 0) * totalKg
+        rawUsage[m.material_name] = (rawUsage[m.material_name] || 0) + gTotal
+        return {
+          material_code: m.material_code,
+          material_name: m.material_name,
+          quantity_per_kg: m.quantity_per_kg,
+          total_g: gTotal,
+          total_kg: gTotal / 1000
+        }
+      })
+      return {
+        dough_code: code,
+        dough_name: dr?.dough_name || code,
+        dough_name_en: dr?.dough_name_en,
+        total_kg: totalKg,
+        batch_size_kg: batchKg,
+        batch_count: batchCount,
+        materials: matBreakdown,
+        has_recipe: mats.length > 0
+      }
+    }).sort((a, b) => b.total_kg - a.total_kg)
+
+    // BOM 기반 원료 사용량 병합
+    for (const [name, g] of Object.entries(bomRawUsage)) {
+      rawUsage[name] = (rawUsage[name] || 0) + g
+    }
+
+    // 5. 관리자 조정값 로드
+    let adjustMap: Record<string, any> = {}
+    try {
+      const aRes = await c.env.DB.prepare(`
+        SELECT material_key, material_type, material_name, auto_qty, adjust_qty, adjust_delta, unit, memo, adjusted_by, updated_at
+        FROM weekly_material_adjust
+        WHERE start_date = ?
+      `).bind(start).all()
+      for (const a of (aRes.results as any[])) adjustMap[a.material_key] = a
+    } catch (_) { /* table missing */ }
+
+    // 6. 원료 목록 (관리자 조정값 병합)
+    const rawMaterialSummary = Object.entries(rawUsage).map(([name, totalG]) => {
+      const autoKg = totalG / 1000
+      const key = `raw|${name}`
+      const adj = adjustMap[key]
+      return {
+        material_key: key,
+        material_type: 'raw',
+        material_name: name,
+        auto_kg: Math.round(autoKg * 1000) / 1000,
+        auto_g: totalG,
+        adjust_kg: adj ? Number(adj.adjust_qty) : autoKg,     // 조정 없으면 자동값 그대로
+        is_adjusted: !!adj,
+        adjust_delta: adj ? Number(adj.adjust_delta) : 0,
+        unit: adj?.unit || 'kg',
+        memo: adj?.memo || null,
+        adjusted_by: adj?.adjusted_by || null,
+        updated_at: adj?.updated_at || null
+      }
+    }).sort((a, b) => b.auto_kg - a.auto_kg)
+
+    // 7. 반죽 목록에도 조정값 병합
+    const doughSummaryWithAdjust = doughSummary.map(d => {
+      const key = `dough|${d.dough_code}`
+      const adj = adjustMap[key]
+      return {
+        ...d,
+        material_key: key,
+        material_type: 'dough',
+        auto_kg: d.total_kg,
+        adjust_kg: adj ? Number(adj.adjust_qty) : d.total_kg,
+        is_adjusted: !!adj,
+        adjust_delta: adj ? Number(adj.adjust_delta) : 0,
+        memo: adj?.memo || null,
+        adjusted_by: adj?.adjusted_by || null,
+        updated_at: adj?.updated_at || null
+      }
+    })
+
+    return c.json({
+      success: true,
+      start_date: start,
+      end_date: end,
+      dates,
+      include_extra: includeExtra,
+      summary: {
+        total_products_planned: plans.length,
+        products_with_recipe: productBreakdown.length,
+        products_from_bom: productsFromBom.length,
+        products_without_recipe: productsWithoutRecipe.length,
+        total_dough_kg: Math.round(doughSummary.reduce((s, d) => s + d.total_kg, 0) * 100) / 100,
+        total_batches: Math.round(doughSummary.reduce((s, d) => s + d.batch_count, 0) * 100) / 100,
+        total_raw_kg: Math.round(rawMaterialSummary.reduce((s, r) => s + r.auto_kg, 0) * 100) / 100,
+        total_raw_adjust_kg: Math.round(rawMaterialSummary.reduce((s, r) => s + r.adjust_kg, 0) * 100) / 100,
+        adjust_count: Object.keys(adjustMap).length
+      },
+      doughs: doughSummaryWithAdjust,
+      raw_materials: rawMaterialSummary,
+      products_breakdown: productBreakdown,
+      products_from_bom: productsFromBom,
+      products_without_recipe: productsWithoutRecipe
+    })
+  } catch (e: any) {
+    console.error('[order-plan/weekly-materials] error:', e)
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
+// ============================================================
+// ★ v3.6.90: POST /api/order-plan/weekly-materials/adjust
+// 관리자가 원료/반죽 수량을 조정 저장 (upsert)
+// body: {
+//   start_date, adjustments: [
+//     { material_key, material_type, material_name, auto_qty, adjust_qty, unit?, memo?, adjusted_by? }
+//   ]
+// }
+// ============================================================
+orderPlan.post('/weekly-materials/adjust', async (c) => {
+  try {
+    const body = await c.req.json()
+    const { start_date, adjustments } = body
+    if (!start_date || !/^\d{4}-\d{2}-\d{2}$/.test(start_date)) {
+      return c.json({ success: false, error: 'start_date(YYYY-MM-DD) 필요' }, 400)
+    }
+    if (!Array.isArray(adjustments)) {
+      return c.json({ success: false, error: 'adjustments 배열 필요' }, 400)
+    }
+
+    // 테이블 자동 생성
+    try {
+      await c.env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS weekly_material_adjust (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          start_date TEXT NOT NULL,
+          material_key TEXT NOT NULL,
+          material_type TEXT NOT NULL,
+          material_name TEXT,
+          auto_qty REAL DEFAULT 0,
+          adjust_qty REAL NOT NULL DEFAULT 0,
+          adjust_delta REAL DEFAULT 0,
+          unit TEXT DEFAULT 'kg',
+          memo TEXT,
+          adjusted_by TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(start_date, material_key)
+        )
+      `).run()
+    } catch (_) { /* ignore */ }
+
+    let upserted = 0
+    let deleted = 0
+    for (const a of adjustments) {
+      if (!a.material_key || !a.material_type) continue
+      const autoQty = Number(a.auto_qty) || 0
+      const adjQty = Number(a.adjust_qty)
+      if (adjQty == null || isNaN(adjQty)) continue
+
+      // 조정값이 자동값과 같으면 조정 레코드 삭제 (깨끗한 상태 유지)
+      if (Math.abs(adjQty - autoQty) < 0.0001) {
+        const del = await c.env.DB.prepare(`
+          DELETE FROM weekly_material_adjust
+          WHERE start_date = ? AND material_key = ?
+        `).bind(start_date, a.material_key).run()
+        deleted += del.meta.changes || 0
+        continue
+      }
+
+      const delta = Math.round((adjQty - autoQty) * 1000) / 1000
+
+      // UPSERT (SQLite ON CONFLICT DO UPDATE)
+      await c.env.DB.prepare(`
+        INSERT INTO weekly_material_adjust
+          (start_date, material_key, material_type, material_name, auto_qty, adjust_qty, adjust_delta, unit, memo, adjusted_by, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(start_date, material_key) DO UPDATE SET
+          auto_qty = excluded.auto_qty,
+          adjust_qty = excluded.adjust_qty,
+          adjust_delta = excluded.adjust_delta,
+          material_name = excluded.material_name,
+          unit = excluded.unit,
+          memo = excluded.memo,
+          adjusted_by = excluded.adjusted_by,
+          updated_at = CURRENT_TIMESTAMP
+      `).bind(
+        start_date,
+        a.material_key,
+        a.material_type,
+        a.material_name || null,
+        autoQty,
+        adjQty,
+        delta,
+        a.unit || 'kg',
+        a.memo || null,
+        a.adjusted_by || null
+      ).run()
+      upserted++
+    }
+
+    return c.json({ success: true, upserted, deleted, start_date })
+  } catch (e: any) {
+    console.error('[order-plan/weekly-materials/adjust] error:', e)
+    return c.json({ success: false, error: e.message }, 500)
+  }
+})
+
 export default orderPlan

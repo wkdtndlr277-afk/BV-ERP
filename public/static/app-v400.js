@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.200';
+const APP_VERSION = '3.6.201';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -41095,18 +41095,30 @@ function openProductModalV2(productCode) {
         </div>
       </div>
 
-      <!-- 2. 분류 (v3.6.195 신규) -->
+      <!-- 2. 분류 (v3.6.195 신규 / v3.6.201: 카테고리 19종 확장) -->
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">분류 <span class="text-xs text-gray-500">(카테고리)</span></label>
-        <input type="text" id="pv2-category" value="${v('category')}" list="pv2-category-suggestions" class="w-full border rounded-lg px-3 py-2" placeholder="예: 클래식, 식빵, 모닝빵, 깜바뉴, 치아바타, 크런치빵">
+        <label class="block text-sm font-medium text-gray-700 mb-1">분류 <span class="text-xs text-gray-500">(카테고리 · 직접 입력 가능)</span></label>
+        <input type="text" id="pv2-category" value="${v('category')}" list="pv2-category-suggestions" class="w-full border rounded-lg px-3 py-2" placeholder="예: 슬랩, 깜빠뉴, 푸가스, 바게트, 브레드, 식빵, 모닝빵, 치아바타, 베이글, 스콘, 쿠키, 케이크...">
         <datalist id="pv2-category-suggestions">
-          <option value="클래식">
+          <option value="슬랩">
+          <option value="깜빠뉴">
+          <option value="푸가스">
+          <option value="바게트">
+          <option value="브레드">
           <option value="식빵">
           <option value="모닝빵">
-          <option value="깜바뉴">
-          <option value="치아바타">
+          <option value="단팥빵">
           <option value="크런치빵">
-          <option value="브레드">
+          <option value="치아바타">
+          <option value="베이글">
+          <option value="플랫브레드">
+          <option value="포켓브레드">
+          <option value="샌드위치">
+          <option value="스콘">
+          <option value="쿠키">
+          <option value="케이크">
+          <option value="잼/스프레드">
+          <option value="쿠키세트">
         </datalist>
       </div>
 

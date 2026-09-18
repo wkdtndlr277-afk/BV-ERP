@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.199';
+const APP_VERSION = '3.6.200';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -612,17 +612,18 @@ function forceHideLoading() {
 
 function showModal(title, content, actions = '', maxWidth = 'max-w-lg') {
   const container = document.getElementById('modal-container');
+  // v3.6.200: flex column layout — 헤더/푸터 고정, 본문만 스크롤 (단일 스크롤바)
   container.innerHTML = `
     <div class="modal active fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-xl shadow-2xl ${maxWidth} w-full max-h-[90vh] overflow-hidden">
-        <div class="flex items-center justify-between p-4 border-b bg-gray-50">
+      <div class="bg-white rounded-xl shadow-2xl ${maxWidth} w-full max-h-[90vh] flex flex-col overflow-hidden">
+        <div class="flex items-center justify-between p-4 border-b bg-gray-50 flex-shrink-0">
           <h3 class="text-lg font-bold text-gray-800">${title}</h3>
           <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600">
             <i class="fas fa-times text-xl"></i>
           </button>
         </div>
-        <div class="p-6 overflow-y-auto max-h-[60vh]">${content}</div>
-        ${actions ? `<div class="flex justify-end gap-2 p-4 border-t bg-gray-50">${actions}</div>` : ''}
+        <div class="p-6 overflow-y-auto flex-1 min-h-0">${content}</div>
+        ${actions ? `<div class="flex justify-end gap-2 p-4 border-t bg-gray-50 flex-shrink-0">${actions}</div>` : ''}
       </div>
     </div>
   `;
@@ -40655,7 +40656,7 @@ function openChannelModal(productCode, channelCode) {
 
   // v3.6.195: 채널별 파생 필드 대폭 확장 (사진/보관방법/품목번호/파생상품명/박스/제품크기/바코드이미지)
   showModal(isEdit ? `채널 SKU 수정 (${channelCode})` : `채널 SKU 추가 - ${product.product_name}`, `
-    <div class="space-y-3 max-h-[75vh] overflow-y-auto pr-2">
+    <div class="space-y-3">
       <!-- 상품 대표 정보 헤더 -->
       <div class="bg-gray-50 border rounded-lg p-3 text-sm">
         <div class="flex items-center gap-2 mb-1">
@@ -40862,17 +40863,8 @@ function openChannelModal(productCode, channelCode) {
     </div>
   `, '', 'max-w-3xl');
   
-  // v3.6.198: 내부 스크롤 영역 확장
-  setTimeout(() => {
-    const modal = document.querySelector('#modal-container .bg-white.rounded-xl');
-    if (modal) {
-      const body = modal.querySelector('.overflow-y-auto');
-      if (body) {
-        body.style.maxHeight = '78vh';
-      }
-    }
-    previewChannelAbbr();
-  }, 100);
+  // v3.6.200: 이중 스크롤 제거 (외부 모달 스크롤만 사용)
+  setTimeout(() => { previewChannelAbbr(); }, 100);
 }
 
 // v3.6.190: 채널명 입력 시 약자 미리보기 갱신 (백엔드 매핑 로직과 동일하게 프론트에서 실행)
@@ -41072,7 +41064,7 @@ function openProductModalV2(productCode) {
   const v = (k, d = '') => isEdit ? escapeHtml(p[k] ?? d) : d;
 
   showLargeModal(isEdit ? `제품 수정 (${productCode})` : '신규 제품 등록', `
-    <div class="space-y-3 max-h-[70vh] overflow-y-auto pr-2">
+    <div class="space-y-3">
       ${isEdit ? `
         <div class="flex items-center gap-2 pb-2 border-b">
           <span class="text-xs text-gray-500">제품코드</span>
@@ -41201,18 +41193,8 @@ function openProductModalV2(productCode) {
 // 큰 모달 헬퍼 (없으면 showModal 사용)
 function showLargeModal(title, content) {
   if (typeof window.showModal === 'function') {
-    // v3.6.199: showModal 4번째 인자로 폭 전달 (max-w-3xl = 768px)
+    // v3.6.200: showModal 4번째 인자로 폭 전달 (max-w-3xl = 768px), 외부 스크롤만 사용
     window.showModal(title, content, '', 'max-w-3xl');
-    // 내부 스크롤 영역 확장
-    setTimeout(() => {
-      const modal = document.querySelector('#modal-container .bg-white.rounded-xl');
-      if (modal) {
-        const body = modal.querySelector('.overflow-y-auto');
-        if (body) {
-          body.style.maxHeight = '78vh';
-        }
-      }
-    }, 0);
   } else {
     console.error('showModal not available');
   }
@@ -41505,8 +41487,9 @@ function openProductDetail(productCode) {
   const nl2br = (s) => s ? escapeHtml(String(s)).replace(/\n/g, '<br>') : '<span class="text-gray-400">-</span>';
   
   // v3.6.195: 대표(마스터) 정보 + 채널별 파생 SKU 리스트 구조
+  // v3.6.200: 내부 스크롤 제거 (외부 모달 하나만 사용)
   const html = `
-    <div class="max-h-[80vh] overflow-y-auto pr-2 space-y-4">
+    <div class="space-y-4">
       <!-- 헤더: 대표 사진 + 대표 정보 -->
       <div class="flex gap-4 pb-4 border-b">
         <div class="flex-shrink-0">
@@ -41661,18 +41644,8 @@ function openProductDetail(productCode) {
     </div>
   `;
   
-  // v3.6.198: max-w-5xl (1024px)로 넓게 + 내부 스크롤 영역 확장
+  // v3.6.200: max-w-5xl(1024px) + 외부 모달 스크롤만 사용 (이중 스크롤 제거)
   showModal(`제품 상세 (대표) - ${p.product_name}`, html, '', 'max-w-5xl');
-  setTimeout(() => {
-    const modal = document.querySelector('#modal-container .bg-white.rounded-xl');
-    if (modal) {
-      const body = modal.querySelector('.overflow-y-auto');
-      if (body) {
-        body.style.maxHeight = '80vh';
-        body.style.padding = '1.25rem';
-      }
-    }
-  }, 0);
 }
 function saveProductDetail() { /* deprecated */ }
 
@@ -41723,8 +41696,9 @@ function openChannelDetail(channelCode) {
   const boxQty = resolve(ch.channel_box_qty, p.box_qty);
   const productSize = resolve(ch.channel_product_size, p.product_size);
   
+  // v3.6.200: 내부 스크롤 제거 (외부 모달 하나만 사용)
   const html = `
-    <div class="max-h-[80vh] overflow-y-auto pr-2 space-y-4">
+    <div class="space-y-4">
       <!-- 헤더: 채널 사진 + 채널 정보 -->
       <div class="flex gap-4 pb-4 border-b">
         <div class="flex-shrink-0 relative">
@@ -41861,19 +41835,8 @@ function openChannelDetail(channelCode) {
     </div>
   `;
   
-  // v3.6.198: max-w-5xl (1024px)로 넓게 + 내부 스크롤 영역도 확장
+  // v3.6.200: max-w-5xl(1024px) + 외부 모달 스크롤만 사용 (이중 스크롤 제거)
   showModal(`채널 SKU 상세 - ${ch.channel_name} · ${displayName}`, html, '', 'max-w-5xl');
-  // 내부 컨텐츠 영역의 max-h-[60vh] 기본값을 벗어나 더 넓게 사용
-  setTimeout(() => {
-    const modal = document.querySelector('#modal-container .bg-white.rounded-xl');
-    if (modal) {
-      const body = modal.querySelector('.overflow-y-auto');
-      if (body) {
-        body.style.maxHeight = '80vh';
-        body.style.padding = '1.25rem';
-      }
-    }
-  }, 0);
 }
 
 

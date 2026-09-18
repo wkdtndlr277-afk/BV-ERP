@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.191';
+const APP_VERSION = '3.6.192';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -40409,6 +40409,20 @@ if (typeof window.__expandedProducts === 'undefined') {
   window.__expandedProducts = new Set();
 }
 
+// v3.6.192: 포장규격 표시 - 숫자만 있으면 "g" 자동 추가, 이미 단위가 있으면 그대로
+function formatPackageSize(value) {
+  if (value == null || value === '') return '-';
+  const str = String(value).trim();
+  if (!str) return '-';
+  // 숫자 (정수, 소수, 소수점, 콤마 포함) 만 있으면 g 붙임
+  // 예: "200" → "200g", "1.5" → "1.5g", "1,000" → "1,000g"
+  // "200g", "500 g", "1kg" 처럼 이미 문자가 섞여 있으면 그대로
+  if (/^[\d.,\s]+$/.test(str)) {
+    return escapeHtml(str) + 'g';
+  }
+  return escapeHtml(str);
+}
+
 function toggleProductExpand(productCode) {
   if (window.__expandedProducts.has(productCode)) {
     window.__expandedProducts.delete(productCode);
@@ -40468,7 +40482,7 @@ function renderProductsV2Grouped() {
               <th class="px-2 py-2 text-left">보관방법</th>
               <th class="px-2 py-2 text-left">소비기한</th>
               <th class="px-2 py-2 text-left">포장단위</th>
-              <th class="px-2 py-2 text-left">포장규격</th>
+              <th class="px-2 py-2 text-left">포장규격(g)</th>
               <th class="px-2 py-2 text-left">포장재질</th>
               <th class="px-2 py-2 text-left">박스규격</th>
               <th class="px-2 py-2 text-left">박스당 수량</th>
@@ -40516,7 +40530,7 @@ function renderProductsV2Grouped() {
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.storage_method || '-')}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.shelf_life || '-')}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_unit || '-')}</td>
-                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_size || '-')}</td>
+                <td class="px-2 py-2 text-gray-600">${formatPackageSize(p.package_size)}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_material || '-')}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.box_size || '-')}</td>
                 <td class="px-2 py-2 text-gray-600 text-center">${escapeHtml(p.box_qty || '-')}</td>
@@ -40968,8 +40982,11 @@ function openProductModalV2(productCode) {
 
       <!-- 12. 포장 규격 -->
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">포장 규격</label>
-        <input type="text" id="pv2-package-size" value="${v('package_size')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 550g, 1kg">
+        <label class="block text-sm font-medium text-gray-700 mb-1">포장 규격 <span class="text-xs text-gray-500">(단위: g · 숫자만 입력하면 자동으로 g 표기)</span></label>
+        <div class="relative">
+          <input type="text" id="pv2-package-size" value="${v('package_size')}" class="w-full border rounded-lg px-3 py-2 pr-10" placeholder="예: 200, 550, 1000">
+          <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">g</span>
+        </div>
       </div>
 
       <!-- 13. 포장재질 -->
@@ -41299,7 +41316,7 @@ function openProductDetail(productCode) {
           <div class="flex"><span class="w-24 text-gray-500">소비기한</span><span class="flex-1 font-medium">${val(p.shelf_life)}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">기한조건</span><span class="flex-1 font-medium">${val(p.shelf_life_condition)}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">포장단위</span><span class="flex-1 font-medium">${val(p.package_unit)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">포장규격</span><span class="flex-1 font-medium">${val(p.package_size)}</span></div>
+          <div class="flex"><span class="w-24 text-gray-500">포장규격(g)</span><span class="flex-1 font-medium">${p.package_size ? formatPackageSize(p.package_size) : '<span class="text-gray-400">-</span>'}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">포장재질</span><span class="flex-1 font-medium">${val(p.package_material)}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">박스규격</span><span class="flex-1 font-medium">${val(p.box_size)}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">박스당수량</span><span class="flex-1 font-medium">${val(p.box_qty)}</span></div>

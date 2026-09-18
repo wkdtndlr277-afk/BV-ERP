@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.190';
+const APP_VERSION = '3.6.191';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -40465,6 +40465,7 @@ function renderProductsV2Grouped() {
               <th class="px-2 py-2 text-left">판매채널</th>
               <th class="px-2 py-2 text-left">레시피명</th>
               <th class="px-2 py-2 text-left">상품명</th>
+              <th class="px-2 py-2 text-left">보관방법</th>
               <th class="px-2 py-2 text-left">소비기한</th>
               <th class="px-2 py-2 text-left">포장단위</th>
               <th class="px-2 py-2 text-left">포장규격</th>
@@ -40512,6 +40513,7 @@ function renderProductsV2Grouped() {
                 <td class="px-2 py-2 whitespace-nowrap">${channelSummary}</td>
                 <td class="px-2 py-2 text-gray-700">${escapeHtml(p.recipe_name || '-')}</td>
                 <td class="px-2 py-2 font-medium text-blue-900 whitespace-nowrap hover:underline">${escapeHtml(p.product_name)}</td>
+                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.storage_method || '-')}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.shelf_life || '-')}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_unit || '-')}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_size || '-')}</td>
@@ -40536,7 +40538,7 @@ function renderProductsV2Grouped() {
               ${isExpanded ? `
               <tr class="bg-blue-50/40">
                 <td></td>
-                <td colspan="15" class="px-4 py-3">
+                <td colspan="16" class="px-4 py-3">
                   <div class="flex items-center justify-between mb-2">
                     <div class="text-sm font-semibold text-blue-800">
                       <i class="fas fa-store mr-1"></i>채널별 판매 SKU (${channels.length}개)

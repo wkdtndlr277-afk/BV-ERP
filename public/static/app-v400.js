@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.198';
+const APP_VERSION = '3.6.199';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -41201,13 +41201,16 @@ function openProductModalV2(productCode) {
 // 큰 모달 헬퍼 (없으면 showModal 사용)
 function showLargeModal(title, content) {
   if (typeof window.showModal === 'function') {
-    window.showModal(title, content);
-    // 모달 크기 조정
+    // v3.6.199: showModal 4번째 인자로 폭 전달 (max-w-3xl = 768px)
+    window.showModal(title, content, '', 'max-w-3xl');
+    // 내부 스크롤 영역 확장
     setTimeout(() => {
-      const modal = document.querySelector('#global-modal .bg-white') || document.querySelector('[id*="modal"] .bg-white');
+      const modal = document.querySelector('#modal-container .bg-white.rounded-xl');
       if (modal) {
-        modal.style.maxWidth = '640px';
-        modal.style.width = '95%';
+        const body = modal.querySelector('.overflow-y-auto');
+        if (body) {
+          body.style.maxHeight = '78vh';
+        }
       }
     }, 0);
   } else {

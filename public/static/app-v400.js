@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.195';
+const APP_VERSION = '3.6.196';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -40554,12 +40554,14 @@ function renderProductsV2Grouped() {
                         <thead class="bg-gray-100 text-gray-600 uppercase text-xs">
                           <tr>
                             <th class="px-2 py-2 text-left">사진</th>
+                            <th class="px-2 py-2 text-left" title="파생 SKU 고유코드">SKU 코드</th>
                             <th class="px-2 py-2 text-left">채널 코드</th>
                             <th class="px-2 py-2 text-left">판매채널</th>
                             <th class="px-2 py-2 text-left">파생 상품명</th>
                             <th class="px-2 py-2 text-left">포장 입수량</th>
                             <th class="px-2 py-2 text-left">포장규격(g)</th>
                             <th class="px-2 py-2 text-left">보관방법</th>
+                            <th class="px-2 py-2 text-left">원재료</th>
                             <th class="px-2 py-2 text-left">채널 SKU</th>
                             <th class="px-2 py-2 text-left">바코드</th>
                             <th class="px-2 py-2 text-right">판매가</th>
@@ -40593,12 +40595,14 @@ function renderProductsV2Grouped() {
                                   ? `<img src="${escapeHtml(displayPhoto)}" class="w-9 h-9 object-cover rounded border ${photoIsDefault ? 'opacity-50' : 'cursor-pointer'}" ${photoIsDefault ? '' : `onclick="window.open('${escapeHtml(displayPhoto)}','_blank')"`} title="${photoIsDefault ? '대표 사진 (채널 전용 없음)' : '채널 사진'}">` 
                                   : '<div class="w-9 h-9 bg-gray-100 rounded border flex items-center justify-center text-gray-300"><i class="fas fa-image text-xs"></i></div>'}
                               </td>
-                              <td class="px-2 py-2 font-mono text-xs text-purple-700 whitespace-nowrap">${escapeHtml(ch.channel_code)}</td>
+                              <td class="px-2 py-2 whitespace-nowrap">${ch.sku_code ? `<span class="font-mono text-xs font-bold text-white bg-purple-600 px-1.5 py-0.5 rounded" title="파생 SKU 고유코드">${escapeHtml(ch.sku_code)}</span>` : '<span class="text-gray-300">-</span>'}</td>
+                              <td class="px-2 py-2 font-mono text-xs text-gray-500 whitespace-nowrap">${escapeHtml(ch.channel_code)}</td>
                               <td class="px-2 py-2"><span class="inline-block px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-medium whitespace-nowrap">${escapeHtml(ch.channel_name)}</span></td>
                               <td class="px-2 py-2 max-w-[220px] ${ch.channel_product_name ? 'font-medium text-gray-800' : 'text-gray-400 italic'}" title="${escapeHtml(displayName)}">${escapeHtml(displayName.length > 30 ? displayName.substring(0, 30) + '…' : displayName)}${!ch.channel_product_name ? ' <span class="text-xs text-gray-400">(대표)</span>' : ''}</td>
                               <td class="px-2 py-2 ${pkgUnitIsDefault ? 'text-gray-400 italic' : ''}">${pkgUnit ? escapeHtml(pkgUnit) : '-'}${pkgUnitIsDefault ? ' <span class="text-xs">(대표)</span>' : ''}</td>
                               <td class="px-2 py-2 ${pkgSizeIsDefault ? 'text-gray-400 italic' : ''}">${pkgSize ? formatPackageSize(pkgSize) : '-'}${pkgSizeIsDefault ? ' <span class="text-xs">(대표)</span>' : ''}</td>
                               <td class="px-2 py-2 ${storageIsDefault ? 'text-gray-400 italic' : ''}">${storage ? escapeHtml(storage) : '-'}${storageIsDefault ? ' <span class="text-xs">(대표)</span>' : ''}</td>
+                              <td class="px-2 py-2 text-center">${ch.channel_ingredients ? '<span class="inline-block px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded text-xs" title="채널별 원재료명 등록됨"><i class="fas fa-check-circle mr-0.5"></i>채널</span>' : (p.ingredients ? '<span class="text-xs text-gray-400 italic">대표</span>' : '<span class="text-xs text-gray-300">-</span>')}</td>
                               <td class="px-2 py-2 font-mono">${escapeHtml(ch.channel_sku || '-')}</td>
                               <td class="px-2 py-2 whitespace-nowrap" onclick="event.stopPropagation()">
                                 <div class="text-xs">${escapeHtml(ch.channel_barcode || '-')}</div>
@@ -40671,6 +40675,18 @@ function openChannelModal(productCode, channelCode) {
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">채널 약자 <span class="text-xs text-gray-500">(2~3자)</span></label>
           <input type="text" id="ch-channel-abbr" value="${v('channel_abbr')}" maxlength="3" class="w-full border rounded-lg px-3 py-2 font-mono uppercase" placeholder="CP" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,''); previewChannelAbbr()">
+        </div>
+      </div>
+
+      <!-- ①-2 파생 SKU 고유코드 (v3.6.196 신규) -->
+      <div class="bg-purple-50 border border-purple-200 rounded-lg p-3">
+        <label class="block text-sm font-medium text-purple-900 mb-1">
+          <i class="fas fa-fingerprint mr-1"></i>파생 SKU 고유코드
+          <span class="text-xs font-normal text-purple-700">(물류/재고/바코드용 · 비우면 자동 생성)</span>
+        </label>
+        <input type="text" id="ch-sku-code" value="${v('sku_code')}" class="w-full border border-purple-300 rounded-lg px-3 py-2 font-mono text-sm" placeholder="${escapeHtml(productCode)}-XX (비워두면 자동 생성 예: ${escapeHtml(productCode)}-01)">
+        <div class="text-xs text-purple-700 mt-1">
+          <i class="fas fa-info-circle mr-1"></i>같은 상품에서 파생된 SKU 순번 (예: ${escapeHtml(productCode)}-01, ${escapeHtml(productCode)}-02). 채널코드(${escapeHtml(productCode)}-CP01)와는 별개입니다.
         </div>
       </div>
 
@@ -40815,7 +40831,20 @@ function openChannelModal(productCode, channelCode) {
         </div>
       </div>
 
-      <!-- ⑩ 메모 -->
+      <!-- ⑩ 채널별 원재료명 표기 (v3.6.196 신규) -->
+      <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+        <label class="block text-sm font-medium text-emerald-900 mb-1">
+          <i class="fas fa-list-alt mr-1"></i>채널별 원재료명 표기
+          <span class="text-xs font-normal text-emerald-700">(채널마다 표기 방식이 다를 수 있음 · 비우면 대표 원재료명 사용)</span>
+        </label>
+        <textarea id="ch-channel-ingredients" rows="4" class="w-full border border-emerald-300 rounded-lg px-3 py-2 text-sm" placeholder="${escapeHtml(product.ingredients || '예: 밀가루(미국산), 물, 발효종...')}">${v('channel_ingredients')}</textarea>
+        ${product.ingredients ? `<details class="mt-2 text-xs">
+          <summary class="cursor-pointer text-emerald-700 hover:text-emerald-900"><i class="fas fa-chevron-right mr-1"></i>대표 원재료명 보기</summary>
+          <div class="mt-2 p-2 bg-white border border-emerald-200 rounded text-gray-700 whitespace-pre-wrap">${escapeHtml(product.ingredients)}</div>
+        </details>` : '<div class="text-xs text-emerald-700 mt-1"><i class="fas fa-info-circle mr-1"></i>대표 상품에 원재료명이 등록되지 않았습니다.</div>'}
+      </div>
+
+      <!-- ⑪ 메모 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
         <textarea id="ch-channel-memo" rows="2" class="w-full border rounded-lg px-3 py-2" placeholder="채널별 특이사항">${v('channel_memo')}</textarea>
@@ -40912,7 +40941,10 @@ async function saveChannel(productCode, channelCode) {
     channel_photo_url: document.getElementById('ch-channel-photo-url')?.value.trim() || null,
     channel_photo_filename: document.getElementById('ch-channel-photo-filename')?.value.trim() || null,
     channel_storage_method: document.getElementById('ch-channel-storage-method')?.value.trim() || null,
-    channel_manufacture_report_no: document.getElementById('ch-channel-manufacture-report-no')?.value.trim() || null
+    channel_manufacture_report_no: document.getElementById('ch-channel-manufacture-report-no')?.value.trim() || null,
+    // v3.6.196: 파생 SKU 고유코드 + 채널별 원재료명
+    sku_code: document.getElementById('ch-sku-code')?.value.trim() || null,
+    channel_ingredients: document.getElementById('ch-channel-ingredients')?.value.trim() || null
   };
 
   try {
@@ -41558,7 +41590,8 @@ function openProductDetail(productCode) {
                 <!-- 헤더 -->
                 <div class="bg-blue-50 border-b border-blue-100 px-3 py-2 flex items-center justify-between">
                   <div class="flex items-center gap-2 flex-wrap min-w-0">
-                    <span class="font-mono text-xs text-purple-700">${escapeHtml(ch.channel_code)}</span>
+                    ${ch.sku_code ? `<span class="font-mono text-xs font-bold text-white bg-purple-600 px-1.5 py-0.5 rounded" title="파생 SKU 고유코드"><i class="fas fa-fingerprint mr-0.5"></i>${escapeHtml(ch.sku_code)}</span>` : ''}
+                    <span class="font-mono text-[10px] text-gray-500" title="채널코드">${escapeHtml(ch.channel_code)}</span>
                     <span class="px-2 py-0.5 bg-blue-600 text-white rounded text-xs font-medium whitespace-nowrap">${escapeHtml(ch.channel_name)}</span>
                     ${ch.channel_abbr ? `<span class="font-mono px-1.5 py-0.5 bg-gray-200 rounded text-xs">${escapeHtml(ch.channel_abbr)}</span>` : ''}
                   </div>
@@ -41596,6 +41629,7 @@ function openProductDetail(productCode) {
                       </div>
                     ` : ''}
                     ${(reportNo && ch.channel_manufacture_report_no) ? `<div class="text-[10px] text-amber-700">품목: ${escapeHtml(reportNo)}</div>` : ''}
+                    ${ch.channel_ingredients ? `<div class="text-[10px] text-emerald-700"><i class="fas fa-flask mr-0.5"></i>원재료 채널별 표기 등록됨</div>` : ''}
                     ${ch.channel_url ? `<div class="pt-0.5" onclick="event.stopPropagation()"><a href="${escapeHtml(ch.channel_url)}" target="_blank" class="text-blue-600 hover:underline text-[10px]"><i class="fas fa-external-link-alt mr-1"></i>상품 페이지</a></div>` : ''}
                   </div>
                 </div>
@@ -41691,7 +41725,8 @@ function openChannelDetail(channelCode) {
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 mb-1 flex-wrap">
-                <span class="font-mono text-sm text-purple-700">${escapeHtml(ch.channel_code)}</span>
+                ${ch.sku_code ? `<span class="font-mono text-sm font-bold text-white bg-purple-600 px-2 py-0.5 rounded" title="파생 SKU 고유코드"><i class="fas fa-fingerprint mr-1"></i>${escapeHtml(ch.sku_code)}</span>` : ''}
+                <span class="font-mono text-xs text-gray-500" title="채널코드">${escapeHtml(ch.channel_code)}</span>
                 <span class="px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs font-medium">${escapeHtml(ch.channel_name)}</span>
                 ${ch.channel_abbr ? `<span class="font-mono px-1.5 py-0.5 bg-gray-200 rounded text-xs">${escapeHtml(ch.channel_abbr)}</span>` : ''}
                 <span class="px-2 py-0.5 bg-purple-50 text-purple-700 rounded text-xs">${escapeHtml(p.brand_name || p.brand_code || '-')}</span>
@@ -41769,12 +41804,25 @@ function openChannelDetail(channelCode) {
         </div>
       </div>
       
-      <!-- 원재료 (대표) -->
+      <!-- 원재료명 (v3.6.196: 채널별 우선, 없으면 대표) -->
       <div>
-        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-flask text-green-600 mr-1"></i>원재료명 <span class="text-xs text-gray-400 font-normal">(대표 · 전체 표시)</span></h3>
-        <div class="border rounded-lg p-3 bg-green-50/30 text-sm leading-relaxed">
-          ${nl2br(p.ingredients)}
-        </div>
+        <h3 class="text-sm font-semibold text-gray-700 mb-2">
+          <i class="fas fa-flask text-emerald-600 mr-1"></i>원재료명 표기
+          ${ch.channel_ingredients ? '<span class="text-xs text-emerald-700 font-normal ml-1"><i class="fas fa-check-circle mr-0.5"></i>채널별 표기 등록됨</span>' : '<span class="text-xs text-gray-400 font-normal ml-1">(채널값 없음 → 대표 표기 사용)</span>'}
+        </h3>
+        ${ch.channel_ingredients 
+          ? `<div class="border-2 border-emerald-300 rounded-lg p-3 bg-emerald-50/50 text-sm leading-relaxed">
+              <div class="text-xs text-emerald-700 font-medium mb-2"><i class="fas fa-tag mr-1"></i>${escapeHtml(ch.channel_name)} 채널 표기</div>
+              ${nl2br(ch.channel_ingredients)}
+              ${p.ingredients ? `<details class="mt-3 pt-3 border-t border-emerald-200">
+                <summary class="cursor-pointer text-xs text-emerald-700 hover:text-emerald-900"><i class="fas fa-chevron-right mr-1"></i>대표 원재료명 비교하기</summary>
+                <div class="mt-2 p-2 bg-white border rounded text-gray-500 italic text-xs whitespace-pre-wrap">${escapeHtml(p.ingredients)}</div>
+              </details>` : ''}
+            </div>`
+          : `<div class="border rounded-lg p-3 bg-gray-50 text-sm leading-relaxed">
+              <div class="text-gray-500 italic">${nl2br(p.ingredients)}</div>
+              <div class="text-xs text-gray-400 mt-2"><i class="fas fa-info-circle mr-1"></i>대표 상품의 원재료명을 표시하고 있습니다. 이 채널만 다른 표기가 필요하면 <button class="text-emerald-600 hover:text-emerald-800 underline" onclick="closeModal(); openChannelModal('${p.product_code}', '${ch.channel_code}')">수정</button>에서 등록하세요.</div>
+            </div>`}
       </div>
       
       ${ch.channel_memo ? `

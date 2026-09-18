@@ -9696,6 +9696,8 @@ admin.get('/init-product-schema', async (c) => {
         channel_photo_filename TEXT,
         channel_storage_method TEXT,
         channel_manufacture_report_no TEXT,
+        sku_code TEXT,
+        channel_ingredients TEXT,
         is_active INTEGER DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -9743,7 +9745,10 @@ admin.get('/init-product-schema', async (c) => {
       { col: 'channel_photo_url', desc: '채널별 제품 사진 URL' },
       { col: 'channel_photo_filename', desc: '채널별 제품 사진 파일명' },
       { col: 'channel_storage_method', desc: '채널별 보관방법 (실온/냉동 등)' },
-      { col: 'channel_manufacture_report_no', desc: '채널별 품목제조보고번호' }
+      { col: 'channel_manufacture_report_no', desc: '채널별 품목제조보고번호' },
+      // v3.6.196: 파생 SKU 고유 코드 + 채널별 원재료명
+      { col: 'sku_code', desc: '파생 SKU 고유코드 (예: PD001-01)' },
+      { col: 'channel_ingredients', desc: '채널별 원재료명 표기' }
     ];
     for (const { col, desc } of v195Cols) {
       try {

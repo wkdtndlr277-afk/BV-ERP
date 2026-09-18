@@ -148,7 +148,9 @@ productChannels.post('/', async (c) => {
       channel_barcode_image_url, channel_barcode_filename,
       // v3.6.195: 채널별 사진/보관방법/품목제조번호 (같은 규격이라도 채널마다 다를 수 있음)
       channel_photo_url, channel_photo_filename,
-      channel_storage_method, channel_manufacture_report_no
+      channel_storage_method, channel_manufacture_report_no,
+      // v3.6.196: 파생 SKU 고유 코드 (PD001-01 형식) + 채널별 원재료명
+      sku_code, channel_ingredients
     } = body;
     
     if (!product_code) return c.json({ success: false, error: 'product_code 필수' }, 400);
@@ -188,6 +190,37 @@ productChannels.post('/', async (c) => {
     const nextSeq = maxSeq + 1;
     const channelCode = `${product_code}-${abbr}${String(nextSeq).padStart(2, '0')}`;
     
+    // v3.6.196: 파생 SKU 고유코드 (sku_code) 채번
+    // 형식: {product_code}-{2자리 연번} (예: PD001-01, PD001-02)
+    // 사용자 지정 값이 있으면 그대로 사용 + 중복 체크
+    // 비어있으면 해당 product_code 내에서 다음 순번 자동 생성
+    let finalSkuCode: string | null = null;
+    if (sku_code && String(sku_code).trim()) {
+      const trimmed = String(sku_code).trim();
+      // 동일 product_code 내에서 sku_code 중복 체크 (활성 채널만)
+      const skuDup = await c.env.DB.prepare(
+        `SELECT channel_code FROM product_channels WHERE product_code = ? AND sku_code = ? AND is_active = 1`
+      ).bind(product_code, trimmed).first();
+      if (skuDup) {
+        return c.json({ success: false, error: `이미 사용중인 SKU 코드입니다: ${trimmed} (${(skuDup as any).channel_code})` }, 409);
+      }
+      finalSkuCode = trimmed;
+    } else {
+      // 자동 생성: {product_code}-{연번 2자리}, 해당 product_code 내 max+1
+      const skuRows = await c.env.DB.prepare(
+        `SELECT sku_code FROM product_channels WHERE product_code = ? AND sku_code IS NOT NULL`
+      ).bind(product_code).all();
+      const skuPattern = new RegExp(`^${product_code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)$`);
+      let maxSkuSeq = 0;
+      for (const r of (skuRows.results || [])) {
+        const s = String((r as any).sku_code || '');
+        const m = s.match(skuPattern);
+        if (m) maxSkuSeq = Math.max(maxSkuSeq, parseInt(m[1], 10));
+      }
+      const nextSkuSeq = maxSkuSeq + 1;
+      finalSkuCode = `${product_code}-${String(nextSkuSeq).padStart(2, '0')}`;
+    }
+    
     await c.env.DB.prepare(
       `INSERT INTO product_channels 
        (channel_code, product_code, channel_name, channel_abbr, channel_sku, channel_barcode, channel_price, channel_url, channel_memo, 
@@ -195,8 +228,9 @@ productChannels.post('/', async (c) => {
         channel_product_name, channel_box_size, channel_box_qty, channel_product_size,
         channel_barcode_image_url, channel_barcode_filename,
         channel_photo_url, channel_photo_filename,
-        channel_storage_method, channel_manufacture_report_no)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        channel_storage_method, channel_manufacture_report_no,
+        sku_code, channel_ingredients)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       channelCode,
       product_code,
@@ -218,10 +252,12 @@ productChannels.post('/', async (c) => {
       channel_photo_url || null,
       channel_photo_filename || null,
       channel_storage_method || null,
-      channel_manufacture_report_no || null
+      channel_manufacture_report_no || null,
+      finalSkuCode,
+      channel_ingredients || null
     ).run();
     
-    return c.json({ success: true, channel_code: channelCode, channel_abbr: abbr });
+    return c.json({ success: true, channel_code: channelCode, channel_abbr: abbr, sku_code: finalSkuCode });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }
@@ -235,8 +271,21 @@ productChannels.put('/:code', async (c) => {
     const code = c.req.param('code');
     const body = await c.req.json<any>();
     
-    const exists = await c.env.DB.prepare(`SELECT channel_code FROM product_channels WHERE channel_code = ?`).bind(code).first();
+    const exists = await c.env.DB.prepare(`SELECT channel_code, product_code FROM product_channels WHERE channel_code = ?`).bind(code).first();
     if (!exists) return c.json({ success: false, error: '채널 SKU 없음' }, 404);
+    
+    // v3.6.196: sku_code 수정 시 동일 product_code 내 중복 체크
+    if (body.sku_code !== undefined && body.sku_code !== null && String(body.sku_code).trim()) {
+      const newSku = String(body.sku_code).trim();
+      const productCodeOfChannel = (exists as any).product_code;
+      const skuDup = await c.env.DB.prepare(
+        `SELECT channel_code FROM product_channels WHERE product_code = ? AND sku_code = ? AND channel_code != ? AND is_active = 1`
+      ).bind(productCodeOfChannel, newSku, code).first();
+      if (skuDup) {
+        return c.json({ success: false, error: `이미 사용중인 SKU 코드입니다: ${newSku} (${(skuDup as any).channel_code})` }, 409);
+      }
+      body.sku_code = newSku; // 정규화된 값 저장
+    }
     
     const fields = ['channel_name', 'channel_abbr', 'channel_sku', 'channel_barcode', 'channel_price', 'channel_url', 'channel_memo',
       'channel_package_unit', 'channel_package_size',
@@ -244,7 +293,9 @@ productChannels.put('/:code', async (c) => {
       'channel_barcode_image_url', 'channel_barcode_filename',
       // v3.6.195
       'channel_photo_url', 'channel_photo_filename',
-      'channel_storage_method', 'channel_manufacture_report_no'];
+      'channel_storage_method', 'channel_manufacture_report_no',
+      // v3.6.196
+      'sku_code', 'channel_ingredients'];
     const sets: string[] = [];
     const params: any[] = [];
     for (const f of fields) {

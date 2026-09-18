@@ -143,7 +143,12 @@ productChannels.post('/', async (c) => {
     const {
       product_code, channel_name, channel_abbr, channel_sku, channel_barcode,
       channel_price, channel_url, channel_memo,
-      channel_package_unit, channel_package_size
+      channel_package_unit, channel_package_size,
+      channel_product_name, channel_box_size, channel_box_qty, channel_product_size,
+      channel_barcode_image_url, channel_barcode_filename,
+      // v3.6.195: 채널별 사진/보관방법/품목제조번호 (같은 규격이라도 채널마다 다를 수 있음)
+      channel_photo_url, channel_photo_filename,
+      channel_storage_method, channel_manufacture_report_no
     } = body;
     
     if (!product_code) return c.json({ success: false, error: 'product_code 필수' }, 400);
@@ -185,8 +190,13 @@ productChannels.post('/', async (c) => {
     
     await c.env.DB.prepare(
       `INSERT INTO product_channels 
-       (channel_code, product_code, channel_name, channel_abbr, channel_sku, channel_barcode, channel_price, channel_url, channel_memo, channel_package_unit, channel_package_size)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (channel_code, product_code, channel_name, channel_abbr, channel_sku, channel_barcode, channel_price, channel_url, channel_memo, 
+        channel_package_unit, channel_package_size,
+        channel_product_name, channel_box_size, channel_box_qty, channel_product_size,
+        channel_barcode_image_url, channel_barcode_filename,
+        channel_photo_url, channel_photo_filename,
+        channel_storage_method, channel_manufacture_report_no)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       channelCode,
       product_code,
@@ -198,7 +208,17 @@ productChannels.post('/', async (c) => {
       channel_url || null,
       channel_memo || null,
       channel_package_unit || null,
-      channel_package_size || null
+      channel_package_size || null,
+      channel_product_name || null,
+      channel_box_size || null,
+      channel_box_qty || null,
+      channel_product_size || null,
+      channel_barcode_image_url || null,
+      channel_barcode_filename || null,
+      channel_photo_url || null,
+      channel_photo_filename || null,
+      channel_storage_method || null,
+      channel_manufacture_report_no || null
     ).run();
     
     return c.json({ success: true, channel_code: channelCode, channel_abbr: abbr });
@@ -218,7 +238,13 @@ productChannels.put('/:code', async (c) => {
     const exists = await c.env.DB.prepare(`SELECT channel_code FROM product_channels WHERE channel_code = ?`).bind(code).first();
     if (!exists) return c.json({ success: false, error: '채널 SKU 없음' }, 404);
     
-    const fields = ['channel_name', 'channel_abbr', 'channel_sku', 'channel_barcode', 'channel_price', 'channel_url', 'channel_memo', 'channel_package_unit', 'channel_package_size'];
+    const fields = ['channel_name', 'channel_abbr', 'channel_sku', 'channel_barcode', 'channel_price', 'channel_url', 'channel_memo',
+      'channel_package_unit', 'channel_package_size',
+      'channel_product_name', 'channel_box_size', 'channel_box_qty', 'channel_product_size',
+      'channel_barcode_image_url', 'channel_barcode_filename',
+      // v3.6.195
+      'channel_photo_url', 'channel_photo_filename',
+      'channel_storage_method', 'channel_manufacture_report_no'];
     const sets: string[] = [];
     const params: any[] = [];
     for (const f of fields) {

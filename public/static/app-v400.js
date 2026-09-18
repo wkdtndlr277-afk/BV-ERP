@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.194';
+const APP_VERSION = '3.6.195';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -40478,19 +40478,15 @@ function renderProductsV2Grouped() {
               <th class="px-2 py-2 w-8"></th>
               <th class="px-2 py-2 text-left">사진</th>
               <th class="px-2 py-2 text-left">제품코드</th>
-              <th class="px-2 py-2 text-left">판매채널</th>
+              <th class="px-2 py-2 text-left">분류</th>
               <th class="px-2 py-2 text-left">레시피명</th>
-              <th class="px-2 py-2 text-left">상품명</th>
+              <th class="px-2 py-2 text-left">상품명(대표)</th>
               <th class="px-2 py-2 text-left">보관방법</th>
               <th class="px-2 py-2 text-left">소비기한</th>
-              <th class="px-2 py-2 text-left">포장 입수량</th>
-              <th class="px-2 py-2 text-left">포장규격(g)</th>
               <th class="px-2 py-2 text-left">포장재질</th>
-              <th class="px-2 py-2 text-left">박스규격</th>
-              <th class="px-2 py-2 text-left">박스당 수량</th>
               <th class="px-2 py-2 text-left">원재료명</th>
-              <th class="px-2 py-2 text-left">제품크기</th>
-              <th class="px-2 py-2 text-left">바코드</th>
+              <th class="px-2 py-2 text-left">품목제조번호</th>
+              <th class="px-2 py-2 text-center">채널 SKU</th>
               <th class="px-2 py-2 text-center">액션</th>
             </tr>
           </thead>
@@ -40498,25 +40494,17 @@ function renderProductsV2Grouped() {
             ${group.items.map(p => {
               const isExpanded = window.__expandedProducts.has(p.product_code);
               const channels = p.channels || [];
-              // 판매채널 요약 (첫 채널 + 개수)
-              const channelSummary = channels.length === 0 
-                ? '<span class="text-gray-400">-</span>' 
-                : channels.length === 1
-                  ? `<span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 rounded">${escapeHtml(channels[0].channel_name)}</span>`
-                  : `<span class="inline-block px-2 py-0.5 bg-blue-50 text-blue-700 rounded">${escapeHtml(channels[0].channel_name)}</span> <span class="text-xs text-gray-500">+${channels.length - 1}</span>`;
-              // 원재료명은 길므로 요약
+              // v3.6.195: 채널 요약 (최대 3개 뱃지 + 나머지 개수)
+              const channelBadges = channels.length === 0 
+                ? '<span class="text-gray-400">채널 없음</span>' 
+                : channels.slice(0, 3).map(c => `<span class="inline-block px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs mr-0.5" title="${escapeHtml(c.channel_code)}">${escapeHtml(c.channel_name)}${c.channel_package_size ? ' ' + formatPackageSize(c.channel_package_size) : ''}</span>`).join('') 
+                  + (channels.length > 3 ? `<span class="text-xs text-gray-500">+${channels.length - 3}</span>` : '');
+              // 원재료명 요약
               const ingredientsShort = p.ingredients 
                 ? (p.ingredients.length > 30 ? escapeHtml(p.ingredients.substring(0, 30)) + '…' : escapeHtml(p.ingredients))
                 : '-';
-              // 바코드 다운로드 링크
-              const barcodeDownloadBtn = p.barcode_image_url 
-                ? `<button onclick="event.stopPropagation(); downloadBarcode('${p.product_code}')" class="text-purple-600 hover:text-purple-800 ml-1" title="다운로드"><i class="fas fa-download"></i></button>` 
-                : '';
-              const barcodeImgBtn = p.barcode_image_url 
-                ? `<button onclick="event.stopPropagation(); window.open('${escapeHtml(p.barcode_image_url)}','_blank')" class="text-blue-600 hover:text-blue-800" title="이미지 보기"><i class="fas fa-image"></i></button>` 
-                : '';
               return `
-              <tr class="hover:bg-blue-50 cursor-pointer" onclick="openProductDetail('${p.product_code}')" title="클릭하여 상세 정보 보기">
+              <tr class="hover:bg-blue-50 cursor-pointer" onclick="openProductDetail('${p.product_code}')" title="클릭하여 대표 상품 상세 보기">
                 <td class="px-2 py-2 text-center" onclick="event.stopPropagation(); toggleProductExpand('${p.product_code}')" title="채널 SKU 펼치기/접기">
                   <button class="w-6 h-6 rounded hover:bg-gray-200 flex items-center justify-center">
                     <i class="fas fa-chevron-${isExpanded ? 'down' : 'right'} text-gray-400 text-xs"></i>
@@ -40526,24 +40514,17 @@ function renderProductsV2Grouped() {
                   ${p.photo_url ? `<img src="${escapeHtml(p.photo_url)}" class="w-10 h-10 object-cover rounded border cursor-pointer" onclick="window.open('${escapeHtml(p.photo_url)}','_blank')">` : '<div class="w-10 h-10 bg-gray-100 rounded border flex items-center justify-center text-gray-300"><i class="fas fa-image text-xs"></i></div>'}
                 </td>
                 <td class="px-2 py-2 font-mono text-gray-600 whitespace-nowrap">${escapeHtml(p.product_code)}</td>
-                <td class="px-2 py-2 whitespace-nowrap">${channelSummary}</td>
+                <td class="px-2 py-2 text-gray-700">${p.category ? `<span class="inline-block px-1.5 py-0.5 bg-emerald-50 text-emerald-700 rounded text-xs">${escapeHtml(p.category)}</span>` : '<span class="text-gray-400">-</span>'}</td>
                 <td class="px-2 py-2 text-gray-700">${escapeHtml(p.recipe_name || '-')}</td>
                 <td class="px-2 py-2 font-medium text-blue-900 whitespace-nowrap hover:underline">${escapeHtml(p.product_name)}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.storage_method || '-')}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.shelf_life || '-')}</td>
-                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_unit || '-')}</td>
-                <td class="px-2 py-2 text-gray-600">${formatPackageSize(p.package_size)}</td>
                 <td class="px-2 py-2 text-gray-600">${escapeHtml(p.package_material || '-')}</td>
-                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.box_size || '-')}</td>
-                <td class="px-2 py-2 text-gray-600 text-center">${escapeHtml(p.box_qty || '-')}</td>
-                <td class="px-2 py-2 text-gray-600 max-w-[200px]" title="${escapeHtml(p.ingredients || '')} (클릭하여 전체 보기)">${ingredientsShort}${p.ingredients && p.ingredients.length > 30 ? ' <i class="fas fa-external-link-alt text-blue-400 text-xs"></i>' : ''}</td>
-                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.product_size || '-')}</td>
-                <td class="px-2 py-2 whitespace-nowrap" onclick="event.stopPropagation()">
-                  <div class="text-gray-600">${escapeHtml(p.barcode_number || '-')}</div>
-                  <div class="flex gap-1 mt-0.5">
-                    ${barcodeImgBtn}
-                    ${barcodeDownloadBtn}
-                  </div>
+                <td class="px-2 py-2 text-gray-600 max-w-[220px]" title="${escapeHtml(p.ingredients || '')} (클릭하여 전체 보기)">${ingredientsShort}${p.ingredients && p.ingredients.length > 30 ? ' <i class="fas fa-external-link-alt text-blue-400 text-xs"></i>' : ''}</td>
+                <td class="px-2 py-2 text-gray-600">${escapeHtml(p.manufacture_report_no || '-')}</td>
+                <td class="px-2 py-2 text-center whitespace-nowrap" onclick="event.stopPropagation()">
+                  <div class="flex flex-wrap items-center gap-0.5 justify-start">${channelBadges}</div>
+                  <button onclick="event.stopPropagation(); openChannelModal('${p.product_code}')" class="mt-1 text-xs text-blue-600 hover:text-blue-800"><i class="fas fa-plus"></i> 채널 추가</button>
                 </td>
                 <td class="px-2 py-2 text-center whitespace-nowrap" onclick="event.stopPropagation()">
                   <button onclick="openProductDetail('${p.product_code}')" class="text-green-600 hover:text-green-800 mr-1" title="상세 보기"><i class="fas fa-eye"></i></button>
@@ -40554,10 +40535,10 @@ function renderProductsV2Grouped() {
               ${isExpanded ? `
               <tr class="bg-blue-50/40">
                 <td></td>
-                <td colspan="16" class="px-4 py-3">
+                <td colspan="12" class="px-4 py-3">
                   <div class="flex items-center justify-between mb-2">
                     <div class="text-sm font-semibold text-blue-800">
-                      <i class="fas fa-store mr-1"></i>채널별 판매 SKU (${channels.length}개)
+                      <i class="fas fa-store mr-1"></i>채널별 판매 SKU (${channels.length}개) <span class="text-xs text-gray-500 font-normal">· 행을 클릭하면 채널 상세페이지가 열립니다</span>
                     </div>
                     <button onclick="event.stopPropagation(); openChannelModal('${p.product_code}')" class="px-3 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">
                       <i class="fas fa-plus mr-1"></i>채널 SKU 추가
@@ -40572,37 +40553,62 @@ function renderProductsV2Grouped() {
                       <table class="min-w-full text-xs">
                         <thead class="bg-gray-100 text-gray-600 uppercase text-xs">
                           <tr>
-                            <th class="px-3 py-2 text-left">채널 코드</th>
-                            <th class="px-3 py-2 text-left">판매채널</th>
-                            <th class="px-3 py-2 text-left">채널 SKU</th>
-                            <th class="px-3 py-2 text-left">채널 바코드</th>
-                            <th class="px-3 py-2 text-left">포장 입수량</th>
-                            <th class="px-3 py-2 text-left">포장규격(g)</th>
-                            <th class="px-3 py-2 text-right">판매가</th>
-                            <th class="px-3 py-2 text-left">URL</th>
-                            <th class="px-3 py-2 text-center">액션</th>
+                            <th class="px-2 py-2 text-left">사진</th>
+                            <th class="px-2 py-2 text-left">채널 코드</th>
+                            <th class="px-2 py-2 text-left">판매채널</th>
+                            <th class="px-2 py-2 text-left">파생 상품명</th>
+                            <th class="px-2 py-2 text-left">포장 입수량</th>
+                            <th class="px-2 py-2 text-left">포장규격(g)</th>
+                            <th class="px-2 py-2 text-left">보관방법</th>
+                            <th class="px-2 py-2 text-left">채널 SKU</th>
+                            <th class="px-2 py-2 text-left">바코드</th>
+                            <th class="px-2 py-2 text-right">판매가</th>
+                            <th class="px-2 py-2 text-center">액션</th>
                           </tr>
                         </thead>
                         <tbody class="divide-y">
                           ${channels.map(ch => {
-                            // 채널값이 있으면 채널값, 없으면 제품 기본값 (회색 표시)
+                            // 채널값 우선, 없으면 대표값 (회색 이탤릭 + "(대표)")
                             const pkgUnit = ch.channel_package_unit || p.package_unit;
                             const pkgUnitIsDefault = !ch.channel_package_unit && p.package_unit;
                             const pkgSize = ch.channel_package_size || p.package_size;
                             const pkgSizeIsDefault = !ch.channel_package_size && p.package_size;
+                            const storage = ch.channel_storage_method || p.storage_method;
+                            const storageIsDefault = !ch.channel_storage_method && p.storage_method;
+                            const displayName = ch.channel_product_name || p.product_name;
+                            const displayPhoto = ch.channel_photo_url || p.photo_url;
+                            const photoIsDefault = !ch.channel_photo_url && p.photo_url;
+                            // 채널 바코드 이미지 우선, 없으면 대표
+                            const barcodeImg = ch.channel_barcode_image_url || p.barcode_image_url;
+                            const barcodeImgBtn = barcodeImg 
+                              ? `<button onclick="event.stopPropagation(); window.open('${escapeHtml(barcodeImg)}','_blank')" class="text-blue-600 hover:text-blue-800" title="바코드 이미지 보기"><i class="fas fa-image"></i></button>`
+                              : '';
+                            const barcodeDl = ch.channel_barcode_image_url
+                              ? `<button onclick="event.stopPropagation(); downloadChannelBarcode('${ch.channel_code}')" class="text-purple-600 hover:text-purple-800 ml-1" title="채널 바코드 다운로드"><i class="fas fa-download"></i></button>`
+                              : (p.barcode_image_url ? `<button onclick="event.stopPropagation(); downloadBarcode('${p.product_code}')" class="text-purple-400 hover:text-purple-600 ml-1" title="대표 바코드 다운로드"><i class="fas fa-download"></i></button>` : '');
                             return `
-                            <tr class="hover:bg-gray-50" onclick="event.stopPropagation()">
-                              <td class="px-3 py-2 font-mono text-xs text-purple-700">${escapeHtml(ch.channel_code)}</td>
-                              <td class="px-3 py-2"><span class="inline-block px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-medium">${escapeHtml(ch.channel_name)}</span></td>
-                              <td class="px-3 py-2">${escapeHtml(ch.channel_sku || '-')}</td>
-                              <td class="px-3 py-2">${escapeHtml(ch.channel_barcode || '-')}</td>
-                              <td class="px-3 py-2 ${pkgUnitIsDefault ? 'text-gray-400 italic' : ''}">${pkgUnit ? escapeHtml(pkgUnit) : '-'}${pkgUnitIsDefault ? ' <span class="text-xs">(기본)</span>' : ''}</td>
-                              <td class="px-3 py-2 ${pkgSizeIsDefault ? 'text-gray-400 italic' : ''}">${pkgSize ? formatPackageSize(pkgSize) : '-'}${pkgSizeIsDefault ? ' <span class="text-xs">(기본)</span>' : ''}</td>
-                              <td class="px-3 py-2 text-right">${ch.channel_price != null ? Number(ch.channel_price).toLocaleString() + '원' : '-'}</td>
-                              <td class="px-3 py-2">${ch.channel_url ? `<a href="${escapeHtml(ch.channel_url)}" target="_blank" class="text-blue-600 hover:underline"><i class="fas fa-external-link-alt"></i> 링크</a>` : '-'}</td>
-                              <td class="px-3 py-2 text-center whitespace-nowrap">
-                                <button onclick="event.stopPropagation(); openChannelModal('${p.product_code}', '${ch.channel_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="수정"><i class="fas fa-edit"></i></button>
-                                <button onclick="event.stopPropagation(); deleteChannel('${ch.channel_code}')" class="text-red-600 hover:text-red-800" title="삭제"><i class="fas fa-trash"></i></button>
+                            <tr class="hover:bg-blue-50 cursor-pointer" onclick="openChannelDetail('${ch.channel_code}')" title="클릭하여 채널 SKU 상세 보기">
+                              <td class="px-2 py-2" onclick="event.stopPropagation()">
+                                ${displayPhoto 
+                                  ? `<img src="${escapeHtml(displayPhoto)}" class="w-9 h-9 object-cover rounded border ${photoIsDefault ? 'opacity-50' : 'cursor-pointer'}" ${photoIsDefault ? '' : `onclick="window.open('${escapeHtml(displayPhoto)}','_blank')"`} title="${photoIsDefault ? '대표 사진 (채널 전용 없음)' : '채널 사진'}">` 
+                                  : '<div class="w-9 h-9 bg-gray-100 rounded border flex items-center justify-center text-gray-300"><i class="fas fa-image text-xs"></i></div>'}
+                              </td>
+                              <td class="px-2 py-2 font-mono text-xs text-purple-700 whitespace-nowrap">${escapeHtml(ch.channel_code)}</td>
+                              <td class="px-2 py-2"><span class="inline-block px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-medium whitespace-nowrap">${escapeHtml(ch.channel_name)}</span></td>
+                              <td class="px-2 py-2 max-w-[220px] ${ch.channel_product_name ? 'font-medium text-gray-800' : 'text-gray-400 italic'}" title="${escapeHtml(displayName)}">${escapeHtml(displayName.length > 30 ? displayName.substring(0, 30) + '…' : displayName)}${!ch.channel_product_name ? ' <span class="text-xs text-gray-400">(대표)</span>' : ''}</td>
+                              <td class="px-2 py-2 ${pkgUnitIsDefault ? 'text-gray-400 italic' : ''}">${pkgUnit ? escapeHtml(pkgUnit) : '-'}${pkgUnitIsDefault ? ' <span class="text-xs">(대표)</span>' : ''}</td>
+                              <td class="px-2 py-2 ${pkgSizeIsDefault ? 'text-gray-400 italic' : ''}">${pkgSize ? formatPackageSize(pkgSize) : '-'}${pkgSizeIsDefault ? ' <span class="text-xs">(대표)</span>' : ''}</td>
+                              <td class="px-2 py-2 ${storageIsDefault ? 'text-gray-400 italic' : ''}">${storage ? escapeHtml(storage) : '-'}${storageIsDefault ? ' <span class="text-xs">(대표)</span>' : ''}</td>
+                              <td class="px-2 py-2 font-mono">${escapeHtml(ch.channel_sku || '-')}</td>
+                              <td class="px-2 py-2 whitespace-nowrap" onclick="event.stopPropagation()">
+                                <div class="text-xs">${escapeHtml(ch.channel_barcode || '-')}</div>
+                                ${(barcodeImgBtn || barcodeDl) ? `<div class="flex gap-1 mt-0.5">${barcodeImgBtn}${barcodeDl}</div>` : ''}
+                              </td>
+                              <td class="px-2 py-2 text-right whitespace-nowrap">${ch.channel_price != null ? '<span class="font-medium text-blue-700">' + Number(ch.channel_price).toLocaleString() + '원</span>' : '-'}</td>
+                              <td class="px-2 py-2 text-center whitespace-nowrap" onclick="event.stopPropagation()">
+                                <button onclick="openChannelDetail('${ch.channel_code}')" class="text-green-600 hover:text-green-800 mr-2" title="상세"><i class="fas fa-eye"></i></button>
+                                <button onclick="openChannelModal('${p.product_code}', '${ch.channel_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="수정"><i class="fas fa-edit"></i></button>
+                                <button onclick="deleteChannel('${ch.channel_code}')" class="text-red-600 hover:text-red-800" title="삭제"><i class="fas fa-trash"></i></button>
                               </td>
                             </tr>`;
                           }).join('')}
@@ -40640,17 +40646,20 @@ function openChannelModal(productCode, channelCode) {
 
   const v = (k, d = '') => (ch && ch[k] != null) ? escapeHtml(String(ch[k])) : d;
 
+  // v3.6.195: 채널별 파생 필드 대폭 확장 (사진/보관방법/품목번호/파생상품명/박스/제품크기/바코드이미지)
   showModal(isEdit ? `채널 SKU 수정 (${channelCode})` : `채널 SKU 추가 - ${product.product_name}`, `
-    <div class="space-y-3 max-h-[70vh] overflow-y-auto pr-2">
+    <div class="space-y-3 max-h-[75vh] overflow-y-auto pr-2">
+      <!-- 상품 대표 정보 헤더 -->
       <div class="bg-gray-50 border rounded-lg p-3 text-sm">
         <div class="flex items-center gap-2 mb-1">
-          <span class="text-xs text-gray-500">상품:</span>
+          <span class="text-xs text-gray-500">대표 상품:</span>
           <span class="font-mono text-xs text-blue-600">${escapeHtml(product.product_code)}</span>
           <span class="font-medium">${escapeHtml(product.product_name)}</span>
         </div>
         ${isEdit ? `<div class="flex items-center gap-2"><span class="text-xs text-gray-500">채널코드:</span><span class="font-mono text-xs text-purple-600">${escapeHtml(channelCode)}</span></div>` : `<div class="text-xs text-blue-800"><i class="fas fa-info-circle mr-1"></i>채널 코드는 <strong>${escapeHtml(productCode)}-<span id="ch-abbr-preview">CP</span>01</strong> 형식으로 자동 부여됩니다. (예: 쿠팡→CP, 오아시스→OA, CJ→CJ, 롯데→LT, 컬리→KL)</div>`}
       </div>
 
+      <!-- ① 판매채널 -->
       <div class="grid grid-cols-3 gap-2">
         <div class="col-span-2">
           <label class="block text-sm font-medium text-gray-700 mb-1">판매채널 <span class="text-red-500">*</span></label>
@@ -40665,42 +40674,25 @@ function openChannelModal(productCode, channelCode) {
         </div>
       </div>
 
+      <!-- ② 파생 상품명 (채널별로 다를 수 있음) -->
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">채널 SKU / 판매코드</label>
-        <input type="text" id="ch-channel-sku" value="${v('channel_sku')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 쿠팡 상품ID, 네이버 상품번호">
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          파생 상품명 <span class="text-xs text-gray-500">(채널별 표기, 비우면 대표명 사용)</span>
+        </label>
+        <input type="text" id="ch-channel-product-name" value="${v('channel_product_name')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 단백질을더한 발효종 순수 통밀모닝빵, 1봉(9알), 270g">
+        <div class="text-xs text-gray-500 mt-1">대표: ${escapeHtml(product.product_name)}</div>
       </div>
 
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">채널 바코드</label>
-        <input type="text" id="ch-channel-barcode" value="${v('channel_barcode')}" class="w-full border rounded-lg px-3 py-2" placeholder="채널 전용 바코드 (선택)">
-      </div>
-
-      <!-- v3.6.194: 채널별 포장 입수량/규격 (같은 제품이라도 채널별로 다를 수 있음) -->
-      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
-        <div class="text-xs font-semibold text-blue-800 mb-2">
-          <i class="fas fa-box mr-1"></i>채널별 포장 사양
-          <span class="font-normal text-blue-600">(비워두면 제품 기본값 사용)</span>
+      <!-- ③ 채널 SKU / URL -->
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">채널 SKU / 판매코드</label>
+          <input type="text" id="ch-channel-sku" value="${v('channel_sku')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 10723438055">
         </div>
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">포장 입수량</label>
-            <input type="text" id="ch-channel-package-unit" value="${v('channel_package_unit')}" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="${escapeHtml(product.package_unit || '예: 1개입, 2개입')}">
-            ${product.package_unit ? `<div class="text-xs text-gray-500 mt-1">제품 기본: ${escapeHtml(product.package_unit)}</div>` : ''}
-          </div>
-          <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">포장규격 (g)</label>
-            <div class="relative">
-              <input type="text" id="ch-channel-package-size" value="${v('channel_package_size')}" class="w-full border rounded-lg px-3 py-2 pr-8 text-sm" placeholder="${escapeHtml(product.package_size || '예: 200')}">
-              <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">g</span>
-            </div>
-            ${product.package_size ? `<div class="text-xs text-gray-500 mt-1">제품 기본: ${formatPackageSize(product.package_size)}</div>` : ''}
-          </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">판매가 (원)</label>
+          <input type="number" id="ch-channel-price" value="${v('channel_price')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 12000" min="0" step="100">
         </div>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">판매가 (원)</label>
-        <input type="number" id="ch-channel-price" value="${v('channel_price')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 12000" min="0" step="100">
       </div>
 
       <div>
@@ -40708,6 +40700,122 @@ function openChannelModal(productCode, channelCode) {
         <input type="url" id="ch-channel-url" value="${v('channel_url')}" class="w-full border rounded-lg px-3 py-2" placeholder="https://...">
       </div>
 
+      <!-- ④ 채널별 포장 사양 (v3.6.194 계승) -->
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+        <div class="text-xs font-semibold text-blue-800 mb-2">
+          <i class="fas fa-box mr-1"></i>채널별 포장 사양
+          <span class="font-normal text-blue-600">(비워두면 대표값 사용)</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">포장 입수량</label>
+            <input type="text" id="ch-channel-package-unit" value="${v('channel_package_unit')}" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="${escapeHtml(product.package_unit || '예: 1개입, 2개입, 9알')}">
+            ${product.package_unit ? `<div class="text-xs text-gray-500 mt-1">대표: ${escapeHtml(product.package_unit)}</div>` : ''}
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">포장규격 (g)</label>
+            <div class="relative">
+              <input type="text" id="ch-channel-package-size" value="${v('channel_package_size')}" class="w-full border rounded-lg px-3 py-2 pr-8 text-sm" placeholder="${escapeHtml(product.package_size || '예: 180, 270')}">
+              <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">g</span>
+            </div>
+            ${product.package_size ? `<div class="text-xs text-gray-500 mt-1">대표: ${formatPackageSize(product.package_size)}</div>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- ⑤ 채널별 박스 / 제품크기 (v3.6.195 신규) -->
+      <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-3">
+        <div class="text-xs font-semibold text-indigo-800 mb-2">
+          <i class="fas fa-cube mr-1"></i>채널별 박스 / 제품 크기
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">박스 규격</label>
+            <input type="text" id="ch-channel-box-size" value="${v('channel_box_size')}" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="예: 30x20x15cm">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">박스당 수량</label>
+            <input type="text" id="ch-channel-box-qty" value="${v('channel_box_qty')}" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="예: 12개">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">제품 크기</label>
+            <input type="text" id="ch-channel-product-size" value="${v('channel_product_size')}" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="예: 직경 15cm">
+          </div>
+        </div>
+      </div>
+
+      <!-- ⑥ 채널별 보관방법 / 품목제조번호 (v3.6.195 신규 - 같은 규격도 채널별 다름) -->
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-3">
+        <div class="text-xs font-semibold text-amber-800 mb-2">
+          <i class="fas fa-warehouse mr-1"></i>채널별 보관방법 / 품목제조번호
+          <span class="font-normal text-amber-700">(같은 규격도 채널별 실온/냉동, 품목번호 다를 수 있음)</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">보관방법</label>
+            <input type="text" id="ch-channel-storage-method" value="${v('channel_storage_method')}" list="ch-storage-suggestions" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="${escapeHtml(product.storage_method || '예: 실온, 냉장, 냉동')}">
+            <datalist id="ch-storage-suggestions">
+              <option value="실온">
+              <option value="냉장">
+              <option value="냉동">
+              <option value="냉장(0~10℃)">
+              <option value="냉동(-18℃ 이하)">
+            </datalist>
+            ${product.storage_method ? `<div class="text-xs text-gray-500 mt-1">대표: ${escapeHtml(product.storage_method)}</div>` : ''}
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">품목제조보고번호</label>
+            <input type="text" id="ch-channel-manufacture-report-no" value="${v('channel_manufacture_report_no')}" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="${escapeHtml(product.manufacture_report_no || '채널별 품목번호')}">
+            ${product.manufacture_report_no ? `<div class="text-xs text-gray-500 mt-1">대표: ${escapeHtml(product.manufacture_report_no)}</div>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- ⑦ 채널별 제품 사진 (v3.6.195 신규 - 채널마다 이미지가 다를 수 있음) -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          채널별 제품 사진 <span class="text-xs text-gray-500">(PC 파일 업로드, 최대 5MB · 비우면 대표 사진 사용)</span>
+        </label>
+        <div class="flex items-start gap-3">
+          <div id="ch-photo-preview" class="w-24 h-24 bg-gray-100 border rounded-lg flex items-center justify-center overflow-hidden">
+            ${ch && ch.channel_photo_url ? `<img src="${escapeHtml(ch.channel_photo_url)}" class="w-full h-full object-cover">` : (product.photo_url ? `<img src="${escapeHtml(product.photo_url)}" class="w-full h-full object-cover opacity-40" title="대표 사진">` : '<i class="fas fa-image text-gray-300 text-2xl"></i>')}
+          </div>
+          <div class="flex-1">
+            <input type="file" id="ch-photo-file" accept="image/*" onchange="handleChannelPhotoUpload(event)" class="text-sm">
+            <input type="hidden" id="ch-channel-photo-url" value="${v('channel_photo_url')}">
+            <input type="hidden" id="ch-channel-photo-filename" value="${v('channel_photo_filename')}">
+            <div id="ch-photo-status" class="text-xs text-gray-500 mt-1">${ch && ch.channel_photo_url ? '기존 이미지가 있습니다' + (ch.channel_photo_filename ? ` (${escapeHtml(ch.channel_photo_filename)})` : '') : (product.photo_url ? '비어있으면 대표 사진을 사용합니다' : '파일을 선택하면 자동 업로드됩니다')}</div>
+            ${ch && ch.channel_photo_url ? `<button type="button" onclick="clearChannelPhoto()" class="mt-2 text-xs bg-gray-100 text-gray-700 border rounded px-2 py-1 hover:bg-gray-200"><i class="fas fa-times mr-1"></i>사진 제거 (대표 사용)</button>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- ⑧ 채널별 바코드 번호 -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">채널 바코드 번호</label>
+        <input type="text" id="ch-channel-barcode" value="${v('channel_barcode')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 8809424532041">
+      </div>
+
+      <!-- ⑨ 채널별 바코드 이미지 (v3.6.195 신규) -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          채널별 바코드 이미지 <span class="text-xs text-gray-500">(PC 파일 업로드, 이미지/PDF)</span>
+        </label>
+        <div class="flex items-start gap-3">
+          <div id="ch-barcode-preview" class="w-32 h-24 bg-gray-100 border rounded-lg flex items-center justify-center overflow-hidden">
+            ${ch && ch.channel_barcode_image_url ? `<img src="${escapeHtml(ch.channel_barcode_image_url)}" class="w-full h-full object-contain">` : '<i class="fas fa-barcode text-gray-300 text-2xl"></i>'}
+          </div>
+          <div class="flex-1">
+            <input type="file" id="ch-barcode-file" accept="image/*,application/pdf" onchange="handleChannelBarcodeUpload(event)" class="text-sm">
+            <input type="hidden" id="ch-channel-barcode-url" value="${v('channel_barcode_image_url')}">
+            <input type="hidden" id="ch-channel-barcode-filename" value="${v('channel_barcode_filename')}">
+            <div id="ch-barcode-status" class="text-xs text-gray-500 mt-1">${ch && ch.channel_barcode_image_url ? '기존 이미지가 있습니다' + (ch.channel_barcode_filename ? ` (${escapeHtml(ch.channel_barcode_filename)})` : '') : '파일을 선택하면 자동 업로드됩니다 (이미지/PDF)'}</div>
+            ${ch && ch.channel_barcode_image_url ? `<button type="button" onclick="downloadChannelBarcode('${channelCode}')" class="mt-2 text-xs bg-purple-50 text-purple-700 border border-purple-200 rounded px-2 py-1 hover:bg-purple-100"><i class="fas fa-download mr-1"></i>바코드 다운로드</button>` : ''}
+          </div>
+        </div>
+      </div>
+
+      <!-- ⑩ 메모 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
         <textarea id="ch-channel-memo" rows="2" class="w-full border rounded-lg px-3 py-2" placeholder="채널별 특이사항">${v('channel_memo')}</textarea>
@@ -40722,8 +40830,15 @@ function openChannelModal(productCode, channelCode) {
     </div>
   `);
   
-  // 최초 로드 시 약자 미리보기
-  setTimeout(() => previewChannelAbbr(), 100);
+  // 모달 크기 확장 (필드가 많아짐)
+  setTimeout(() => {
+    const modal = document.querySelector('.modal-content, [role="dialog"]');
+    if (modal) {
+      modal.style.maxWidth = '680px';
+      modal.style.width = '95%';
+    }
+    previewChannelAbbr();
+  }, 100);
 }
 
 // v3.6.190: 채널명 입력 시 약자 미리보기 갱신 (백엔드 매핑 로직과 동일하게 프론트에서 실행)
@@ -40786,7 +40901,18 @@ async function saveChannel(productCode, channelCode) {
     channel_url: document.getElementById('ch-channel-url')?.value.trim() || null,
     channel_memo: document.getElementById('ch-channel-memo')?.value.trim() || null,
     channel_package_unit: document.getElementById('ch-channel-package-unit')?.value.trim() || null,
-    channel_package_size: document.getElementById('ch-channel-package-size')?.value.trim() || null
+    channel_package_size: document.getElementById('ch-channel-package-size')?.value.trim() || null,
+    // v3.6.195: 채널별 파생 필드 확장
+    channel_product_name: document.getElementById('ch-channel-product-name')?.value.trim() || null,
+    channel_box_size: document.getElementById('ch-channel-box-size')?.value.trim() || null,
+    channel_box_qty: document.getElementById('ch-channel-box-qty')?.value.trim() || null,
+    channel_product_size: document.getElementById('ch-channel-product-size')?.value.trim() || null,
+    channel_barcode_image_url: document.getElementById('ch-channel-barcode-url')?.value.trim() || null,
+    channel_barcode_filename: document.getElementById('ch-channel-barcode-filename')?.value.trim() || null,
+    channel_photo_url: document.getElementById('ch-channel-photo-url')?.value.trim() || null,
+    channel_photo_filename: document.getElementById('ch-channel-photo-filename')?.value.trim() || null,
+    channel_storage_method: document.getElementById('ch-channel-storage-method')?.value.trim() || null,
+    channel_manufacture_report_no: document.getElementById('ch-channel-manufacture-report-no')?.value.trim() || null
   };
 
   try {
@@ -40930,25 +41056,44 @@ function openProductModalV2(productCode) {
         </select>
       </div>
 
-      <!-- 2. 레시피명 -->
+      <!-- v3.6.195 안내: 이 폼은 '대표 정보'만 관리. 채널별 파생은 채널 SKU에서 -->
+      <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-xs text-emerald-800">
+        <i class="fas fa-lightbulb mr-1"></i><strong>제품 마스터(대표 정보)</strong>만 여기서 관리합니다.
+        <div class="mt-1">
+          · <strong>포장 입수량 / 포장규격 / 판매가 / 바코드 / 박스규격 / 제품크기</strong>는 채널마다 다를 수 있어
+          상품 등록 후 <strong>"채널 SKU 추가"</strong>로 채널별 파생 관리합니다.
+          (예: 쿠팡 270g 9알 · 오아시스 180g · B마트 180g 30gx6알)
+        </div>
+      </div>
+
+      <!-- 2. 분류 (v3.6.195 신규) -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">분류 <span class="text-xs text-gray-500">(카테고리)</span></label>
+        <input type="text" id="pv2-category" value="${v('category')}" list="pv2-category-suggestions" class="w-full border rounded-lg px-3 py-2" placeholder="예: 클래식, 식빵, 모닝빵, 깜바뉴, 치아바타, 크런치빵">
+        <datalist id="pv2-category-suggestions">
+          <option value="클래식">
+          <option value="식빵">
+          <option value="모닝빵">
+          <option value="깜바뉴">
+          <option value="치아바타">
+          <option value="크런치빵">
+          <option value="브레드">
+        </datalist>
+      </div>
+
+      <!-- 3. 레시피명 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">레시피명 <span class="text-xs text-gray-500">(생산 레시피 이름)</span></label>
-        <input type="text" id="pv2-recipe-name" value="${v('recipe_name')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 발효종 저당 치아바타">
+        <input type="text" id="pv2-recipe-name" value="${v('recipe_name')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 단백질을더한 발효종 순수 통밀모닝빵">
       </div>
 
-      <!-- 3. 제품명 (상품명) -->
+      <!-- 4. 상품명 (대표) -->
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">상품명 <span class="text-red-500">*</span></label>
-        <input type="text" id="pv2-product-name" value="${v('product_name')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 발효종 통밀식빵 550g">
+        <label class="block text-sm font-medium text-gray-700 mb-1">상품명 (대표) <span class="text-red-500">*</span> <span class="text-xs text-gray-500">(파생 상품명은 채널별로 등록)</span></label>
+        <input type="text" id="pv2-product-name" value="${v('product_name')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 단백질을 더한 저당 통밀모닝빵">
       </div>
 
-      <!-- 4. 판매채널 안내 (v3.6.188: 채널은 등록 후 채널 SKU 추가로 관리) -->
-      <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-800">
-        <i class="fas fa-info-circle mr-1"></i><strong>판매채널</strong>은 상품 등록 후 목록에서 상품 행을 클릭하여 "채널 SKU 추가"로 등록하세요.
-        (쿠팡/네이버/컬리/오프라인 등 채널별로 다른 판매코드와 가격을 관리할 수 있습니다.)
-      </div>
-
-      <!-- 4. 제품 사진 -->
+      <!-- 5. 제품 사진 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">제품 사진 <span class="text-xs text-gray-500">(PC 파일 업로드, 최대 5MB)</span></label>
         <div class="flex items-start gap-3">
@@ -40964,99 +41109,43 @@ function openProductModalV2(productCode) {
         </div>
       </div>
 
-      <!-- 5. 바코드 번호 -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">바코드 번호</label>
-        <input type="text" id="pv2-barcode-number" value="${v('barcode_number')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 8801234567890">
-      </div>
-
-      <!-- 6. 바코드 이미지 -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">바코드 이미지 <span class="text-xs text-gray-500">(PC 파일 업로드)</span></label>
-        <div class="flex items-start gap-3">
-          <div id="pv2-barcode-preview" class="w-32 h-24 bg-gray-100 border rounded-lg flex items-center justify-center overflow-hidden">
-            ${isEdit && p.barcode_image_url ? `<img src="${escapeHtml(p.barcode_image_url)}" class="w-full h-full object-contain">` : '<i class="fas fa-barcode text-gray-300 text-2xl"></i>'}
-          </div>
-          <div class="flex-1">
-            <input type="file" id="pv2-barcode-file" accept="image/*,application/pdf" onchange="handleBarcodeUpload(event)" class="text-sm">
-            <input type="hidden" id="pv2-barcode-url" value="${v('barcode_image_url')}">
-            <input type="hidden" id="pv2-barcode-filename" value="${v('barcode_filename')}">
-            <div id="pv2-barcode-status" class="text-xs text-gray-500 mt-1">${isEdit && p.barcode_image_url ? '기존 이미지가 있습니다' + (p.barcode_filename ? ` (${escapeHtml(p.barcode_filename)})` : '') : '파일을 선택하면 자동 업로드됩니다 (이미지/PDF)'}</div>
-            ${isEdit && p.barcode_image_url ? `<button type="button" onclick="downloadBarcode('${p.product_code}')" class="mt-2 text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded px-2 py-1 hover:bg-blue-100"><i class="fas fa-download mr-1"></i>바코드 다운로드</button>` : ''}
-          </div>
-        </div>
-      </div>
-
-      <!-- 7. 품목제조보고번호 -->
+      <!-- 6. 품목제조보고번호 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">품목제조보고번호</label>
         <input type="text" id="pv2-manufacture-report-no" value="${v('manufacture_report_no')}" class="w-full border rounded-lg px-3 py-2">
       </div>
 
-      <!-- 8. 보관방법 -->
+      <!-- 7. 보관방법 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">보관방법</label>
         <input type="text" id="pv2-storage-method" value="${v('storage_method')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 냉장, 냉동, 실온">
       </div>
 
-      <!-- 9. 소비기한 -->
+      <!-- 8. 소비기한 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">소비기한</label>
         <input type="text" id="pv2-shelf-life" value="${v('shelf_life')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 제조일로부터 7일">
       </div>
 
-      <!-- 10. 소비기한 조건 -->
+      <!-- 9. 소비기한 조건 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">소비기한 조건</label>
         <input type="text" id="pv2-shelf-life-condition" value="${v('shelf_life_condition')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 냉장보관 시">
       </div>
 
-      <!-- 11. 포장 입수량 -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">포장 입수량 <span class="text-xs text-gray-500">(한 포장당 들어가는 개수)</span></label>
-        <input type="text" id="pv2-package-unit" value="${v('package_unit')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 1개입, 2개입, 5개입">
-      </div>
-
-      <!-- 12. 포장 규격 -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">포장 규격 <span class="text-xs text-gray-500">(단위: g · 숫자만 입력하면 자동으로 g 표기)</span></label>
-        <div class="relative">
-          <input type="text" id="pv2-package-size" value="${v('package_size')}" class="w-full border rounded-lg px-3 py-2 pr-10" placeholder="예: 200, 550, 1000">
-          <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">g</span>
-        </div>
-      </div>
-
-      <!-- 13. 포장재질 -->
+      <!-- 10. 포장재질 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">포장재질</label>
         <input type="text" id="pv2-package-material" value="${v('package_material')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: PE, PP">
       </div>
 
-      <!-- 14. 박스 규격 -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">박스 규격</label>
-        <input type="text" id="pv2-box-size" value="${v('box_size')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 30cm x 20cm x 15cm">
-      </div>
-
-      <!-- 15. 박스당 수량 -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">박스당 수량</label>
-        <input type="text" id="pv2-box-qty" value="${v('box_qty')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 12개">
-      </div>
-
-      <!-- 16. 원재료 -->
+      <!-- 11. 원재료 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">원재료</label>
         <textarea id="pv2-ingredients" rows="3" class="w-full border rounded-lg px-3 py-2" placeholder="예: 통밀가루, 물, 소금, 발효종...">${v('ingredients')}</textarea>
       </div>
 
-      <!-- 17. 제품 크기 -->
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">제품 크기</label>
-        <input type="text" id="pv2-product-size" value="${v('product_size')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 직경 15cm">
-      </div>
-
-      <!-- 18. 메모 -->
+      <!-- 12. 메모 -->
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">메모</label>
         <textarea id="pv2-memo" rows="2" class="w-full border rounded-lg px-3 py-2" placeholder="기타 참고사항">${v('memo')}</textarea>
@@ -41168,24 +41257,131 @@ function downloadBarcode(productCode) {
     showToast('바코드 이미지가 없습니다', 'error');
     return;
   }
+  _downloadR2File(p.barcode_image_url, p.barcode_filename, 'barcodes');
+}
+
+// v3.6.195: R2 파일 다운로드 공통 헬퍼 (원본 파일명으로 저장)
+function _downloadR2File(imageUrl, originalFilename, defaultFolder) {
   try {
-    const url = new URL(p.barcode_image_url);
+    const url = new URL(imageUrl);
     const parts = url.pathname.split('/').filter(Boolean);
-    // 예: /barcodes/xxx.png → folder='barcodes', filename='xxx.png'
-    // R2 public URL 구조에 따라 마지막 2개를 folder/filename 으로 사용
-    let folder = 'barcodes';
+    let folder = defaultFolder || 'barcodes';
     let filename = parts[parts.length - 1];
     if (parts.length >= 2) {
       folder = parts[parts.length - 2];
       filename = parts[parts.length - 1];
     }
-    const downloadName = p.barcode_filename || filename;
+    const downloadName = originalFilename || filename;
     const dl = `/api/uploads/download/${encodeURIComponent(folder)}/${encodeURIComponent(filename)}?name=${encodeURIComponent(downloadName)}`;
     window.open(dl, '_blank');
   } catch (e) {
-    console.error('downloadBarcode error', e);
-    // fallback: 그냥 원본 URL 열기
-    window.open(p.barcode_image_url, '_blank');
+    console.error('_downloadR2File error', e);
+    window.open(imageUrl, '_blank');
+  }
+}
+
+// v3.6.195: 채널별 바코드 다운로드
+function downloadChannelBarcode(channelCode) {
+  // 캐시된 제품 목록에서 채널 찾기
+  let ch = null;
+  for (const p of (typeof __productsV2Cache !== 'undefined' ? __productsV2Cache : [])) {
+    const found = (p.channels || []).find(c => c.channel_code === channelCode);
+    if (found) { ch = found; break; }
+  }
+  if (!ch || !ch.channel_barcode_image_url) {
+    showToast('채널 바코드 이미지가 없습니다', 'error');
+    return;
+  }
+  _downloadR2File(ch.channel_barcode_image_url, ch.channel_barcode_filename, 'barcodes');
+}
+
+// v3.6.195: 채널별 제품 사진 업로드
+async function handleChannelPhotoUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('ch-photo-status');
+  const previewEl = document.getElementById('ch-photo-preview');
+  const urlInput = document.getElementById('ch-channel-photo-url');
+  const filenameInput = document.getElementById('ch-channel-photo-filename');
+
+  if (file.size > 5 * 1024 * 1024) {
+    statusEl.textContent = '❌ 파일이 너무 큽니다 (최대 5MB)';
+    statusEl.className = 'text-xs text-red-600 mt-1';
+    return;
+  }
+  statusEl.textContent = '⏳ 업로드 중...';
+  statusEl.className = 'text-xs text-blue-600 mt-1';
+
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await axios.post('/api/uploads/product-photo', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    urlInput.value = res.data.url;
+    if (filenameInput) filenameInput.value = res.data.filename || file.name || '';
+    previewEl.innerHTML = `<img src="${res.data.url}" class="w-full h-full object-cover">`;
+    statusEl.textContent = `✅ 업로드 완료${res.data.filename ? ` (${res.data.filename})` : ''}`;
+    statusEl.className = 'text-xs text-green-600 mt-1';
+  } catch (e) {
+    statusEl.textContent = '❌ 업로드 실패: ' + (e.response?.data?.error || e.message);
+    statusEl.className = 'text-xs text-red-600 mt-1';
+  }
+}
+
+// v3.6.195: 채널 사진 제거 (대표 사진으로 fallback)
+function clearChannelPhoto() {
+  const urlInput = document.getElementById('ch-channel-photo-url');
+  const filenameInput = document.getElementById('ch-channel-photo-filename');
+  const previewEl = document.getElementById('ch-photo-preview');
+  const statusEl = document.getElementById('ch-photo-status');
+  const fileInput = document.getElementById('ch-photo-file');
+  if (urlInput) urlInput.value = '';
+  if (filenameInput) filenameInput.value = '';
+  if (fileInput) fileInput.value = '';
+  if (previewEl) previewEl.innerHTML = '<i class="fas fa-image text-gray-300 text-2xl"></i>';
+  if (statusEl) {
+    statusEl.textContent = '채널 사진 제거됨 (저장 시 대표 사진 사용)';
+    statusEl.className = 'text-xs text-orange-600 mt-1';
+  }
+}
+
+// v3.6.195: 채널별 바코드 이미지 업로드
+async function handleChannelBarcodeUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const statusEl = document.getElementById('ch-barcode-status');
+  const previewEl = document.getElementById('ch-barcode-preview');
+  const urlInput = document.getElementById('ch-channel-barcode-url');
+  const filenameInput = document.getElementById('ch-channel-barcode-filename');
+
+  if (file.size > 5 * 1024 * 1024) {
+    statusEl.textContent = '❌ 파일이 너무 큽니다 (최대 5MB)';
+    statusEl.className = 'text-xs text-red-600 mt-1';
+    return;
+  }
+  statusEl.textContent = '⏳ 업로드 중...';
+  statusEl.className = 'text-xs text-blue-600 mt-1';
+
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await axios.post('/api/uploads/barcode', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    urlInput.value = res.data.url;
+    if (filenameInput) filenameInput.value = res.data.filename || file.name || '';
+    const ext = (res.data.extension || (file.name.split('.').pop() || '')).toLowerCase();
+    if (ext === 'pdf') {
+      previewEl.innerHTML = '<div class="text-center"><i class="fas fa-file-pdf text-red-500 text-3xl"></i><div class="text-xs mt-1">PDF</div></div>';
+    } else {
+      previewEl.innerHTML = `<img src="${res.data.url}" class="w-full h-full object-contain">`;
+    }
+    statusEl.textContent = `✅ 업로드 완료${res.data.filename ? ` (${res.data.filename})` : ''}`;
+    statusEl.className = 'text-xs text-green-600 mt-1';
+  } catch (e) {
+    statusEl.textContent = '❌ 업로드 실패: ' + (e.response?.data?.error || e.message);
+    statusEl.className = 'text-xs text-red-600 mt-1';
   }
 }
 
@@ -41198,25 +41394,21 @@ async function saveProductV2(productCode) {
   const payload = {
     brand_code,
     product_name,
+    // v3.6.195: 마스터에는 대표 정보만. 채널별 파생 필드는 product_channels 에서 관리
+    category: document.getElementById('pv2-category')?.value.trim() || null,
     recipe_name: document.getElementById('pv2-recipe-name')?.value.trim() || null,
     // sales_channel은 product_channels 테이블에서 관리 (v3.6.188)
     photo_url: document.getElementById('pv2-photo-url')?.value.trim() || null,
     photo_filename: document.getElementById('pv2-photo-filename')?.value.trim() || null,
-    barcode_number: document.getElementById('pv2-barcode-number')?.value.trim() || null,
-    barcode_image_url: document.getElementById('pv2-barcode-url')?.value.trim() || null,
-    barcode_filename: document.getElementById('pv2-barcode-filename')?.value.trim() || null,
     manufacture_report_no: document.getElementById('pv2-manufacture-report-no')?.value.trim() || null,
     storage_method: document.getElementById('pv2-storage-method')?.value.trim() || null,
     shelf_life: document.getElementById('pv2-shelf-life')?.value.trim() || null,
     shelf_life_condition: document.getElementById('pv2-shelf-life-condition')?.value.trim() || null,
-    package_unit: document.getElementById('pv2-package-unit')?.value.trim() || null,
-    package_size: document.getElementById('pv2-package-size')?.value.trim() || null,
     package_material: document.getElementById('pv2-package-material')?.value.trim() || null,
-    box_size: document.getElementById('pv2-box-size')?.value.trim() || null,
-    box_qty: document.getElementById('pv2-box-qty')?.value.trim() || null,
     ingredients: document.getElementById('pv2-ingredients')?.value.trim() || null,
-    product_size: document.getElementById('pv2-product-size')?.value.trim() || null,
     memo: document.getElementById('pv2-memo')?.value.trim() || null
+    // 제거된 필드 (채널별로 이동): package_unit, package_size, box_size, box_qty, product_size,
+    //                              barcode_number, barcode_image_url, barcode_filename
   };
 
   try {
@@ -41272,9 +41464,10 @@ function openProductDetail(productCode) {
   const val = (v, fallback = '<span class="text-gray-400">-</span>') => (v != null && v !== '') ? escapeHtml(String(v)) : fallback;
   const nl2br = (s) => s ? escapeHtml(String(s)).replace(/\n/g, '<br>') : '<span class="text-gray-400">-</span>';
   
+  // v3.6.195: 대표(마스터) 정보 + 채널별 파생 SKU 리스트 구조
   const html = `
     <div class="max-h-[80vh] overflow-y-auto pr-2 space-y-4">
-      <!-- 헤더: 사진 + 기본 정보 -->
+      <!-- 헤더: 대표 사진 + 대표 정보 -->
       <div class="flex gap-4 pb-4 border-b">
         <div class="flex-shrink-0">
           ${p.photo_url 
@@ -41283,94 +41476,41 @@ function openProductDetail(productCode) {
         </div>
         <div class="flex-1 min-w-0">
           <div class="flex items-start justify-between gap-2">
-            <div>
-              <div class="flex items-center gap-2 mb-1">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
                 <span class="font-mono text-sm text-purple-600">${escapeHtml(p.product_code)}</span>
                 <span class="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">${escapeHtml(p.brand_name || p.brand_code || '-')}</span>
+                ${p.category ? `<span class="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs">${escapeHtml(p.category)}</span>` : ''}
+                <span class="px-2 py-0.5 bg-gray-200 text-gray-600 rounded text-xs">대표(마스터)</span>
               </div>
               <h2 class="text-xl font-bold text-gray-900">${escapeHtml(p.product_name)}</h2>
               ${p.recipe_name ? `<div class="text-sm text-gray-600 mt-1"><i class="fas fa-book-open mr-1"></i>레시피: ${escapeHtml(p.recipe_name)}</div>` : ''}
+              <div class="text-xs text-gray-500 mt-1"><i class="fas fa-store mr-1"></i>등록된 채널 SKU: <strong class="text-blue-700">${channels.length}개</strong></div>
             </div>
-            <div class="flex gap-2">
-              <button onclick="closeModal(); openProductModalV2('${p.product_code}')" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
-                <i class="fas fa-edit mr-1"></i>수정
+            <div class="flex gap-2 flex-shrink-0">
+              <button onclick="closeModal(); openProductModalV2('${p.product_code}')" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 whitespace-nowrap">
+                <i class="fas fa-edit mr-1"></i>대표 수정
               </button>
             </div>
           </div>
         </div>
       </div>
       
-      <!-- 판매채널 SKU -->
+      <!-- ① 대표 제품 정보 (공통 사항) -->
       <div>
-        <div class="flex items-center justify-between mb-2">
-          <h3 class="text-sm font-semibold text-gray-700"><i class="fas fa-store text-blue-600 mr-1"></i>판매채널 (${channels.length}개)</h3>
-          <button onclick="closeModal(); openChannelModal('${p.product_code}')" class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">
-            <i class="fas fa-plus mr-1"></i>채널 SKU 추가
-          </button>
-        </div>
-        ${channels.length === 0 ? `
-          <div class="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-yellow-800">
-            등록된 판매채널이 없습니다. "채널 SKU 추가"로 등록하세요.
-          </div>
-        ` : `
-          <div class="border rounded overflow-hidden">
-            <table class="min-w-full text-xs">
-              <thead class="bg-gray-100">
-                <tr>
-                  <th class="px-2 py-1.5 text-left">채널코드</th>
-                  <th class="px-2 py-1.5 text-left">채널명</th>
-                  <th class="px-2 py-1.5 text-left">약자</th>
-                  <th class="px-2 py-1.5 text-left">SKU</th>
-                  <th class="px-2 py-1.5 text-left">바코드</th>
-                  <th class="px-2 py-1.5 text-left">포장 입수량</th>
-                  <th class="px-2 py-1.5 text-left">포장규격(g)</th>
-                  <th class="px-2 py-1.5 text-right">판매가</th>
-                  <th class="px-2 py-1.5 text-left">URL</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y">
-                ${channels.map(ch => {
-                  const pkgUnit = ch.channel_package_unit || p.package_unit;
-                  const pkgUnitIsDefault = !ch.channel_package_unit && p.package_unit;
-                  const pkgSize = ch.channel_package_size || p.package_size;
-                  const pkgSizeIsDefault = !ch.channel_package_size && p.package_size;
-                  return `
-                  <tr class="hover:bg-gray-50">
-                    <td class="px-2 py-1.5 font-mono text-purple-700">${escapeHtml(ch.channel_code)}</td>
-                    <td class="px-2 py-1.5">${escapeHtml(ch.channel_name)}</td>
-                    <td class="px-2 py-1.5"><span class="font-mono px-1.5 py-0.5 bg-gray-200 rounded text-xs">${escapeHtml(ch.channel_abbr || '-')}</span></td>
-                    <td class="px-2 py-1.5">${escapeHtml(ch.channel_sku || '-')}</td>
-                    <td class="px-2 py-1.5">${escapeHtml(ch.channel_barcode || '-')}</td>
-                    <td class="px-2 py-1.5 ${pkgUnitIsDefault ? 'text-gray-400 italic' : ''}">${pkgUnit ? escapeHtml(pkgUnit) : '-'}</td>
-                    <td class="px-2 py-1.5 ${pkgSizeIsDefault ? 'text-gray-400 italic' : ''}">${pkgSize ? formatPackageSize(pkgSize) : '-'}</td>
-                    <td class="px-2 py-1.5 text-right">${ch.channel_price != null ? Number(ch.channel_price).toLocaleString() + '원' : '-'}</td>
-                    <td class="px-2 py-1.5">${ch.channel_url ? `<a href="${escapeHtml(ch.channel_url)}" target="_blank" class="text-blue-600 hover:underline"><i class="fas fa-external-link-alt"></i></a>` : '-'}</td>
-                  </tr>`;
-                }).join('')}
-              </tbody>
-            </table>
-          </div>
-        `}
-      </div>
-      
-      <!-- 기본 정보 그리드 -->
-      <div>
-        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-info-circle text-gray-600 mr-1"></i>제품 정보</h3>
+        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-info-circle text-gray-600 mr-1"></i>대표 제품 정보 <span class="text-xs text-gray-400 font-normal">(공통 사항 · 채널이 값을 지정하지 않으면 이 값을 사용)</span></h3>
         <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm border rounded-lg p-3">
-          <div class="flex"><span class="w-24 text-gray-500">품목제조번호</span><span class="flex-1 font-medium">${val(p.manufacture_report_no)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">보관방법</span><span class="flex-1 font-medium">${val(p.storage_method)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">소비기한</span><span class="flex-1 font-medium">${val(p.shelf_life)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">기한조건</span><span class="flex-1 font-medium">${val(p.shelf_life_condition)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">포장 입수량</span><span class="flex-1 font-medium">${val(p.package_unit)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">포장규격(g)</span><span class="flex-1 font-medium">${p.package_size ? formatPackageSize(p.package_size) : '<span class="text-gray-400">-</span>'}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">포장재질</span><span class="flex-1 font-medium">${val(p.package_material)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">박스규격</span><span class="flex-1 font-medium">${val(p.box_size)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">박스당수량</span><span class="flex-1 font-medium">${val(p.box_qty)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">제품크기</span><span class="flex-1 font-medium">${val(p.product_size)}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">브랜드</span><span class="flex-1 font-medium">${val(p.brand_name || p.brand_code)}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">분류</span><span class="flex-1 font-medium">${val(p.category)}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">품목제조번호</span><span class="flex-1 font-medium">${val(p.manufacture_report_no)}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">보관방법</span><span class="flex-1 font-medium">${val(p.storage_method)}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">소비기한</span><span class="flex-1 font-medium">${val(p.shelf_life)}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">기한조건</span><span class="flex-1 font-medium">${val(p.shelf_life_condition)}</span></div>
+          <div class="flex col-span-2"><span class="w-28 text-gray-500">포장재질</span><span class="flex-1 font-medium">${val(p.package_material)}</span></div>
         </div>
       </div>
       
-      <!-- 원재료명 (전체 표시) -->
+      <!-- ② 원재료명 (대표) -->
       <div>
         <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-flask text-green-600 mr-1"></i>원재료명 <span class="text-xs text-gray-400 font-normal">(전체)</span></h3>
         <div class="border rounded-lg p-3 bg-green-50/30 text-sm leading-relaxed">
@@ -41378,43 +41518,106 @@ function openProductDetail(productCode) {
         </div>
       </div>
       
-      <!-- 바코드 -->
-      <div>
-        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-barcode text-purple-600 mr-1"></i>바코드</h3>
-        <div class="border rounded-lg p-3 flex items-start gap-4">
-          <div class="flex-shrink-0">
-            ${p.barcode_image_url 
-              ? `<img src="${escapeHtml(p.barcode_image_url)}" class="w-40 h-24 object-contain border rounded bg-white cursor-pointer" onclick="window.open('${escapeHtml(p.barcode_image_url)}','_blank')" title="클릭하여 크게 보기">`
-              : `<div class="w-40 h-24 bg-gray-100 border rounded flex items-center justify-center text-gray-300"><i class="fas fa-barcode text-2xl"></i></div>`}
-          </div>
-          <div class="flex-1">
-            <div class="text-sm mb-2"><span class="text-gray-500">번호:</span> <span class="font-mono font-medium">${val(p.barcode_number)}</span></div>
-            ${p.barcode_filename ? `<div class="text-xs text-gray-500 mb-2">파일: ${escapeHtml(p.barcode_filename)}</div>` : ''}
-            ${p.barcode_image_url 
-              ? `<button onclick="downloadBarcode('${p.product_code}')" class="px-3 py-1.5 bg-purple-600 text-white rounded text-xs hover:bg-purple-700"><i class="fas fa-download mr-1"></i>바코드 다운로드</button>`
-              : ''}
-          </div>
-        </div>
-      </div>
-      
       ${p.memo ? `
-      <!-- 메모 -->
       <div>
-        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-sticky-note text-yellow-600 mr-1"></i>메모</h3>
+        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-sticky-note text-yellow-600 mr-1"></i>대표 메모</h3>
         <div class="border rounded-lg p-3 bg-yellow-50/40 text-sm">${nl2br(p.memo)}</div>
       </div>
       ` : ''}
       
+      <!-- ③ 채널별 판매 SKU (파생) -->
+      <div>
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="text-sm font-semibold text-gray-700"><i class="fas fa-store text-blue-600 mr-1"></i>채널별 판매 SKU (${channels.length}개) <span class="text-xs text-gray-400 font-normal">· 카드 클릭 시 채널 상세페이지</span></h3>
+          <button onclick="closeModal(); openChannelModal('${p.product_code}')" class="px-2 py-1 bg-blue-600 text-white rounded text-xs hover:bg-blue-700">
+            <i class="fas fa-plus mr-1"></i>채널 SKU 추가
+          </button>
+        </div>
+        ${channels.length === 0 ? `
+          <div class="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-yellow-800">
+            등록된 판매채널이 없습니다. "채널 SKU 추가"로 등록하세요.
+            <div class="text-xs mt-1">쿠팡/오아시스/B마트/CJ 등 채널마다 다른 상품명·규격·판매가·바코드를 관리할 수 있습니다.</div>
+          </div>
+        ` : `
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            ${channels.map(ch => {
+              const pkgUnit = ch.channel_package_unit || p.package_unit;
+              const pkgUnitIsDefault = !ch.channel_package_unit && p.package_unit;
+              const pkgSize = ch.channel_package_size || p.package_size;
+              const pkgSizeIsDefault = !ch.channel_package_size && p.package_size;
+              const storage = ch.channel_storage_method || p.storage_method;
+              const storageIsDefault = !ch.channel_storage_method && p.storage_method;
+              const reportNo = ch.channel_manufacture_report_no || p.manufacture_report_no;
+              const reportNoIsDefault = !ch.channel_manufacture_report_no && p.manufacture_report_no;
+              const displayName = ch.channel_product_name || p.product_name;
+              const displayPhoto = ch.channel_photo_url || p.photo_url;
+              const photoIsDefault = !ch.channel_photo_url && p.photo_url;
+              const barcodeImg = ch.channel_barcode_image_url || p.barcode_image_url;
+              return `
+              <div class="border rounded-lg overflow-hidden hover:shadow-md hover:border-blue-400 cursor-pointer transition" onclick="closeModal(); openChannelDetail('${ch.channel_code}')" title="클릭하여 채널 SKU 상세 보기">
+                <!-- 헤더 -->
+                <div class="bg-blue-50 border-b border-blue-100 px-3 py-2 flex items-center justify-between">
+                  <div class="flex items-center gap-2 flex-wrap min-w-0">
+                    <span class="font-mono text-xs text-purple-700">${escapeHtml(ch.channel_code)}</span>
+                    <span class="px-2 py-0.5 bg-blue-600 text-white rounded text-xs font-medium whitespace-nowrap">${escapeHtml(ch.channel_name)}</span>
+                    ${ch.channel_abbr ? `<span class="font-mono px-1.5 py-0.5 bg-gray-200 rounded text-xs">${escapeHtml(ch.channel_abbr)}</span>` : ''}
+                  </div>
+                  <div class="flex gap-1 flex-shrink-0" onclick="event.stopPropagation()">
+                    <button onclick="closeModal(); openChannelModal('${p.product_code}', '${ch.channel_code}')" class="text-blue-600 hover:text-blue-800 text-xs" title="수정"><i class="fas fa-edit"></i></button>
+                    <button onclick="closeModal(); deleteChannel('${ch.channel_code}')" class="text-red-600 hover:text-red-800 text-xs" title="삭제"><i class="fas fa-trash"></i></button>
+                  </div>
+                </div>
+                <!-- 본문 -->
+                <div class="p-3 flex gap-3">
+                  <div class="flex-shrink-0 relative">
+                    ${displayPhoto 
+                      ? `<div class="w-16 h-16 border rounded overflow-hidden ${photoIsDefault ? 'opacity-70' : ''}"><img src="${escapeHtml(displayPhoto)}" class="w-full h-full object-cover"></div>` 
+                      : '<div class="w-16 h-16 bg-gray-100 border rounded flex items-center justify-center text-gray-300"><i class="fas fa-image"></i></div>'}
+                    ${photoIsDefault ? '<div class="absolute -bottom-1 left-0 right-0 text-[9px] text-center bg-gray-700 text-white rounded-b">대표</div>' : ''}
+                  </div>
+                  <div class="flex-1 min-w-0 text-xs space-y-1">
+                    <div class="font-medium text-gray-900 ${!ch.channel_product_name ? 'text-gray-500 italic' : ''}" title="${escapeHtml(displayName)}">${escapeHtml(displayName.length > 40 ? displayName.substring(0, 40) + '…' : displayName)}${!ch.channel_product_name ? ' <span class="text-gray-400 text-[10px]">(대표)</span>' : ''}</div>
+                    <div class="flex flex-wrap gap-x-2 gap-y-0.5 text-gray-600">
+                      <span class="${pkgUnitIsDefault ? 'text-gray-400 italic' : ''}">📦 ${pkgUnit ? escapeHtml(pkgUnit) : '-'}${pkgUnitIsDefault ? ' (대표)' : ''}</span>
+                      <span class="${pkgSizeIsDefault ? 'text-gray-400 italic' : ''}">⚖ ${pkgSize ? formatPackageSize(pkgSize) : '-'}${pkgSizeIsDefault ? ' (대표)' : ''}</span>
+                      <span class="${storageIsDefault ? 'text-gray-400 italic' : ''}">🌡 ${storage ? escapeHtml(storage) : '-'}${storageIsDefault ? ' (대표)' : ''}</span>
+                    </div>
+                    <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-gray-600">
+                      ${ch.channel_sku ? `<span>SKU: <span class="font-mono">${escapeHtml(ch.channel_sku)}</span></span>` : ''}
+                      ${ch.channel_price != null ? `<span class="font-medium text-blue-700">💰 ${Number(ch.channel_price).toLocaleString()}원</span>` : ''}
+                    </div>
+                    ${ch.channel_barcode || barcodeImg ? `
+                      <div class="flex items-center gap-2 pt-0.5">
+                        <span class="font-mono text-[10px] text-gray-600">${escapeHtml(ch.channel_barcode || '-')}</span>
+                        <div class="flex gap-1" onclick="event.stopPropagation()">
+                          ${barcodeImg ? `<button onclick="window.open('${escapeHtml(barcodeImg)}','_blank')" class="text-blue-600 hover:text-blue-800" title="바코드 이미지"><i class="fas fa-image"></i></button>` : ''}
+                          ${ch.channel_barcode_image_url ? `<button onclick="downloadChannelBarcode('${ch.channel_code}')" class="text-purple-600 hover:text-purple-800" title="채널 바코드 다운로드"><i class="fas fa-download"></i></button>` : ''}
+                        </div>
+                      </div>
+                    ` : ''}
+                    ${(reportNo && ch.channel_manufacture_report_no) ? `<div class="text-[10px] text-amber-700">품목: ${escapeHtml(reportNo)}</div>` : ''}
+                    ${ch.channel_url ? `<div class="pt-0.5" onclick="event.stopPropagation()"><a href="${escapeHtml(ch.channel_url)}" target="_blank" class="text-blue-600 hover:underline text-[10px]"><i class="fas fa-external-link-alt mr-1"></i>상품 페이지</a></div>` : ''}
+                  </div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        `}
+      </div>
+      
       <div class="flex justify-end gap-2 pt-3 border-t sticky bottom-0 bg-white">
         <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">닫기</button>
-        <button onclick="closeModal(); openProductModalV2('${p.product_code}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-          <i class="fas fa-edit mr-1"></i>제품 정보 수정
+        <button onclick="closeModal(); openChannelModal('${p.product_code}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+          <i class="fas fa-plus mr-1"></i>채널 SKU 추가
+        </button>
+        <button onclick="closeModal(); openProductModalV2('${p.product_code}')" class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
+          <i class="fas fa-edit mr-1"></i>대표 정보 수정
         </button>
       </div>
     </div>
   `;
   
-  showModal(`제품 상세 - ${p.product_name}`, html);
+  showModal(`제품 상세 (대표) - ${p.product_name}`, html);
   
   // 모달 넓게
   setTimeout(() => {
@@ -41426,6 +41629,184 @@ function openProductDetail(productCode) {
   }, 0);
 }
 function saveProductDetail() { /* deprecated */ }
+
+// v3.6.195: 채널 SKU 상세페이지 (채널 행 클릭 시 표시)
+// - 채널별 값이 있으면 채널값, 없으면 대표(제품 마스터) 값 표시 (fallback + "(대표)" 표기)
+function openChannelDetail(channelCode) {
+  // 캐시에서 채널 + 소속 상품 찾기
+  let ch = null;
+  let p = null;
+  for (const prod of (__productsV2Cache || [])) {
+    const found = (prod.channels || []).find(c => c.channel_code === channelCode);
+    if (found) { ch = found; p = prod; break; }
+  }
+  if (!ch || !p) { showToast('채널 정보를 찾을 수 없습니다', 'error'); return; }
+  
+  // 대표값 fallback 헬퍼: 채널값 있으면 채널값, 없으면 대표값 + "(대표)" 라벨
+  // returns { text: HTMLstr, isDefault: bool }
+  const resolve = (channelVal, masterVal) => {
+    if (channelVal != null && channelVal !== '') {
+      return { text: escapeHtml(String(channelVal)), isDefault: false };
+    }
+    if (masterVal != null && masterVal !== '') {
+      return { text: `<span class="text-gray-500 italic">${escapeHtml(String(masterVal))}</span> <span class="text-xs text-gray-400">(대표)</span>`, isDefault: true };
+    }
+    return { text: '<span class="text-gray-400">-</span>', isDefault: false };
+  };
+  const val = (v) => (v != null && v !== '') ? escapeHtml(String(v)) : '<span class="text-gray-400">-</span>';
+  const nl2br = (s) => s ? escapeHtml(String(s)).replace(/\n/g, '<br>') : '<span class="text-gray-400">-</span>';
+  
+  // 표시용 사진: 채널 사진 있으면 그거, 없으면 대표
+  const displayPhoto = ch.channel_photo_url || p.photo_url;
+  const photoIsDefault = !ch.channel_photo_url && p.photo_url;
+  
+  // 파생 상품명 우선
+  const displayName = ch.channel_product_name || p.product_name;
+  
+  const pkgUnit = resolve(ch.channel_package_unit, p.package_unit);
+  const pkgSizeRaw = ch.channel_package_size || p.package_size;
+  const pkgSizeIsDefault = !ch.channel_package_size && p.package_size;
+  const pkgSizeText = pkgSizeRaw
+    ? (pkgSizeIsDefault
+        ? `<span class="text-gray-500 italic">${formatPackageSize(pkgSizeRaw)}</span> <span class="text-xs text-gray-400">(대표)</span>`
+        : formatPackageSize(pkgSizeRaw))
+    : '<span class="text-gray-400">-</span>';
+  const storage = resolve(ch.channel_storage_method, p.storage_method);
+  const reportNo = resolve(ch.channel_manufacture_report_no, p.manufacture_report_no);
+  const boxSize = resolve(ch.channel_box_size, p.box_size);
+  const boxQty = resolve(ch.channel_box_qty, p.box_qty);
+  const productSize = resolve(ch.channel_product_size, p.product_size);
+  
+  const html = `
+    <div class="max-h-[80vh] overflow-y-auto pr-2 space-y-4">
+      <!-- 헤더: 채널 사진 + 채널 정보 -->
+      <div class="flex gap-4 pb-4 border-b">
+        <div class="flex-shrink-0 relative">
+          ${displayPhoto 
+            ? `<img src="${escapeHtml(displayPhoto)}" class="w-32 h-32 object-cover rounded-lg border cursor-pointer ${photoIsDefault ? 'opacity-70' : ''}" onclick="window.open('${escapeHtml(displayPhoto)}','_blank')" title="클릭하여 크게 보기">` 
+            : `<div class="w-32 h-32 bg-gray-100 rounded-lg border flex items-center justify-center text-gray-300"><i class="fas fa-image text-3xl"></i></div>`}
+          ${photoIsDefault ? `<div class="absolute bottom-1 left-1 right-1 bg-black bg-opacity-60 text-white text-[10px] text-center py-0.5 rounded">대표 사진</div>` : ''}
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <span class="font-mono text-sm text-purple-700">${escapeHtml(ch.channel_code)}</span>
+                <span class="px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs font-medium">${escapeHtml(ch.channel_name)}</span>
+                ${ch.channel_abbr ? `<span class="font-mono px-1.5 py-0.5 bg-gray-200 rounded text-xs">${escapeHtml(ch.channel_abbr)}</span>` : ''}
+                <span class="px-2 py-0.5 bg-purple-50 text-purple-700 rounded text-xs">${escapeHtml(p.brand_name || p.brand_code || '-')}</span>
+              </div>
+              <h2 class="text-lg font-bold text-gray-900 break-words">${escapeHtml(displayName)}</h2>
+              ${ch.channel_product_name ? `<div class="text-xs text-gray-400 mt-0.5">대표: ${escapeHtml(p.product_name)}</div>` : ''}
+              <div class="text-sm text-gray-600 mt-1">
+                <i class="fas fa-tag mr-1"></i>대표 상품 
+                <span class="font-mono text-purple-600 cursor-pointer hover:underline" onclick="closeModal(); openProductDetail('${p.product_code}')" title="대표 상품 상세 보기">${escapeHtml(p.product_code)}</span>
+                ${p.recipe_name ? ` · <i class="fas fa-book-open mr-1"></i>${escapeHtml(p.recipe_name)}` : ''}
+              </div>
+            </div>
+            <div class="flex flex-col gap-2 flex-shrink-0">
+              <button onclick="closeModal(); openChannelModal('${p.product_code}', '${ch.channel_code}')" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 whitespace-nowrap">
+                <i class="fas fa-edit mr-1"></i>수정
+              </button>
+              <button onclick="closeModal(); deleteChannel('${ch.channel_code}')" class="px-3 py-1.5 bg-red-600 text-white rounded text-sm hover:bg-red-700 whitespace-nowrap">
+                <i class="fas fa-trash mr-1"></i>삭제
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 판매 정보 -->
+      <div>
+        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-shopping-cart text-blue-600 mr-1"></i>판매 정보</h3>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm border rounded-lg p-3 bg-blue-50/30">
+          <div class="flex"><span class="w-28 text-gray-500">채널 SKU</span><span class="flex-1 font-medium font-mono">${val(ch.channel_sku)}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">판매가</span><span class="flex-1 font-medium text-blue-700">${ch.channel_price != null ? Number(ch.channel_price).toLocaleString() + '원' : '<span class="text-gray-400">-</span>'}</span></div>
+          <div class="flex col-span-2"><span class="w-28 text-gray-500">상품 URL</span><span class="flex-1 font-medium">${ch.channel_url ? `<a href="${escapeHtml(ch.channel_url)}" target="_blank" class="text-blue-600 hover:underline break-all"><i class="fas fa-external-link-alt mr-1"></i>${escapeHtml(ch.channel_url)}</a>` : '<span class="text-gray-400">-</span>'}</span></div>
+        </div>
+      </div>
+      
+      <!-- 포장 / 크기 -->
+      <div>
+        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-box text-indigo-600 mr-1"></i>포장 · 크기 <span class="text-xs text-gray-400 font-normal">(값이 없으면 대표 사용)</span></h3>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm border rounded-lg p-3">
+          <div class="flex"><span class="w-28 text-gray-500">포장 입수량</span><span class="flex-1 font-medium">${pkgUnit.text}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">포장규격(g)</span><span class="flex-1 font-medium">${pkgSizeText}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">박스 규격</span><span class="flex-1 font-medium">${boxSize.text}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">박스당 수량</span><span class="flex-1 font-medium">${boxQty.text}</span></div>
+          <div class="flex col-span-2"><span class="w-28 text-gray-500">제품 크기</span><span class="flex-1 font-medium">${productSize.text}</span></div>
+        </div>
+      </div>
+      
+      <!-- 보관 · 품목 -->
+      <div>
+        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-warehouse text-amber-600 mr-1"></i>보관 · 품목 <span class="text-xs text-gray-400 font-normal">(값이 없으면 대표 사용)</span></h3>
+        <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm border rounded-lg p-3 bg-amber-50/30">
+          <div class="flex"><span class="w-28 text-gray-500">보관방법</span><span class="flex-1 font-medium">${storage.text}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">품목제조번호</span><span class="flex-1 font-medium">${reportNo.text}</span></div>
+          <div class="flex"><span class="w-28 text-gray-500">소비기한</span><span class="flex-1 font-medium text-gray-500 italic">${val(p.shelf_life)} <span class="text-xs text-gray-400">(대표)</span></span></div>
+          <div class="flex"><span class="w-28 text-gray-500">기한조건</span><span class="flex-1 font-medium text-gray-500 italic">${val(p.shelf_life_condition)} <span class="text-xs text-gray-400">(대표)</span></span></div>
+          <div class="flex col-span-2"><span class="w-28 text-gray-500">포장재질</span><span class="flex-1 font-medium text-gray-500 italic">${val(p.package_material)} <span class="text-xs text-gray-400">(대표)</span></span></div>
+        </div>
+      </div>
+      
+      <!-- 바코드 -->
+      <div>
+        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-barcode text-purple-600 mr-1"></i>채널 바코드</h3>
+        <div class="border rounded-lg p-3 flex items-start gap-4">
+          <div class="flex-shrink-0">
+            ${ch.channel_barcode_image_url 
+              ? `<img src="${escapeHtml(ch.channel_barcode_image_url)}" class="w-40 h-24 object-contain border rounded bg-white cursor-pointer" onclick="window.open('${escapeHtml(ch.channel_barcode_image_url)}','_blank')" title="클릭하여 크게 보기">`
+              : `<div class="w-40 h-24 bg-gray-100 border rounded flex items-center justify-center text-gray-300"><i class="fas fa-barcode text-2xl"></i></div>`}
+          </div>
+          <div class="flex-1">
+            <div class="text-sm mb-2"><span class="text-gray-500">번호:</span> <span class="font-mono font-medium">${val(ch.channel_barcode)}</span></div>
+            ${ch.channel_barcode_filename ? `<div class="text-xs text-gray-500 mb-2">파일: ${escapeHtml(ch.channel_barcode_filename)}</div>` : ''}
+            ${ch.channel_barcode_image_url 
+              ? `<button onclick="downloadChannelBarcode('${ch.channel_code}')" class="px-3 py-1.5 bg-purple-600 text-white rounded text-xs hover:bg-purple-700"><i class="fas fa-download mr-1"></i>바코드 다운로드</button>`
+              : `<div class="text-xs text-gray-400">등록된 채널 바코드 이미지가 없습니다.</div>`}
+          </div>
+        </div>
+      </div>
+      
+      <!-- 원재료 (대표) -->
+      <div>
+        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-flask text-green-600 mr-1"></i>원재료명 <span class="text-xs text-gray-400 font-normal">(대표 · 전체 표시)</span></h3>
+        <div class="border rounded-lg p-3 bg-green-50/30 text-sm leading-relaxed">
+          ${nl2br(p.ingredients)}
+        </div>
+      </div>
+      
+      ${ch.channel_memo ? `
+      <div>
+        <h3 class="text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-sticky-note text-yellow-600 mr-1"></i>채널 메모</h3>
+        <div class="border rounded-lg p-3 bg-yellow-50/40 text-sm">${nl2br(ch.channel_memo)}</div>
+      </div>
+      ` : ''}
+      
+      <div class="flex justify-between items-center gap-2 pt-3 border-t sticky bottom-0 bg-white">
+        <button onclick="closeModal(); openProductDetail('${p.product_code}')" class="px-3 py-2 text-sm text-purple-700 hover:text-purple-900">
+          <i class="fas fa-arrow-left mr-1"></i>대표 상품 상세로
+        </button>
+        <div class="flex gap-2">
+          <button onclick="closeModal()" class="px-4 py-2 border rounded-lg hover:bg-gray-50">닫기</button>
+          <button onclick="closeModal(); openChannelModal('${p.product_code}', '${ch.channel_code}')" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            <i class="fas fa-edit mr-1"></i>채널 SKU 수정
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+  
+  showModal(`채널 SKU 상세 - ${ch.channel_name} · ${displayName}`, html);
+  setTimeout(() => {
+    const modal = document.querySelector('.modal-content, [role="dialog"]');
+    if (modal) {
+      modal.style.maxWidth = '900px';
+      modal.style.width = '92%';
+    }
+  }, 0);
+}
 
 
 function showAddProductModal() {
@@ -42608,6 +42989,12 @@ window.toggleProductExpand = toggleProductExpand;
 window.openChannelModal = openChannelModal;
 window.saveChannel = saveChannel;
 window.deleteChannel = deleteChannel;
+// v3.6.195: 채널별 파생 필드 확장 (사진/바코드 이미지 업로드/다운로드, 채널 상세페이지)
+window.handleChannelPhotoUpload = handleChannelPhotoUpload;
+window.handleChannelBarcodeUpload = handleChannelBarcodeUpload;
+window.downloadChannelBarcode = downloadChannelBarcode;
+window.clearChannelPhoto = clearChannelPhoto;
+window.openChannelDetail = openChannelDetail;
 // 하위호환 exports
 window.loadProductDetailsList = loadProductDetailsList;
 window.filterProductDetails = filterProductDetails;

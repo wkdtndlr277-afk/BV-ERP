@@ -110,7 +110,7 @@ productsV2.post('/', async (c) => {
   try {
     const body = await c.req.json<any>();
     const {
-      brand_code, product_name, sales_channel, recipe_name,
+      brand_code, product_name, sales_channel, recipe_name, category,
       photo_url, photo_filename, barcode_number, barcode_image_url, barcode_filename,
       manufacture_report_no, storage_method, shelf_life, shelf_life_condition,
       package_unit, package_size, package_material, box_size, box_qty,
@@ -129,14 +129,14 @@ productsV2.post('/', async (c) => {
     
     await c.env.DB.prepare(`
       INSERT INTO products_new (
-        product_code, brand_code, product_name, sales_channel, recipe_name,
+        product_code, brand_code, product_name, sales_channel, recipe_name, category,
         photo_url, photo_filename, barcode_number, barcode_image_url, barcode_filename,
         manufacture_report_no, storage_method, shelf_life, shelf_life_condition,
         package_unit, package_size, package_material, box_size, box_qty,
         ingredients, product_size, memo
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      nextCode, brand_code, product_name.trim(), sales_channel || null, recipe_name || null,
+      nextCode, brand_code, product_name.trim(), sales_channel || null, recipe_name || null, category || null,
       photo_url || null, photo_filename || null, barcode_number || null, barcode_image_url || null, barcode_filename || null,
       manufacture_report_no || null, storage_method || null, shelf_life || null, shelf_life_condition || null,
       package_unit || null, package_size || null, package_material || null, box_size || null, box_qty || null,
@@ -166,6 +166,7 @@ productsV2.put('/:code', async (c) => {
         product_name = COALESCE(?, product_name),
         sales_channel = ?,
         recipe_name = ?,
+        category = ?,
         photo_url = ?,
         photo_filename = ?,
         barcode_number = ?,
@@ -190,6 +191,7 @@ productsV2.put('/:code', async (c) => {
       body.product_name || null,
       body.sales_channel ?? null,
       body.recipe_name ?? null,
+      body.category ?? null,
       body.photo_url ?? null,
       body.photo_filename ?? null,
       body.barcode_number ?? null,

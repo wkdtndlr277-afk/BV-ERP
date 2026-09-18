@@ -9686,6 +9686,16 @@ admin.get('/init-product-schema', async (c) => {
         channel_memo TEXT,
         channel_package_unit TEXT,
         channel_package_size TEXT,
+        channel_product_name TEXT,
+        channel_box_size TEXT,
+        channel_box_qty TEXT,
+        channel_product_size TEXT,
+        channel_barcode_image_url TEXT,
+        channel_barcode_filename TEXT,
+        channel_photo_url TEXT,
+        channel_photo_filename TEXT,
+        channel_storage_method TEXT,
+        channel_manufacture_report_no TEXT,
         is_active INTEGER DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -9718,6 +9728,41 @@ admin.get('/init-product-schema', async (c) => {
     } catch (e: any) {
       if (String(e.message).includes('duplicate column')) {
         results.push('ℹ️ product_channels.channel_package_size 이미 존재');
+      } else throw e;
+    }
+    
+    // v3.6.195: 채널별 파생 필드 10개 추가 (상품명/박스/제품크기/바코드이미지/사진/보관방법/품목제조번호)
+    // - 같은 규격 제품도 채널마다 사진, 보관방법(실온/냉동), 품목제조번호가 다를 수 있음
+    const v195Cols = [
+      { col: 'channel_product_name', desc: '파생 상품명' },
+      { col: 'channel_box_size', desc: '박스규격' },
+      { col: 'channel_box_qty', desc: '박스당 수량' },
+      { col: 'channel_product_size', desc: '제품크기' },
+      { col: 'channel_barcode_image_url', desc: '바코드 이미지 URL' },
+      { col: 'channel_barcode_filename', desc: '바코드 이미지 파일명' },
+      { col: 'channel_photo_url', desc: '채널별 제품 사진 URL' },
+      { col: 'channel_photo_filename', desc: '채널별 제품 사진 파일명' },
+      { col: 'channel_storage_method', desc: '채널별 보관방법 (실온/냉동 등)' },
+      { col: 'channel_manufacture_report_no', desc: '채널별 품목제조보고번호' }
+    ];
+    for (const { col, desc } of v195Cols) {
+      try {
+        await env.DB.prepare(`ALTER TABLE product_channels ADD COLUMN ${col} TEXT`).run();
+        results.push(`✅ product_channels.${col} 컴럼 추가 (${desc})`);
+      } catch (e: any) {
+        if (String(e.message).includes('duplicate column')) {
+          results.push(`ℹ️ product_channels.${col} 이미 존재`);
+        } else throw e;
+      }
+    }
+    
+    // v3.6.195: products_new에 category (분류) 컴럼 추가 (클래식/식빵/모닝빵 등)
+    try {
+      await env.DB.prepare(`ALTER TABLE products_new ADD COLUMN category TEXT`).run();
+      results.push('✅ products_new.category 컴럼 추가 (분류)');
+    } catch (e: any) {
+      if (String(e.message).includes('duplicate column')) {
+        results.push('ℹ️ products_new.category 이미 존재');
       } else throw e;
     }
     

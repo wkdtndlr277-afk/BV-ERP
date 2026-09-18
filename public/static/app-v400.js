@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.197';
+const APP_VERSION = '3.6.198';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -40860,14 +40860,16 @@ function openChannelModal(productCode, channelCode) {
         </button>
       </div>
     </div>
-  `);
+  `, '', 'max-w-3xl');
   
-  // 모달 크기 확장 (필드가 많아짐)
+  // v3.6.198: 내부 스크롤 영역 확장
   setTimeout(() => {
-    const modal = document.querySelector('.modal-content, [role="dialog"]');
+    const modal = document.querySelector('#modal-container .bg-white.rounded-xl');
     if (modal) {
-      modal.style.maxWidth = '680px';
-      modal.style.width = '95%';
+      const body = modal.querySelector('.overflow-y-auto');
+      if (body) {
+        body.style.maxHeight = '78vh';
+      }
     }
     previewChannelAbbr();
   }, 100);
@@ -41656,14 +41658,16 @@ function openProductDetail(productCode) {
     </div>
   `;
   
-  showModal(`제품 상세 (대표) - ${p.product_name}`, html);
-  
-  // 모달 넓게
+  // v3.6.198: max-w-5xl (1024px)로 넓게 + 내부 스크롤 영역 확장
+  showModal(`제품 상세 (대표) - ${p.product_name}`, html, '', 'max-w-5xl');
   setTimeout(() => {
-    const modal = document.querySelector('.modal-content, [role="dialog"]');
+    const modal = document.querySelector('#modal-container .bg-white.rounded-xl');
     if (modal) {
-      modal.style.maxWidth = '900px';
-      modal.style.width = '90%';
+      const body = modal.querySelector('.overflow-y-auto');
+      if (body) {
+        body.style.maxHeight = '80vh';
+        body.style.padding = '1.25rem';
+      }
     }
   }, 0);
 }
@@ -41854,12 +41858,17 @@ function openChannelDetail(channelCode) {
     </div>
   `;
   
-  showModal(`채널 SKU 상세 - ${ch.channel_name} · ${displayName}`, html);
+  // v3.6.198: max-w-5xl (1024px)로 넓게 + 내부 스크롤 영역도 확장
+  showModal(`채널 SKU 상세 - ${ch.channel_name} · ${displayName}`, html, '', 'max-w-5xl');
+  // 내부 컨텐츠 영역의 max-h-[60vh] 기본값을 벗어나 더 넓게 사용
   setTimeout(() => {
-    const modal = document.querySelector('.modal-content, [role="dialog"]');
+    const modal = document.querySelector('#modal-container .bg-white.rounded-xl');
     if (modal) {
-      modal.style.maxWidth = '900px';
-      modal.style.width = '92%';
+      const body = modal.querySelector('.overflow-y-auto');
+      if (body) {
+        body.style.maxHeight = '80vh';
+        body.style.padding = '1.25rem';
+      }
     }
   }, 0);
 }

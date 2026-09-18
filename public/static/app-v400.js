@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.193';
+const APP_VERSION = '3.6.194';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -40483,7 +40483,7 @@ function renderProductsV2Grouped() {
               <th class="px-2 py-2 text-left">상품명</th>
               <th class="px-2 py-2 text-left">보관방법</th>
               <th class="px-2 py-2 text-left">소비기한</th>
-              <th class="px-2 py-2 text-left">포장단위</th>
+              <th class="px-2 py-2 text-left">포장 입수량</th>
               <th class="px-2 py-2 text-left">포장규격(g)</th>
               <th class="px-2 py-2 text-left">포장재질</th>
               <th class="px-2 py-2 text-left">박스규격</th>
@@ -40576,7 +40576,7 @@ function renderProductsV2Grouped() {
                             <th class="px-3 py-2 text-left">판매채널</th>
                             <th class="px-3 py-2 text-left">채널 SKU</th>
                             <th class="px-3 py-2 text-left">채널 바코드</th>
-                            <th class="px-3 py-2 text-left">포장단위</th>
+                            <th class="px-3 py-2 text-left">포장 입수량</th>
                             <th class="px-3 py-2 text-left">포장규격(g)</th>
                             <th class="px-3 py-2 text-right">판매가</th>
                             <th class="px-3 py-2 text-left">URL</th>
@@ -40675,7 +40675,7 @@ function openChannelModal(productCode, channelCode) {
         <input type="text" id="ch-channel-barcode" value="${v('channel_barcode')}" class="w-full border rounded-lg px-3 py-2" placeholder="채널 전용 바코드 (선택)">
       </div>
 
-      <!-- v3.6.193: 채널별 포장 단위/규격 (같은 제품이라도 채널별로 다를 수 있음) -->
+      <!-- v3.6.194: 채널별 포장 입수량/규격 (같은 제품이라도 채널별로 다를 수 있음) -->
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
         <div class="text-xs font-semibold text-blue-800 mb-2">
           <i class="fas fa-box mr-1"></i>채널별 포장 사양
@@ -40683,7 +40683,7 @@ function openChannelModal(productCode, channelCode) {
         </div>
         <div class="grid grid-cols-2 gap-2">
           <div>
-            <label class="block text-xs font-medium text-gray-700 mb-1">포장단위</label>
+            <label class="block text-xs font-medium text-gray-700 mb-1">포장 입수량</label>
             <input type="text" id="ch-channel-package-unit" value="${v('channel_package_unit')}" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="${escapeHtml(product.package_unit || '예: 1개입, 2개입')}">
             ${product.package_unit ? `<div class="text-xs text-gray-500 mt-1">제품 기본: ${escapeHtml(product.package_unit)}</div>` : ''}
           </div>
@@ -41011,10 +41011,10 @@ function openProductModalV2(productCode) {
         <input type="text" id="pv2-shelf-life-condition" value="${v('shelf_life_condition')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 냉장보관 시">
       </div>
 
-      <!-- 11. 포장 단위 -->
+      <!-- 11. 포장 입수량 -->
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">포장 단위</label>
-        <input type="text" id="pv2-package-unit" value="${v('package_unit')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 개, 봉, 박스">
+        <label class="block text-sm font-medium text-gray-700 mb-1">포장 입수량 <span class="text-xs text-gray-500">(한 포장당 들어가는 개수)</span></label>
+        <input type="text" id="pv2-package-unit" value="${v('package_unit')}" class="w-full border rounded-lg px-3 py-2" placeholder="예: 1개입, 2개입, 5개입">
       </div>
 
       <!-- 12. 포장 규격 -->
@@ -41322,7 +41322,7 @@ function openProductDetail(productCode) {
                   <th class="px-2 py-1.5 text-left">약자</th>
                   <th class="px-2 py-1.5 text-left">SKU</th>
                   <th class="px-2 py-1.5 text-left">바코드</th>
-                  <th class="px-2 py-1.5 text-left">포장단위</th>
+                  <th class="px-2 py-1.5 text-left">포장 입수량</th>
                   <th class="px-2 py-1.5 text-left">포장규격(g)</th>
                   <th class="px-2 py-1.5 text-right">판매가</th>
                   <th class="px-2 py-1.5 text-left">URL</th>
@@ -41361,7 +41361,7 @@ function openProductDetail(productCode) {
           <div class="flex"><span class="w-24 text-gray-500">보관방법</span><span class="flex-1 font-medium">${val(p.storage_method)}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">소비기한</span><span class="flex-1 font-medium">${val(p.shelf_life)}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">기한조건</span><span class="flex-1 font-medium">${val(p.shelf_life_condition)}</span></div>
-          <div class="flex"><span class="w-24 text-gray-500">포장단위</span><span class="flex-1 font-medium">${val(p.package_unit)}</span></div>
+          <div class="flex"><span class="w-24 text-gray-500">포장 입수량</span><span class="flex-1 font-medium">${val(p.package_unit)}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">포장규격(g)</span><span class="flex-1 font-medium">${p.package_size ? formatPackageSize(p.package_size) : '<span class="text-gray-400">-</span>'}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">포장재질</span><span class="flex-1 font-medium">${val(p.package_material)}</span></div>
           <div class="flex"><span class="w-24 text-gray-500">박스규격</span><span class="flex-1 font-medium">${val(p.box_size)}</span></div>

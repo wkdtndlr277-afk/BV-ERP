@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.196';
+const APP_VERSION = '3.6.197';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -40610,9 +40610,12 @@ function renderProductsV2Grouped() {
                               </td>
                               <td class="px-2 py-2 text-right whitespace-nowrap">${ch.channel_price != null ? '<span class="font-medium text-blue-700">' + Number(ch.channel_price).toLocaleString() + '원</span>' : '-'}</td>
                               <td class="px-2 py-2 text-center whitespace-nowrap" onclick="event.stopPropagation()">
-                                <button onclick="openChannelDetail('${ch.channel_code}')" class="text-green-600 hover:text-green-800 mr-2" title="상세"><i class="fas fa-eye"></i></button>
-                                <button onclick="openChannelModal('${p.product_code}', '${ch.channel_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="수정"><i class="fas fa-edit"></i></button>
-                                <button onclick="deleteChannel('${ch.channel_code}')" class="text-red-600 hover:text-red-800" title="삭제"><i class="fas fa-trash"></i></button>
+                                ${ch.channel_url
+                                  ? `<a href="${escapeHtml(ch.channel_url)}" target="_blank" rel="noopener" class="inline-block px-2 py-0.5 bg-green-600 text-white rounded text-[11px] font-medium hover:bg-green-700 mr-2 align-middle" title="채널 상품 페이지 열기 (새 탭): ${escapeHtml(ch.channel_url)}"><i class="fas fa-external-link-alt mr-1"></i>링크</a>`
+                                  : `<span class="inline-block px-2 py-0.5 bg-gray-200 text-gray-400 rounded text-[11px] mr-2 align-middle cursor-not-allowed" title="상품 URL 미등록">링크</span>`}
+                                <button onclick="openChannelDetail('${ch.channel_code}')" class="text-green-600 hover:text-green-800 mr-2 align-middle" title="상세"><i class="fas fa-eye"></i></button>
+                                <button onclick="openChannelModal('${p.product_code}', '${ch.channel_code}')" class="text-blue-600 hover:text-blue-800 mr-2 align-middle" title="수정"><i class="fas fa-edit"></i></button>
+                                <button onclick="deleteChannel('${ch.channel_code}')" class="text-red-600 hover:text-red-800 align-middle" title="삭제"><i class="fas fa-trash"></i></button>
                               </td>
                             </tr>`;
                           }).join('')}
@@ -41595,8 +41598,11 @@ function openProductDetail(productCode) {
                     <span class="px-2 py-0.5 bg-blue-600 text-white rounded text-xs font-medium whitespace-nowrap">${escapeHtml(ch.channel_name)}</span>
                     ${ch.channel_abbr ? `<span class="font-mono px-1.5 py-0.5 bg-gray-200 rounded text-xs">${escapeHtml(ch.channel_abbr)}</span>` : ''}
                   </div>
-                  <div class="flex gap-1 flex-shrink-0" onclick="event.stopPropagation()">
-                    <button onclick="closeModal(); openChannelModal('${p.product_code}', '${ch.channel_code}')" class="text-blue-600 hover:text-blue-800 text-xs" title="수정"><i class="fas fa-edit"></i></button>
+                  <div class="flex gap-1 flex-shrink-0 items-center" onclick="event.stopPropagation()">
+                    ${ch.channel_url 
+                      ? `<a href="${escapeHtml(ch.channel_url)}" target="_blank" rel="noopener" class="px-2 py-1 bg-green-600 text-white rounded text-[11px] font-medium hover:bg-green-700 whitespace-nowrap" title="채널 상품 페이지 열기 (새 탭)"><i class="fas fa-external-link-alt mr-1"></i>링크</a>`
+                      : `<span class="px-2 py-1 bg-gray-200 text-gray-400 rounded text-[11px] cursor-not-allowed" title="상품 URL 미등록">링크</span>`}
+                    <button onclick="closeModal(); openChannelModal('${p.product_code}', '${ch.channel_code}')" class="text-blue-600 hover:text-blue-800 text-xs ml-1" title="수정"><i class="fas fa-edit"></i></button>
                     <button onclick="closeModal(); deleteChannel('${ch.channel_code}')" class="text-red-600 hover:text-red-800 text-xs" title="삭제"><i class="fas fa-trash"></i></button>
                   </div>
                 </div>
@@ -41630,7 +41636,6 @@ function openProductDetail(productCode) {
                     ` : ''}
                     ${(reportNo && ch.channel_manufacture_report_no) ? `<div class="text-[10px] text-amber-700">품목: ${escapeHtml(reportNo)}</div>` : ''}
                     ${ch.channel_ingredients ? `<div class="text-[10px] text-emerald-700"><i class="fas fa-flask mr-0.5"></i>원재료 채널별 표기 등록됨</div>` : ''}
-                    ${ch.channel_url ? `<div class="pt-0.5" onclick="event.stopPropagation()"><a href="${escapeHtml(ch.channel_url)}" target="_blank" class="text-blue-600 hover:underline text-[10px]"><i class="fas fa-external-link-alt mr-1"></i>상품 페이지</a></div>` : ''}
                   </div>
                 </div>
               </div>`;
@@ -41740,6 +41745,9 @@ function openChannelDetail(channelCode) {
               </div>
             </div>
             <div class="flex flex-col gap-2 flex-shrink-0">
+              ${ch.channel_url
+                ? `<a href="${escapeHtml(ch.channel_url)}" target="_blank" rel="noopener" class="px-3 py-1.5 bg-green-600 text-white rounded text-sm hover:bg-green-700 whitespace-nowrap text-center" title="채널 상품 페이지 열기 (새 탭)"><i class="fas fa-external-link-alt mr-1"></i>상품 페이지 열기</a>`
+                : `<span class="px-3 py-1.5 bg-gray-200 text-gray-400 rounded text-sm whitespace-nowrap text-center cursor-not-allowed" title="상품 URL 미등록"><i class="fas fa-link-slash mr-1"></i>URL 없음</span>`}
               <button onclick="closeModal(); openChannelModal('${p.product_code}', '${ch.channel_code}')" class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 whitespace-nowrap">
                 <i class="fas fa-edit mr-1"></i>수정
               </button>

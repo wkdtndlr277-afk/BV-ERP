@@ -1,6 +1,6 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.192';
+const APP_VERSION = '3.6.193';
 const APP_BUILD = '20260917-4';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
@@ -40323,13 +40323,15 @@ async function renderProductsManagement(container) {
 
 async function loadBrandsAndProducts() {
   try {
-    const [brandsRes, productsRes] = await Promise.all([
+    const [brandsRes, productsRes, channelsRes] = await Promise.all([
       axios.get('/api/brands'),
-      axios.get('/api/products-v2')
+      axios.get('/api/products-v2'),
+      axios.get('/api/product-channels/meta/channels').catch(() => ({ data: { channels: [] } }))
     ]);
     __brandsCache = brandsRes.data.data || brandsRes.data.brands || [];
     __productsV2Cache = productsRes.data.data || productsRes.data.products || [];
-    __channelsCache = productsRes.data.channels || [];
+    // v3.6.193: 채널명 자동완성 - DB에 저장된 채널 + 기본 제안 채널명 병합
+    __channelsCache = channelsRes.data.channels || [];
 
     renderBrandsList();
     renderBrandFilterOptions();
@@ -40574,26 +40576,36 @@ function renderProductsV2Grouped() {
                             <th class="px-3 py-2 text-left">판매채널</th>
                             <th class="px-3 py-2 text-left">채널 SKU</th>
                             <th class="px-3 py-2 text-left">채널 바코드</th>
+                            <th class="px-3 py-2 text-left">포장단위</th>
+                            <th class="px-3 py-2 text-left">포장규격(g)</th>
                             <th class="px-3 py-2 text-right">판매가</th>
                             <th class="px-3 py-2 text-left">URL</th>
                             <th class="px-3 py-2 text-center">액션</th>
                           </tr>
                         </thead>
                         <tbody class="divide-y">
-                          ${channels.map(ch => `
+                          ${channels.map(ch => {
+                            // 채널값이 있으면 채널값, 없으면 제품 기본값 (회색 표시)
+                            const pkgUnit = ch.channel_package_unit || p.package_unit;
+                            const pkgUnitIsDefault = !ch.channel_package_unit && p.package_unit;
+                            const pkgSize = ch.channel_package_size || p.package_size;
+                            const pkgSizeIsDefault = !ch.channel_package_size && p.package_size;
+                            return `
                             <tr class="hover:bg-gray-50" onclick="event.stopPropagation()">
                               <td class="px-3 py-2 font-mono text-xs text-purple-700">${escapeHtml(ch.channel_code)}</td>
                               <td class="px-3 py-2"><span class="inline-block px-2 py-0.5 bg-blue-100 text-blue-800 rounded font-medium">${escapeHtml(ch.channel_name)}</span></td>
                               <td class="px-3 py-2">${escapeHtml(ch.channel_sku || '-')}</td>
                               <td class="px-3 py-2">${escapeHtml(ch.channel_barcode || '-')}</td>
+                              <td class="px-3 py-2 ${pkgUnitIsDefault ? 'text-gray-400 italic' : ''}">${pkgUnit ? escapeHtml(pkgUnit) : '-'}${pkgUnitIsDefault ? ' <span class="text-xs">(기본)</span>' : ''}</td>
+                              <td class="px-3 py-2 ${pkgSizeIsDefault ? 'text-gray-400 italic' : ''}">${pkgSize ? formatPackageSize(pkgSize) : '-'}${pkgSizeIsDefault ? ' <span class="text-xs">(기본)</span>' : ''}</td>
                               <td class="px-3 py-2 text-right">${ch.channel_price != null ? Number(ch.channel_price).toLocaleString() + '원' : '-'}</td>
                               <td class="px-3 py-2">${ch.channel_url ? `<a href="${escapeHtml(ch.channel_url)}" target="_blank" class="text-blue-600 hover:underline"><i class="fas fa-external-link-alt"></i> 링크</a>` : '-'}</td>
                               <td class="px-3 py-2 text-center whitespace-nowrap">
                                 <button onclick="event.stopPropagation(); openChannelModal('${p.product_code}', '${ch.channel_code}')" class="text-blue-600 hover:text-blue-800 mr-2" title="수정"><i class="fas fa-edit"></i></button>
                                 <button onclick="event.stopPropagation(); deleteChannel('${ch.channel_code}')" class="text-red-600 hover:text-red-800" title="삭제"><i class="fas fa-trash"></i></button>
                               </td>
-                            </tr>
-                          `).join('')}
+                            </tr>`;
+                          }).join('')}
                         </tbody>
                       </table>
                     </div>
@@ -40661,6 +40673,29 @@ function openChannelModal(productCode, channelCode) {
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">채널 바코드</label>
         <input type="text" id="ch-channel-barcode" value="${v('channel_barcode')}" class="w-full border rounded-lg px-3 py-2" placeholder="채널 전용 바코드 (선택)">
+      </div>
+
+      <!-- v3.6.193: 채널별 포장 단위/규격 (같은 제품이라도 채널별로 다를 수 있음) -->
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3">
+        <div class="text-xs font-semibold text-blue-800 mb-2">
+          <i class="fas fa-box mr-1"></i>채널별 포장 사양
+          <span class="font-normal text-blue-600">(비워두면 제품 기본값 사용)</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">포장단위</label>
+            <input type="text" id="ch-channel-package-unit" value="${v('channel_package_unit')}" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="${escapeHtml(product.package_unit || '예: 1개입, 2개입')}">
+            ${product.package_unit ? `<div class="text-xs text-gray-500 mt-1">제품 기본: ${escapeHtml(product.package_unit)}</div>` : ''}
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">포장규격 (g)</label>
+            <div class="relative">
+              <input type="text" id="ch-channel-package-size" value="${v('channel_package_size')}" class="w-full border rounded-lg px-3 py-2 pr-8 text-sm" placeholder="${escapeHtml(product.package_size || '예: 200')}">
+              <span class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs pointer-events-none">g</span>
+            </div>
+            ${product.package_size ? `<div class="text-xs text-gray-500 mt-1">제품 기본: ${formatPackageSize(product.package_size)}</div>` : ''}
+          </div>
+        </div>
       </div>
 
       <div>
@@ -40749,7 +40784,9 @@ async function saveChannel(productCode, channelCode) {
     channel_barcode: document.getElementById('ch-channel-barcode')?.value.trim() || null,
     channel_price: document.getElementById('ch-channel-price')?.value || null,
     channel_url: document.getElementById('ch-channel-url')?.value.trim() || null,
-    channel_memo: document.getElementById('ch-channel-memo')?.value.trim() || null
+    channel_memo: document.getElementById('ch-channel-memo')?.value.trim() || null,
+    channel_package_unit: document.getElementById('ch-channel-package-unit')?.value.trim() || null,
+    channel_package_size: document.getElementById('ch-channel-package-size')?.value.trim() || null
   };
 
   try {
@@ -41285,22 +41322,31 @@ function openProductDetail(productCode) {
                   <th class="px-2 py-1.5 text-left">약자</th>
                   <th class="px-2 py-1.5 text-left">SKU</th>
                   <th class="px-2 py-1.5 text-left">바코드</th>
+                  <th class="px-2 py-1.5 text-left">포장단위</th>
+                  <th class="px-2 py-1.5 text-left">포장규격(g)</th>
                   <th class="px-2 py-1.5 text-right">판매가</th>
                   <th class="px-2 py-1.5 text-left">URL</th>
                 </tr>
               </thead>
               <tbody class="divide-y">
-                ${channels.map(ch => `
+                ${channels.map(ch => {
+                  const pkgUnit = ch.channel_package_unit || p.package_unit;
+                  const pkgUnitIsDefault = !ch.channel_package_unit && p.package_unit;
+                  const pkgSize = ch.channel_package_size || p.package_size;
+                  const pkgSizeIsDefault = !ch.channel_package_size && p.package_size;
+                  return `
                   <tr class="hover:bg-gray-50">
                     <td class="px-2 py-1.5 font-mono text-purple-700">${escapeHtml(ch.channel_code)}</td>
                     <td class="px-2 py-1.5">${escapeHtml(ch.channel_name)}</td>
                     <td class="px-2 py-1.5"><span class="font-mono px-1.5 py-0.5 bg-gray-200 rounded text-xs">${escapeHtml(ch.channel_abbr || '-')}</span></td>
                     <td class="px-2 py-1.5">${escapeHtml(ch.channel_sku || '-')}</td>
                     <td class="px-2 py-1.5">${escapeHtml(ch.channel_barcode || '-')}</td>
+                    <td class="px-2 py-1.5 ${pkgUnitIsDefault ? 'text-gray-400 italic' : ''}">${pkgUnit ? escapeHtml(pkgUnit) : '-'}</td>
+                    <td class="px-2 py-1.5 ${pkgSizeIsDefault ? 'text-gray-400 italic' : ''}">${pkgSize ? formatPackageSize(pkgSize) : '-'}</td>
                     <td class="px-2 py-1.5 text-right">${ch.channel_price != null ? Number(ch.channel_price).toLocaleString() + '원' : '-'}</td>
                     <td class="px-2 py-1.5">${ch.channel_url ? `<a href="${escapeHtml(ch.channel_url)}" target="_blank" class="text-blue-600 hover:underline"><i class="fas fa-external-link-alt"></i></a>` : '-'}</td>
-                  </tr>
-                `).join('')}
+                  </tr>`;
+                }).join('')}
               </tbody>
             </table>
           </div>

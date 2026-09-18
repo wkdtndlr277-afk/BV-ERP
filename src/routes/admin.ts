@@ -9684,6 +9684,8 @@ admin.get('/init-product-schema', async (c) => {
         channel_price REAL,
         channel_url TEXT,
         channel_memo TEXT,
+        channel_package_unit TEXT,
+        channel_package_size TEXT,
         is_active INTEGER DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -9698,6 +9700,24 @@ admin.get('/init-product-schema', async (c) => {
     } catch (e: any) {
       if (String(e.message).includes('duplicate column')) {
         results.push('ℹ️ product_channels.channel_abbr 이미 존재');
+      } else throw e;
+    }
+    
+    // v3.6.193: 채널별 포장단위/포장규격 컬럼 추가
+    try {
+      await env.DB.prepare(`ALTER TABLE product_channels ADD COLUMN channel_package_unit TEXT`).run();
+      results.push('✅ product_channels.channel_package_unit 컴럼 추가');
+    } catch (e: any) {
+      if (String(e.message).includes('duplicate column')) {
+        results.push('ℹ️ product_channels.channel_package_unit 이미 존재');
+      } else throw e;
+    }
+    try {
+      await env.DB.prepare(`ALTER TABLE product_channels ADD COLUMN channel_package_size TEXT`).run();
+      results.push('✅ product_channels.channel_package_size 컴럼 추가');
+    } catch (e: any) {
+      if (String(e.message).includes('duplicate column')) {
+        results.push('ℹ️ product_channels.channel_package_size 이미 존재');
       } else throw e;
     }
     

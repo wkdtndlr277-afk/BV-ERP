@@ -142,7 +142,8 @@ productChannels.post('/', async (c) => {
     const body = await c.req.json<any>();
     const {
       product_code, channel_name, channel_abbr, channel_sku, channel_barcode,
-      channel_price, channel_url, channel_memo
+      channel_price, channel_url, channel_memo,
+      channel_package_unit, channel_package_size
     } = body;
     
     if (!product_code) return c.json({ success: false, error: 'product_code 필수' }, 400);
@@ -184,8 +185,8 @@ productChannels.post('/', async (c) => {
     
     await c.env.DB.prepare(
       `INSERT INTO product_channels 
-       (channel_code, product_code, channel_name, channel_abbr, channel_sku, channel_barcode, channel_price, channel_url, channel_memo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (channel_code, product_code, channel_name, channel_abbr, channel_sku, channel_barcode, channel_price, channel_url, channel_memo, channel_package_unit, channel_package_size)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       channelCode,
       product_code,
@@ -195,7 +196,9 @@ productChannels.post('/', async (c) => {
       channel_barcode || null,
       channel_price != null && channel_price !== '' ? Number(channel_price) : null,
       channel_url || null,
-      channel_memo || null
+      channel_memo || null,
+      channel_package_unit || null,
+      channel_package_size || null
     ).run();
     
     return c.json({ success: true, channel_code: channelCode, channel_abbr: abbr });
@@ -215,7 +218,7 @@ productChannels.put('/:code', async (c) => {
     const exists = await c.env.DB.prepare(`SELECT channel_code FROM product_channels WHERE channel_code = ?`).bind(code).first();
     if (!exists) return c.json({ success: false, error: '채널 SKU 없음' }, 404);
     
-    const fields = ['channel_name', 'channel_abbr', 'channel_sku', 'channel_barcode', 'channel_price', 'channel_url', 'channel_memo'];
+    const fields = ['channel_name', 'channel_abbr', 'channel_sku', 'channel_barcode', 'channel_price', 'channel_url', 'channel_memo', 'channel_package_unit', 'channel_package_size'];
     const sets: string[] = [];
     const params: any[] = [];
     for (const f of fields) {
@@ -260,10 +263,19 @@ productChannels.delete('/:code', async (c) => {
 // -----------------------------------------------
 productChannels.get('/meta/channels', async (c) => {
   try {
+    // 기본 제안 채널명 (신규 등록 시 자동완성 도움)
+    const DEFAULT_CHANNELS = [
+      '쿠팡', '네이버스마트스토어', '오아시스', 'CJ온스타일', '롯데온',
+      '마켓컬리', '이마트', '홈플러스', 'SSG', '11번가', 'GS샵',
+      '현대홈쇼핑', '카카오톡선물하기', '위메프', '티몬', '오프라인', '자사몰'
+    ];
     const rows = await c.env.DB.prepare(
       `SELECT DISTINCT channel_name FROM product_channels WHERE is_active = 1 AND channel_name IS NOT NULL ORDER BY channel_name`
     ).all();
-    return c.json({ success: true, channels: (rows.results || []).map((r: any) => r.channel_name) });
+    const dbChannels = (rows.results || []).map((r: any) => r.channel_name);
+    // DB 채널을 앞에, 기본 채널을 뒤에 (중복 제거)
+    const merged = Array.from(new Set([...dbChannels, ...DEFAULT_CHANNELS]));
+    return c.json({ success: true, channels: merged, db_channels: dbChannels, default_channels: DEFAULT_CHANNELS });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }

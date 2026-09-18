@@ -1,9 +1,84 @@
 // ★★★ v3.6.188: 채널별 SKU 관리 (product_channels) ★★★
+// v3.6.190: 채널 약자 코드 부여 (PD001-CP01, PD001-OA01 형식)
 // 같은 상품이 여러 채널(쿠팡/네이버/오프라인 등)로 판매될 때 채널별로 코드/바코드/가격 관리
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
 
 const productChannels = new Hono<{ Bindings: Bindings }>();
+
+// 채널명 → 약자 매핑 (v3.6.190)
+const CHANNEL_ABBR_MAP: { [key: string]: string } = {
+  '쿠팡': 'CP',
+  'coupang': 'CP',
+  '네이버': 'NV',
+  'naver': 'NV',
+  '네이버스마트스토어': 'NV',
+  '스마트스토어': 'NV',
+  '오아시스': 'OA',
+  'oasis': 'OA',
+  'CJ': 'CJ',
+  'cj': 'CJ',
+  'CJ온스타일': 'CJ',
+  'CJ오쇼핑': 'CJ',
+  '롯데': 'LT',
+  'lotte': 'LT',
+  '롯데온': 'LT',
+  '롯데마트': 'LT',
+  '컬리': 'KL',
+  'kurly': 'KL',
+  '마켓컬리': 'KL',
+  '이마트': 'EM',
+  'emart': 'EM',
+  '홈플러스': 'HP',
+  'homeplus': 'HP',
+  'SSG': 'SG',
+  'ssg': 'SG',
+  '11번가': '11',
+  'GS': 'GS',
+  'gs': 'GS',
+  'GS샵': 'GS',
+  '현대': 'HD',
+  '현대홈쇼핑': 'HD',
+  'hyundai': 'HD',
+  '카카오': 'KK',
+  'kakao': 'KK',
+  '카카오톡선물하기': 'KK',
+  '오프라인': 'OF',
+  'offline': 'OF',
+  '자사몰': 'OW',
+  '자사': 'OW',
+  '위메프': 'WM',
+  'wemakeprice': 'WM',
+  '티몬': 'TM',
+  'tmon': 'TM',
+  '알리익스프레스': 'AL',
+  'aliexpress': 'AL',
+  '아마존': 'AZ',
+  'amazon': 'AZ',
+};
+
+// 채널명 → 약자 자동 변환 (한글/영문 대소문자 무시)
+function getChannelAbbr(channelName: string, customAbbr?: string): string {
+  if (customAbbr && customAbbr.trim()) {
+    // 사용자 지정 약자 (영문+숫자만, 2~3자 권장)
+    const clean = customAbbr.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return clean.substring(0, 3) || 'XX';
+  }
+  const trimmed = channelName.trim();
+  // 정확 매칭
+  if (CHANNEL_ABBR_MAP[trimmed]) return CHANNEL_ABBR_MAP[trimmed];
+  // 소문자 매칭
+  const lower = trimmed.toLowerCase();
+  if (CHANNEL_ABBR_MAP[lower]) return CHANNEL_ABBR_MAP[lower];
+  // 부분 매칭 (채널명에 키워드 포함)
+  for (const [key, abbr] of Object.entries(CHANNEL_ABBR_MAP)) {
+    if (trimmed.includes(key) || lower.includes(key.toLowerCase())) return abbr;
+  }
+  // 기본: 첫 글자를 영문 대문자로 (한글이면 XX)
+  const asciiFirst = trimmed.match(/[A-Za-z]/);
+  if (asciiFirst) return trimmed.substring(0, 2).toUpperCase();
+  return 'XX';
+}
 
 // -----------------------------------------------
 // GET /api/product-channels?product_code=PD001 — 특정 상품의 전체 채널 목록
@@ -66,7 +141,7 @@ productChannels.post('/', async (c) => {
   try {
     const body = await c.req.json<any>();
     const {
-      product_code, channel_name, channel_sku, channel_barcode,
+      product_code, channel_name, channel_abbr, channel_sku, channel_barcode,
       channel_price, channel_url, channel_memo
     } = body;
     
@@ -83,26 +158,39 @@ productChannels.post('/', async (c) => {
     ).bind(product_code, channel_name.trim()).first();
     if (dup) return c.json({ success: false, error: `이미 등록된 채널입니다: ${(dup as any).channel_code}` }, 409);
     
-    // 채널 코드 채번: PD001-01, PD001-02 ...
+    // v3.6.190: 채널 약자 계산 (예: 쿠팡 → CP)
+    const abbr = getChannelAbbr(channel_name, channel_abbr);
+    
+    // 채널 코드 채번: PD001-CP01, PD001-CP02, PD001-OA01 ...
+    // 동일 상품 + 동일 약자 내에서 연번 부여
     const existing = await c.env.DB.prepare(
       `SELECT channel_code FROM product_channels WHERE product_code = ?`
     ).bind(product_code).all();
     let maxSeq = 0;
+    const abbrPattern = new RegExp(`-${abbr}(\\d+)$`);
+    const legacyPattern = /-(\d+)$/; // 구버전 (v3.6.188) 코드 호환
     for (const r of (existing.results || [])) {
-      const m = String((r as any).channel_code).match(/-(\d+)$/);
-      if (m) maxSeq = Math.max(maxSeq, parseInt(m[1], 10));
+      const code = String((r as any).channel_code);
+      const m1 = code.match(abbrPattern);
+      if (m1) {
+        maxSeq = Math.max(maxSeq, parseInt(m1[1], 10));
+      } else {
+        // 구버전 코드 (PD001-01) 는 CP 등 특정 약자와 무관하므로 스킵
+        // 단 abbr이 없는 경우(레거시)만 참조
+      }
     }
     const nextSeq = maxSeq + 1;
-    const channelCode = `${product_code}-${String(nextSeq).padStart(2, '0')}`;
+    const channelCode = `${product_code}-${abbr}${String(nextSeq).padStart(2, '0')}`;
     
     await c.env.DB.prepare(
       `INSERT INTO product_channels 
-       (channel_code, product_code, channel_name, channel_sku, channel_barcode, channel_price, channel_url, channel_memo)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+       (channel_code, product_code, channel_name, channel_abbr, channel_sku, channel_barcode, channel_price, channel_url, channel_memo)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       channelCode,
       product_code,
       channel_name.trim(),
+      abbr,
       channel_sku || null,
       channel_barcode || null,
       channel_price != null && channel_price !== '' ? Number(channel_price) : null,
@@ -110,7 +198,7 @@ productChannels.post('/', async (c) => {
       channel_memo || null
     ).run();
     
-    return c.json({ success: true, channel_code: channelCode });
+    return c.json({ success: true, channel_code: channelCode, channel_abbr: abbr });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }
@@ -127,7 +215,7 @@ productChannels.put('/:code', async (c) => {
     const exists = await c.env.DB.prepare(`SELECT channel_code FROM product_channels WHERE channel_code = ?`).bind(code).first();
     if (!exists) return c.json({ success: false, error: '채널 SKU 없음' }, 404);
     
-    const fields = ['channel_name', 'channel_sku', 'channel_barcode', 'channel_price', 'channel_url', 'channel_memo'];
+    const fields = ['channel_name', 'channel_abbr', 'channel_sku', 'channel_barcode', 'channel_price', 'channel_url', 'channel_memo'];
     const sets: string[] = [];
     const params: any[] = [];
     for (const f of fields) {
@@ -179,6 +267,22 @@ productChannels.get('/meta/channels', async (c) => {
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
   }
+});
+
+// -----------------------------------------------
+// GET /api/product-channels/meta/abbr-map — 채널명 → 약자 매핑 (프론트 미리보기용)
+// GET /api/product-channels/meta/preview-abbr?channel_name=쿠팡 — 특정 채널명의 약자 예상
+// -----------------------------------------------
+productChannels.get('/meta/abbr-map', async (c) => {
+  return c.json({ success: true, map: CHANNEL_ABBR_MAP });
+});
+
+productChannels.get('/meta/preview-abbr', async (c) => {
+  const name = c.req.query('channel_name') || '';
+  const custom = c.req.query('channel_abbr') || '';
+  if (!name.trim()) return c.json({ success: false, error: 'channel_name 필요' }, 400);
+  const abbr = getChannelAbbr(name, custom);
+  return c.json({ success: true, channel_name: name, channel_abbr: abbr });
 });
 
 export default productChannels;

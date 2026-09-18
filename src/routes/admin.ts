@@ -9678,6 +9678,7 @@ admin.get('/init-product-schema', async (c) => {
         channel_code TEXT PRIMARY KEY,
         product_code TEXT NOT NULL,
         channel_name TEXT NOT NULL,
+        channel_abbr TEXT,
         channel_sku TEXT,
         channel_barcode TEXT,
         channel_price REAL,
@@ -9689,6 +9690,16 @@ admin.get('/init-product-schema', async (c) => {
       )
     `).run();
     results.push('✅ product_channels 테이블 생성');
+    
+    // v3.6.190: 기존 테이블에 channel_abbr 컴럼 추가
+    try {
+      await env.DB.prepare(`ALTER TABLE product_channels ADD COLUMN channel_abbr TEXT`).run();
+      results.push('✅ product_channels.channel_abbr 컴럼 추가');
+    } catch (e: any) {
+      if (String(e.message).includes('duplicate column')) {
+        results.push('ℹ️ product_channels.channel_abbr 이미 존재');
+      } else throw e;
+    }
     
     await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pc_product ON product_channels(product_code)`).run();
     await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_pc_channel ON product_channels(channel_name)`).run();
@@ -9773,6 +9784,90 @@ admin.delete('/brands/:code/hard-delete', async (c) => {
     return c.json({ success: true, deleted: code, meta: result.meta });
   } catch (e: any) {
     return c.json({ success: false, error: e.message }, 500);
+  }
+});
+
+// ★★★ v3.6.190: 기존 channel_code(PDxxx-01)를 새 형식(PDxxx-CP01)으로 마이그레이션 ★★★
+admin.post('/migrate-channel-abbr', async (c) => {
+  const CHANNEL_ABBR_MAP: any = {
+    '쿠팡':'CP','coupang':'CP','네이버':'NV','naver':'NV','네이버스마트스토어':'NV','스마트스토어':'NV',
+    '오아시스':'OA','oasis':'OA','CJ':'CJ','cj':'CJ','CJ온스타일':'CJ','CJ오쇼핑':'CJ',
+    '롯데':'LT','lotte':'LT','롯데온':'LT','롯데마트':'LT','컬리':'KL','kurly':'KL','마켓컬리':'KL',
+    '이마트':'EM','emart':'EM','홈플러스':'HP','homeplus':'HP','SSG':'SG','ssg':'SG','11번가':'11',
+    'GS':'GS','gs':'GS','GS샵':'GS','현대':'HD','현대홈쇼핑':'HD','hyundai':'HD',
+    '카카오':'KK','kakao':'KK','오프라인':'OF','offline':'OF','자사몰':'OW','자사':'OW',
+    '위메프':'WM','wemakeprice':'WM','티몬':'TM','tmon':'TM','알리익스프레스':'AL','아마존':'AZ','amazon':'AZ'
+  };
+  function getAbbr(name: string): string {
+    const t = (name || '').trim();
+    if (CHANNEL_ABBR_MAP[t]) return CHANNEL_ABBR_MAP[t];
+    const l = t.toLowerCase();
+    if (CHANNEL_ABBR_MAP[l]) return CHANNEL_ABBR_MAP[l];
+    for (const [k, v] of Object.entries(CHANNEL_ABBR_MAP)) {
+      if (t.includes(k) || l.includes(k.toLowerCase())) return v as string;
+    }
+    if (/[A-Za-z]/.test(t)) return t.substring(0,2).toUpperCase();
+    return 'XX';
+  }
+  
+  try {
+    const { env } = c;
+    const channels = await env.DB.prepare(
+      `SELECT channel_code, product_code, channel_name FROM product_channels WHERE is_active = 1`
+    ).all();
+    
+    const migrated: any[] = [];
+    const skipped: any[] = [];
+    
+    // 상품별 새 시퀀스 관리 (약자별로 카운트)
+    const seqMap: { [key: string]: number } = {};
+    
+    for (const row of (channels.results || []) as any[]) {
+      const oldCode = row.channel_code;
+      const productCode = row.product_code;
+      const channelName = row.channel_name;
+      
+      // 이미 새 형식(PDxxx-AB01)이면 스킵. 구 형식(PDxxx-01)만 마이그레이션
+      const newFormatMatch = oldCode.match(/^(.+)-([A-Z0-9]{2,3})(\d+)$/);
+      const oldFormatMatch = oldCode.match(/^(.+)-(\d+)$/);
+      
+      if (newFormatMatch) {
+        // 이미 새 형식 - channel_abbr 필드만 백필
+        const abbr = newFormatMatch[2];
+        await env.DB.prepare(
+          `UPDATE product_channels SET channel_abbr = ? WHERE channel_code = ? AND (channel_abbr IS NULL OR channel_abbr = '')`
+        ).bind(abbr, oldCode).run();
+        skipped.push({ channel_code: oldCode, reason: '이미 새 형식', abbr });
+        continue;
+      }
+      
+      if (!oldFormatMatch) {
+        skipped.push({ channel_code: oldCode, reason: '형식 불일치' });
+        continue;
+      }
+      
+      const abbr = getAbbr(channelName);
+      const seqKey = `${productCode}-${abbr}`;
+      const nextSeq = (seqMap[seqKey] = (seqMap[seqKey] || 0) + 1);
+      const newCode = `${productCode}-${abbr}${String(nextSeq).padStart(2, '0')}`;
+      
+      // channel_code는 PRIMARY KEY이므로 UPDATE 가능
+      await env.DB.prepare(
+        `UPDATE product_channels SET channel_code = ?, channel_abbr = ?, updated_at = CURRENT_TIMESTAMP WHERE channel_code = ?`
+      ).bind(newCode, abbr, oldCode).run();
+      
+      migrated.push({ old: oldCode, new: newCode, channel_name: channelName, abbr });
+    }
+    
+    return c.json({
+      success: true,
+      migrated_count: migrated.length,
+      skipped_count: skipped.length,
+      migrated,
+      skipped
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message, stack: e.stack }, 500);
   }
 });
 

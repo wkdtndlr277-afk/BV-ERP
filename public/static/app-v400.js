@@ -1,7 +1,7 @@
 // HACCP ERP Frontend Application
 // Version: 3.6.00 Build: 20260629
-const APP_VERSION = '3.6.201';
-const APP_BUILD = '20260917-4';
+const APP_VERSION = '3.6.202';
+const APP_BUILD = '20260923-1';
 console.log(`HACCP ERP v${APP_VERSION} (${APP_BUILD}) loaded`);
 
 const API_BASE = '/api';
@@ -24245,6 +24245,48 @@ function fuzzyMatchProduct(searchName, products) {
       const levenScore = 1 - (levenshteinDistance(searchNorm, pNorm) / Math.max(searchNorm.length, pNorm.length));
       if (levenScore > 0.7) {
         score = Math.max(score, levenScore * 0.85);
+      }
+    }
+    
+    // 5. v3.6.202: 붙여쓴 이름 대응 (공백 없이 붙여쓴 엑셀 상품명 vs 공백/쉼표 있는 마스터 상품명)
+    // 예) "크렌베리베이글150g" ↔ "크렌베리 발효종 베이글, 1개입, 120g"
+    // pKeywords (마스터의 핵심 키워드들)가 searchNorm (엑셀명 정규화)에 모두 포함되는지 확인
+    if (pKeywords.length >= 2) {
+      let containedCount = 0;
+      for (const pk of pKeywords) {
+        if (pk.length >= 2 && searchNorm.includes(pk)) containedCount++;
+      }
+      // 마스터 키워드가 2개 이상이고 그중 대부분이 엑셀명에 포함되면 강력 매칭
+      const containRatio = containedCount / pKeywords.length;
+      if (containedCount >= 2 && containRatio >= 0.6) {
+        // 마스터 키워드 커버리지 기반 점수 (최대 0.85)
+        const containScore = 0.6 + containRatio * 0.25;
+        score = Math.max(score, containScore);
+      }
+    }
+    // 5-1. 반대 방향: searchKeywords(엑셀 핵심 키워드)가 pNorm에 모두 포함
+    if (searchKeywords.length >= 2) {
+      let containedCount = 0;
+      for (const sk of searchKeywords) {
+        if (sk.length >= 2 && pNorm.includes(sk)) containedCount++;
+      }
+      const containRatio = containedCount / searchKeywords.length;
+      if (containedCount >= 2 && containRatio >= 0.6) {
+        const containScore = 0.6 + containRatio * 0.25;
+        score = Math.max(score, containScore);
+      }
+    }
+    // 5-2. 엑셀명이 붙여쓰기라 키워드 1개만 나온 경우 (예: "크렌베리베이글")
+    // → 마스터 키워드들을 엑셀명 substring으로 확인
+    if (searchKeywords.length < 2 && pKeywords.length >= 2 && searchNorm.length >= 4) {
+      let containedCount = 0;
+      for (const pk of pKeywords) {
+        if (pk.length >= 2 && searchNorm.includes(pk)) containedCount++;
+      }
+      if (containedCount >= 2) {
+        const containRatio = containedCount / pKeywords.length;
+        const containScore = 0.55 + containRatio * 0.3;
+        score = Math.max(score, containScore);
       }
     }
     

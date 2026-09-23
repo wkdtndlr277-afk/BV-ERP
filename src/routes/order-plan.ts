@@ -332,6 +332,60 @@ function stripWeight(s: string): string {
   return String(s || '').replace(/\d+\s*g\b/gi, '').replace(/\s+/g, ' ').trim()
 }
 
+// v3.6.202: 핵심 키워드 추출 (숫자/무게/괄호/구분자 제거 후 2글자 이상 토큰만)
+// 예) "크렌베리 발효종 베이글, 1개입, 120g" → ["크렌베리", "발효종", "베이글", "1개입"]
+//     "크렌베리베이글150g (140g+13g)" → ["크렌베리베이글"]  (공백 없으면 한 덩어리)
+// 브랜드/판매채널/포장단위 스탑워드 필터
+const STOP_WORDS = new Set([
+  '생협', '브로드카세', '비블리', '프롬위트', '저당', '단백질을더한',
+  '로켓프레시', '실온', '냉동', '컬리', '쿠팡', '오아시스',
+  '개입', '개', '팩', '세트', '봉', '박스'
+])
+function extractServerKeywords(s: string): string[] {
+  if (!s) return []
+  // 무게 제거, 괄호 제거, 소문자화
+  const cleaned = stripWeight(stripParen(String(s))).toLowerCase()
+  // 숫자만/구분자 제거 → 한글/영문/숫자 조합 토큰
+  const tokens = cleaned.split(/[\s,._\-·\/()+]+/).filter(Boolean)
+  return tokens
+    .map(t => t.replace(/\d+g$/i, '').trim())    // 토큰 끝의 그램 제거
+    .filter(t => t.length >= 2)
+    .filter(t => !STOP_WORDS.has(t))
+    .filter(t => !/^\d+$/.test(t))                // 순수 숫자 제거
+}
+
+// v3.6.202: 붙여쓴 이름 substring 매칭 (엑셀명이 공백 없이 붙어있을 때)
+// 예) 엑셀 "크렌베리베이글150g" ↔ 마스터 "크렌베리 발효종 베이글, 1개입, 120g"
+// 마스터 핵심 키워드가 엑셀 정규화명(공백 없이)에 몇 개 포함되는지
+// 이 점수는 "엑셀명의 앞쪽 제품 이름 부분"이 마스터로 얼마나 설명되는지를 측정
+function substringMatchScore(excelNorm: string, masterName: string): number {
+  const masterKeywords = extractServerKeywords(masterName)
+  if (masterKeywords.length < 2) return 0
+  // 엑셀명에서 무게/괄호를 제거한 "제품 이름 부분"만 추출 (분모용)
+  const excelCore = normalizeWithTypo(stripWeight(stripParen(excelNorm)))
+  const excelCoreLen = excelCore.length || excelNorm.length || 1
+
+  let hits = 0
+  let hitLen = 0
+  for (const k of masterKeywords) {
+    const kTyped = normalizeWithTypo(k)
+    // 엑셀 원본(normOriginal)에서 확인 (무게 뒤로 밀렸어도 캐치)
+    if (excelNorm.includes(kTyped)) {
+      hits++
+      hitLen += kTyped.length
+    }
+  }
+  if (hits < 2) return 0
+
+  // 커버리지 = 히트한 마스터 키워드 수 / 마스터 키워드 수
+  const coverage = hits / masterKeywords.length
+  // 엑셀 커버리지 = 히트 문자 총량 / 엑셀명 "제품 이름 부분" 길이
+  //                 (엑셀명의 앞쪽 이름 부분이 마스터로 얼마나 설명되는가)
+  const excelCoverage = Math.min(1.0, hitLen / excelCoreLen)
+  // 두 커버리지의 가중 평균 (엑셀 커버리지에 더 큰 무게 - 엑셀명 앞부분이 통째로 마스터명 안에 있으면 매치)
+  return coverage * 0.4 + excelCoverage * 0.6
+}
+
 // Longest Common Substring 길이
 function lcsLength(a: string, b: string): number {
   if (!a || !b) return 0
@@ -450,20 +504,64 @@ orderPlan.post('/match', async (c) => {
         continue
       }
 
-      // Level 5: 실패 → 유사도 TOP3 후보 계산
+      // v3.6.202 Level 4.5: 붙여쓰기/공백 무시 substring 강력 매칭
+      // 예) 엑셀 "크렌베리베이글150g (140g+13g)" → normOriginal "크랜베리베이글150g(140g+13g)"
+      //     마스터 "크렌베리 발효종 베이글, 1개입, 120g" → keywords ["크렌베리","발효종","베이글","1개입"]
+      //     마스터의 핵심 키워드가 엑셀명에 대부분 포함되면 자동 매칭
       const normOriginal = normalizeWithTypo(original)
+      const substringScored = products.map((p: any) => ({
+        p,
+        sub: substringMatchScore(normOriginal, p.name || '')
+      })).filter(x => x.sub > 0)
+        .sort((a, b) => b.sub - a.sub)
+
+      // 최고 substring 점수가 0.7 이상이고, 2위와 차이가 크면 (또는 유일한 최고점) 자동 매칭
+      if (substringScored.length > 0 && substringScored[0].sub >= 0.7) {
+        const top = substringScored[0]
+        const second = substringScored[1]
+        const isUnique = !second || (top.sub - second.sub) >= 0.15 || top.sub >= 0.85
+        if (isUnique) {
+          matched.push({
+            excel_name: original,
+            code: top.p.code,
+            name: top.p.name,
+            method: 'substring'
+          })
+          continue
+        }
+      }
+
+      // Level 5: 실패 → 유사도 TOP5 후보 계산 (LCS + substring 결합)
       const scored = products.map((p: any) => {
         const normP = normalizeWithTypo(p.name || '')
         const lcs = lcsLength(normOriginal, normP)
-        // 정규화: LCS / min(len)
         const minLen = Math.min(normOriginal.length, normP.length) || 1
-        const score = lcs / minLen
-        return { code: p.code, name: p.name, score: Math.round(score * 100), lcs }
-      }).filter(x => x.lcs >= 4).sort((a: any, b: any) => b.score - a.score || b.lcs - a.lcs)
+        const lcsScore = lcs / minLen  // 0.0~1.0
+
+        // v3.6.202: substring 점수를 결합 (핵심 키워드 커버리지 우선)
+        const subScore = substringMatchScore(normOriginal, p.name || '')
+
+        // 최종 점수: substring이 있으면 그것에 무게, 없으면 LCS
+        // substring이 우세할 때 순위 뒤집기 (앞쪽 제품명 매칭 > 뒤쪽 무게 매칭)
+        const combined = Math.max(lcsScore * 0.6, subScore * 1.0, (lcsScore * 0.4 + subScore * 0.6))
+
+        return {
+          code: p.code,
+          name: p.name,
+          score: Math.round(combined * 100),
+          lcs,
+          sub: subScore
+        }
+      }).filter(x => x.lcs >= 4 || x.sub >= 0.4)
+        .sort((a: any, b: any) => b.score - a.score || b.sub - a.sub || b.lcs - a.lcs)
 
       unmatched.push({
         excel_name: original,
-        candidates: scored.slice(0, 5)
+        candidates: scored.slice(0, 5).map(x => ({
+          code: x.code,
+          name: x.name,
+          score: x.score
+        }))
       })
     }
 
@@ -481,6 +579,7 @@ orderPlan.post('/match', async (c) => {
           typo: matched.filter(m => m.method === 'typo').length,
           paren: matched.filter(m => m.method === 'paren').length,
           weight_strip: matched.filter(m => m.method === 'weight_strip').length,
+          substring: matched.filter(m => m.method === 'substring').length,
         }
       }
     })

@@ -6,6 +6,24 @@ type Bindings = {
 
 const orderPlan = new Hono<{ Bindings: Bindings }>()
 
+// v3.6.204: 원료 필요량 조회에서 제외할 원료명 (물처럼 사입/발주 대상이 아닌 것)
+// 정규화 비교 (공백/대소문자 무시)로 매칭됨
+export const EXCLUDED_RAW_MATERIALS = new Set([
+  '정제수',
+  '물',
+  '얼음물',
+  '냉수',
+  '온수'
+])
+function isExcludedMaterial(name: string): boolean {
+  if (!name) return false
+  const norm = String(name).replace(/\s+/g, '').toLowerCase()
+  for (const ex of EXCLUDED_RAW_MATERIALS) {
+    if (ex.replace(/\s+/g, '').toLowerCase() === norm) return true
+  }
+  return false
+}
+
 // 발주 계획표 지원 채널 (10개, 컬리 상온은 평택/김포/창원 합산)
 export const PLAN_CHANNELS = [
   '쿠팡',        // 1차/2차/3차 합계
@@ -873,6 +891,8 @@ orderPlan.post('/apply-to-daily-report', async (c) => {
 
       // BOM 원재료 집계 (1개당 * quantity)
       for (const bom of bomItems) {
+        // v3.6.204: 정제수/물 등 제외
+        if (isExcludedMaterial(bom.material_name)) continue
         const requiredQty = (bom.quantity || 0) * item.quantity
         const bomUnit = (bom.unit || 'kg').toLowerCase()
         const requiredKg = bomUnit === 'g' ? requiredQty / 1000 : requiredQty
@@ -1516,6 +1536,8 @@ orderPlan.get('/weekly-materials/:start_date', async (c) => {
         // v3.6.203: 반죽별 원료가 하나도 없고 제품 BOM이 있으면 BOM으로 원료 계산
         if (!hasAnyDoughMaterial && bomMats.length > 0) {
           for (const m of bomMats) {
+            // v3.6.204: 정제수/물 등 제외
+            if (isExcludedMaterial(m.material_name)) continue
             const unit = String(m.unit || 'g').toLowerCase()
             const factor = (unit === 'kg') ? 1000 : 1
             const g = Number(m.quantity) * qty * factor
@@ -1526,6 +1548,8 @@ orderPlan.get('/weekly-materials/:start_date', async (c) => {
       } else if (bomMats.length > 0) {
         // 반죽 매핑 없이 BOM만 있는 케이스 (기존 로직)
         for (const m of bomMats) {
+          // v3.6.204: 정제수/물 등 제외
+          if (isExcludedMaterial(m.material_name)) continue
           const unit = String(m.unit || 'g').toLowerCase()
           const factor = (unit === 'kg') ? 1000 : 1
           const g = Number(m.quantity) * qty * factor
@@ -1552,13 +1576,18 @@ orderPlan.get('/weekly-materials/:start_date', async (c) => {
       const mats = doughMatByCode[code] || []
       const matBreakdown = mats.map((m: any) => {
         const gTotal = (m.quantity_per_kg || 0) * totalKg
-        rawUsage[m.material_name] = (rawUsage[m.material_name] || 0) + gTotal
+        // v3.6.204: 정제수/물 등 제외 (breakdown은 참고용으로 유지, 합계엔 미포함)
+        const isExcluded = isExcludedMaterial(m.material_name)
+        if (!isExcluded) {
+          rawUsage[m.material_name] = (rawUsage[m.material_name] || 0) + gTotal
+        }
         return {
           material_code: m.material_code,
           material_name: m.material_name,
           quantity_per_kg: m.quantity_per_kg,
           total_g: gTotal,
-          total_kg: gTotal / 1000
+          total_kg: gTotal / 1000,
+          excluded_from_total: isExcluded
         }
       })
       return {

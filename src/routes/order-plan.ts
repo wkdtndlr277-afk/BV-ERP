@@ -174,17 +174,56 @@ orderPlan.post('/save', async (c) => {
       WHERE order_date = ? AND order_plan_id IS NOT NULL
     `).bind(plan_date).run()
 
-    // 3. 신규 row INSERT
+    // v3.6.203: 서버 사이드에서 rows 배열의 중복 product_code를 먼저 합산 (병합)
+    // (프론트에서 gridMap 병합이 실패해도 서버가 안전하게 방어)
+    type MergedRow = {
+      product_code: string
+      product_name: string | null
+      channels: Record<string, number>
+      extra: Record<string, number>
+      memo: string | null
+      final_qty: number
+      formula_note: string | null
+    }
+    const mergedMap = new Map<string, MergedRow>()
+    for (const row of rows) {
+      const code = row.product_code
+      if (!code) continue
+      const existing = mergedMap.get(code) || {
+        product_code: code,
+        product_name: row.product_name || null,
+        channels: {} as Record<string, number>,
+        extra: {} as Record<string, number>,
+        memo: row.memo || null,
+        final_qty: 0,
+        formula_note: row.formula_note || null
+      }
+      for (const [ch, q] of Object.entries(row.channels || {})) {
+        const n = Number(q); if (!n) continue
+        existing.channels[ch] = (existing.channels[ch] || 0) + n
+      }
+      for (const [ch, q] of Object.entries(row.extra || {})) {
+        const n = Number(q); if (!n) continue
+        existing.extra[ch] = (existing.extra[ch] || 0) + n
+      }
+      if (row.final_qty) existing.final_qty = (existing.final_qty || 0) + Number(row.final_qty)
+      if (row.formula_note && !existing.formula_note) existing.formula_note = row.formula_note
+      if (row.memo && !existing.memo) existing.memo = row.memo
+      mergedMap.set(code, existing)
+    }
+    const mergedRows = Array.from(mergedMap.values())
+
+    // 3. 신규 row INSERT (병합된 rows 사용)
     let planInserted = 0
     let ordersInserted = 0
     let finalInserted = 0
 
-    for (const row of rows) {
+    for (const row of mergedRows) {
       const code = row.product_code
       const name = row.product_name || null
       if (!code) continue
 
-      // 정기 발주
+      // 정기 발주 (UNIQUE 충돌 시 quantity 합산)
       let channelSum = 0
       for (const [channel, qty] of Object.entries(row.channels || {})) {
         const q = Number(qty)
@@ -195,6 +234,9 @@ orderPlan.post('/save', async (c) => {
         const planResult = await c.env.DB.prepare(`
           INSERT INTO order_plan (plan_date, product_code, product_name, channel, quantity, is_extra, memo)
           VALUES (?, ?, ?, ?, ?, 0, ?)
+          ON CONFLICT(plan_date, product_code, channel, is_extra) DO UPDATE SET
+            quantity = quantity + excluded.quantity,
+            updated_at = CURRENT_TIMESTAMP
         `).bind(plan_date, code, name, channel, q, row.memo || null).run()
         planInserted++
 
@@ -217,6 +259,9 @@ orderPlan.post('/save', async (c) => {
         const planResult = await c.env.DB.prepare(`
           INSERT INTO order_plan (plan_date, product_code, product_name, channel, quantity, is_extra, memo)
           VALUES (?, ?, ?, ?, ?, 1, ?)
+          ON CONFLICT(plan_date, product_code, channel, is_extra) DO UPDATE SET
+            quantity = quantity + excluded.quantity,
+            updated_at = CURRENT_TIMESTAMP
         `).bind(plan_date, code, name, channel, q, row.memo || null).run()
         planInserted++
 
@@ -846,10 +891,12 @@ orderPlan.post('/apply-to-daily-report', async (c) => {
       }
     }
 
-    // 7. 원재료 INSERT (기존 계획표 것 지운 후 재작성)
+    // v3.6.203: 실제 스키마에 맞춘 컬럼명 (required_quantity, source 없음)
+    // 실제 컬럼: report_id, item_id, material_code, material_name, required_quantity, unit, production_code, created_at
+    // 7. 원재료 INSERT (해당 report의 기존 것 지운 후 재작성)
     await c.env.DB.prepare(`
       DELETE FROM production_daily_materials
-      WHERE report_id = ? AND source = '계획표'
+      WHERE report_id = ?
     `).bind(reportId).run()
 
     let materialsInserted = 0
@@ -857,22 +904,12 @@ orderPlan.post('/apply-to-daily-report', async (c) => {
       try {
         await c.env.DB.prepare(`
           INSERT INTO production_daily_materials
-          (report_id, material_code, material_name, quantity, unit, source)
-          VALUES (?, ?, ?, ?, ?, '계획표')
-        `).bind(reportId, mat.material_code, mat.material_name, mat.quantity, mat.unit).run()
+          (report_id, material_code, material_name, required_quantity, unit)
+          VALUES (?, ?, ?, ?, ?)
+        `).bind(reportId, mat.material_code || null, mat.material_name, mat.quantity, mat.unit).run()
         materialsInserted++
-      } catch (e) {
-        // material_code 없거나 source 컬럼 없을 때 fallback
-        try {
-          await c.env.DB.prepare(`
-            INSERT INTO production_daily_materials
-            (report_id, material_code, material_name, quantity, unit)
-            VALUES (?, ?, ?, ?, ?)
-          `).bind(reportId, mat.material_code, mat.material_name, mat.quantity, mat.unit).run()
-          materialsInserted++
-        } catch (e2) {
-          console.error('[apply-to-daily-report] material insert failed:', e2)
-        }
+      } catch (e2) {
+        console.error('[apply-to-daily-report] material insert failed:', (e2 as any).message)
       }
     }
 
@@ -1438,19 +1475,31 @@ orderPlan.get('/weekly-materials/:start_date', async (c) => {
     const bomRawUsage: Record<string, number> = {}  // material_name → total_g
     const productsFromBom: string[] = []
 
+    // v3.6.203: 반죽 매핑이 있어도 해당 반죽에 dough_material이 없으면 (원료 미등록)
+    // BOM으로 fallback해서 원료를 계산 (dough_material 마스터 미완성 대응)
     for (const p of plans) {
       const qty = Number(p.total_qty) || 0
       if (qty <= 0) continue
       const usages = pduByProduct[p.product_code] || []
       const bomMats = bomByProduct[p.product_code] || []
 
-      if (usages.length > 0) {
+      // 반죽 매핑이 있는지 판단
+      const hasDoughRecipe = usages.length > 0
+      // 반죽 매핑이 있는 경우, 매핑된 반죽 중 하나라도 dough_material이 있는지
+      const hasAnyDoughMaterial = hasDoughRecipe && usages.some(u =>
+        (doughMatByCode[u.dough_code] || []).length > 0
+      )
+
+      if (hasDoughRecipe) {
+        // 반죽 사용량 g는 항상 집계 (반죽 목록 표시용)
         const rowDetail: any = {
           product_code: p.product_code,
           product_name: p.product_name,
           quantity: qty,
           doughs: [] as any[],
-          has_recipe: true
+          has_recipe: true,
+          // 반죽 매핑은 있지만 dough_material이 비어 BOM으로 원료 계산했는지 표시
+          used_bom_for_materials: !hasAnyDoughMaterial && bomMats.length > 0
         }
         for (const u of usages) {
           const gTotal = (u.dough_g_per_product || 0) * qty
@@ -1463,9 +1512,20 @@ orderPlan.get('/weekly-materials/:start_date', async (c) => {
           })
         }
         productBreakdown.push(rowDetail)
+
+        // v3.6.203: 반죽별 원료가 하나도 없고 제품 BOM이 있으면 BOM으로 원료 계산
+        if (!hasAnyDoughMaterial && bomMats.length > 0) {
+          for (const m of bomMats) {
+            const unit = String(m.unit || 'g').toLowerCase()
+            const factor = (unit === 'kg') ? 1000 : 1
+            const g = Number(m.quantity) * qty * factor
+            bomRawUsage[m.material_name] = (bomRawUsage[m.material_name] || 0) + g
+          }
+          productsFromBom.push(p.product_name)
+        }
       } else if (bomMats.length > 0) {
+        // 반죽 매핑 없이 BOM만 있는 케이스 (기존 로직)
         for (const m of bomMats) {
-          // v3.6.92: unit 반영 (kg → g 환산). 기본 g.
           const unit = String(m.unit || 'g').toLowerCase()
           const factor = (unit === 'kg') ? 1000 : 1
           const g = Number(m.quantity) * qty * factor

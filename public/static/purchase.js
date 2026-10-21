@@ -15,6 +15,7 @@ const State = {
   currentTab: 'items',
   items: [],
   itemsFilter: { category: '', supplier_id: '', search: '' },
+  supplierSearch: '',    // ★ 사이드바 공급업체 검색어 (클라이언트 필터)
   cart: [],              // 업체별 그룹
   cartSelectedSupplierId: null,
   orders: [],
@@ -714,17 +715,47 @@ async function renderItemsPanel() {
       <!-- 좌측 사이드바 -->
       <aside class="col-span-12 md:col-span-3 lg:col-span-2">
         <div class="bg-white rounded-lg border border-gray-200 p-3">
-          <div class="text-sm font-semibold text-gray-500 px-2 mb-2">공급업체</div>
-          <div class="scrollable" style="max-height:70vh;">
+          <div class="flex items-center justify-between px-1 mb-2">
+            <div class="text-sm font-semibold text-gray-500">공급업체</div>
+            <div class="text-xs text-gray-400">${(State.suppliersWithStats || []).filter(s => s.item_count > 0).length}개</div>
+          </div>
+          <div class="relative mb-2">
+            <input id="supplier-search-input" type="text"
+              placeholder="업체명 검색..."
+              value="${(State.supplierSearch || '').replace(/"/g, '&quot;')}"
+              class="w-full pl-7 pr-7 py-1.5 border border-gray-300 rounded text-sm focus:border-blue-400 focus:outline-none" />
+            <i class="fas fa-search absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+            ${State.supplierSearch ? `
+              <button type="button" onclick="clearSupplierSearch()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700" title="검색 지우기">
+                <i class="fas fa-times-circle"></i>
+              </button>
+            ` : ''}
+          </div>
+          <div class="scrollable" style="max-height:65vh;">
             <div class="sidebar-item ${!sfx.supplier_id ? 'active' : ''}" onclick="setItemsFilter({supplier_id:''})">
               <span>전체</span><span class="count">${State.items.length}</span>
             </div>
-            ${(State.suppliersWithStats || []).filter(s => s.item_count > 0).map(s => `
-              <div class="sidebar-item ${String(sfx.supplier_id) === String(s.id) ? 'active' : ''}" onclick="setItemsFilter({supplier_id:${s.id}})">
-                <span class="truncate" title="${s.name}">${s.name}</span>
-                <span class="count">${s.item_count}</span>
-              </div>
-            `).join('')}
+            ${(() => {
+              const q = (State.supplierSearch || '').trim().toLowerCase();
+              const list = (State.suppliersWithStats || []).filter(s => s.item_count > 0);
+              const filtered = q
+                ? list.filter(s => {
+                    if ((s.name || '').toLowerCase().includes(q)) return true;
+                    // 별칭 매칭 (aliases 는 '|' 로 join 된 string)
+                    const alias = (s.aliases || '').toLowerCase();
+                    return alias.includes(q);
+                  })
+                : list;
+              if (q && filtered.length === 0) {
+                return `<div class="text-xs text-gray-400 text-center py-4">검색 결과 없음</div>`;
+              }
+              return filtered.map(s => `
+                <div class="sidebar-item ${String(sfx.supplier_id) === String(s.id) ? 'active' : ''}" onclick="setItemsFilter({supplier_id:${s.id}})">
+                  <span class="truncate" title="${s.name}">${s.name}</span>
+                  <span class="count">${s.item_count}</span>
+                </div>
+              `).join('');
+            })()}
           </div>
         </div>
       </aside>
@@ -788,6 +819,26 @@ async function renderItemsPanel() {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => setItemsFilter({ search: e.target.value }), 300);
   });
+
+  // ★ 공급업체 사이드바 검색 (클라이언트 필터, 재렌더링 없이 사이드바만 리프레시)
+  const supInput = $('#supplier-search-input');
+  if (supInput) {
+    let supTimer;
+    supInput.addEventListener('input', (e) => {
+      clearTimeout(supTimer);
+      supTimer = setTimeout(() => {
+        State.supplierSearch = e.target.value || '';
+        // 사이드바만 리렌더링 (전체 패널 새로 그리면 포커스 날아감 + API 재호출)
+        rerenderSupplierSidebar();
+      }, 150);
+    });
+    // 포커스 유지: 커서 끝으로
+    try {
+      const v = supInput.value;
+      supInput.focus();
+      supInput.setSelectionRange(v.length, v.length);
+    } catch (_) {}
+  }
   $('#items-check-all').addEventListener('change', (e) => {
     $$('.item-row-check').forEach(ch => { ch.checked = e.target.checked; });
     $$('#items-tbody tr').forEach(tr => tr.classList.toggle('selected', e.target.checked));
@@ -882,6 +933,85 @@ window.setItemsFilter = function (patch) {
   Object.assign(State.itemsFilter, patch);
   renderItemsPanel();
 };
+
+/** 공급업체 검색 지우기 */
+window.clearSupplierSearch = function () {
+  State.supplierSearch = '';
+  rerenderSupplierSidebar();
+  // 입력창에도 반영
+  const inp = $('#supplier-search-input');
+  if (inp) { inp.value = ''; inp.focus(); }
+};
+
+/** 공급업체 사이드바만 부분 리렌더링 (전체 패널 재호출 없이) */
+function rerenderSupplierSidebar() {
+  const aside = $('#panel-items aside');
+  if (!aside) return;
+  const sfx = State.itemsFilter;
+  const q = (State.supplierSearch || '').trim().toLowerCase();
+  const list = (State.suppliersWithStats || []).filter(s => s.item_count > 0);
+  const filtered = q
+    ? list.filter(s => {
+        if ((s.name || '').toLowerCase().includes(q)) return true;
+        const alias = (s.aliases || '').toLowerCase();
+        return alias.includes(q);
+      })
+    : list;
+
+  const inner = `
+    <div class="bg-white rounded-lg border border-gray-200 p-3">
+      <div class="flex items-center justify-between px-1 mb-2">
+        <div class="text-sm font-semibold text-gray-500">공급업체</div>
+        <div class="text-xs text-gray-400">${list.length}개</div>
+      </div>
+      <div class="relative mb-2">
+        <input id="supplier-search-input" type="text"
+          placeholder="업체명 검색..."
+          value="${(State.supplierSearch || '').replace(/"/g, '&quot;')}"
+          class="w-full pl-7 pr-7 py-1.5 border border-gray-300 rounded text-sm focus:border-blue-400 focus:outline-none" />
+        <i class="fas fa-search absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs"></i>
+        ${State.supplierSearch ? `
+          <button type="button" onclick="clearSupplierSearch()" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700" title="검색 지우기">
+            <i class="fas fa-times-circle"></i>
+          </button>
+        ` : ''}
+      </div>
+      <div class="scrollable" style="max-height:65vh;">
+        <div class="sidebar-item ${!sfx.supplier_id ? 'active' : ''}" onclick="setItemsFilter({supplier_id:''})">
+          <span>전체</span><span class="count">${State.items.length}</span>
+        </div>
+        ${(q && filtered.length === 0)
+          ? `<div class="text-xs text-gray-400 text-center py-4">검색 결과 없음</div>`
+          : filtered.map(s => `
+              <div class="sidebar-item ${String(sfx.supplier_id) === String(s.id) ? 'active' : ''}" onclick="setItemsFilter({supplier_id:${s.id}})">
+                <span class="truncate" title="${s.name}">${s.name}</span>
+                <span class="count">${s.item_count}</span>
+              </div>
+            `).join('')
+        }
+      </div>
+    </div>
+  `;
+  aside.innerHTML = inner;
+
+  // 입력 포커스 유지 + 이벤트 재바인딩
+  const supInput = $('#supplier-search-input');
+  if (supInput) {
+    let supTimer;
+    supInput.addEventListener('input', (e) => {
+      clearTimeout(supTimer);
+      supTimer = setTimeout(() => {
+        State.supplierSearch = e.target.value || '';
+        rerenderSupplierSidebar();
+      }, 150);
+    });
+    try {
+      const v = supInput.value;
+      supInput.focus();
+      supInput.setSelectionRange(v.length, v.length);
+    } catch (_) {}
+  }
+}
 
 async function addSelectedItemsToCart() {
   const items = [];

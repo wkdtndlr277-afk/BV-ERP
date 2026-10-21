@@ -623,20 +623,24 @@ app.post('/sync-from-erp', async (c) => {
     totalCount = Number(countRow?.c || 0)
   }
 
+  // ★ master (원료 R*/RM*) + supplies (부자재 SM*) 양쪽 LEFT JOIN
+  //   SM* 는 master 에 등록되지 않고 supplies 에 등록되어 있음 (예: SM001 = 포장박스(대))
+  //   COALESCE 우선순위: master → supplies → item_code (fallback)
   const query = `
     SELECT
       i.inbound_date,
       i.item_code,
-      COALESCE(m.item_name, i.item_code) AS item_name,
+      COALESCE(NULLIF(m.item_name, ''), NULLIF(s.item_name, ''), i.item_code) AS item_name,
       i.lot_number,
       i.origin_qty AS quantity,
-      COALESCE(m.unit, 'kg') AS unit,
+      COALESCE(NULLIF(m.unit, ''), NULLIF(s.unit, ''), 'kg') AS unit,
       i.supplier AS supplier_raw,
-      m.pack_unit AS erp_pack_unit,
-      m.pack_unit_name AS erp_pack_unit_name,
+      COALESCE(m.pack_unit, s.pack_unit) AS erp_pack_unit,
+      COALESCE(NULLIF(m.pack_unit_name, ''), NULLIF(s.pack_unit_name, '')) AS erp_pack_unit_name,
       i.is_sample
     FROM inbound i
     LEFT JOIN master m ON m.item_code = i.item_code
+    LEFT JOIN supplies s ON s.item_code = i.item_code
     WHERE ${whereClauses.join(' AND ')}
     ORDER BY i.inbound_date ASC, i.id ASC
     LIMIT ? OFFSET ?

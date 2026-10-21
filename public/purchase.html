@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<title>원료 발주 관리 - 본비반트</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+<style>
+  :root{
+    --primary:#1D4ED8;        /* 코발트 블루 */
+    --primary-dark:#1E40AF;
+    --primary-50:#EFF6FF;
+    --warning-bg:#FFF7ED;
+    --warning-text:#C2410C;
+    --row-selected:#EFF6FF;
+    --border:#E5E7EB;
+    --text-main:#111827;
+    --text-sub:#6B7280;
+  }
+  html,body{font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans KR',sans-serif;color:var(--text-main);background:#F9FAFB;}
+  .btn-primary{background:var(--primary);color:#fff;padding:.5rem 1rem;border-radius:.5rem;font-weight:600;transition:all .15s;}
+  .btn-primary:hover{background:var(--primary-dark);}
+  .btn-primary:disabled{background:#9CA3AF;cursor:not-allowed;}
+  .btn-secondary{background:#fff;color:var(--text-main);border:1px solid var(--border);padding:.5rem 1rem;border-radius:.5rem;font-weight:500;transition:all .15s;}
+  .btn-secondary:hover{background:#F3F4F6;}
+  .btn-danger{background:#fff;color:#DC2626;border:1px solid #FCA5A5;padding:.5rem 1rem;border-radius:.5rem;font-weight:500;}
+  .btn-danger:hover{background:#FEF2F2;}
+  .tab{padding:.5rem 1rem;border-radius:.5rem;font-weight:500;color:var(--text-sub);cursor:pointer;display:flex;align-items:center;gap:.5rem;}
+  .tab:hover{background:#F3F4F6;color:var(--text-main);}
+  .tab.active{background:#F3F4F6;color:var(--primary);font-weight:600;}
+  .tab-badge{background:var(--primary);color:#fff;font-size:.75rem;padding:.1rem .5rem;border-radius:999px;min-width:1.5rem;text-align:center;font-weight:700;}
+  .sidebar-item{padding:.75rem 1rem;border-radius:.5rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center;transition:all .15s;}
+  .sidebar-item:hover{background:#F3F4F6;}
+  .sidebar-item.active{background:var(--primary-50);color:var(--primary);font-weight:600;}
+  .sidebar-item .count{font-size:.875rem;color:var(--text-sub);}
+  .sidebar-item.active .count{color:var(--primary);}
+  .badge-warn{background:var(--warning-bg);color:var(--warning-text);font-size:.75rem;padding:.15rem .5rem;border-radius:.25rem;font-weight:500;}
+  .badge-info{background:#DBEAFE;color:#1E40AF;font-size:.75rem;padding:.15rem .5rem;border-radius:.25rem;font-weight:500;}
+  .badge-gray{background:#F3F4F6;color:#4B5563;font-size:.75rem;padding:.15rem .5rem;border-radius:.25rem;font-weight:500;}
+  .badge-green{background:#D1FAE5;color:#065F46;font-size:.75rem;padding:.15rem .5rem;border-radius:.25rem;font-weight:500;}
+  .badge-red{background:#FEE2E2;color:#991B1B;font-size:.75rem;padding:.15rem .5rem;border-radius:.25rem;font-weight:500;}
+  .status-draft{background:#F3F4F6;color:#4B5563;}
+  .status-sent{background:#DBEAFE;color:#1E40AF;}
+  .status-received{background:#D1FAE5;color:#065F46;}
+  .status-cancelled{background:#FEE2E2;color:#991B1B;}
+  .table-base{width:100%;border-collapse:separate;border-spacing:0;}
+  .table-base th{background:#F9FAFB;color:var(--text-sub);font-weight:500;font-size:.75rem;text-align:left;padding:.75rem 1rem;border-bottom:1px solid var(--border);}
+  .table-base td{padding:.75rem 1rem;border-bottom:1px solid var(--border);font-size:.875rem;}
+  .table-base tr:hover td{background:#F9FAFB;}
+  .table-base tr.selected td{background:var(--row-selected);}
+  .input-inline{border:1px solid #E5E7EB;border-radius:.375rem;padding:.25rem .5rem;font-size:.875rem;width:100%;}
+  .input-inline:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 2px rgba(29,78,216,.1);}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:50;display:flex;align-items:center;justify-content:center;padding:1rem;}
+  .modal-box{background:#fff;border-radius:.75rem;max-width:90vw;max-height:90vh;overflow:auto;}
+  .toast{position:fixed;bottom:2rem;left:50%;transform:translateX(-50%);padding:.75rem 1.5rem;border-radius:.5rem;color:#fff;font-weight:500;z-index:100;box-shadow:0 10px 15px -3px rgba(0,0,0,.1);animation:toast-in .3s ease;}
+  .toast-success{background:#16A34A;}
+  .toast-error{background:#DC2626;}
+  .toast-info{background:#1D4ED8;}
+  @keyframes toast-in{from{opacity:0;transform:translate(-50%,20px);}to{opacity:1;transform:translate(-50%,0);}}
+  .custom-checkbox{width:1rem;height:1rem;accent-color:var(--primary);cursor:pointer;}
+  .scrollable{overflow-y:auto;}
+  .scrollable::-webkit-scrollbar{width:8px;height:8px;}
+  .scrollable::-webkit-scrollbar-track{background:transparent;}
+  .scrollable::-webkit-scrollbar-thumb{background:#D1D5DB;border-radius:4px;}
+  .scrollable::-webkit-scrollbar-thumb:hover{background:#9CA3AF;}
+
+  /* 발주서 (JPG 생성용) */
+  .po-document{background:#fff;color:#000;font-family:'Noto Sans KR','Malgun Gothic',sans-serif;padding:40px;width:794px;box-sizing:border-box;}
+  .po-document h1{font-size:28px;font-weight:700;text-align:center;margin:0 0 24px;letter-spacing:12px;}
+  .po-document .po-meta{display:flex;justify-content:space-between;font-size:14px;margin-bottom:20px;}
+  .po-document .po-recipient{font-size:18px;font-weight:600;margin-bottom:8px;}
+  .po-document .po-sender{font-size:14px;margin-bottom:16px;}
+  .po-document .po-intro{font-size:15px;margin:16px 0;}
+  .po-document table{width:100%;border-collapse:collapse;font-size:14px;margin:16px 0;}
+  .po-document th,.po-document td{border:1px solid #000;padding:8px 10px;text-align:center;}
+  .po-document th{background:#F3F4F6;font-weight:600;}
+  .po-document td.left{text-align:left;}
+  .po-document .po-footer{margin-top:24px;font-size:14px;}
+  .po-document .po-footer .label{font-weight:600;}
+  .po-document .po-notes{margin-top:16px;padding:12px;border:1px dashed #999;font-size:13px;}
+
+  @media (max-width:768px){
+    .mobile-hide{display:none;}
+    .mobile-full{width:100%;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ====================== 상단 바 ====================== -->
+<header class="bg-white border-b border-gray-200 sticky top-0 z-30">
+  <div class="max-w-screen-2xl mx-auto px-4 py-3 flex items-center gap-4">
+    <!-- 로고 -->
+    <div class="flex items-center gap-2">
+      <div class="w-9 h-9 rounded-full bg-[color:var(--primary)] text-white flex items-center justify-center font-bold text-sm">발주</div>
+      <h1 class="text-lg font-bold text-gray-900">원료 발주 관리</h1>
+    </div>
+
+    <!-- 탭 -->
+    <nav class="flex items-center gap-1 ml-6" id="main-tabs">
+      <div class="tab active" data-tab="items"><i class="fas fa-boxes-stacked"></i>원료 목록</div>
+      <div class="tab" data-tab="cart"><i class="fas fa-cart-shopping"></i>발주 담은 목록<span id="cart-badge" class="tab-badge" style="display:none;">0</span></div>
+      <div class="tab" data-tab="orders"><i class="fas fa-file-invoice"></i>발주 이력</div>
+      <div class="tab" data-tab="suppliers"><i class="fas fa-building"></i>업체 관리</div>
+      <div class="tab" data-tab="settings"><i class="fas fa-gear"></i>설정</div>
+    </nav>
+
+    <div class="flex-1"></div>
+
+    <!-- 메인 ERP 관리로 복귀 (선택) -->
+    <a href="/" class="text-sm text-gray-500 hover:text-gray-700" title="본사 ERP로 돌아가기">
+      <i class="fas fa-arrow-left"></i> ERP
+    </a>
+
+    <!-- ERP 데이터 가져오기 (주요 액션) -->
+    <button id="btn-upload" class="btn-primary">
+      <i class="fas fa-upload"></i> ERP 데이터 가져오기
+    </button>
+  </div>
+</header>
+
+<!-- ====================== 메인 ====================== -->
+<main id="app" class="max-w-screen-2xl mx-auto px-4 py-6">
+  <!-- 각 탭 패널 렌더링 -->
+  <div id="panel-items" class="tab-panel"></div>
+  <div id="panel-cart" class="tab-panel hidden"></div>
+  <div id="panel-orders" class="tab-panel hidden"></div>
+  <div id="panel-suppliers" class="tab-panel hidden"></div>
+  <div id="panel-settings" class="tab-panel hidden"></div>
+</main>
+
+<!-- ====================== 모달 컨테이너 ====================== -->
+<div id="modal-root"></div>
+<div id="toast-root"></div>
+
+<!-- 발주서 렌더링용 (JPG 변환, 화면 밖) -->
+<div id="po-render-root" style="position:fixed;left:-9999px;top:0;"></div>
+
+<script src="/static/purchase.js?v=1"></script>
+</body>
+</html>

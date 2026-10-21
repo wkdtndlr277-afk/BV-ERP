@@ -49,6 +49,8 @@ import brandsRoutes from './routes/brands';
 import productsV2Routes from './routes/products-v2';
 import productChannelsRoutes from './routes/product-channels';
 import uploadsRoutes from './routes/uploads';
+// 구매발주 관리 모듈 (카톡 기반, 금액 없음)
+import purchaseOrderRoutes from './routes/purchase-order';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -102,6 +104,8 @@ app.route('/api/brands', brandsRoutes);
 app.route('/api/products-v2', productsV2Routes);
 app.route('/api/product-channels', productChannelsRoutes);
 app.route('/api/uploads', uploadsRoutes);
+// 구매발주 관리 모듈 API
+app.route('/api/po', purchaseOrderRoutes);
 
 // ★★★ v3.6.81: 품목 검색 API (바코드 수기등록용) ★★★
 app.get('/api/items/search', async (c) => {
@@ -559,6 +563,21 @@ app.get('/barcode.html', async (c) => {
     return c.redirect('/');
   }
 });
+
+// ============================================================
+// 구매발주 관리 모듈 - 독립 페이지 /purchase
+// 카톡 전송 기반, 금액 없음
+// ============================================================
+app.get('/purchase', async (c) => {
+  try {
+    const response = await c.env.ASSETS.fetch(new Request('https://dummy/purchase.html'));
+    const html = await response.text();
+    return c.html(html);
+  } catch (e) {
+    return c.html('<h1>purchase.html not found</h1>', 500);
+  }
+});
+app.get('/purchase.html', async (c) => c.redirect('/purchase'));
 
 // Main HTML page
 app.get('/*', (c) => {

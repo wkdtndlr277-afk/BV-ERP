@@ -119,9 +119,14 @@
       <i class="fas fa-arrow-left"></i> ERP
     </a>
 
-    <!-- ERP 데이터 가져오기 (주요 액션) -->
-    <button id="btn-upload" class="btn-primary">
-      <i class="fas fa-upload"></i> ERP 데이터 가져오기
+    <!-- ERP 동기화 (본체 inbound → 자동 가져오기) -->
+    <button id="btn-erp-sync" class="btn-primary" title="본사 ERP 입고 데이터를 자동으로 가져옵니다">
+      <i class="fas fa-sync-alt"></i> ERP에서 동기화
+    </button>
+
+    <!-- 수동 업로드 (엑셀/붙여넣기) -->
+    <button id="btn-upload" class="btn-secondary" title="엑셀 파일 또는 붙여넣기로 수동 업로드">
+      <i class="fas fa-upload"></i> 수동 업로드
     </button>
   </div>
 </header>

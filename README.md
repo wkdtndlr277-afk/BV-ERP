@@ -1,9 +1,85 @@
-# BV-ERP (본비반트 통합관리시스템) - v3.7.0
+# BV-ERP (본비반트 통합관리시스템) - v3.8.0
 
 ## 프로젝트 개요
 - **이름**: BV-ERP (Bon Vivant ERP)
 - **목표**: 베이커리 HACCP 규정 대응 + 원료/반죽/생산/재고 통합 관리 + **원료 구매발주 (카톡 기반)**
 - **주요 기능**: 재료체크시트 자동 임포트, 반죽↔제품 매핑, 원료사용량 산출, HACCP 편차관리, D1 DB 스냅샷, **구매발주서 자동 생성 → 카톡 공유**
+
+## v3.8.0 신규 기능 (이번 세션) — ERP 자동 동기화 + 포장단위 사용자 편집
+
+### 핵심 변경
+1. **ERP → 발주 모듈 자동 동기화** (`POST /api/po/sync-from-erp`)
+   - 기존 ERP 모듈의 `inbound` + `master` 테이블을 **직접 조회** → `po_erp_inbound` 저장
+   - 수동 Excel 붙여넣기 불필요 (수동 업로드는 fallback으로 유지)
+   - `since` (최근 N개월), `category_filter` (raw/sub/all), `limit`, `dry_run` 지원
+   - UNIQUE(dedup_hash) 제약으로 **재실행 시 중복 자동 제외** (idempotent)
+   - 테스트성 공급사 (`'1'`, `테스트*`, `재고조정*`) + `RT*` 품목코드 자동 제외
+   - 상단 "ERP에서 동기화" primary 버튼 → 모달에서 기간/분류/건수 선택 → 미리보기 → 실행
+
+2. **포장단위 (`package_spec`) 사용자 편집 가능**
+   - `po_items.package_spec` TEXT 컬럼 신규 (migration 0050)
+   - **처음 동기화 시**: `master.pack_unit + pack_unit_name` 으로 초기값 자동 생성 (`2.5kg/팩`, `25kg/포대`, `10kg/박스` 등)
+   - **사용자 수정 후 재동기화**: 수정값 **완전 보존** (`recalcItemsSummary`가 DELETE+INSERT 전에 Map으로 백업)
+   - 원료 목록 테이블에 "포장단위" 컬럼 추가 → **인라인 편집** (디바운스 600ms + green/red 피드백)
+   - 발주 담은 목록에도 포장단위 컬럼 노출 + 수정 가능
+   - 발주서/카톡 문구에 `품목명 [포장단위]` 형식으로 자동 포함
+
+3. **원료 목록 행 아무 곳이나 클릭 → 체크박스 토글** (UX 개선)
+   - 체크박스 작은 영역만 클릭하던 불편함 해소
+   - 편집용 요소 (input/select/button) 클릭 시엔 토글되지 않도록 가드
+   - 선택된 행 하이라이트 (`.selected` 클래스, `#EFF6FF` 배경)
+   - `check-all` ↔ 개별 체크 상태 양방향 동기화 + `indeterminate` 상태 지원
+
+### 신규 API
+| Method | Path | 설명 |
+|---|---|---|
+| POST | `/api/po/sync-from-erp` | ERP 자동 동기화 (body: `{since?, limit?, dry_run?, category_filter?}`) |
+| PUT | `/api/po/items/:code` | 품목 사용자 필드 수정 (body: `{package_spec?, memo?}`) |
+
+### 스키마 변경 (migration 0050)
+```sql
+ALTER TABLE po_items ADD COLUMN package_spec TEXT;
+ALTER TABLE po_cart ADD COLUMN package_spec TEXT;
+ALTER TABLE po_order_items ADD COLUMN package_spec TEXT;
+ALTER TABLE po_erp_inbound ADD COLUMN erp_pack_unit REAL;
+ALTER TABLE po_erp_inbound ADD COLUMN erp_pack_unit_name TEXT;
+ALTER TABLE po_erp_inbound ADD COLUMN source TEXT DEFAULT 'manual-upload';
+```
+- `source`: `'manual-upload'` | `'erp-sync'`
+- 로컬 D1 + 운영 D1 (haccp-erp-production) 둘 다 적용 완료
+
+### 포장단위 스냅샷 흐름
+```
+master.pack_unit (ERP)
+  ↓ (sync-from-erp, 최초만)
+po_items.package_spec ← 사용자 편집 가능
+  ↓ (add to cart)
+po_cart.package_spec ← 사용자 편집 가능
+  ↓ (create order)
+po_order_items.package_spec (스냅샷 - 이후 수정해도 과거 발주서 유지)
+  ↓
+발주서 JPG + 카톡 문구
+```
+
+### 테스트 결과
+- `POST /sync-from-erp` dry_run → `{considered:11, excluded:1, will_insert:10}` ✅
+- `POST /sync-from-erp` 실행 → `{inserted:10, duplicates:0}` ✅
+- 재실행 → `{inserted:0, duplicates:10}` ✅ (dedup 작동)
+- `PUT /items/RM1063 {package_spec:"500g/병"}` → 재동기화 후에도 `500g/병` 유지 ✅
+- Playwright: JS 에러 0건, 포장단위 컬럼/인라인 편집/행 클릭 토글 전부 정상 ✅
+
+---
+
+## v3.7.1 (이전 턴) — 카톡 전송 UX 전면 개선
+- `detectKakaoCapability()`: UA + Share API + Clipboard API 더미 File 테스트로 디바이스 판별
+- `kakaoSmartSend()`:
+  - 모바일: 이미지 전용 공유 (텍스트는 자동 클립보드 복사, 카톡 호환성 향상)
+  - PC: PNG → `ClipboardItem` write (카톡에서 Ctrl+V)
+  - fallback: 다운로드
+- 디바이스별 안내 뱃지 + 사용법 모달 안내
+- `toast()`: `durationMs` + 클릭 즉시 닫기
+
+---
 
 ## v3.7.0 신규 모듈: 원료 구매발주 관리 (`/purchase`)
 
@@ -176,8 +252,8 @@
 - **Platform**: Cloudflare Pages
 - **Status**: ✅ Active
 - **Tech Stack**: Hono + TypeScript + TailwindCSS + Cloudflare D1
-- **Last Updated**: 2026-09-16
-- **Last Commit**: v3.6.83 재료체크시트 임포트 라우트 + 서버사이드 마이그레이션
+- **Last Updated**: 2026-10-21
+- **Last Commit**: v3.8.0 — ERP 자동 동기화 + 포장단위 사용자 편집 + 행 클릭 토글
 
 ## Migration Notes
 ### 문제: `/order-plan`에서 "반죽 마스터 테이블이 없습니다" 오류

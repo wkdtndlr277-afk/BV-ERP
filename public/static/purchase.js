@@ -147,6 +147,9 @@ async function init() {
   });
   // ERP 업로드 버튼
   $('#btn-upload').addEventListener('click', openUploadModal);
+  // ERP 자동 동기화 버튼
+  const btnErp = document.getElementById('btn-erp-sync');
+  if (btnErp) btnErp.addEventListener('click', openErpSyncModal);
 
   // 설정 미리 로드
   const s = await apiGet('/settings');
@@ -184,6 +187,138 @@ async function refreshCartBadge() {
     }
   }
 }
+
+/* =============================================================
+   ERP 자동 동기화 (본체 inbound → po_erp_inbound)
+============================================================= */
+function openErpSyncModal() {
+  // 최근 N개월 선택지 + 카테고리 필터
+  const today = new Date();
+  const periods = [
+    { label: '최근 1개월', months: 1 },
+    { label: '최근 3개월', months: 3 },
+    { label: '최근 6개월', months: 6 },
+    { label: '최근 1년', months: 12 },
+    { label: '전체 (처음부터)', months: null },
+  ];
+  const html = `
+    <div class="p-6">
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-xl font-bold"><i class="fas fa-sync-alt"></i> ERP에서 입고 데이터 동기화</h2>
+        <button onclick="closeModal()" class="text-gray-500 hover:text-gray-700"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="mb-4 p-3 bg-blue-50 text-blue-900 rounded text-sm border border-blue-200">
+        <i class="fas fa-info-circle"></i>
+        본사 ERP(bv-erp)의 <b>입고 데이터(inbound)</b>를 자동으로 가져옵니다. 중복은 자동으로 걸러지며,
+        <b>직접 입력하신 포장단위는 보존</b>됩니다.
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">가져올 기간</label>
+        <select id="erp-sync-period" class="w-full border border-gray-300 rounded px-3 py-2">
+          ${periods.map((p, i) => `<option value="${p.months ?? ''}" ${i === 2 ? 'selected' : ''}>${p.label}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">품목 분류</label>
+        <select id="erp-sync-filter" class="w-full border border-gray-300 rounded px-3 py-2">
+          <option value="all" selected>전체 (원료 + 부자재)</option>
+          <option value="raw">원료만 (R*/RM*)</option>
+          <option value="sub">부자재만 (SM*)</option>
+        </select>
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-sm font-semibold text-gray-700 mb-2">최대 건수</label>
+        <input id="erp-sync-limit" type="number" value="5000" min="1" max="10000" class="w-full border border-gray-300 rounded px-3 py-2" />
+        <div class="text-xs text-gray-500 mt-1">너무 많은 데이터는 1만 건까지 처리됩니다.</div>
+      </div>
+
+      <div id="erp-sync-preview-result" class="mb-4"></div>
+
+      <div class="flex gap-2 justify-end">
+        <button class="btn-secondary" onclick="erpSyncPreview()"><i class="fas fa-eye"></i> 미리보기</button>
+        <button class="btn-primary" onclick="erpSyncRun()"><i class="fas fa-check"></i> 지금 가져오기</button>
+      </div>
+    </div>
+  `;
+  openModal(html, { width: '600px' });
+}
+
+function erpSyncPayload() {
+  const months = document.getElementById('erp-sync-period').value;
+  const filter = document.getElementById('erp-sync-filter').value;
+  const limit = Math.max(1, Math.min(10000, Number(document.getElementById('erp-sync-limit').value) || 5000));
+  let since = null;
+  if (months) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - Number(months));
+    since = d.toISOString().slice(0, 10);
+  }
+  return { since, limit, category_filter: filter };
+}
+
+window.erpSyncPreview = async function () {
+  const payload = { ...erpSyncPayload(), dry_run: true };
+  const box = document.getElementById('erp-sync-preview-result');
+  box.innerHTML = '<div class="text-sm text-gray-500">조회 중...</div>';
+  try {
+    const r = await apiPost('/sync-from-erp', payload);
+    if (!r?.success) {
+      box.innerHTML = `<div class="text-red-600 text-sm">실패: ${r?.error || '알 수 없음'}</div>`;
+      return;
+    }
+    const sampleRows = (r.sample || []).map(s => `
+      <tr class="border-t"><td class="px-2 py-1 text-xs">${s.inbound_date}</td>
+      <td class="px-2 py-1 text-xs">${s.item_code}</td>
+      <td class="px-2 py-1 text-xs">${s.item_name}</td>
+      <td class="px-2 py-1 text-xs text-right">${s.quantity}${s.unit}</td>
+      <td class="px-2 py-1 text-xs">${s.supplier_raw}</td>
+      <td class="px-2 py-1 text-xs">${s.erp_pack_unit ? `${s.erp_pack_unit}${s.unit}${s.erp_pack_unit_name ? '/' + s.erp_pack_unit_name : ''}` : '-'}</td>
+      </tr>
+    `).join('');
+    box.innerHTML = `
+      <div class="p-3 bg-gray-50 rounded border border-gray-200">
+        <div class="grid grid-cols-3 gap-2 text-sm mb-3">
+          <div class="text-center"><div class="text-gray-500 text-xs">조회된 행</div><div class="text-lg font-bold text-gray-800">${r.considered}</div></div>
+          <div class="text-center"><div class="text-gray-500 text-xs">제외 (테스트/빈값)</div><div class="text-lg font-bold text-orange-600">${r.excluded}</div></div>
+          <div class="text-center"><div class="text-gray-500 text-xs">가져올 건수</div><div class="text-lg font-bold text-blue-700">${r.will_insert}</div></div>
+        </div>
+        ${sampleRows ? `
+          <div class="text-xs text-gray-600 mb-1">샘플 (최대 5건)</div>
+          <table class="w-full text-xs border-collapse"><thead class="bg-gray-100">
+            <tr><th class="px-2 py-1 text-left">입고일</th><th>품목코드</th><th>품목명</th><th>수량</th><th>공급사</th><th>ERP포장</th></tr>
+          </thead><tbody>${sampleRows}</tbody></table>
+        ` : ''}
+      </div>
+    `;
+  } catch (e) {
+    box.innerHTML = `<div class="text-red-600 text-sm">오류: ${e.message || e}</div>`;
+  }
+};
+
+window.erpSyncRun = async function () {
+  if (!confirm('ERP에서 입고 데이터를 가져오시겠습니까? (중복은 자동으로 걸러집니다)')) return;
+  const payload = erpSyncPayload();
+  toast('동기화 중... 잠시 기다려주세요', 'info', 10000);
+  try {
+    const r = await apiPost('/sync-from-erp', payload);
+    if (!r?.success) {
+      toast('실패: ' + (r?.error || '알 수 없음'), 'error');
+      return;
+    }
+    toast(`✅ 동기화 완료: 신규 ${r.inserted}건 / 중복 ${r.duplicates}건 / 제외 ${r.excluded}건`, 'success', 6000);
+    closeModal();
+    // 리프레시
+    await loadSuppliers();
+    await refreshCartBadge();
+    if (State.currentTab === 'items') renderItemsPanel();
+    else if (State.currentTab === 'suppliers') renderSuppliersPanel();
+  } catch (e) {
+    toast('오류: ' + (e.message || e), 'error');
+  }
+};
 
 /* =============================================================
    ERP 업로드 모달
@@ -506,6 +641,7 @@ async function renderItemsPanel() {
                   <th>품목코드</th>
                   <th>품목명</th>
                   <th>단위</th>
+                  <th style="width:140px;">포장단위 <span class="text-xs text-gray-400 font-normal">(클릭 수정)</span></th>
                   <th>주거래 업체</th>
                   <th class="text-right">최근 입고일</th>
                   <th class="text-right">최근 수량</th>
@@ -516,9 +652,9 @@ async function renderItemsPanel() {
               </thead>
               <tbody id="items-tbody">
                 ${State.items.length === 0 ?
-                  `<tr><td colspan="10" class="text-center py-16 text-gray-400">
+                  `<tr><td colspan="11" class="text-center py-16 text-gray-400">
                     <div class="text-lg mb-2"><i class="fas fa-inbox"></i></div>
-                    품목이 없습니다. 상단 "ERP 데이터 가져오기"로 입고 이력을 업로드 하세요.
+                    품목이 없습니다. 상단 "ERP에서 동기화"로 입고 이력을 가져오세요.
                   </td></tr>` :
                   State.items.map(renderItemRow).join('')}
               </tbody>
@@ -539,8 +675,57 @@ async function renderItemsPanel() {
   });
   $('#items-check-all').addEventListener('change', (e) => {
     $$('.item-row-check').forEach(ch => { ch.checked = e.target.checked; });
+    $$('#items-tbody tr').forEach(tr => tr.classList.toggle('selected', e.target.checked));
   });
   $('#btn-add-to-cart').addEventListener('click', addSelectedItemsToCart);
+
+  // 행 아무 곳이나 클릭 → 체크박스 토글 (input/select/button/label 등 편집 요소는 제외)
+  $$('#items-tbody tr').forEach(tr => {
+    const chk = tr.querySelector('.item-row-check');
+    if (!chk) return;
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', (e) => {
+      // 편집용 요소 클릭 시엔 토글하지 않음
+      if (e.target.closest('input, select, button, textarea, a, label, option')) return;
+      chk.checked = !chk.checked;
+      tr.classList.toggle('selected', chk.checked);
+      // check-all 상태 동기화
+      const all = $('#items-check-all');
+      if (all) {
+        const total = $$('.item-row-check').length;
+        const checkedCount = $$('.item-row-check:checked').length;
+        all.checked = total > 0 && checkedCount === total;
+        all.indeterminate = checkedCount > 0 && checkedCount < total;
+      }
+    });
+    // 체크박스 직접 클릭 시에도 하이라이트 동기화
+    chk.addEventListener('change', () => {
+      tr.classList.toggle('selected', chk.checked);
+    });
+  });
+
+  // 포장단위 인라인 편집 (디바운스 저장 + 시각적 피드백)
+  $$('#items-tbody tr').forEach(tr => {
+    const code = tr.dataset.code;
+    const inp = tr.querySelector('.item-package-spec');
+    if (!inp) return;
+    const save = debounce(async () => {
+      const newVal = inp.value.trim();
+      if (newVal === tr.dataset.packageSpec) return;
+      inp.classList.add('ring-1', 'ring-amber-300');
+      const r = await apiPut(`/items/${encodeURIComponent(code)}`, { package_spec: newVal || null });
+      inp.classList.remove('ring-1', 'ring-amber-300');
+      if (r?.success) {
+        tr.dataset.packageSpec = newVal;
+        inp.classList.add('ring-1', 'ring-green-300');
+        setTimeout(() => inp.classList.remove('ring-1', 'ring-green-300'), 800);
+      } else {
+        inp.classList.add('ring-1', 'ring-red-400');
+      }
+    }, 600);
+    inp.addEventListener('input', save);
+    inp.addEventListener('blur', save);
+  });
 }
 
 function renderItemRow(item) {
@@ -548,8 +733,9 @@ function renderItemRow(item) {
     `<option value="${s.id}" ${s.id === item.primary_supplier_id ? 'selected' : ''}>${s.name}</option>`
   ).join('');
   const defaultQty = item.last_quantity ?? '';
+  const pkgSpec = item.package_spec || '';
   return `
-    <tr data-code="${item.item_code}" data-name="${item.item_name}" data-unit="${item.unit}">
+    <tr data-code="${item.item_code}" data-name="${item.item_name}" data-unit="${item.unit}" data-package-spec="${escapeHtml(pkgSpec)}">
       <td><input type="checkbox" class="custom-checkbox item-row-check"></td>
       <td class="font-mono">${item.item_code}</td>
       <td>
@@ -557,6 +743,9 @@ function renderItemRow(item) {
         <div class="text-xs text-gray-400">${item.category === 'raw' ? '원재료' : item.category === 'sub' ? '부자재' : '기타'}</div>
       </td>
       <td>${item.unit}</td>
+      <td>
+        <input type="text" value="${escapeHtml(pkgSpec)}" class="input-inline item-package-spec" placeholder="예: 2.5kg/팩" style="width:130px;" title="클릭 후 수정하면 자동 저장됩니다">
+      </td>
       <td>${item.primary_supplier_name || '<span class="text-gray-400">-</span>'}</td>
       <td class="text-right">${fmtDate(item.last_inbound_date)}</td>
       <td class="text-right">${fmtQty(item.last_quantity)}</td>
@@ -587,12 +776,15 @@ async function addSelectedItemsToCart() {
     const supplier_id = Number(tr.querySelector('.item-supplier')?.value);
     if (!qty || qty <= 0) return;
     if (!supplier_id) return;
+    const pkgInp = tr.querySelector('.item-package-spec');
+    const pkgVal = pkgInp ? pkgInp.value.trim() : (tr.dataset.packageSpec || '');
     items.push({
       supplier_id,
       item_code: tr.dataset.code,
       item_name: tr.dataset.name,
       unit: tr.dataset.unit,
-      quantity: qty
+      quantity: qty,
+      package_spec: pkgVal || null
     });
   });
   if (!items.length) {
@@ -675,6 +867,7 @@ async function renderCartPanel() {
                 <tr>
                   <th>품목코드</th>
                   <th>품목명</th>
+                  <th style="width:140px;">포장단위</th>
                   <th style="width:120px;">수량</th>
                   <th style="width:70px;">단위</th>
                   <th style="width:150px;">입고요청일</th>
@@ -687,6 +880,7 @@ async function renderCartPanel() {
                   <tr data-cart-id="${it.id}">
                     <td class="font-mono">${it.item_code}</td>
                     <td>${it.item_name}</td>
+                    <td><input type="text" value="${escapeHtml(it.package_spec || '')}" class="input-inline cart-package-spec" placeholder="예: 2.5kg/팩" style="width:130px;"></td>
                     <td><input type="number" step="0.01" value="${it.quantity}" class="input-inline cart-qty"></td>
                     <td>${it.unit}</td>
                     <td><input type="date" value="${it.requested_date || ''}" class="input-inline cart-date"></td>
@@ -710,13 +904,15 @@ async function renderCartPanel() {
       const payload = {
         quantity: Number(tr.querySelector('.cart-qty').value),
         requested_date: tr.querySelector('.cart-date').value || null,
-        memo: tr.querySelector('.cart-memo').value || null
+        memo: tr.querySelector('.cart-memo').value || null,
+        package_spec: tr.querySelector('.cart-package-spec').value.trim() || null
       };
       await apiPut(`/cart/${id}`, payload);
     }, 500);
     tr.querySelector('.cart-qty').addEventListener('input', save);
     tr.querySelector('.cart-date').addEventListener('change', save);
     tr.querySelector('.cart-memo').addEventListener('input', save);
+    tr.querySelector('.cart-package-spec').addEventListener('input', save);
   });
 }
 
@@ -1144,9 +1340,10 @@ function buildKakaoText(order, items, settings) {
   const uniqDates = Array.from(new Set(items.map(it => it.requested_date).filter(Boolean)));
   const singleDate = uniqDates.length <= 1 ? (uniqDates[0] || '') : null;
   const lines = items.map(it => {
-    let line = `- ${it.item_name} ${fmtQty(it.quantity)}${it.unit}`;
+    const pkg = it.package_spec ? ` [${it.package_spec}]` : '';
+    let line = `- ${it.item_name}${pkg} ${fmtQty(it.quantity)}${it.unit}`;
     if (!singleDate && it.requested_date) line += ` (요청: ${it.requested_date})`;
-    if (it.memo) line += ` [${it.memo}]`;
+    if (it.memo) line += ` (${it.memo})`;
     return line;
   }).join('\n');
   const dateLabel = singleDate || (uniqDates.length === 0 ? '-' : '품목별 상이 (아래 참조)');
@@ -1214,11 +1411,11 @@ function renderPoDocumentHtml(order, items, settings) {
             <tr>
               <td>${i + 1}</td>
               <td style="font-family:monospace;">${it.item_code}</td>
-              <td class="left">${it.item_name}</td>
+              <td class="left">${escapeHtml(it.item_name)}${it.package_spec ? ` <span style="color:#555;">[${escapeHtml(it.package_spec)}]</span>` : ''}</td>
               <td>${fmtQty(it.quantity)}</td>
               <td>${it.unit}</td>
               ${singleDate ? '' : `<td>${it.requested_date || '-'}</td>`}
-              <td>${it.memo || ''}</td>
+              <td>${escapeHtml(it.memo || '')}</td>
             </tr>
           `).join('')}
         </tbody>

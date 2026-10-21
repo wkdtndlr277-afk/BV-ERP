@@ -104,6 +104,7 @@ async function resolveSupplier(db: D1Database, rawName: string): Promise<number 
 /** 품목 요약 테이블 재집계 */
 async function recalcItemsSummary(db: D1Database): Promise<void> {
   // 집계: category / 최신 이름 / 주 단위 / 최근 입고 / 횟수 / 주 공급업체 / 평균 주기
+  // + 사용자가 수정한 package_spec, memo 는 보존
   const rows = await db.prepare(`
     SELECT
       e.item_code,
@@ -113,11 +114,20 @@ async function recalcItemsSummary(db: D1Database): Promise<void> {
       e.inbound_date,
       e.quantity,
       e.supplier_id,
-      e.uploaded_at
+      e.uploaded_at,
+      e.erp_pack_unit,
+      e.erp_pack_unit_name
     FROM po_erp_inbound e
     WHERE e.is_excluded = 0
     ORDER BY e.item_code, e.inbound_date DESC, e.uploaded_at DESC
   `).all<any>()
+
+  // 기존 사용자 입력값 보존 (package_spec, memo)
+  const existingRows = await db.prepare(`SELECT item_code, package_spec, memo FROM po_items`).all<any>()
+  const userValues = new Map<string, { package_spec: string | null, memo: string | null }>()
+  for (const r of existingRows.results || []) {
+    userValues.set(r.item_code, { package_spec: r.package_spec, memo: r.memo })
+  }
 
   const byCode = new Map<string, any[]>()
   for (const r of rows.results || []) {
@@ -155,10 +165,27 @@ async function recalcItemsSummary(db: D1Database): Promise<void> {
       avgCycle = Math.round(totalDays / (dates.length - 1))
     }
 
+    // 사용자 입력값 유지. 신규 품목이면 ERP의 pack_unit을 초기값으로 사용
+    const userVal = userValues.get(code)
+    let packageSpec: string | null = userVal?.package_spec ?? null
+    const memo: string | null = userVal?.memo ?? null
+    if (packageSpec === null) {
+      // 최초 등장 - ERP 원본에서 포장단위 조합
+      const pu = (latest as any).erp_pack_unit
+      const pun = (latest as any).erp_pack_unit_name
+      if (pu && pun) {
+        packageSpec = `${fmtPackNum(pu)}${mainUnit}/${pun}`
+      } else if (pu) {
+        packageSpec = `${fmtPackNum(pu)}${mainUnit}`
+      } else if (pun) {
+        packageSpec = pun
+      }
+    }
+
     await db.prepare(`
       INSERT INTO po_items
-        (item_code, item_name, unit, category, primary_supplier_id, last_inbound_date, last_quantity, inbound_count, avg_cycle_days)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (item_code, item_name, unit, category, primary_supplier_id, last_inbound_date, last_quantity, inbound_count, avg_cycle_days, package_spec, memo)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       code,
       latest.item_name,
@@ -168,9 +195,19 @@ async function recalcItemsSummary(db: D1Database): Promise<void> {
       latest.inbound_date,
       latest.quantity,
       items.length,
-      avgCycle
+      avgCycle,
+      packageSpec,
+      memo
     ).run()
   }
+}
+
+// 포장단위 숫자 포맷 (2 → "2", 2.5 → "2.5")
+function fmtPackNum(n: number | null | undefined): string {
+  if (n === null || n === undefined) return ''
+  const num = Number(n)
+  if (!Number.isFinite(num)) return ''
+  return Number.isInteger(num) ? String(num) : String(Math.round(num * 100) / 100)
 }
 
 /** 발주번호 생성: PO-YYYYMMDD-NNN */
@@ -530,6 +567,180 @@ app.post('/upload-commit', async (c) => {
 })
 
 // =================================================================
+// API: ERP 동기화 (bv-erp 본체의 inbound 테이블에서 자동 가져오기)
+// =================================================================
+/**
+ * POST /sync-from-erp
+ * body: { since?: "YYYY-MM-DD", limit?: number, dry_run?: boolean, category_filter?: "raw"|"sub"|"all" }
+ * ERP의 inbound + master를 조인해서 po_erp_inbound에 증분 삽입.
+ * UNIQUE(dedup_hash) 때문에 중복은 자동 skip.
+ */
+app.post('/sync-from-erp', async (c) => {
+  const body = await c.req.json<any>().catch(() => ({}))
+  const since: string | null = body.since || null // 선택: 특정 날짜 이후만
+  const limit: number = Math.min(Number(body.limit) || 5000, 10000)
+  const dryRun: boolean = !!body.dry_run
+  const categoryFilter: string = body.category_filter || 'all' // all | raw | sub
+
+  // ERP inbound + master JOIN
+  const whereClauses: string[] = ['i.inbound_date IS NOT NULL', 'i.item_code IS NOT NULL']
+  const binds: any[] = []
+  if (since) {
+    whereClauses.push('i.inbound_date >= ?')
+    binds.push(since)
+  }
+  if (categoryFilter === 'raw') {
+    whereClauses.push("(i.item_code LIKE 'R%' AND i.item_code NOT LIKE 'RT%')")
+  } else if (categoryFilter === 'sub') {
+    whereClauses.push("i.item_code LIKE 'SM%'")
+  }
+
+  const query = `
+    SELECT
+      i.inbound_date,
+      i.item_code,
+      COALESCE(m.item_name, i.item_code) AS item_name,
+      i.lot_number,
+      i.origin_qty AS quantity,
+      COALESCE(m.unit, 'kg') AS unit,
+      i.supplier AS supplier_raw,
+      m.pack_unit AS erp_pack_unit,
+      m.pack_unit_name AS erp_pack_unit_name,
+      i.is_sample
+    FROM inbound i
+    LEFT JOIN master m ON m.item_code = i.item_code
+    WHERE ${whereClauses.join(' AND ')}
+    ORDER BY i.inbound_date DESC, i.id DESC
+    LIMIT ?
+  `
+  binds.push(limit)
+
+  const erpRows = await c.env.DB.prepare(query).bind(...binds).all<any>()
+  const rows = erpRows.results || []
+
+  // 통계
+  let considered = 0
+  let excluded = 0
+  let willInsert = 0
+  let supplierCreated = 0
+  const supplierCreateCache = new Set<string>()
+  const sample: any[] = []
+
+  // 분류
+  function classify(code: string): string {
+    if (/^RT/i.test(code)) return 'other' // RT는 테스트
+    if (/^RM/i.test(code)) return 'raw'
+    if (/^R\d/i.test(code)) return 'raw'
+    if (/^SM/i.test(code)) return 'sub'
+    return 'other'
+  }
+
+  const toInsert: any[] = []
+  for (const r of rows) {
+    considered++
+    const supplierRaw = String(r.supplier_raw || '').trim()
+    // 제외 조건 - 기존 isExcludableSupplier와 동일
+    if (!supplierRaw || supplierRaw === '1' || /테스트/.test(supplierRaw) || /재고조정/.test(supplierRaw)) {
+      excluded++
+      continue
+    }
+    // RT 제외 (테스트 품목)
+    if (/^RT/i.test(r.item_code)) {
+      excluded++
+      continue
+    }
+    const qty = Number(r.quantity) || 0
+    if (qty <= 0) {
+      excluded++
+      continue
+    }
+
+    const category = classify(r.item_code)
+    const isSample = /\-S$|_S$/i.test(r.lot_number || '') || !!r.is_sample
+    const dedup = `${r.inbound_date}|${r.item_code}|${r.lot_number || ''}|${qty}|${supplierRaw}`
+
+    toInsert.push({
+      inbound_date: r.inbound_date,
+      item_code: r.item_code,
+      item_name: r.item_name,
+      lot_number: r.lot_number || `${r.inbound_date.replace(/-/g, '')}-${r.item_code}-AUTO`,
+      quantity: qty,
+      unit: r.unit || 'kg',
+      supplier_raw: supplierRaw,
+      category,
+      is_sample: isSample ? 1 : 0,
+      erp_pack_unit: r.erp_pack_unit != null ? Number(r.erp_pack_unit) : null,
+      erp_pack_unit_name: r.erp_pack_unit_name || null,
+      dedup_hash: dedup,
+    })
+    willInsert++
+    if (sample.length < 5) sample.push(toInsert[toInsert.length - 1])
+  }
+
+  if (dryRun) {
+    return c.json({
+      success: true,
+      dry_run: true,
+      considered,
+      excluded,
+      will_insert: willInsert,
+      sample,
+    })
+  }
+
+  // 실제 저장
+  let inserted = 0
+  let duplicates = 0
+  for (const r of toInsert) {
+    // 공급사 매칭/생성
+    const supplierId = await resolveSupplier(c.env.DB, r.supplier_raw)
+    if (supplierId && !supplierCreateCache.has(r.supplier_raw)) {
+      supplierCreateCache.add(r.supplier_raw)
+      // 신규 생성 여부는 알 수 없지만 캐시만
+    }
+    try {
+      await c.env.DB.prepare(`
+        INSERT INTO po_erp_inbound
+          (inbound_date, item_code, item_name, lot_number, quantity, unit,
+           supplier_raw, supplier_id, category, is_sample, is_excluded, needs_review,
+           dedup_hash, erp_pack_unit, erp_pack_unit_name, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 'erp-sync')
+      `).bind(
+        r.inbound_date, r.item_code, r.item_name, r.lot_number,
+        r.quantity, r.unit, r.supplier_raw, supplierId,
+        r.category, r.is_sample, r.dedup_hash,
+        r.erp_pack_unit, r.erp_pack_unit_name
+      ).run()
+      inserted++
+    } catch (e: any) {
+      // UNIQUE 중복 (이미 동기화됨)
+      duplicates++
+    }
+  }
+
+  // 품목 요약 재집계 (package_spec 포함)
+  await recalcItemsSummary(c.env.DB)
+
+  // 업로드 로그
+  await c.env.DB.prepare(`
+    INSERT INTO po_upload_log (source, total_rows, inserted_rows, duplicate_rows, excluded_rows, review_rows, message)
+    VALUES ('erp-sync', ?, ?, ?, ?, 0, ?)
+  `).bind(
+    considered, inserted, duplicates, excluded,
+    `since=${since || 'all'} limit=${limit} filter=${categoryFilter}`
+  ).run()
+
+  return c.json({
+    success: true,
+    considered,
+    excluded,
+    inserted,
+    duplicates,
+    sample,
+  })
+})
+
+// =================================================================
 // API: 품목 목록
 // =================================================================
 app.get('/items', async (c) => {
@@ -559,6 +770,31 @@ app.get('/items', async (c) => {
   `
   const rows = await c.env.DB.prepare(sql).bind(...binds).all()
   return c.json({ success: true, data: rows.results })
+})
+
+/**
+ * PUT /items/:code
+ * body: { package_spec?: string|null, memo?: string|null }
+ * 사용자가 품목의 포장단위, 메모를 직접 수정
+ */
+app.put('/items/:code', async (c) => {
+  const code = c.req.param('code')
+  const body = await c.req.json<any>().catch(() => ({}))
+  const updates: string[] = []
+  const binds: any[] = []
+  if ('package_spec' in body) {
+    updates.push('package_spec = ?')
+    binds.push(body.package_spec || null)
+  }
+  if ('memo' in body) {
+    updates.push('memo = ?')
+    binds.push(body.memo || null)
+  }
+  if (!updates.length) return c.json({ success: false, error: '수정할 필드 없음' }, 400)
+  updates.push('updated_at = CURRENT_TIMESTAMP')
+  binds.push(code)
+  await c.env.DB.prepare(`UPDATE po_items SET ${updates.join(', ')} WHERE item_code = ?`).bind(...binds).run()
+  return c.json({ success: true })
 })
 
 app.get('/items/:code/history', async (c) => {
@@ -605,7 +841,8 @@ app.get('/cart', async (c) => {
       unit: r2.unit,
       quantity: r2.quantity,
       requested_date: r2.requested_date,
-      memo: r2.memo
+      memo: r2.memo,
+      package_spec: r2.package_spec
     })
   }
   return c.json({ success: true, data: Array.from(bySupplier.values()) })
@@ -617,12 +854,19 @@ app.post('/cart', async (c) => {
   let added = 0
   for (const it of items) {
     if (!it.supplier_id || !it.item_code || !it.quantity) continue
+    // 포장단위 자동 보충: 명시적으로 제공 안 되면 po_items에서 조회
+    let packageSpec: string | null = it.package_spec !== undefined ? (it.package_spec || null) : null
+    if (packageSpec === null && it.item_code) {
+      const found = await c.env.DB.prepare('SELECT package_spec FROM po_items WHERE item_code = ?').bind(it.item_code).first<any>()
+      packageSpec = found?.package_spec || null
+    }
     await c.env.DB.prepare(`
-      INSERT INTO po_cart (supplier_id, item_code, item_name, unit, quantity, requested_date, memo)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO po_cart (supplier_id, item_code, item_name, unit, quantity, requested_date, memo, package_spec)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       Number(it.supplier_id), it.item_code, it.item_name || it.item_code,
-      it.unit || 'kg', Number(it.quantity), it.requested_date || null, it.memo || null
+      it.unit || 'kg', Number(it.quantity), it.requested_date || null, it.memo || null,
+      packageSpec
     ).run()
     added++
   }
@@ -632,7 +876,7 @@ app.post('/cart', async (c) => {
 app.put('/cart/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const body = await c.req.json<any>()
-  const fields = ['quantity', 'requested_date', 'memo', 'supplier_id', 'unit']
+  const fields = ['quantity', 'requested_date', 'memo', 'supplier_id', 'unit', 'package_spec']
   const sets: string[] = []
   const vals: any[] = []
   for (const f of fields) {
@@ -688,12 +932,21 @@ app.post('/orders', async (c) => {
     const rows = await c.env.DB.prepare('SELECT * FROM po_cart WHERE supplier_id = ? ORDER BY created_at').bind(supplier_id).all<any>()
     items = (rows.results || []).map((r: any) => ({
       item_code: r.item_code, item_name: r.item_name, unit: r.unit,
-      quantity: r.quantity, requested_date: r.requested_date, memo: r.memo
+      quantity: r.quantity, requested_date: r.requested_date, memo: r.memo,
+      package_spec: r.package_spec
     }))
   } else {
     items = Array.isArray(body.items) ? body.items : []
   }
   if (!items.length) return c.json({ success: false, error: '발주 품목 없음' }, 400)
+
+  // 수동 생성 시 package_spec 없으면 po_items에서 보충
+  for (const it of items) {
+    if (!it.package_spec && it.item_code) {
+      const found = await c.env.DB.prepare('SELECT package_spec FROM po_items WHERE item_code = ?').bind(it.item_code).first<any>()
+      it.package_spec = found?.package_spec || null
+    }
+  }
 
   // 발주일 / 번호
   const orderDate = (body.order_date || new Date().toISOString().slice(0, 10))
@@ -715,11 +968,12 @@ app.post('/orders', async (c) => {
   let seq = 1
   for (const it of items) {
     await c.env.DB.prepare(`
-      INSERT INTO po_order_items (po_id, seq, item_code, item_name, unit, quantity, requested_date, memo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO po_order_items (po_id, seq, item_code, item_name, unit, quantity, requested_date, memo, package_spec)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       poId, seq++, it.item_code, it.item_name, it.unit,
-      Number(it.quantity) || 0, it.requested_date || null, it.memo || null
+      Number(it.quantity) || 0, it.requested_date || null, it.memo || null,
+      it.package_spec || null
     ).run()
   }
 
@@ -780,9 +1034,9 @@ app.post('/orders/:id/status', async (c) => {
     if (header && items.results) {
       for (const it of items.results as any[]) {
         await c.env.DB.prepare(`
-          INSERT INTO po_cart (supplier_id, item_code, item_name, unit, quantity, requested_date, memo)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).bind(header.supplier_id, it.item_code, it.item_name, it.unit, it.quantity, it.requested_date, it.memo).run()
+          INSERT INTO po_cart (supplier_id, item_code, item_name, unit, quantity, requested_date, memo, package_spec)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).bind(header.supplier_id, it.item_code, it.item_name, it.unit, it.quantity, it.requested_date, it.memo, it.package_spec || null).run()
       }
     }
     await c.env.DB.prepare("UPDATE po_orders SET status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP WHERE id = ?").bind(id).run()

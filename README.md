@@ -83,7 +83,8 @@
 
 ## URLs
 - **Production**: https://bv-erp.pages.dev
-- **Latest deploy**: https://51d0bf00.bv-erp.pages.dev
+- **Purchase Module (v3.7.0)**: https://bv-erp.pages.dev/purchase
+- **Latest deploy**: https://075967b0.bv-erp.pages.dev
 - **GitHub**: https://github.com/wkdtndlr277-afk/BV-ERP
 
 ## Data Architecture

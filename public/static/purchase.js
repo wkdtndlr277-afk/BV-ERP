@@ -230,10 +230,15 @@ function openErpSyncModal() {
       </div>
 
       <div class="mb-4">
-        <label class="block text-sm font-semibold text-gray-700 mb-2">최대 건수</label>
-        <input id="erp-sync-limit" type="number" value="5000" min="1" max="10000" class="w-full border border-gray-300 rounded px-3 py-2" />
-        <div class="text-xs text-gray-500 mt-1">너무 많은 데이터는 1만 건까지 처리됩니다.</div>
+        <label class="block text-sm font-semibold text-gray-700 mb-2">1페이지당 건수</label>
+        <input id="erp-sync-limit" type="number" value="1000" min="100" max="3000" class="w-full border border-gray-300 rounded px-3 py-2" />
+        <div class="text-xs text-gray-500 mt-1">
+          전체 데이터는 자동으로 여러 번 나눠서 가져옵니다 (서버 한도 안전 처리).
+          <br>디폴트 1,000건 권장. 느리면 500으로 줄여주세요.
+        </div>
       </div>
+
+      <div id="erp-sync-progress" class="mb-4"></div>
 
       <div id="erp-sync-preview-result" class="mb-4"></div>
 
@@ -249,7 +254,7 @@ function openErpSyncModal() {
 function erpSyncPayload() {
   const months = document.getElementById('erp-sync-period').value;
   const filter = document.getElementById('erp-sync-filter').value;
-  const limit = Math.max(1, Math.min(10000, Number(document.getElementById('erp-sync-limit').value) || 5000));
+  const limit = Math.max(100, Math.min(3000, Number(document.getElementById('erp-sync-limit').value) || 1000));
   let since = null;
   if (months) {
     const d = new Date();
@@ -260,7 +265,7 @@ function erpSyncPayload() {
 }
 
 window.erpSyncPreview = async function () {
-  const payload = { ...erpSyncPayload(), dry_run: true };
+  const payload = { ...erpSyncPayload(), dry_run: true, offset: 0 };
   const box = document.getElementById('erp-sync-preview-result');
   box.innerHTML = '<div class="text-sm text-gray-500">조회 중...</div>';
   try {
@@ -269,6 +274,9 @@ window.erpSyncPreview = async function () {
       box.innerHTML = `<div class="text-red-600 text-sm">실패: ${r?.error || '알 수 없음'}</div>`;
       return;
     }
+    const totalLabel = r.total_count != null
+      ? `<span class="text-xs text-gray-500">(전체 ${r.total_count.toLocaleString()}건 중 1페이지)</span>`
+      : '';
     const sampleRows = (r.sample || []).map(s => `
       <tr class="border-t"><td class="px-2 py-1 text-xs">${s.inbound_date}</td>
       <td class="px-2 py-1 text-xs">${s.item_code}</td>
@@ -280,10 +288,11 @@ window.erpSyncPreview = async function () {
     `).join('');
     box.innerHTML = `
       <div class="p-3 bg-gray-50 rounded border border-gray-200">
+        <div class="mb-2 text-sm text-gray-700">미리보기 ${totalLabel}</div>
         <div class="grid grid-cols-3 gap-2 text-sm mb-3">
-          <div class="text-center"><div class="text-gray-500 text-xs">조회된 행</div><div class="text-lg font-bold text-gray-800">${r.considered}</div></div>
-          <div class="text-center"><div class="text-gray-500 text-xs">제외 (테스트/빈값)</div><div class="text-lg font-bold text-orange-600">${r.excluded}</div></div>
-          <div class="text-center"><div class="text-gray-500 text-xs">가져올 건수</div><div class="text-lg font-bold text-blue-700">${r.will_insert}</div></div>
+          <div class="text-center"><div class="text-gray-500 text-xs">전체 (ERP)</div><div class="text-lg font-bold text-gray-800">${(r.total_count ?? r.considered).toLocaleString()}</div></div>
+          <div class="text-center"><div class="text-gray-500 text-xs">1페이지 제외</div><div class="text-lg font-bold text-orange-600">${r.excluded}</div></div>
+          <div class="text-center"><div class="text-gray-500 text-xs">1페이지 대상</div><div class="text-lg font-bold text-blue-700">${r.will_insert}</div></div>
         </div>
         ${sampleRows ? `
           <div class="text-xs text-gray-600 mb-1">샘플 (최대 5건)</div>
@@ -291,6 +300,7 @@ window.erpSyncPreview = async function () {
             <tr><th class="px-2 py-1 text-left">입고일</th><th>품목코드</th><th>품목명</th><th>수량</th><th>공급사</th><th>ERP포장</th></tr>
           </thead><tbody>${sampleRows}</tbody></table>
         ` : ''}
+        ${r.has_more ? `<div class="text-xs text-blue-700 mt-2"><i class="fas fa-info-circle"></i> 데이터가 많아 "지금 가져오기" 시 자동으로 여러 번 나눠서 처리합니다.</div>` : ''}
       </div>
     `;
   } catch (e) {
@@ -298,23 +308,98 @@ window.erpSyncPreview = async function () {
   }
 };
 
+/**
+ * 전체 데이터를 자동으로 페이지네이션하면서 가져옴.
+ * 각 호출은 Cloudflare Workers CPU/subrequest 한도 안에서만 처리.
+ * 마지막 페이지에서만 recalc 실행.
+ */
 window.erpSyncRun = async function () {
-  if (!confirm('ERP에서 입고 데이터를 가져오시겠습니까? (중복은 자동으로 걸러집니다)')) return;
-  const payload = erpSyncPayload();
-  toast('동기화 중... 잠시 기다려주세요', 'info', 10000);
+  if (!confirm('ERP에서 입고 데이터를 전체 가져오시겠습니까? (여러 번 나눠서 자동 처리되며, 중복은 자동으로 걸러집니다)')) return;
+  const basePayload = erpSyncPayload();
+  const progressBox = document.getElementById('erp-sync-progress');
+
+  let offset = 0;
+  let totalInserted = 0;
+  let totalDuplicates = 0;
+  let totalExcluded = 0;
+  let totalConsidered = 0;
+  let pageCount = 0;
+  let lastRecalc = null;
+  let lastRecalcError = null;
+
+  const maxPages = 50; // 안전장치 (1000×50 = 5만 건)
+
   try {
-    const r = await apiPost('/sync-from-erp', payload);
-    if (!r?.success) {
-      toast('실패: ' + (r?.error || '알 수 없음'), 'error');
-      return;
+    while (pageCount < maxPages) {
+      pageCount++;
+
+      // 다음 페이지가 있을지 모르니 skip_recalc=true (마지막에만 recalc)
+      // 마지막 페이지인지는 응답의 has_more 로 판단
+      const payload = { ...basePayload, offset, skip_recalc: true };
+
+      if (progressBox) {
+        progressBox.innerHTML = `
+          <div class="p-3 bg-blue-50 border border-blue-200 rounded text-sm">
+            <div class="flex items-center gap-2">
+              <i class="fas fa-spinner fa-spin text-blue-600"></i>
+              <span><b>페이지 ${pageCount}</b> 처리 중 (offset ${offset.toLocaleString()}, limit ${basePayload.limit})...</span>
+            </div>
+            <div class="mt-2 text-xs text-gray-700">
+              누적: 신규 ${totalInserted}건 / 중복 ${totalDuplicates}건 / 제외 ${totalExcluded}건
+            </div>
+          </div>
+        `;
+      }
+      toast(`페이지 ${pageCount} 처리 중... (누적 신규 ${totalInserted}건)`, 'info', 15000);
+
+      const r = await apiPost('/sync-from-erp', payload);
+      if (!r?.success) {
+        toast(`❌ 페이지 ${pageCount} 실패: ${r?.error || '알 수 없음'}`, 'error', 10000);
+        return;
+      }
+
+      totalInserted += (r.inserted || 0);
+      totalDuplicates += (r.duplicates || 0);
+      totalExcluded += (r.excluded || 0);
+      totalConsidered += (r.considered || 0);
+
+      // 더 없으면 종료 & 마지막 recalc
+      if (!r.has_more) {
+        break;
+      }
+      offset = r.next_offset ?? (offset + basePayload.limit);
     }
-    const recalcMsg = r.recalc_error
-      ? ` ⚠️ 집계 실패: ${r.recalc_error} - "재집계" 버튼으로 다시 시도하세요`
-      : (r.recalc?.codes != null ? ` / 품목 ${r.recalc.codes}개` : '');
+
+    // 마지막에 recalc 실행 (별도 엔드포인트)
+    if (progressBox) {
+      progressBox.innerHTML = `
+        <div class="p-3 bg-blue-50 border border-blue-200 rounded text-sm">
+          <div class="flex items-center gap-2">
+            <i class="fas fa-spinner fa-spin text-blue-600"></i>
+            <span>품목 재집계 중...</span>
+          </div>
+        </div>
+      `;
+    }
+    toast('품목 재집계 중...', 'info', 8000);
+    try {
+      const rc = await apiPost('/items/recalc', {});
+      if (rc?.success) {
+        lastRecalc = rc;
+      } else {
+        lastRecalcError = rc?.error || '알 수 없음';
+      }
+    } catch (e) {
+      lastRecalcError = e.message || String(e);
+    }
+
+    const recalcMsg = lastRecalcError
+      ? ` ⚠️ 집계 실패: ${lastRecalcError} - "재집계" 버튼으로 다시 시도하세요`
+      : (lastRecalc?.codes != null ? ` / 품목 ${lastRecalc.codes}개` : '');
     toast(
-      `✅ 동기화 완료: 신규 ${r.inserted}건 / 중복 ${r.duplicates}건 / 제외 ${r.excluded}건${recalcMsg}`,
-      r.recalc_error ? 'error' : 'success',
-      r.recalc_error ? 12000 : 6000
+      `✅ 전체 동기화 완료 (${pageCount}페이지): 신규 ${totalInserted}건 / 중복 ${totalDuplicates}건 / 제외 ${totalExcluded}건${recalcMsg}`,
+      lastRecalcError ? 'error' : 'success',
+      lastRecalcError ? 12000 : 8000
     );
     closeModal();
     // 리프레시
@@ -323,7 +408,10 @@ window.erpSyncRun = async function () {
     if (State.currentTab === 'items') renderItemsPanel();
     else if (State.currentTab === 'suppliers') renderSuppliersPanel();
   } catch (e) {
-    toast('오류: ' + (e.message || e), 'error');
+    toast('오류: ' + (e.message || e), 'error', 10000);
+    if (progressBox) {
+      progressBox.innerHTML = `<div class="p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">${e.message || e}</div>`;
+    }
   }
 };
 

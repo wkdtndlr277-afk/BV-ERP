@@ -574,16 +574,32 @@ app.post('/upload-commit', async (c) => {
 // =================================================================
 /**
  * POST /sync-from-erp
- * body: { since?: "YYYY-MM-DD", limit?: number, dry_run?: boolean, category_filter?: "raw"|"sub"|"all" }
+ * body: {
+ *   since?: "YYYY-MM-DD",
+ *   limit?: number,              // 1회 호출당 최대 건수 (디폴트 1000, 상한 3000)
+ *   offset?: number,             // 페이지네이션 offset (디폴트 0) - 클라이언트가 이어서 호출
+ *   dry_run?: boolean,
+ *   category_filter?: "raw"|"sub"|"all",
+ *   skip_recalc?: boolean        // 마지막 호출에서만 recalc 하도록
+ * }
  * ERP의 inbound + master를 조인해서 po_erp_inbound에 증분 삽입.
  * UNIQUE(dedup_hash) 때문에 중복은 자동 skip.
+ *
+ * ★ Cloudflare Workers 제한 대응:
+ *   - 공급사 매칭 테이블을 1회 쿼리로 전체 로드 (쿼리 90회→1회)
+ *   - 신규 공급사는 batch 로 한 번에 생성
+ *   - INSERT chunk 50 으로 축소
+ *   - offset+limit 로 재개 가능 → 클라이언트가 응답의 has_more=true 보면 다음 offset 으로 재호출
+ *   - skip_recalc=true 로 중간 호출은 recalc 생략, 마지막만 recalc
  */
 app.post('/sync-from-erp', async (c) => {
   const body = await c.req.json<any>().catch(() => ({}))
-  const since: string | null = body.since || null // 선택: 특정 날짜 이후만
-  const limit: number = Math.min(Number(body.limit) || 5000, 10000)
+  const since: string | null = body.since || null
+  const limit: number = Math.min(Number(body.limit) || 1000, 3000)
+  const offset: number = Math.max(0, Number(body.offset) || 0)
   const dryRun: boolean = !!body.dry_run
-  const categoryFilter: string = body.category_filter || 'all' // all | raw | sub
+  const skipRecalc: boolean = !!body.skip_recalc
+  const categoryFilter: string = body.category_filter || 'all'
 
   // ERP inbound + master JOIN
   const whereClauses: string[] = ['i.inbound_date IS NOT NULL', 'i.item_code IS NOT NULL']
@@ -596,6 +612,15 @@ app.post('/sync-from-erp', async (c) => {
     whereClauses.push("(i.item_code LIKE 'R%' AND i.item_code NOT LIKE 'RT%')")
   } else if (categoryFilter === 'sub') {
     whereClauses.push("i.item_code LIKE 'SM%'")
+  }
+
+  // dry_run 일 때 전체 totalCount 도 함께 반환 (사용자에게 전체 스펙 보여주기)
+  let totalCount: number | null = null
+  if (dryRun) {
+    const countRow = await c.env.DB.prepare(`
+      SELECT COUNT(*) as c FROM inbound i WHERE ${whereClauses.join(' AND ')}
+    `).bind(...binds).first<{ c: number }>()
+    totalCount = Number(countRow?.c || 0)
   }
 
   const query = `
@@ -613,25 +638,24 @@ app.post('/sync-from-erp', async (c) => {
     FROM inbound i
     LEFT JOIN master m ON m.item_code = i.item_code
     WHERE ${whereClauses.join(' AND ')}
-    ORDER BY i.inbound_date DESC, i.id DESC
-    LIMIT ?
+    ORDER BY i.inbound_date ASC, i.id ASC
+    LIMIT ? OFFSET ?
   `
-  binds.push(limit)
+  binds.push(limit, offset)
 
   const erpRows = await c.env.DB.prepare(query).bind(...binds).all<any>()
   const rows = erpRows.results || []
+  const hasMore = rows.length === limit
 
   // 통계
   let considered = 0
   let excluded = 0
   let willInsert = 0
-  let supplierCreated = 0
-  const supplierCreateCache = new Set<string>()
   const sample: any[] = []
 
   // 분류
   function classify(code: string): string {
-    if (/^RT/i.test(code)) return 'other' // RT는 테스트
+    if (/^RT/i.test(code)) return 'other'
     if (/^RM/i.test(code)) return 'raw'
     if (/^R\d/i.test(code)) return 'raw'
     if (/^SM/i.test(code)) return 'sub'
@@ -642,12 +666,10 @@ app.post('/sync-from-erp', async (c) => {
   for (const r of rows) {
     considered++
     const supplierRaw = String(r.supplier_raw || '').trim()
-    // 제외 조건 - 기존 isExcludableSupplier와 동일
     if (!supplierRaw || supplierRaw === '1' || /테스트/.test(supplierRaw) || /재고조정/.test(supplierRaw)) {
       excluded++
       continue
     }
-    // RT 제외 (테스트 품목)
     if (/^RT/i.test(r.item_code)) {
       excluded++
       continue
@@ -684,25 +706,90 @@ app.post('/sync-from-erp', async (c) => {
     return c.json({
       success: true,
       dry_run: true,
+      total_count: totalCount,
+      offset,
+      limit,
+      page_rows: rows.length,
       considered,
       excluded,
       will_insert: willInsert,
+      has_more: hasMore,
       sample,
     })
   }
 
-  // ---- 실제 저장 ----
-  // 1단계: 공급사 ID 를 미리 전부 캐시 (subrequest 수 크게 감소)
+  // ============================================================
+  // ★ 공급사 매칭을 "쿼리 폭발 없이" 처리
+  // ============================================================
   const uniqueSuppliers = Array.from(new Set(toInsert.map(r => r.supplier_raw)))
   const supplierIdMap = new Map<string, number | null>()
-  for (const supName of uniqueSuppliers) {
-    const sid = await resolveSupplier(c.env.DB, supName)
-    supplierIdMap.set(supName, sid)
+
+  if (uniqueSuppliers.length > 0) {
+    // 1) 별칭 테이블 전체 한 번에 로드 (단일 쿼리)
+    const aliasRows = await c.env.DB.prepare(`
+      SELECT alias, normalized_alias, supplier_id FROM po_supplier_aliases
+    `).all<{ alias: string, normalized_alias: string, supplier_id: number }>()
+
+    const exactMap = new Map<string, number>()
+    const normMap = new Map<string, number>()
+    for (const r of aliasRows.results || []) {
+      exactMap.set(r.alias, r.supplier_id)
+      normMap.set(r.normalized_alias, r.supplier_id)
+    }
+
+    // 2) 메모리에서 매칭
+    const needCreate: string[] = []  // 신규로 만들어야 하는 raw 이름
+    for (const sup of uniqueSuppliers) {
+      const exact = exactMap.get(sup)
+      if (exact != null) { supplierIdMap.set(sup, exact); continue }
+      const norm = normalizeSupplier(sup)
+      const byNorm = norm ? normMap.get(norm) : undefined
+      if (byNorm != null) {
+        supplierIdMap.set(sup, byNorm)
+        continue
+      }
+      needCreate.push(sup)
+    }
+
+    // 3) 신규 공급사 batch 생성
+    if (needCreate.length > 0) {
+      // 3-1) po_suppliers INSERT OR IGNORE batch
+      const supInsertStmt = c.env.DB.prepare('INSERT OR IGNORE INTO po_suppliers (name) VALUES (?)')
+      await c.env.DB.batch(needCreate.map(name => supInsertStmt.bind(name)))
+
+      // 3-2) 방금 만든 공급사 id 조회 (단일 쿼리)
+      const placeholders = needCreate.map(() => '?').join(',')
+      const newSupRows = await c.env.DB.prepare(
+        `SELECT id, name FROM po_suppliers WHERE name IN (${placeholders})`
+      ).bind(...needCreate).all<{ id: number, name: string }>()
+      const newSupMap = new Map<string, number>()
+      for (const r of newSupRows.results || []) {
+        newSupMap.set(r.name, r.id)
+      }
+
+      // 3-3) 별칭도 batch 로 등록
+      const aliasInsertStmt = c.env.DB.prepare(
+        'INSERT OR IGNORE INTO po_supplier_aliases (supplier_id, alias, normalized_alias) VALUES (?, ?, ?)'
+      )
+      const aliasStmts: D1PreparedStatement[] = []
+      for (const name of needCreate) {
+        const sid = newSupMap.get(name)
+        if (sid != null) {
+          supplierIdMap.set(name, sid)
+          aliasStmts.push(aliasInsertStmt.bind(sid, name, normalizeSupplier(name)))
+        } else {
+          supplierIdMap.set(name, null)
+        }
+      }
+      if (aliasStmts.length > 0) {
+        await c.env.DB.batch(aliasStmts)
+      }
+    }
   }
 
-  // 2단계: INSERT 는 UNIQUE 중복 처리를 위해 INSERT OR IGNORE 로 batch
-  //        - batch 안에서 is_excluded=0 이면서 중복인 행은 그냥 조용히 skip
-  //        - 중복 수 집계는 batch 결과의 meta.changes 로 역산
+  // ============================================================
+  // ★ INSERT 는 chunk 50 batch 로
+  // ============================================================
   const insertStmt = c.env.DB.prepare(`
     INSERT OR IGNORE INTO po_erp_inbound
       (inbound_date, item_code, item_name, lot_number, quantity, unit,
@@ -717,43 +804,54 @@ app.post('/sync-from-erp', async (c) => {
     r.erp_pack_unit, r.erp_pack_unit_name
   ))
 
-  // chunk 100 씩 batch (D1 batch 한도 안전치)
   let inserted = 0
-  const CHUNK = 100
+  const CHUNK = 50
   for (let i = 0; i < insertStmts.length; i += CHUNK) {
     const batch = insertStmts.slice(i, i + CHUNK)
     const results = await c.env.DB.batch(batch)
     for (const r of results) {
-      // INSERT OR IGNORE: 중복이면 changes=0, 신규면 changes=1
       inserted += (r.meta?.changes || 0)
     }
   }
   const duplicates = toInsert.length - inserted
 
-  // 품목 요약 재집계 (실패시 에러 응답)
+  // ============================================================
+  // 품목 요약 재집계 - skip_recalc=true 면 생략 (중간 호출)
+  // ============================================================
   let recalcInfo: any = null
   let recalcError: string | null = null
-  try {
-    recalcInfo = await recalcItemsSummary(c.env.DB)
-  } catch (e: any) {
-    recalcError = String(e?.message || e)
+  if (!skipRecalc) {
+    try {
+      recalcInfo = await recalcItemsSummary(c.env.DB)
+    } catch (e: any) {
+      recalcError = String(e?.message || e)
+    }
   }
 
-  // 업로드 로그
-  await c.env.DB.prepare(`
-    INSERT INTO po_upload_log (source, total_rows, inserted_rows, duplicate_rows, excluded_rows, review_rows, message)
-    VALUES ('erp-sync', ?, ?, ?, ?, 0, ?)
-  `).bind(
-    considered, inserted, duplicates, excluded,
-    `since=${since || 'all'} limit=${limit} filter=${categoryFilter}${recalcError ? ' RECALC_ERR:' + recalcError : ''}`
-  ).run()
+  // 업로드 로그 (매 호출마다 저장 - 실패 진단용)
+  try {
+    await c.env.DB.prepare(`
+      INSERT INTO po_upload_log (source, total_rows, inserted_rows, duplicate_rows, excluded_rows, review_rows, message)
+      VALUES ('erp-sync', ?, ?, ?, ?, 0, ?)
+    `).bind(
+      considered, inserted, duplicates, excluded,
+      `since=${since || 'all'} offset=${offset} limit=${limit} filter=${categoryFilter} has_more=${hasMore}${recalcError ? ' RECALC_ERR:' + recalcError : ''}`
+    ).run()
+  } catch (e) {
+    // 로그 실패는 조용히 무시
+  }
 
   return c.json({
     success: true,
+    offset,
+    limit,
+    page_rows: rows.length,
     considered,
     excluded,
     inserted,
     duplicates,
+    has_more: hasMore,
+    next_offset: hasMore ? offset + limit : null,
     recalc: recalcInfo,
     recalc_error: recalcError,
     sample,

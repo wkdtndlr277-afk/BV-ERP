@@ -308,13 +308,38 @@ window.erpSyncRun = async function () {
       toast('실패: ' + (r?.error || '알 수 없음'), 'error');
       return;
     }
-    toast(`✅ 동기화 완료: 신규 ${r.inserted}건 / 중복 ${r.duplicates}건 / 제외 ${r.excluded}건`, 'success', 6000);
+    const recalcMsg = r.recalc_error
+      ? ` ⚠️ 집계 실패: ${r.recalc_error} - "재집계" 버튼으로 다시 시도하세요`
+      : (r.recalc?.codes != null ? ` / 품목 ${r.recalc.codes}개` : '');
+    toast(
+      `✅ 동기화 완료: 신규 ${r.inserted}건 / 중복 ${r.duplicates}건 / 제외 ${r.excluded}건${recalcMsg}`,
+      r.recalc_error ? 'error' : 'success',
+      r.recalc_error ? 12000 : 6000
+    );
     closeModal();
     // 리프레시
     await loadSuppliers();
     await refreshCartBadge();
     if (State.currentTab === 'items') renderItemsPanel();
     else if (State.currentTab === 'suppliers') renderSuppliersPanel();
+  } catch (e) {
+    toast('오류: ' + (e.message || e), 'error');
+  }
+};
+
+// 수동 재집계 (동기화는 됐는데 품목 목록이 비어있을 때 복구용)
+window.recalcItems = async function () {
+  if (!confirm('ERP 입고 데이터를 기반으로 품목 목록을 다시 집계하시겠습니까?\n(사용자가 수정한 포장단위/메모는 유지됩니다)')) return;
+  toast('재집계 중...', 'info', 8000);
+  try {
+    const r = await apiPost('/items/recalc', {});
+    if (!r?.success) {
+      toast('재집계 실패: ' + (r?.error || '알 수 없음'), 'error', 8000);
+      return;
+    }
+    toast(`✅ 재집계 완료: 품목 ${r.codes}개`, 'success');
+    await loadSuppliers();
+    if (State.currentTab === 'items') renderItemsPanel();
   } catch (e) {
     toast('오류: ' + (e.message || e), 'error');
   }
@@ -654,7 +679,9 @@ async function renderItemsPanel() {
                 ${State.items.length === 0 ?
                   `<tr><td colspan="11" class="text-center py-16 text-gray-400">
                     <div class="text-lg mb-2"><i class="fas fa-inbox"></i></div>
-                    품목이 없습니다. 상단 "ERP에서 동기화"로 입고 이력을 가져오세요.
+                    <div class="mb-3">품목이 없습니다. 상단 "ERP에서 동기화"로 입고 이력을 가져오세요.</div>
+                    <div class="text-xs text-gray-400 mb-2">이미 동기화 했는데 비어있다면 아래 버튼을 눌러주세요</div>
+                    <button class="btn-secondary text-sm" onclick="recalcItems()"><i class="fas fa-rotate"></i> 품목 재집계</button>
                   </td></tr>` :
                   State.items.map(renderItemRow).join('')}
               </tbody>

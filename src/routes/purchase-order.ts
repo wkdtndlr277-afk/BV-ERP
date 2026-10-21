@@ -101,8 +101,8 @@ async function resolveSupplier(db: D1Database, rawName: string): Promise<number 
   return sup.id
 }
 
-/** 품목 요약 테이블 재집계 */
-async function recalcItemsSummary(db: D1Database): Promise<void> {
+/** 품목 요약 테이블 재집계 (D1 batch 사용 - CPU 시간 절약) */
+async function recalcItemsSummary(db: D1Database): Promise<{ codes: number; inserted: number }> {
   // 집계: category / 최신 이름 / 주 단위 / 최근 입고 / 횟수 / 주 공급업체 / 평균 주기
   // + 사용자가 수정한 package_spec, memo 는 보존
   const rows = await db.prepare(`
@@ -135,13 +135,18 @@ async function recalcItemsSummary(db: D1Database): Promise<void> {
     byCode.get(r.item_code)!.push(r)
   }
 
-  // 기존 요약 삭제 (단순화 - 소량 데이터)
-  await db.prepare('DELETE FROM po_items').run()
+  // batch 로 처리: DELETE + 모든 INSERT 를 한 번에
+  const stmts: D1PreparedStatement[] = []
+  stmts.push(db.prepare('DELETE FROM po_items'))
+
+  const insertStmt = db.prepare(`
+    INSERT INTO po_items
+      (item_code, item_name, unit, category, primary_supplier_id, last_inbound_date, last_quantity, inbound_count, avg_cycle_days, package_spec, memo)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
 
   for (const [code, items] of byCode) {
-    // 최신 (첫 요소)
     const latest = items[0]
-    // 가장 많이 쓰인 단위
     const unitCount: Record<string, number> = {}
     const supCount: Record<string, number> = {}
     for (const it of items) {
@@ -151,7 +156,6 @@ async function recalcItemsSummary(db: D1Database): Promise<void> {
     const mainUnit = Object.entries(unitCount).sort((a, b) => b[1] - a[1])[0]?.[0] || latest.unit
     const mainSupId = Object.entries(supCount).sort((a, b) => b[1] - a[1])[0]?.[0] || null
 
-    // 평균 주기 (일): 입고일 간격 평균
     const dates = Array.from(new Set(items.map((it: any) => it.inbound_date))).sort().reverse()
     let avgCycle: number | null = null
     if (dates.length >= 2) {
@@ -165,12 +169,10 @@ async function recalcItemsSummary(db: D1Database): Promise<void> {
       avgCycle = Math.round(totalDays / (dates.length - 1))
     }
 
-    // 사용자 입력값 유지. 신규 품목이면 ERP의 pack_unit을 초기값으로 사용
     const userVal = userValues.get(code)
     let packageSpec: string | null = userVal?.package_spec ?? null
     const memo: string | null = userVal?.memo ?? null
     if (packageSpec === null) {
-      // 최초 등장 - ERP 원본에서 포장단위 조합
       const pu = (latest as any).erp_pack_unit
       const pun = (latest as any).erp_pack_unit_name
       if (pu && pun) {
@@ -182,11 +184,7 @@ async function recalcItemsSummary(db: D1Database): Promise<void> {
       }
     }
 
-    await db.prepare(`
-      INSERT INTO po_items
-        (item_code, item_name, unit, category, primary_supplier_id, last_inbound_date, last_quantity, inbound_count, avg_cycle_days, package_spec, memo)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).bind(
+    stmts.push(insertStmt.bind(
       code,
       latest.item_name,
       mainUnit,
@@ -198,8 +196,13 @@ async function recalcItemsSummary(db: D1Database): Promise<void> {
       avgCycle,
       packageSpec,
       memo
-    ).run()
+    ))
   }
+
+  // D1 batch 는 single-request CPU time 안에서 전부 처리됨
+  await db.batch(stmts)
+
+  return { codes: byCode.size, inserted: byCode.size }
 }
 
 // 포장단위 숫자 포맷 (2 → "2", 2.5 → "2.5")
@@ -688,38 +691,53 @@ app.post('/sync-from-erp', async (c) => {
     })
   }
 
-  // 실제 저장
-  let inserted = 0
-  let duplicates = 0
-  for (const r of toInsert) {
-    // 공급사 매칭/생성
-    const supplierId = await resolveSupplier(c.env.DB, r.supplier_raw)
-    if (supplierId && !supplierCreateCache.has(r.supplier_raw)) {
-      supplierCreateCache.add(r.supplier_raw)
-      // 신규 생성 여부는 알 수 없지만 캐시만
-    }
-    try {
-      await c.env.DB.prepare(`
-        INSERT INTO po_erp_inbound
-          (inbound_date, item_code, item_name, lot_number, quantity, unit,
-           supplier_raw, supplier_id, category, is_sample, is_excluded, needs_review,
-           dedup_hash, erp_pack_unit, erp_pack_unit_name, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 'erp-sync')
-      `).bind(
-        r.inbound_date, r.item_code, r.item_name, r.lot_number,
-        r.quantity, r.unit, r.supplier_raw, supplierId,
-        r.category, r.is_sample, r.dedup_hash,
-        r.erp_pack_unit, r.erp_pack_unit_name
-      ).run()
-      inserted++
-    } catch (e: any) {
-      // UNIQUE 중복 (이미 동기화됨)
-      duplicates++
-    }
+  // ---- 실제 저장 ----
+  // 1단계: 공급사 ID 를 미리 전부 캐시 (subrequest 수 크게 감소)
+  const uniqueSuppliers = Array.from(new Set(toInsert.map(r => r.supplier_raw)))
+  const supplierIdMap = new Map<string, number | null>()
+  for (const supName of uniqueSuppliers) {
+    const sid = await resolveSupplier(c.env.DB, supName)
+    supplierIdMap.set(supName, sid)
   }
 
-  // 품목 요약 재집계 (package_spec 포함)
-  await recalcItemsSummary(c.env.DB)
+  // 2단계: INSERT 는 UNIQUE 중복 처리를 위해 INSERT OR IGNORE 로 batch
+  //        - batch 안에서 is_excluded=0 이면서 중복인 행은 그냥 조용히 skip
+  //        - 중복 수 집계는 batch 결과의 meta.changes 로 역산
+  const insertStmt = c.env.DB.prepare(`
+    INSERT OR IGNORE INTO po_erp_inbound
+      (inbound_date, item_code, item_name, lot_number, quantity, unit,
+       supplier_raw, supplier_id, category, is_sample, is_excluded, needs_review,
+       dedup_hash, erp_pack_unit, erp_pack_unit_name, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 'erp-sync')
+  `)
+  const insertStmts = toInsert.map(r => insertStmt.bind(
+    r.inbound_date, r.item_code, r.item_name, r.lot_number,
+    r.quantity, r.unit, r.supplier_raw, supplierIdMap.get(r.supplier_raw) ?? null,
+    r.category, r.is_sample, r.dedup_hash,
+    r.erp_pack_unit, r.erp_pack_unit_name
+  ))
+
+  // chunk 100 씩 batch (D1 batch 한도 안전치)
+  let inserted = 0
+  const CHUNK = 100
+  for (let i = 0; i < insertStmts.length; i += CHUNK) {
+    const batch = insertStmts.slice(i, i + CHUNK)
+    const results = await c.env.DB.batch(batch)
+    for (const r of results) {
+      // INSERT OR IGNORE: 중복이면 changes=0, 신규면 changes=1
+      inserted += (r.meta?.changes || 0)
+    }
+  }
+  const duplicates = toInsert.length - inserted
+
+  // 품목 요약 재집계 (실패시 에러 응답)
+  let recalcInfo: any = null
+  let recalcError: string | null = null
+  try {
+    recalcInfo = await recalcItemsSummary(c.env.DB)
+  } catch (e: any) {
+    recalcError = String(e?.message || e)
+  }
 
   // 업로드 로그
   await c.env.DB.prepare(`
@@ -727,7 +745,7 @@ app.post('/sync-from-erp', async (c) => {
     VALUES ('erp-sync', ?, ?, ?, ?, 0, ?)
   `).bind(
     considered, inserted, duplicates, excluded,
-    `since=${since || 'all'} limit=${limit} filter=${categoryFilter}`
+    `since=${since || 'all'} limit=${limit} filter=${categoryFilter}${recalcError ? ' RECALC_ERR:' + recalcError : ''}`
   ).run()
 
   return c.json({
@@ -736,8 +754,24 @@ app.post('/sync-from-erp', async (c) => {
     excluded,
     inserted,
     duplicates,
+    recalc: recalcInfo,
+    recalc_error: recalcError,
     sample,
   })
+})
+
+/**
+ * POST /items/recalc
+ * po_erp_inbound 를 기반으로 po_items 를 수동 재집계.
+ * 동기화는 됐는데 품목 테이블이 비어있을 때 복구용.
+ */
+app.post('/items/recalc', async (c) => {
+  try {
+    const info = await recalcItemsSummary(c.env.DB)
+    return c.json({ success: true, ...info })
+  } catch (e: any) {
+    return c.json({ success: false, error: String(e?.message || e) }, 500)
+  }
 })
 
 // =================================================================

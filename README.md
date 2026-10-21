@@ -1,9 +1,31 @@
-# BV-ERP (본비반트 통합관리시스템) - v3.8.0
+# BV-ERP (본비반트 통합관리시스템) - v3.8.1
 
 ## 프로젝트 개요
 - **이름**: BV-ERP (Bon Vivant ERP)
 - **목표**: 베이커리 HACCP 규정 대응 + 원료/반죽/생산/재고 통합 관리 + **원료 구매발주 (카톡 기반)**
 - **주요 기능**: 재료체크시트 자동 임포트, 반죽↔제품 매핑, 원료사용량 산출, HACCP 편차관리, D1 DB 스냅샷, **구매발주서 자동 생성 → 카톡 공유**
+
+## v3.8.1 (hotfix) — ERP 동기화 후 품목 집계 복구
+
+### 문제
+- `POST /sync-from-erp` 가 `po_erp_inbound` 에는 117행 저장했으나 뒤이은 `recalcItemsSummary()` 가 Workers CPU 시간 초과로 조용히 실패
+- 결과: 공급사 사이드바에는 품목 수가 표시되지만 중앙 품목 테이블은 비어있음 (72개 품목이 누락)
+
+### 해결
+1. **`recalcItemsSummary` 를 D1 batch 로 재작성** — 72개 INSERT 를 단일 batch 로 묶어 CPU 시간 1/10 로 단축
+2. **`sync-from-erp` INSERT 루프도 batch(chunk 100)** 로 변경 + `INSERT OR IGNORE` 로 UNIQUE 중복 자동 skip
+3. **공급사 매칭을 미리 전부 캐시** → subrequest 수 감소
+4. **recalc 실패시 응답에 `recalc_error` 포함** (조용히 실패하지 않음)
+5. **`POST /api/po/items/recalc` 복구용 엔드포인트** 신규 추가
+6. **품목 비어있을 때 "품목 재집계" 버튼** 표시 (사용자가 fallback 실행 가능)
+
+### 운영 복구 결과
+```
+POST /api/po/items/recalc → {codes: 72, inserted: 72}
+GET /api/po/items → 72개 품목 반환 (포장단위 자동 생성 포함)
+```
+
+---
 
 ## v3.8.0 신규 기능 (이번 세션) — ERP 자동 동기화 + 포장단위 사용자 편집
 
@@ -253,7 +275,7 @@ po_order_items.package_spec (스냅샷 - 이후 수정해도 과거 발주서 �
 - **Status**: ✅ Active
 - **Tech Stack**: Hono + TypeScript + TailwindCSS + Cloudflare D1
 - **Last Updated**: 2026-10-21
-- **Last Commit**: v3.8.0 — ERP 자동 동기화 + 포장단위 사용자 편집 + 행 클릭 토글
+- **Last Commit**: v3.8.1 hotfix — ERP 동기화 후 품목 집계 복구 (D1 batch)
 
 ## Migration Notes
 ### 문제: `/order-plan`에서 "반죽 마스터 테이블이 없습니다" 오류

@@ -26,12 +26,16 @@ const State = {
 };
 
 /* -------- 토스트 -------- */
-function toast(msg, type = 'info') {
+function toast(msg, type = 'info', durationMs = 2500) {
   const el = document.createElement('div');
   el.className = `toast toast-${type}`;
   el.textContent = msg;
+  // 클릭하면 즉시 닫기 (긴 메시지일 때 유용)
+  el.style.cursor = 'pointer';
+  el.title = '클릭하면 닫힘';
+  el.addEventListener('click', () => el.remove());
   $('#toast-root').appendChild(el);
-  setTimeout(() => el.remove(), 2500);
+  setTimeout(() => el.remove(), durationMs);
 }
 
 /* -------- 숫자 포맷 -------- */
@@ -941,19 +945,32 @@ window.openOrderDetail = async function (id) {
             <textarea id="kakao-text" rows="10" class="w-full p-2 border border-gray-300 rounded text-sm font-mono">${escapeHtml(kakaoText)}</textarea>
           </div>
 
-          <div class="grid grid-cols-2 gap-2 mb-3">
-            <button class="btn-primary" onclick="generateAndShareJpg(${o.id})">
-              <i class="fas fa-share-nodes"></i> 카톡으로 보내기
+          <!-- 기기별 추천 안내 -->
+          <div id="kakao-device-hint" class="mb-2 p-2 rounded text-xs" style="background:#EFF6FF;color:#1E40AF;border:1px solid #BFDBFE;">
+            <i class="fas fa-info-circle"></i> <span id="kakao-device-hint-text">기기 확인 중...</span>
+          </div>
+
+          <div class="grid grid-cols-1 gap-2 mb-2">
+            <button class="btn-primary" onclick="kakaoSmartSend(${o.id})" style="padding:12px;font-size:15px;">
+              <i class="fas fa-paper-plane"></i> 카톡으로 보내기 (자동)
             </button>
+          </div>
+          <div class="grid grid-cols-2 gap-2 mb-2">
             <button class="btn-secondary" onclick="copyKakaoText()">
-              <i class="fas fa-copy"></i> 문구 복사
+              <i class="fas fa-copy"></i> 문구만 복사
             </button>
             <button class="btn-secondary" onclick="generateAndCopyJpg(${o.id})">
-              <i class="fas fa-image"></i> 이미지 복사
+              <i class="fas fa-image"></i> 이미지만 복사
+            </button>
+            <button class="btn-secondary" onclick="generateAndShareJpg(${o.id})">
+              <i class="fas fa-share-nodes"></i> 공유 메뉴
             </button>
             <button class="btn-secondary" onclick="generateAndSaveJpg(${o.id})">
               <i class="fas fa-download"></i> 이미지 저장
             </button>
+          </div>
+          <div class="text-xs text-gray-500 mb-3" id="kakao-howto">
+            <!-- 기기별 사용법 안내가 여기 들어감 -->
           </div>
 
           <div class="text-sm font-semibold text-gray-600 mb-2 mt-4">상태</div>
@@ -971,6 +988,140 @@ window.openOrderDetail = async function (id) {
     </div>
   `;
   openModal(html, { width: '95vw' });
+
+  // 모달 열린 후 기기별 안내 표시
+  setTimeout(() => {
+    const info = detectKakaoCapability();
+    const hintEl = document.getElementById('kakao-device-hint-text');
+    const howtoEl = document.getElementById('kakao-howto');
+    if (hintEl) hintEl.textContent = info.hintBadge;
+    if (howtoEl) howtoEl.innerHTML = info.howtoHtml;
+  }, 50);
+};
+
+/* -------- 디바이스/기능 감지 -------- */
+function detectKakaoCapability() {
+  const ua = navigator.userAgent || '';
+  const isAndroid = /Android/i.test(ua);
+  const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const isMobile = isAndroid || isIOS;
+  const inKakaoApp = /KAKAOTALK/i.test(ua);
+  const hasShare = typeof navigator.canShare === 'function';
+  // 모바일 Share API로 파일 공유 가능한지 (file dummy test)
+  let canShareFiles = false;
+  try {
+    if (hasShare && typeof File !== 'undefined') {
+      const dummy = new File(['x'], 'test.jpg', { type: 'image/jpeg' });
+      canShareFiles = navigator.canShare({ files: [dummy] });
+    }
+  } catch (e) { canShareFiles = false; }
+  const hasClipboardItem = typeof ClipboardItem !== 'undefined' && navigator.clipboard && navigator.clipboard.write;
+
+  let device, hintBadge, howtoHtml;
+  if (isMobile) {
+    device = isIOS ? 'ios' : 'android';
+    if (canShareFiles) {
+      hintBadge = `📱 ${isIOS ? 'iPhone' : 'Android'} 감지 — "카톡으로 보내기" 누르면 공유 메뉴에서 카카오톡을 선택하세요`;
+      howtoHtml = `
+        <strong>사용법:</strong>
+        <ol class="list-decimal list-inside mt-1 space-y-0.5">
+          <li>위 <b>"카톡으로 보내기 (자동)"</b> 버튼 터치</li>
+          <li>공유 메뉴에서 <b>카카오톡</b> 선택</li>
+          <li>보낼 채팅방 선택 → 이미지 전송</li>
+          <li>이어서 <b>문구는 클립보드에 복사되어 있으니</b> 채팅창에서 길게 누르고 붙여넣기</li>
+        </ol>
+        <div class="mt-2 text-red-600">
+          <i class="fas fa-triangle-exclamation"></i> 공유 메뉴에 카톡이 안 뜨면: "이미지 저장" → 카톡에서 사진 첨부 → 저장된 이미지 선택
+        </div>`;
+    } else {
+      hintBadge = `📱 ${isIOS ? 'iPhone' : 'Android'} 감지 — 공유 API 미지원 브라우저입니다. "이미지 저장" 후 수동 전송하세요`;
+      howtoHtml = `
+        <strong>사용법:</strong>
+        <ol class="list-decimal list-inside mt-1 space-y-0.5">
+          <li><b>"이미지 저장"</b> 버튼 터치 → 사진첩에 저장</li>
+          <li><b>"문구만 복사"</b> 버튼 터치</li>
+          <li>카카오톡 열고 → 채팅방 → + 버튼 → 사진 → 저장된 이미지 선택 → 전송</li>
+          <li>채팅창에 길게 누르고 <b>붙여넣기</b>로 문구 보내기</li>
+        </ol>`;
+    }
+    if (inKakaoApp) {
+      hintBadge = '⚠️ 카카오톡 인앱 브라우저에서는 공유가 제한됩니다. 외부 브라우저(Chrome/Safari)로 여세요';
+    }
+  } else {
+    device = 'pc';
+    hintBadge = '💻 PC 감지 — "이미지만 복사" + "문구만 복사" 후 PC 카카오톡에 Ctrl+V 하세요';
+    howtoHtml = `
+      <strong>PC 카카오톡 사용법:</strong>
+      <ol class="list-decimal list-inside mt-1 space-y-0.5">
+        <li>위 <b>"카톡으로 보내기 (자동)"</b> 클릭 (이미지+문구 둘 다 처리)</li>
+        <li>PC 카카오톡 실행 → 보낼 채팅방 열기</li>
+        <li>채팅 입력창에 <b>Ctrl+V</b> → 이미지 전송</li>
+        <li>이어서 다시 <b>Ctrl+V</b>는 안되므로, "문구만 복사" 버튼으로 문구 재복사 → Ctrl+V</li>
+      </ol>
+      <div class="mt-2">
+        <i class="fas fa-lightbulb"></i> 또는 "이미지 저장" → PC 카톡에 파일 끌어다 놓기 (가장 안정적)
+      </div>`;
+  }
+  return { device, isMobile, canShareFiles, hasClipboardItem, inKakaoApp, hintBadge, howtoHtml };
+}
+
+/* -------- 통합 카톡 전송 (기기별 최적 경로 자동 선택) -------- */
+window.kakaoSmartSend = async function (orderId) {
+  const info = detectKakaoCapability();
+  const text = $('#kakao-text')?.value || '';
+
+  // 1) 먼저 카톡 문구는 무조건 클립보드에 복사 (어느 기기든)
+  let textCopied = false;
+  try {
+    await navigator.clipboard.writeText(text);
+    textCopied = true;
+  } catch (e) { /* ignore */ }
+
+  // 2) 이미지 생성
+  toast('발주서 이미지 생성 중...', 'info');
+  const result = await renderPoToCanvas(orderId);
+  if (!result) { toast('이미지 생성 실패', 'error'); return; }
+  const { canvas, order } = result;
+
+  if (info.isMobile && info.canShareFiles) {
+    // 모바일: Web Share로 이미지만 공유 (text 넣으면 카톡이 안 뜨는 경우 많음)
+    canvas.toBlob(async (blob) => {
+      const fileName = `${order.po_number}_${order.supplier_name_snapshot}_발주서.jpg`;
+      const file = new File([blob], fileName, { type: 'image/jpeg' });
+      try {
+        await navigator.share({ files: [file], title: '발주서' });
+        toast(textCopied
+          ? '✅ 이미지 공유 → 카톡 선택 후, 채팅창에 길게 눌러 "붙여넣기"로 문구도 보내세요'
+          : '✅ 이미지 공유됨 (문구는 "문구만 복사" 버튼으로 따로 복사하세요)',
+          'success', 7000);
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        toast('공유 실패: ' + e.message + ' → "이미지 저장" 사용', 'error');
+      }
+    }, 'image/jpeg', 0.92);
+  } else if (!info.isMobile && info.hasClipboardItem) {
+    // PC: 이미지를 클립보드에 복사 (image/png)
+    canvas.toBlob(async (pngBlob) => {
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob })]);
+        toast('✅ 이미지 복사됨! PC 카톡 채팅창에서 Ctrl+V 하세요. 그 뒤 문구 복사는 "문구만 복사" 버튼 사용', 'success', 8000);
+      } catch (e) {
+        // 클립보드 접근 실패 시 다운로드
+        canvas.toBlob((jpgBlob) => {
+          const fileName = `${order.po_number}_${order.supplier_name_snapshot}_발주서.jpg`;
+          saveBlob(jpgBlob, fileName);
+          toast('클립보드 접근 실패 → 이미지 저장됨. PC 카톡에 파일 끌어다 놓으세요', 'info', 6000);
+        }, 'image/jpeg', 0.92);
+      }
+    }, 'image/png');
+  } else {
+    // 최후: 다운로드
+    canvas.toBlob((blob) => {
+      const fileName = `${order.po_number}_${order.supplier_name_snapshot}_발주서.jpg`;
+      saveBlob(blob, fileName);
+      toast('이미지 저장됨. 카톡에서 파일 첨부로 전송하세요', 'info', 6000);
+    }, 'image/jpeg', 0.92);
+  }
 };
 
 window.markSent = async function (id) {

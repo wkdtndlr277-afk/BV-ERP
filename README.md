@@ -1,9 +1,27 @@
-# BV-ERP (본비반트 통합관리시스템) - v3.8.3
+# BV-ERP (본비반트 통합관리시스템) - v3.8.4
 
 ## 프로젝트 개요
 - **이름**: BV-ERP (Bon Vivant ERP)
 - **목표**: 베이커리 HACCP 규정 대응 + 원료/반죽/생산/재고 통합 관리 + **원료 구매발주 (카톡 기반)**
 - **주요 기능**: 재료체크시트 자동 임포트, 반죽↔제품 매핑, 원료사용량 산출, HACCP 편차관리, D1 DB 스냅샷, **구매발주서 자동 생성 → 카톡 공유**
+
+## v3.8.4 — 본체 ERP 사이드바에 원료 발주 관리 링크 추가
+
+### 요구
+- 본체 ERP(`/`)에서 발주 관리 사이트(`/purchase`)로 바로 넘어갈 수 있는 네비게이션 수단 없음
+- 사용자: "https://bv-erp.pages.dev/purchase 이사이트를 erp에서도 접속되게 상단에 링크란 걸어줘"
+
+### 해결
+- `src/index.tsx` 사이드바 **대시보드 바로 아래 (최상단)** 에 "🛒 원료 발주" 섹션 신설
+- `<a href="/purchase" target="_blank" rel="noopener">` 로 새 탭에서 열림 (별도 모듈 느낌 유지)
+- 눈에 확실히 띄도록 `indigo→purple` 그라데이션 + `shopping-cart` + `external-link-alt` 아이콘
+- 두 사이트가 같은 `bv-erp` Pages 프로젝트의 라우트이므로 same-origin, 인증/CORS 이슈 없음
+
+### 배포
+- Production: https://ff740b07.bv-erp.pages.dev
+- 본체 사이드바 → "🛒 원료 발주" → "원료 발주 관리" 클릭 시 새 탭에서 `/purchase` 열림
+
+---
 
 ## v3.8.3 — 부자재(SM*) 명칭 복구 + 공급업체 검색
 

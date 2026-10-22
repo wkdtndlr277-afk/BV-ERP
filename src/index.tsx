@@ -687,8 +687,19 @@ app.get('/*', (c) => {
                     <span>대시보드</span>
                     <span id="alert-badge" class="ml-auto bg-red-500 text-white text-xs px-2 py-0.5 rounded-full alert-badge hidden">0</span>
                 </a>
-                
-                <!-- ========== 바코드 관리 (최상단) ========== -->
+
+                <!-- ========== 원료 발주 관리 (별도 사이트 - 공급사 통합 + 카톡 전송) ========== -->
+                <div class="pt-4 pb-2">
+                    <p class="text-xs font-semibold text-indigo-600 uppercase tracking-wider px-4">🛒 원료 발주</p>
+                </div>
+
+                <a href="/purchase" target="_blank" rel="noopener" class="flex items-center gap-3 px-4 py-3 rounded-lg bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-semibold shadow-md hover:shadow-lg transition-all">
+                    <i class="fas fa-shopping-cart w-5"></i>
+                    <span>원료 발주 관리</span>
+                    <i class="fas fa-external-link-alt text-xs ml-auto opacity-80"></i>
+                </a>
+
+                <!-- ========== 바코드 관리 ========== -->
                 <div class="pt-4 pb-2">
                     <p class="text-xs font-semibold text-blue-600 uppercase tracking-wider px-4">📱 바코드</p>
                 </div>

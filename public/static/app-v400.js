@@ -40344,6 +40344,12 @@ async function renderProductsManagement(container) {
           <select id="productv2-channel-filter" onchange="filterProductsV2()" class="border rounded-lg px-3 py-2">
             <option value="">전체 채널</option>
           </select>
+          <button onclick="downloadProductsV2Excel()" class="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700" title="현재 등록된 제품/채널을 표준 양식 엑셀로 다운로드">
+            <i class="fas fa-file-excel mr-1"></i>엑셀 다운로드
+          </button>
+          <button onclick="openProductsV2ImportModal()" class="px-3 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600" title="표준 양식 엑셀 업로드 (신규 등록 + 기존 수정)">
+            <i class="fas fa-file-upload mr-1"></i>엑셀 업로드
+          </button>
           <button onclick="openProductModalV2()" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
             <i class="fas fa-plus mr-1"></i>신규 제품 등록
           </button>
@@ -65145,3 +65151,257 @@ window.registerOrderPurchase = registerOrderPurchase;
 window.printWeeklyMaterials = printWeeklyMaterials;
 
 // =====================================================================
+// v3.8.6: 제품 관리 엑셀 다운로드/업로드 (표준 양식, 금액/VAT 제외)
+// =====================================================================
+
+/** SheetJS 동적 로드 (CDN) */
+async function ensureSheetJS() {
+  if (window.XLSX) return window.XLSX;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload = () => resolve(window.XLSX);
+    s.onerror = () => reject(new Error('SheetJS 로드 실패'));
+    document.head.appendChild(s);
+  });
+}
+
+/** 다운로드: 현재 등록된 제품/채널을 평탄화 엑셀로 */
+async function downloadProductsV2Excel() {
+  try {
+    const XLSX = await ensureSheetJS();
+    const res = await axios.get('/api/products-v2/export/rows?include_inactive=1');
+    if (!res.data?.success) throw new Error(res.data?.error || '다운로드 실패');
+    const rows = res.data.data || [];
+
+    // 샘플 1행이 비어있어도 헤더가 보이도록 템플릿 행 1개 추가
+    const headers = [
+      '대표코드', '브랜드코드', '브랜드명', '카테고리', '제품명', '레시피명',
+      '품목제조보고번호', '보관방법', '유통기한', '유통기한조건',
+      '포장단위', '포장중량(g)', '포장재질', '박스사이즈', '박스수량', '제품사이즈',
+      '원재료명', '비고', '활성여부',
+      '채널코드', '채널명', '채널약어', 'SKU코드', '채널SKU', '채널바코드', '채널URL',
+      '채널제품명', '채널포장단위', '채널포장중량(g)',
+      '채널박스사이즈', '채널박스수량', '채널제품사이즈',
+      '채널보관방법', '채널품목제조보고번호', '채널원재료명', '채널비고'
+    ];
+    // 빈 경우에도 헤더만 쓰이도록
+    const dataRows = rows.length > 0 ? rows : [Object.fromEntries(headers.map(h => [h, '']))];
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(dataRows, { header: headers });
+    // 컬럼 너비
+    ws['!cols'] = headers.map(h => ({ wch: Math.max(10, Math.min(40, h.length * 2 + 4)) }));
+    XLSX.utils.book_append_sheet(wb, ws, '제품목록');
+
+    // 설명 시트
+    const guideData = [
+      ['제품 관리 표준 양식 - 사용 안내'],
+      [],
+      ['작성 규칙'],
+      ['1', '한 행 = 하나의 (제품 x 채널) 조합. 같은 제품에 쿠팡/네이버 두 채널이면 2행'],
+      ['2', '제품만 등록 (채널 없음) 시 → 채널 관련 컬럼 모두 공란'],
+      ['3', '대표코드가 비어있으면 신규 등록 (PD코드 자동 부여)'],
+      ['4', '대표코드가 있으면 해당 제품을 수정 (upsert)'],
+      ['5', '채널코드가 비어있고 채널명만 있으면 → 신규 채널 추가 (코드 자동 부여)'],
+      ['6', '채널코드가 있으면 → 해당 채널 수정'],
+      ['7', '브랜드코드는 미리 "브랜드 관리"에서 등록된 코드만 허용 (자동생성 안 됨)'],
+      ['8', '사진/바코드이미지는 양식에서 제외 → ERP에서 수동 등록'],
+      ['9', '가격/VAT 관련 컬럼은 양식에 없음 (운영 정책)'],
+      ['10', '활성여부: 1 = 활성 (기본), 0 = 비활성'],
+      [],
+      ['채널약어 자동 매핑 (양식에서 공란이면 자동 설정)'],
+      ['쿠팡', 'CP'], ['네이버 / 네이버스마트스토어', 'NV'], ['컬리 / 마켓컬리', 'KL'],
+      ['카카오톡스토어', 'KK'], ['11번가', 'EL'], ['지마켓', 'GM'], ['옥션', 'AU'],
+      ['오아시스', 'OA'], ['SSG', 'SS'], ['자사몰', 'OW'],
+      [],
+      ['주의'],
+      ['*', '같은 파일을 재업로드해도 중복 생성되지 않음 (코드/브랜드+제품명 기준 upsert)'],
+      ['*', '한 번에 최대 2,000행'],
+    ];
+    const wsGuide = XLSX.utils.aoa_to_sheet(guideData);
+    wsGuide['!cols'] = [{ wch: 10 }, { wch: 80 }];
+    XLSX.utils.book_append_sheet(wb, wsGuide, '사용안내');
+
+    const today = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `제품관리_표준양식_${today}.xlsx`);
+    toastMessage?.(`${rows.length}행 다운로드 완료 (사용안내 시트 포함)`, 'success') || alert(`${rows.length}행 다운로드 완료`);
+  } catch (e) {
+    console.error(e);
+    alert('다운로드 실패: ' + (e.message || e));
+  }
+}
+
+/** 업로드 모달 열기 */
+function openProductsV2ImportModal() {
+  // 기존 모달 제거
+  const old = document.getElementById('products-v2-import-modal');
+  if (old) old.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'products-v2-import-modal';
+  modal.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between p-4 border-b sticky top-0 bg-white">
+        <h3 class="text-lg font-semibold text-gray-800">
+          <i class="fas fa-file-upload text-amber-500 mr-2"></i>제품 엑셀 업로드
+        </h3>
+        <button onclick="document.getElementById('products-v2-import-modal').remove()" class="text-gray-400 hover:text-gray-600 text-xl">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="p-4 space-y-4">
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-900">
+          <p class="font-semibold mb-1"><i class="fas fa-info-circle mr-1"></i>사용법</p>
+          <ol class="list-decimal list-inside space-y-0.5 text-xs">
+            <li><b>엑셀 다운로드</b> → 받은 파일에서 데이터 수정/추가 → 저장</li>
+            <li>아래 영역에 파일 드래그 또는 선택</li>
+            <li>미리보기 확인 → <b>업로드 실행</b> 클릭</li>
+            <li>이미지/바코드 URL은 양식에서 제외 → ERP에서 수동 등록</li>
+            <li>대표코드 공란 = 신규, 대표코드 있음 = 수정 (재업로드 중복 누적 안 됨)</li>
+          </ol>
+        </div>
+        <div id="pv2-import-drop" class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-amber-400 hover:bg-amber-50 cursor-pointer transition" onclick="document.getElementById('pv2-import-file').click()">
+          <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-2"></i>
+          <p class="text-gray-700">엑셀 파일(.xlsx)을 클릭하거나 드래그</p>
+          <p class="text-xs text-gray-400 mt-1">첫 번째 시트의 "제품목록" 데이터만 처리됨</p>
+          <input type="file" id="pv2-import-file" accept=".xlsx,.xls" class="hidden" onchange="handlePv2ImportFile(this.files[0])">
+        </div>
+        <div id="pv2-import-preview" class="hidden"></div>
+        <div id="pv2-import-result" class="hidden"></div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  // 드래그앤드롭
+  const drop = document.getElementById('pv2-import-drop');
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('bg-amber-50'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('bg-amber-50'));
+  drop.addEventListener('drop', e => {
+    e.preventDefault();
+    drop.classList.remove('bg-amber-50');
+    const f = e.dataTransfer.files[0];
+    if (f) handlePv2ImportFile(f);
+  });
+}
+
+/** 파일 파싱 → 미리보기 */
+async function handlePv2ImportFile(file) {
+  if (!file) return;
+  try {
+    const XLSX = await ensureSheetJS();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    // 첫 번째 시트에서 데이터 추출 (제품목록 시트 우선, 없으면 첫 시트)
+    const sheetName = wb.SheetNames.includes('제품목록') ? '제품목록' : wb.SheetNames[0];
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+    if (rows.length === 0) {
+      alert('빈 파일입니다');
+      return;
+    }
+    if (rows.length > 2000) {
+      alert(`한 번에 최대 2,000행까지 가능합니다 (현재 ${rows.length}행)`);
+      return;
+    }
+
+    window.__pv2ImportRows = rows;
+
+    // 미리보기
+    const preview = document.getElementById('pv2-import-preview');
+    preview.classList.remove('hidden');
+    const first5 = rows.slice(0, 5);
+    const cols = ['대표코드', '브랜드코드', '제품명', '채널명', '채널SKU'];
+    preview.innerHTML = `
+      <div class="border rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700 flex justify-between items-center">
+          <span><i class="fas fa-eye mr-1"></i>미리보기 (${rows.length}행 중 처음 5행)</span>
+          <span class="text-xs text-gray-500">시트: ${sheetName}</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead class="bg-gray-100">
+              <tr>${cols.map(c => `<th class="px-2 py-1 text-left border-b">${c}</th>`).join('')}</tr>
+            </thead>
+            <tbody>
+              ${first5.map(r => `<tr>${cols.map(c => `<td class="px-2 py-1 border-b">${(r[c] || '').toString().slice(0, 40)}</td>`).join('')}</tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="p-3 bg-white border-t flex justify-end gap-2">
+          <button onclick="document.getElementById('products-v2-import-modal').remove()" class="px-3 py-1.5 border rounded hover:bg-gray-50 text-sm">취소</button>
+          <button onclick="executePv2Import()" class="px-4 py-1.5 bg-amber-500 text-white rounded hover:bg-amber-600 text-sm">
+            <i class="fas fa-upload mr-1"></i>${rows.length}행 업로드 실행
+          </button>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    console.error(e);
+    alert('파일 파싱 실패: ' + (e.message || e));
+  }
+}
+
+/** 업로드 실행 */
+async function executePv2Import() {
+  const rows = window.__pv2ImportRows;
+  if (!rows || rows.length === 0) return;
+
+  const btn = event?.target?.closest('button');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>처리 중...'; }
+
+  try {
+    const res = await axios.post('/api/products-v2/import/rows', { rows });
+    if (!res.data?.success) throw new Error(res.data?.error || '업로드 실패');
+    const r = res.data.result;
+
+    const resultBox = document.getElementById('pv2-import-result');
+    resultBox.classList.remove('hidden');
+    const errorsList = r.errors.slice(0, 20).map(e => `<li class="text-xs"><b>${e.row}행:</b> ${e.message}</li>`).join('');
+    resultBox.innerHTML = `
+      <div class="border-2 ${r.errors.length ? 'border-amber-300 bg-amber-50' : 'border-green-300 bg-green-50'} rounded-lg p-4">
+        <h4 class="font-semibold text-lg mb-2 ${r.errors.length ? 'text-amber-800' : 'text-green-800'}">
+          <i class="fas ${r.errors.length ? 'fa-exclamation-circle' : 'fa-check-circle'} mr-1"></i>업로드 완료
+        </h4>
+        <div class="grid grid-cols-3 gap-2 text-sm">
+          <div class="bg-white rounded p-2">
+            <div class="text-xs text-gray-500">전체 행</div>
+            <div class="text-xl font-bold">${r.total}</div>
+          </div>
+          <div class="bg-white rounded p-2">
+            <div class="text-xs text-gray-500">제품</div>
+            <div class="text-sm"><span class="text-green-600 font-bold">+${r.product_inserted}</span> / 수정 ${r.product_updated} / 스킵 ${r.product_skipped}</div>
+          </div>
+          <div class="bg-white rounded p-2">
+            <div class="text-xs text-gray-500">채널</div>
+            <div class="text-sm"><span class="text-green-600 font-bold">+${r.channel_inserted}</span> / 수정 ${r.channel_updated} / 스킵 ${r.channel_skipped}</div>
+          </div>
+        </div>
+        ${r.errors.length ? `
+          <details class="mt-3">
+            <summary class="cursor-pointer text-sm font-semibold text-amber-700">⚠️ 경고/에러 ${r.errors.length}건 (처음 20건 표시)</summary>
+            <ul class="mt-2 space-y-0.5 pl-4 list-disc max-h-48 overflow-y-auto">${errorsList}</ul>
+          </details>
+        ` : ''}
+        <div class="mt-3 flex justify-end gap-2">
+          <button onclick="document.getElementById('products-v2-import-modal').remove(); loadBrandsAndProducts();" class="px-4 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
+            닫고 목록 새로고침
+          </button>
+        </div>
+      </div>
+    `;
+    // 성공 토스트
+    if (window.toastMessage) toastMessage(`업로드 완료: 제품 +${r.product_inserted}/수정 ${r.product_updated}, 채널 +${r.channel_inserted}/수정 ${r.channel_updated}`, 'success');
+  } catch (e) {
+    console.error(e);
+    alert('업로드 실패: ' + (e.response?.data?.error || e.message || e));
+    if (btn) { btn.disabled = false; btn.innerHTML = `<i class="fas fa-upload mr-1"></i>${rows.length}행 업로드 실행`; }
+  }
+}
+
+window.downloadProductsV2Excel = downloadProductsV2Excel;
+window.openProductsV2ImportModal = openProductsV2ImportModal;
+window.handlePv2ImportFile = handlePv2ImportFile;
+window.executePv2Import = executePv2Import;

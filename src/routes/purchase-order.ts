@@ -1136,7 +1136,10 @@ app.get('/orders', async (c) => {
   const rows = await c.env.DB.prepare(`
     SELECT o.*,
       (SELECT COUNT(*) FROM po_order_items WHERE po_id = o.id) as item_count,
-      (SELECT SUM(quantity) FROM po_order_items WHERE po_id = o.id) as total_qty
+      (SELECT SUM(quantity) FROM po_order_items WHERE po_id = o.id) as total_qty,
+      (SELECT GROUP_CONCAT(item_name || ' ' || CAST(quantity AS TEXT) || COALESCE(unit, ''), ', ')
+         FROM (SELECT item_name, quantity, unit FROM po_order_items WHERE po_id = o.id ORDER BY seq)
+      ) as items_summary
     FROM po_orders o
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY o.order_date DESC, o.id DESC

@@ -1249,6 +1249,7 @@ async function renderOrdersPanel() {
               <th>업체</th>
               <th class="text-right">품목수</th>
               <th class="text-right">총수량</th>
+              <th style="min-width:280px;">발주 품목</th>
               <th>상태</th>
               <th>보낸시각</th>
               <th>입고시각</th>
@@ -1256,14 +1257,15 @@ async function renderOrdersPanel() {
             </tr>
           </thead>
           <tbody>
-            ${State.orders.length === 0 ? '<tr><td colspan="9" class="text-center py-16 text-gray-400">발주 이력 없음</td></tr>' :
+            ${State.orders.length === 0 ? '<tr><td colspan="10" class="text-center py-16 text-gray-400">발주 이력 없음</td></tr>' :
               State.orders.map(o => `
-                <tr>
+                <tr class="align-top">
                   <td class="font-mono font-semibold">${o.po_number}</td>
                   <td>${o.order_date}</td>
                   <td>${o.supplier_name_snapshot}</td>
                   <td class="text-right">${o.item_count || 0}</td>
                   <td class="text-right">${fmtQty(o.total_qty)}</td>
+                  <td class="text-xs text-gray-700" style="max-width:420px; white-space:normal; line-height:1.5;">${formatItemsSummary(o.items_summary, o.item_count)}</td>
                   <td><span class="badge-gray status-${o.status}">${statusLabel(o.status)}</span></td>
                   <td class="text-xs text-gray-500">${o.sent_at ? fmtDateTime(o.sent_at) : '-'}</td>
                   <td class="text-xs text-gray-500">${o.received_at ? fmtDateTime(o.received_at) : '-'}</td>
@@ -1288,6 +1290,48 @@ function statusLabel(s) {
 function fmtDateTime(s) {
   if (!s) return '';
   return String(s).replace('T', ' ').slice(0, 16);
+}
+
+/**
+ * 발주 품목 요약 표시 (예: "포장박스(대) 10, 날개1 2, 니트릴장갑S 5")
+ * - 품목이 3개 초과이면 처음 3개만 보이고 "+N개 더" 토글 버튼
+ * - 전체는 title 속성으로 마우스오버 표시
+ */
+function formatItemsSummary(summary, count) {
+  if (!summary) return '<span class="text-gray-400">-</span>';
+  const items = String(summary).split(', ');
+  const safeFull = String(summary).replace(/"/g, '&quot;');
+  if (items.length <= 3) {
+    return `<span title="${safeFull}">${items.map(it => `<span class="inline-block bg-gray-100 text-gray-700 px-2 py-0.5 rounded mr-1 mb-1">${escapeHtml(it)}</span>`).join('')}</span>`;
+  }
+  const head = items.slice(0, 3);
+  const rest = items.slice(3);
+  const headHtml = head.map(it => `<span class="inline-block bg-gray-100 text-gray-700 px-2 py-0.5 rounded mr-1 mb-1">${escapeHtml(it)}</span>`).join('');
+  const restHtml = rest.map(it => `<span class="inline-block bg-gray-100 text-gray-700 px-2 py-0.5 rounded mr-1 mb-1">${escapeHtml(it)}</span>`).join('');
+  const uid = 'items-' + Math.random().toString(36).slice(2, 8);
+  return `
+    <span title="${safeFull}">
+      ${headHtml}
+      <span id="${uid}-rest" style="display:none;">${restHtml}</span>
+      <button type="button" id="${uid}-btn" class="inline-block bg-blue-50 text-blue-700 px-2 py-0.5 rounded mr-1 mb-1 hover:bg-blue-100" onclick="toggleItemsRest('${uid}')">+${rest.length}개 더</button>
+    </span>
+  `;
+}
+window.toggleItemsRest = function (uid) {
+  const rest = document.getElementById(uid + '-rest');
+  const btn = document.getElementById(uid + '-btn');
+  if (!rest || !btn) return;
+  if (rest.style.display === 'none') {
+    rest.style.display = 'inline';
+    btn.textContent = '접기';
+  } else {
+    rest.style.display = 'none';
+    const n = rest.querySelectorAll('span').length;
+    btn.textContent = `+${n}개 더`;
+  }
+};
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 window.setOrdersFilter = function (patch) {

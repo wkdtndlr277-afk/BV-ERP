@@ -782,7 +782,15 @@ async function renderItemsPanel() {
         <div class="bg-white rounded-lg border border-gray-200">
           <!-- 필터바 -->
           <div class="p-3 border-b border-gray-200 flex flex-wrap items-center gap-2">
-            <input id="items-search" type="text" placeholder="품목명 / 코드 검색..." value="${sfx.search}" class="flex-1 min-w-[180px] p-2 border border-gray-300 rounded-lg text-sm">
+            <!-- v3.8.9: 품목명 검색창에 지우기(✕) 버튼 노출 — 검색어가 남아서 결과 0건이 되는 혼선 방지 -->
+            <div class="relative flex-1 min-w-[180px]">
+              <input id="items-search" type="text" placeholder="품목명 / 코드 검색..." value="${escapeHtml(sfx.search || '')}" class="w-full pl-3 pr-8 p-2 border ${sfx.search ? 'border-blue-400 bg-blue-50/30' : 'border-gray-300'} rounded-lg text-sm">
+              ${sfx.search ? `
+                <button type="button" onclick="clearItemsSearch()" title="검색어 지우기"
+                  class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-red-600">
+                  <i class="fas fa-times-circle"></i>
+                </button>` : ''}
+            </div>
             <div class="flex gap-1 border border-gray-300 rounded-lg overflow-hidden text-sm">
               <button class="px-3 py-2 ${!sfx.category ? 'bg-blue-50 text-blue-700 font-semibold' : 'bg-white'}" onclick="setItemsFilter({category:''})">전체</button>
               <button class="px-3 py-2 ${sfx.category === 'raw' ? 'bg-blue-50 text-blue-700 font-semibold' : 'bg-white'}" onclick="setItemsFilter({category:'raw'})">원재료</button>
@@ -792,6 +800,18 @@ async function renderItemsPanel() {
             <span class="text-sm text-gray-500">${State.items.length}개 품목</span>
             <button class="btn-primary" id="btn-add-to-cart"><i class="fas fa-cart-plus"></i> 선택 품목 발주 담기</button>
           </div>
+          <!-- v3.8.9: 활성 필터 요약 바 — 어떤 조건으로 걸러진 결과인지 한눈에 -->
+          ${(sfx.search || sfx.category || sfx.supplier_id) ? `
+            <div class="px-3 py-2 bg-blue-50 border-b border-blue-100 text-xs text-blue-700 flex flex-wrap items-center gap-2">
+              <i class="fas fa-filter"></i>
+              <span class="font-semibold">활성 필터:</span>
+              ${sfx.supplier_id ? `<span class="px-2 py-0.5 rounded bg-white border border-blue-200">업체: ${escapeHtml((State.suppliersWithStats || []).find(s => String(s.id) === String(sfx.supplier_id))?.name || sfx.supplier_id)}</span>` : ''}
+              ${sfx.category ? `<span class="px-2 py-0.5 rounded bg-white border border-blue-200">분류: ${sfx.category === 'raw' ? '원재료' : '부자재'}</span>` : ''}
+              ${sfx.search ? `<span class="px-2 py-0.5 rounded bg-white border border-blue-200">검색어: "${escapeHtml(sfx.search)}"</span>` : ''}
+              <button type="button" onclick="clearAllItemsFilters()" class="ml-auto px-2 py-0.5 rounded bg-white border border-blue-300 hover:bg-blue-100 text-blue-700">
+                <i class="fas fa-times"></i> 전체 필터 초기화
+              </button>
+            </div>` : ''}
 
           <!-- 테이블 -->
           <div class="overflow-x-auto">
@@ -814,12 +834,29 @@ async function renderItemsPanel() {
               </thead>
               <tbody id="items-tbody">
                 ${State.items.length === 0 ?
-                  `<tr><td colspan="12" class="text-center py-16 text-gray-400">
-                    <div class="text-lg mb-2"><i class="fas fa-inbox"></i></div>
-                    <div class="mb-3">품목이 없습니다. 상단 "ERP에서 동기화"로 입고 이력을 가져오세요.</div>
-                    <div class="text-xs text-gray-400 mb-2">이미 동기화 했는데 비어있다면 아래 버튼을 눌러주세요</div>
-                    <button class="btn-secondary text-sm" onclick="recalcItems()"><i class="fas fa-rotate"></i> 품목 재집계</button>
-                  </td></tr>` :
+                  // v3.8.9: 필터가 걸려있어서 0건인 경우와 진짜 데이터 없는 경우를 분리
+                  ((sfx.search || sfx.category || sfx.supplier_id) ? `
+                    <tr><td colspan="12" class="text-center py-16 text-gray-400">
+                      <div class="text-lg mb-2"><i class="fas fa-search"></i></div>
+                      <div class="mb-2 text-gray-600">현재 필터 조건에 맞는 품목이 없습니다.</div>
+                      <div class="text-xs text-gray-400 mb-3">
+                        ${sfx.supplier_id ? `업체: <b>${escapeHtml((State.suppliersWithStats || []).find(s => String(s.id) === String(sfx.supplier_id))?.name || '')}</b>` : ''}
+                        ${sfx.category ? ` / 분류: <b>${sfx.category === 'raw' ? '원재료' : '부자재'}</b>` : ''}
+                        ${sfx.search ? ` / 검색어: <b>"${escapeHtml(sfx.search)}"</b>` : ''}
+                      </div>
+                      <button class="btn-secondary text-sm" onclick="clearAllItemsFilters()">
+                        <i class="fas fa-times"></i> 전체 필터 초기화
+                      </button>
+                    </td></tr>
+                  ` : `
+                    <tr><td colspan="12" class="text-center py-16 text-gray-400">
+                      <div class="text-lg mb-2"><i class="fas fa-inbox"></i></div>
+                      <div class="mb-3">품목이 없습니다. 상단 "ERP에서 동기화"로 입고 이력을 가져오세요.</div>
+                      <div class="text-xs text-gray-400 mb-2">이미 동기화 했는데 비어있다면 아래 버튼을 눌러주세요</div>
+                      <button class="btn-secondary text-sm" onclick="recalcItems()"><i class="fas fa-rotate"></i> 품목 재집계</button>
+                    </td></tr>
+                  `)
+                  :
                   State.items.map(renderItemRow).join('')}
               </tbody>
             </table>
@@ -1026,6 +1063,20 @@ window.deletePurchaseItem = async function (code, name) {
 
 window.setItemsFilter = function (patch) {
   Object.assign(State.itemsFilter, patch);
+  renderItemsPanel();
+};
+
+/** 품목 검색어만 지우기 (업체/분류 필터는 유지) */
+window.clearItemsSearch = function () {
+  State.itemsFilter.search = '';
+  renderItemsPanel();
+};
+
+/** 품목 모든 필터 초기화 (업체/분류/검색어) */
+window.clearAllItemsFilters = function () {
+  State.itemsFilter.search = '';
+  State.itemsFilter.category = '';
+  State.itemsFilter.supplier_id = '';
   renderItemsPanel();
 };
 

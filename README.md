@@ -1,9 +1,52 @@
-# BV-ERP (본비반트 통합관리시스템) - v3.8.7
+# BV-ERP (본비반트 통합관리시스템) - v3.8.8
 
 ## 프로젝트 개요
 - **이름**: BV-ERP (Bon Vivant ERP)
 - **목표**: 베이커리 HACCP 규정 대응 + 원료/반죽/생산/재고 통합 관리 + **원료 구매발주 (카톡 기반)**
 - **주요 기능**: 재료체크시트 자동 임포트, 반죽↔제품 매핑, 원료사용량 산출, HACCP 편차관리, D1 DB 스냅샷, **구매발주서 자동 생성 → 카톡 공유**
+
+## v3.8.8 — 원료 발주관리 품목 조회 확장 + 품목 코드 삭제 기능 (2026-10-23)
+
+### 증상 1 — 에이엘 등 "다중 공급" 업체의 품목이 사이드바에서 안 뜸
+- ERP 동기화는 정상(po_erp_inbound 에 데이터 적재됨)인데, 사이드바에서 에이엘 선택 시 **빈 목록**
+- D1 조사 결과: 에이엘(id=11) 입고 이력 18건·품목 8종 모두 적재되어 있으나, 품목 마스터(po_items) 에서는 **primary_supplier_id 가 다른 업체**(웰푸드시스템·열매마을 등)로 잡혀 있어서 매칭 실패
+
+### 원인
+- `recalcItemsSummary()` 는 품목별로 **입고 횟수가 가장 많은 업체 1개만** primary_supplier_id 로 저장
+- `GET /items` 조회가 `primary_supplier_id = ?` 단일 매칭만 함
+  → 1개 품목을 여러 업체가 공급하면 primary 안 된 업체에선 안 보임
+
+### 해결
+- `GET /items` 조회 로직 변경: `primary_supplier_id = ?` 단일 매칭 → `EXISTS (po_erp_inbound WHERE supplier_id = ?)` 로 확장
+  → **해당 업체가 한 번이라도 공급한 모든 품목** 노출
+- 응답에 `is_primary_for_filter`, `supplier_inbound_count`, `supplier_last_date` 보조 통계 추가
+- 프론트 품목 행에 뱃지 표시:
+  - 선택 업체가 현재 주거래면 `[주거래]` (파란색)
+  - 다른 업체가 주거래면 `[주거래]` (황색) + 그 업체명 노출
+- 최근 입고일/횟수를 **선택된 업체 기준**으로 전환 (전체 입고 횟수는 작게 병기)
+
+### 증상 2 — 품목 코드 삭제 기능 부재
+- 잘못 등록된 품목코드/오타 품목을 지울 방법이 없었음
+
+### 해결
+- **백엔드**: `DELETE /api/po/items/:code` 추가
+  - 1차 요청: 발주 이력(po_order_items)에 사용 중이면 **409** 반환 + 상세(order_count/cart_count/inbound_count/item_name)
+  - 2차 요청: `?force=1` 로 재요청하면 강제 삭제 (po_order_items 는 발주 기록 보존을 위해 유지)
+  - 삭제 범위: `po_items` + `po_erp_inbound` + `po_cart` (batch 처리)
+- **프론트**: 품목 행 우측에 🗑 삭제 버튼 추가
+  - 1차 확인창 → 사용 중이면 2차 "강제 삭제" 확인창 → 성공 시 자동 재조회
+  - 응답 토스트 자동출력 방지용 `apiDeleteRaw()` 헬퍼 신규 추가
+
+### 검증
+- `GET /api/po/items?supplier_id=11` → 에이엘 품목 **8종 전부 반환** ✅
+  (R012 건크랜베리, R013 건포도, R079 아몬드슬라이스, R134 피칸, R136 해바라기씨, R142 호두(분태), R150 통아몬드, RM147 호박씨)
+- `DELETE /api/po/items/__NONEXISTENT__` → `404 존재하지 않는 품목코드` ✅
+
+### 배포
+- Production: https://bv-erp.pages.dev
+- 스냅샷: https://fc0f0be5.bv-erp.pages.dev
+
+---
 
 ## v3.8.7 — 입고 조회 엑셀 다운로드 복구 (2026-10-23)
 

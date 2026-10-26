@@ -99,6 +99,23 @@ async function apiDelete(path) {
   }
 }
 
+/**
+ * v3.8.8: raw DELETE — 토스트 자동출력 없이 응답 그대로 반환.
+ * 409(사용 중) 응답을 받아 확인 대화 후 재요청하는 플로우에 사용.
+ */
+async function apiDeleteRaw(path) {
+  try {
+    const r = await axios.delete(`${API}${path}`);
+    return { ok: true, status: r.status, data: r.data };
+  } catch (e) {
+    return {
+      ok: false,
+      status: e?.response?.status || 0,
+      data: e?.response?.data || { success: false, error: e.message || '요청 실패' },
+    };
+  }
+}
+
 /* -------- 모달 -------- */
 function openModal(contentHtml, opts = {}) {
   const root = $('#modal-root');
@@ -792,11 +809,12 @@ async function renderItemsPanel() {
                   <th class="text-right">입고 횟수</th>
                   <th class="text-right">평균 주기</th>
                   <th style="width:200px;">발주 수량 / 업체</th>
+                  <th style="width:60px;" class="text-center">삭제</th>
                 </tr>
               </thead>
               <tbody id="items-tbody">
                 ${State.items.length === 0 ?
-                  `<tr><td colspan="11" class="text-center py-16 text-gray-400">
+                  `<tr><td colspan="12" class="text-center py-16 text-gray-400">
                     <div class="text-lg mb-2"><i class="fas fa-inbox"></i></div>
                     <div class="mb-3">품목이 없습니다. 상단 "ERP에서 동기화"로 입고 이력을 가져오세요.</div>
                     <div class="text-xs text-gray-400 mb-2">이미 동기화 했는데 비어있다면 아래 버튼을 눌러주세요</div>
@@ -895,27 +913,52 @@ async function renderItemsPanel() {
 }
 
 function renderItemRow(item) {
+  // v3.8.8: 선택된 업체 기준 보조 통계 (백엔드가 supplier_id 필터 있을 때만 내려줌)
+  const selSupId = State.itemsFilter.supplier_id ? Number(State.itemsFilter.supplier_id) : null;
+  const hasSupplierFilter = !!selSupId;
+  const isPrimaryForFilter = hasSupplierFilter && Number(item.is_primary_for_filter || 0) === 1;
+  const supplierInboundCount = hasSupplierFilter ? Number(item.supplier_inbound_count || 0) : null;
+  const supplierLastDate = hasSupplierFilter ? item.supplier_last_date : null;
+
+  // 선택 업체가 primary 가 아닐 때 "다른 업체가 주거래" 표시
+  const primaryLabel = item.primary_supplier_name
+    ? (hasSupplierFilter && !isPrimaryForFilter
+        ? `<span class="text-gray-700">${item.primary_supplier_name}</span>
+           <span class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700" title="선택된 업체가 아니라 다른 업체가 주거래로 등록되어 있습니다">주거래</span>`
+        : (isPrimaryForFilter
+            ? `<span class="font-semibold text-blue-700">${item.primary_supplier_name}</span>
+               <span class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">주거래</span>`
+            : item.primary_supplier_name))
+    : '<span class="text-gray-400">-</span>';
+
+  // 선택 업체 기준이 있으면 그 업체의 최근 입고일/횟수 우선 표시
+  const displayLastDate = hasSupplierFilter && supplierLastDate ? supplierLastDate : item.last_inbound_date;
+  const displayInboundCount = hasSupplierFilter ? supplierInboundCount : (item.inbound_count || 0);
+  const inboundCountSuffix = hasSupplierFilter
+    ? `<span class="text-[10px] text-gray-400 ml-0.5">/${item.inbound_count || 0}</span>`
+    : '';
+
   const supplierOpts = State.suppliers.map(s =>
-    `<option value="${s.id}" ${s.id === item.primary_supplier_id ? 'selected' : ''}>${s.name}</option>`
+    `<option value="${s.id}" ${s.id === (selSupId || item.primary_supplier_id) ? 'selected' : ''}>${s.name}</option>`
   ).join('');
   const defaultQty = item.last_quantity ?? '';
   const pkgSpec = item.package_spec || '';
   return `
-    <tr data-code="${item.item_code}" data-name="${item.item_name}" data-unit="${item.unit}" data-package-spec="${escapeHtml(pkgSpec)}">
+    <tr data-code="${item.item_code}" data-name="${escapeHtml(item.item_name || '')}" data-unit="${item.unit}" data-package-spec="${escapeHtml(pkgSpec)}">
       <td><input type="checkbox" class="custom-checkbox item-row-check"></td>
       <td class="font-mono">${item.item_code}</td>
       <td>
-        <div class="font-medium">${item.item_name}</div>
+        <div class="font-medium">${escapeHtml(item.item_name || '')}</div>
         <div class="text-xs text-gray-400">${item.category === 'raw' ? '원재료' : item.category === 'sub' ? '부자재' : '기타'}</div>
       </td>
       <td>${item.unit}</td>
       <td>
         <input type="text" value="${escapeHtml(pkgSpec)}" class="input-inline item-package-spec" placeholder="예: 2.5kg/팩" style="width:130px;" title="클릭 후 수정하면 자동 저장됩니다">
       </td>
-      <td>${item.primary_supplier_name || '<span class="text-gray-400">-</span>'}</td>
-      <td class="text-right">${fmtDate(item.last_inbound_date)}</td>
+      <td>${primaryLabel}</td>
+      <td class="text-right">${fmtDate(displayLastDate)}</td>
       <td class="text-right">${fmtQty(item.last_quantity)}</td>
-      <td class="text-right">${item.inbound_count || 0}</td>
+      <td class="text-right">${displayInboundCount}${inboundCountSuffix}</td>
       <td class="text-right">${item.avg_cycle_days ? item.avg_cycle_days + '일' : '-'}</td>
       <td>
         <div class="flex gap-1 items-center">
@@ -925,9 +968,61 @@ function renderItemRow(item) {
           </select>
         </div>
       </td>
+      <td class="text-center">
+        <button type="button"
+          class="btn-delete-item text-red-600 hover:text-white hover:bg-red-600 border border-red-300 hover:border-red-600 rounded px-2 py-1 text-xs"
+          onclick="deletePurchaseItem('${item.item_code.replace(/'/g, "\\'")}', '${(item.item_name || '').replace(/'/g, "\\'")}')"
+          title="품목 코드 삭제">
+          <i class="fas fa-trash"></i>
+        </button>
+      </td>
     </tr>
   `;
 }
+
+/**
+ * v3.8.8: 품목 코드 삭제
+ * - 1차 요청 (force 없이) → 409 'orders 사용 중' 받으면 확인 후 force=1 재요청
+ * - 400/404/500 등은 그대로 토스트
+ */
+window.deletePurchaseItem = async function (code, name) {
+  if (!code) return;
+  const label = name ? `${name} (${code})` : code;
+  if (!confirm(`정말 삭제하시겠습니까?\n\n품목: ${label}\n\n삭제되는 데이터:\n  • 품목 마스터 (po_items)\n  • 과거 ERP 입고 이력 (po_erp_inbound)\n  • 발주 담은 목록 (po_cart)\n\n발주 이력(po_orders)은 보존됩니다.`)) {
+    return;
+  }
+
+  // 1차 시도
+  let res = await apiDeleteRaw(`/items/${encodeURIComponent(code)}`);
+  if (res.ok && res.data?.success) {
+    const d = res.data.deleted || {};
+    toast(`삭제 완료 — ${label} (입고이력 ${d.po_erp_inbound || 0}건, 발주담은 ${d.po_cart || 0}건)`, 'success');
+    await renderItemsPanel();
+    return;
+  }
+
+  // 409: 발주 이력에 사용 중
+  if (res.status === 409 && res.data) {
+    const d = res.data;
+    const msg = `⚠️ 이 품목은 발주 이력 ${d.order_count || 0}건에 사용 중입니다.\n\n강제 삭제하시겠습니까?\n(발주 이력은 그대로 보존되며, 품목 마스터만 삭제됩니다)`;
+    if (!confirm(msg)) {
+      toast('삭제 취소됨', 'info');
+      return;
+    }
+    // 강제 삭제
+    res = await apiDeleteRaw(`/items/${encodeURIComponent(code)}?force=1`);
+    if (res.ok && res.data?.success) {
+      const dd = res.data.deleted || {};
+      toast(`강제 삭제 완료 — ${label} (발주이력 ${dd.po_order_items_preserved || 0}건 보존)`, 'success');
+      await renderItemsPanel();
+      return;
+    }
+  }
+
+  // 그 외 실패
+  const err = res.data?.error || `삭제 실패 (${res.status || 'network'})`;
+  toast(err, 'error');
+};
 
 window.setItemsFilter = function (patch) {
   Object.assign(State.itemsFilter, patch);

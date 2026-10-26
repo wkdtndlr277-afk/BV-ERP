@@ -879,6 +879,9 @@ app.post('/items/recalc', async (c) => {
 // =================================================================
 // API: 품목 목록
 // =================================================================
+// v3.8.8: supplier_id 필터 변경 — 단일 primary_supplier_id 매칭에서
+//         "해당 업체가 한 번이라도 공급(po_erp_inbound)한 모든 품목"으로 확장.
+//         다중 공급업체 품목이 1개 업체에만 노출되던 문제 해결.
 app.get('/items', async (c) => {
   const category = c.req.query('category') || '' // raw | sub | ''
   const supplier_id = c.req.query('supplier_id') || ''
@@ -890,22 +893,111 @@ app.get('/items', async (c) => {
     binds.push(category)
   }
   if (supplier_id) {
-    where.push('i.primary_supplier_id = ?')
+    // 변경: 해당 업체가 과거에 한 번이라도 공급한 모든 품목
+    where.push(`EXISTS (
+      SELECT 1 FROM po_erp_inbound e
+      WHERE e.item_code = i.item_code
+        AND e.supplier_id = ?
+        AND e.is_excluded = 0
+    )`)
     binds.push(Number(supplier_id))
   }
   if (search) {
     where.push('(i.item_code LIKE ? OR i.item_name LIKE ?)')
     binds.push(`%${search}%`, `%${search}%`)
   }
+
+  // 선택된 업체 기준의 보조 통계 (is_primary / 해당 업체에서의 입고 횟수·최근일·최근수량)
+  const supplierJoinCols = supplier_id ? `,
+      (CASE WHEN i.primary_supplier_id = ? THEN 1 ELSE 0 END) as is_primary_for_filter,
+      (SELECT COUNT(*) FROM po_erp_inbound e2
+         WHERE e2.item_code = i.item_code AND e2.supplier_id = ? AND e2.is_excluded = 0) as supplier_inbound_count,
+      (SELECT MAX(e2.inbound_date) FROM po_erp_inbound e2
+         WHERE e2.item_code = i.item_code AND e2.supplier_id = ? AND e2.is_excluded = 0) as supplier_last_date` : ''
+
   const sql = `
-    SELECT i.*, s.name as primary_supplier_name
+    SELECT i.*, s.name as primary_supplier_name${supplierJoinCols}
     FROM po_items i
     LEFT JOIN po_suppliers s ON s.id = i.primary_supplier_id
     ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
     ORDER BY i.item_code
   `
-  const rows = await c.env.DB.prepare(sql).bind(...binds).all()
+  const allBinds = supplier_id
+    ? [Number(supplier_id), Number(supplier_id), Number(supplier_id), ...binds]
+    : binds
+  const rows = await c.env.DB.prepare(sql).bind(...allBinds).all()
   return c.json({ success: true, data: rows.results })
+})
+
+/**
+ * DELETE /items/:code
+ * 품목 코드 완전 삭제 (v3.8.8)
+ * - 안전장치: 발주 이력(po_order_items)에 사용된 품목은 삭제 거부
+ *   → force=1 쿼리로 강제 삭제 가능 (po_order_items 는 기록 유지)
+ * - 삭제 범위: po_items, po_erp_inbound, po_cart (발주 이력 po_order_items 는 force 시에도 보존)
+ */
+app.delete('/items/:code', async (c) => {
+  const code = c.req.param('code')
+  const force = c.req.query('force') === '1'
+  if (!code) return c.json({ success: false, error: '품목코드 필수' }, 400)
+
+  try {
+    // 품목 존재 확인
+    const existing = await c.env.DB.prepare('SELECT item_code, item_name FROM po_items WHERE item_code = ?')
+      .bind(code).first<{ item_code: string; item_name: string }>()
+    if (!existing) {
+      return c.json({ success: false, error: '존재하지 않는 품목코드' }, 404)
+    }
+
+    // 사용 중 여부 확인
+    const orderRef = await c.env.DB.prepare(
+      'SELECT COUNT(*) as cnt FROM po_order_items WHERE item_code = ?'
+    ).bind(code).first<{ cnt: number }>()
+    const cartRef = await c.env.DB.prepare(
+      'SELECT COUNT(*) as cnt FROM po_cart WHERE item_code = ?'
+    ).bind(code).first<{ cnt: number }>()
+    const inboundRef = await c.env.DB.prepare(
+      'SELECT COUNT(*) as cnt FROM po_erp_inbound WHERE item_code = ?'
+    ).bind(code).first<{ cnt: number }>()
+
+    const orderCount = Number(orderRef?.cnt || 0)
+    const cartCount = Number(cartRef?.cnt || 0)
+    const inboundCount = Number(inboundRef?.cnt || 0)
+
+    // 발주 이력에 있는데 force 아니면 거부
+    if (orderCount > 0 && !force) {
+      return c.json({
+        success: false,
+        error: '사용 중인 품목',
+        detail: `발주 이력 ${orderCount}건에 사용 중입니다. 강제 삭제하려면 force=1 로 재요청하세요.`,
+        order_count: orderCount,
+        cart_count: cartCount,
+        inbound_count: inboundCount,
+        item_name: existing.item_name,
+      }, 409)
+    }
+
+    // batch 삭제 (po_order_items 는 발주 이력 보존을 위해 유지)
+    await c.env.DB.batch([
+      c.env.DB.prepare('DELETE FROM po_cart WHERE item_code = ?').bind(code),
+      c.env.DB.prepare('DELETE FROM po_erp_inbound WHERE item_code = ?').bind(code),
+      c.env.DB.prepare('DELETE FROM po_items WHERE item_code = ?').bind(code),
+    ])
+
+    return c.json({
+      success: true,
+      deleted: {
+        item_code: code,
+        item_name: existing.item_name,
+        po_items: 1,
+        po_cart: cartCount,
+        po_erp_inbound: inboundCount,
+        po_order_items_preserved: orderCount, // 삭제하지 않고 보존
+      },
+    })
+  } catch (e: any) {
+    return c.json({ success: false, error: String(e?.message || e) }, 500)
+  }
 })
 
 /**

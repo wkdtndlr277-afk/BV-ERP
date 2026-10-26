@@ -37279,24 +37279,52 @@ function downloadInboundQuery() {
     showToast('다운로드할 데이터가 없습니다.', 'warning');
     return;
   }
-  
+
   // 기간 조회 방식
   const startDate = document.getElementById('inbound-query-start-date')?.value || '';
   const endDate = document.getElementById('inbound-query-end-date')?.value || '';
   const dateLabel = startDate === endDate ? startDate : `${startDate}~${endDate}`;
-  
-  const rows = data.details.map(r => [
-    r.inbound_date, r.lot_number, r.item_code, r.item_name, r.category,
-    r.origin_qty, r.remain_qty, r.unit, r.expiry_date || '', r.quality_status, r.supplier || ''
-  ]);
-  
-  downloadExcel(
-    `입고조회_${dateLabel.replace(/~/g, '_')}`,
-    '(주)본비반트',
-    ['입고일', 'LOT번호', '품목코드', '품목명', '분류', '입고량', '잔량', '단위', '소비기한', '검사상태', '거래처'],
-    rows,
-    `입고 조회 (${dateLabel})`
-  );
+
+  // v3.8.7: downloadExcel 시그니처 (data, columns, filename, options)에 맞게 수정
+  const columns = [
+    { key: 'inbound_date',   label: '입고일' },
+    { key: 'lot_number',     label: 'LOT번호' },
+    { key: 'item_code',      label: '품목코드' },
+    { key: 'item_name',      label: '품목명' },
+    { key: 'category',       label: '분류' },
+    { key: 'origin_qty',     label: '입고량', type: 'number' },
+    { key: 'remain_qty',     label: '잔량',   type: 'number' },
+    { key: 'unit',           label: '단위' },
+    { key: 'expiry_date',    label: '소비기한' },
+    { key: 'quality_status', label: '검사상태' },
+    { key: 'supplier',       label: '거래처' }
+  ];
+
+  // null/undefined를 빈 문자열로 치환하여 렌더링 깨짐 방지
+  const rows = data.details.map(r => ({
+    inbound_date:   r.inbound_date   ?? '',
+    lot_number:     r.lot_number     ?? '',
+    item_code:      r.item_code      ?? '',
+    item_name:      r.item_name      ?? '',
+    category:       r.category       ?? '',
+    origin_qty:     r.origin_qty     ?? 0,
+    remain_qty:     r.remain_qty     ?? 0,
+    unit:           r.unit           ?? '',
+    expiry_date:    r.expiry_date    ?? '',
+    quality_status: r.quality_status ?? '',
+    supplier:       r.supplier       ?? ''
+  }));
+
+  try {
+    downloadExcel(rows, columns, `입고조회_${dateLabel.replace(/~/g, '_')}`, {
+      title: `입고 조회 (${dateLabel})`,
+      company: '(주)본비반트'
+    });
+    showToast('엑셀 다운로드 완료', 'success');
+  } catch (e) {
+    console.error('[downloadInboundQuery] failed:', e);
+    showToast('엑셀 다운로드 실패: ' + (e && e.message ? e.message : e), 'error');
+  }
 }
 
 function printInboundQuery() {

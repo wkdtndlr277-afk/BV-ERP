@@ -1,9 +1,33 @@
-# BV-ERP (본비반트 통합관리시스템) - v3.8.6
+# BV-ERP (본비반트 통합관리시스템) - v3.8.7
 
 ## 프로젝트 개요
 - **이름**: BV-ERP (Bon Vivant ERP)
 - **목표**: 베이커리 HACCP 규정 대응 + 원료/반죽/생산/재고 통합 관리 + **원료 구매발주 (카톡 기반)**
 - **주요 기능**: 재료체크시트 자동 임포트, 반죽↔제품 매핑, 원료사용량 산출, HACCP 편차관리, D1 DB 스냅샷, **구매발주서 자동 생성 → 카톡 공유**
+
+## v3.8.7 — 입고 조회 엑셀 다운로드 복구 (2026-10-23)
+
+### 증상
+- 입고 조회 화면에서 "엑셀 다운로드" 버튼이 아무 반응 없음 (파일이 생성되지 않음)
+
+### 원인
+- `downloadInboundQuery()` 가 `downloadExcel()` 를 **잘못된 시그니처**로 호출
+  - 공통 함수 정의: `downloadExcel(data, columns, filename, options)`
+  - 입고 조회 호출: `downloadExcel(filename, company, ['문자열헤더'], 2차원배열, title)` ← 완전 다른 순서 + columns가 문자열 배열
+- 다른 모든 export 함수(사용내역/일별수불부/품목마스터 등)는 올바른 시그니처로 호출 → 입고 조회만 유일하게 오작동
+
+### 해결 (`public/static/app-v400.js:37276`)
+- 호출 시그니처를 공통 함수와 일치시킴 — `downloadExcel(rows, columns, filename, { title, company })`
+- `columns`를 `{ key, label, type }` 객체 배열로 변경 (다른 export와 동일 패턴)
+- `rows`를 2차원 배열 → **key 매핑 객체 배열**로 변경
+- null/undefined 값 빈 문자열로 fallback (셀 깨짐 방지)
+- try/catch + 성공/실패 토스트 추가 (사용자 피드백)
+
+### 배포
+- Production: https://bv-erp.pages.dev
+- 스냅샷: https://bf29f77e.bv-erp.pages.dev
+
+---
 
 ## v3.8.6 — 제품 관리 엑셀 표준 양식 다운로드/업로드
 

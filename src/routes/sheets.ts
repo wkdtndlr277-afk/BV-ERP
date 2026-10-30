@@ -10130,6 +10130,98 @@ sheets.put('/monthly-stock/update', async (c) => {
   }
 });
 
+// 월별수불부 특정 품목 행 삭제 (v3.8.10)
+// year_month + item_code 로 구글시트 "월별수불부"의 해당 행만 삭제
+// (deleteDimension API 사용 — 뒤에서부터 삭제해서 인덱스 밀림 방지)
+sheets.delete('/monthly-stock/row', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+
+  try {
+    // 쿼리 or body 둘 다 수용
+    const year_month = c.req.query('year_month') || '';
+    const item_code = c.req.query('item_code') || '';
+
+    if (!year_month || !item_code) {
+      return c.json({
+        success: false,
+        error: 'year_month 와 item_code 쿼리 파라미터가 모두 필요합니다.'
+      }, 400);
+    }
+
+    // 1. 월별수불부 전체 읽어서 매칭 행 찾기
+    const data = await service.readSheet('월별수불부', 'A2:M5000') || [];
+    const matchRows: { row_number: number; item_name: string }[] = [];
+
+    for (let i = 0; i < data.length; i++) {
+      if (data[i][0] === year_month && data[i][1] === item_code) {
+        matchRows.push({
+          row_number: i + 2,  // 1-indexed + 헤더 제외
+          item_name: data[i][2] || item_code
+        });
+      }
+    }
+
+    if (matchRows.length === 0) {
+      return c.json({
+        success: false,
+        error: `${year_month} 월에서 품목코드 "${item_code}" 를 찾을 수 없습니다.`
+      }, 404);
+    }
+
+    // 2. 구글시트 sheetId 조회
+    const sheetId = await service.getSheetId('월별수불부');
+    if (sheetId === null) {
+      return c.json({
+        success: false,
+        error: '구글시트에서 "월별수불부" 시트를 찾을 수 없습니다.'
+      }, 500);
+    }
+
+    // 3. 뒤에서부터 삭제 (인덱스 밀림 방지)
+    const sortedRows = matchRows
+      .map(r => r.row_number)
+      .sort((a, b) => b - a);
+
+    const deleteRequests = sortedRows.map(rowNum => ({
+      deleteDimension: {
+        range: {
+          sheetId: sheetId,
+          dimension: 'ROWS',
+          startIndex: rowNum - 1,  // 0-indexed
+          endIndex: rowNum
+        }
+      }
+    }));
+
+    const result = await service.batchUpdate(deleteRequests);
+    if (!result.success) {
+      return c.json({
+        success: false,
+        error: `구글시트 삭제 실패: ${result.error}`
+      }, 500);
+    }
+
+    return c.json({
+      success: true,
+      message: `${year_month} / ${item_code} (${matchRows[0].item_name}) ${matchRows.length}건 삭제 완료`,
+      deleted: {
+        year_month,
+        item_code,
+        item_name: matchRows[0].item_name,
+        deleted_rows: matchRows.length,
+        row_numbers: sortedRows
+      },
+      note: '구글시트 "월별수불부"에서만 삭제됐습니다. 원료마스터 시트에도 등록돼 있으면 다음 "자동 생성" 시 다시 추가될 수 있습니다.'
+    });
+  } catch (error: any) {
+    console.error('[monthly-stock/row DELETE] 오류:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // 월별수불부 일괄 실사재고 입력
 sheets.post('/monthly-stock/bulk-actual', async (c) => {
   const service = getSheetService(c);

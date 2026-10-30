@@ -7205,7 +7205,7 @@ function renderSheetsDailyStock(result, date, search, category) {
             <th class="p-2 text-right font-medium text-red-600">사용</th>
             <th class="p-2 text-right font-medium">현재고</th>
             <th class="p-2 text-center font-medium">단위</th>
-            ${editMode ? '<th class="p-2 text-center font-medium w-40">액션</th>' : ''}
+            ${editMode ? '<th class="p-2 text-center font-medium w-40">액션</th>' : '<th class="p-2 text-center font-medium w-20">삭제</th>'}
           </tr>
         </thead>
         <tbody>
@@ -7281,13 +7281,22 @@ function renderSheetsDailyStock(result, date, search, category) {
                 </tr>
               `;
             } else {
-              // 조회 모드: 기존 UI
+              // 조회 모드: 기존 UI + v3.8.10 삭제 버튼 (각 행에 🗑)
               const nameCell = nameLooksLikeCode 
                 ? `<span class="text-yellow-700 bg-yellow-100 px-1 rounded" title="품목명이 코드로 표시됨">⚠️ ${item.item_name}</span>`
                 : (item.item_name || '');
               const stockCell = (item.current_stock || 0) < 0 
                 ? `<span class="text-red-600 font-bold bg-red-100 px-2 py-0.5 rounded" title="음수 재고 (구글시트 수식 결과)">⚠️ ${formatNumber(item.current_stock)}</span>`
                 : `<span class="font-bold">${formatNumber(item.current_stock || 0)}</span>`;
+              // 삭제 버튼: _sheet_row 가 있을 때만 활성화 (조회 모드도 백엔드가 _sheet_row 를 리턴하면 바로 가능)
+              const safeName = (item.item_name || '').replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+              const deleteBtn = rowKey > 0
+                ? `<button onclick="deleteDailyRowView(${rowKey}, '${item.item_code || ''}', '${safeName}', '${date}')" 
+                           class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
+                           title="구글시트 '일별수불부' ${date} 의 ${item.item_code} 행을 삭제">
+                     <i class="fas fa-trash"></i>
+                   </button>`
+                : `<span class="text-xs text-gray-400" title="편집 모드를 켜야 행 번호가 매핑되어 삭제가 가능합니다">—</span>`;
               return `
                 <tr class="border-b hover:bg-gray-50">
                   <td class="p-2 font-mono text-xs">${item.item_code || ''}</td>
@@ -7297,6 +7306,7 @@ function renderSheetsDailyStock(result, date, search, category) {
                   <td class="p-2 text-right text-red-600">${item.usage_qty ? (item.usage_qty > 0 ? '-' : '+') + formatNumber(Math.abs(item.usage_qty)) : '-'}</td>
                   <td class="p-2 text-right">${stockCell}</td>
                   <td class="p-2 text-center text-gray-500">${item.unit || ''}</td>
+                  <td class="p-2 text-center">${deleteBtn}</td>
                 </tr>
               `;
             }
@@ -7433,6 +7443,36 @@ async function deleteDailyRow(sheetRow) {
     showToast('삭제 실패: ' + (e.message || e), 'error');
   }
 }
+
+// v3.8.10: 조회 모드 전용 삭제 (품목코드/이름/날짜 상세 확인창)
+async function deleteDailyRowView(sheetRow, itemCode, itemName, date) {
+  const confirmMsg =
+    `[일별수불부] ${date}\n\n` +
+    `  품목코드: ${itemCode}\n` +
+    `  품목명: ${itemName || '(이름 없음)'}\n` +
+    `  시트 행: ${sheetRow}\n\n` +
+    `⚠️ 구글시트 "일별수불부"에서 이 행의 값이 모두 비워집니다.\n` +
+    `계속하시겠습니까?`;
+  if (!confirm(confirmMsg)) return;
+
+  showLoading('삭제 중...');
+  try {
+    const result = await api('/sheets/daily-stock/delete-row', 'POST', {
+      sheet_row: sheetRow, confirm: true
+    });
+    hideLoading();
+    if (result.success) {
+      showToast(`✅ ${itemCode} (${itemName || ''}) 삭제 완료`, 'success');
+      await loadDailyLedger();
+    } else {
+      showToast('❌ 삭제 실패: ' + (result.error || ''), 'error');
+    }
+  } catch (e) {
+    hideLoading();
+    showToast('❌ 삭제 오류: ' + (e.message || e), 'error');
+  }
+}
+window.deleteDailyRowView = deleteDailyRowView;
 
 // 품목명 일괄 자동복구
 async function fixDailyItemNames(date) {
@@ -55540,10 +55580,11 @@ function renderMonthlyStockAudit() {
                 <th class="px-3 py-3 text-right font-semibold text-gray-600">차이</th>
                 <th class="px-3 py-3 text-left font-semibold text-gray-600">비고/사유</th>
                 <th class="px-3 py-3 text-center font-semibold text-gray-600">저장</th>
+                <th class="px-3 py-3 text-center font-semibold text-gray-600">삭제</th>
               </tr>
             </thead>
             <tbody id="monthly-stock-audit-body">
-              <tr><td colspan="11" class="px-4 py-8 text-center text-gray-500">조회 버튼을 클릭하세요</td></tr>
+              <tr><td colspan="12" class="px-4 py-8 text-center text-gray-500">조회 버튼을 클릭하세요</td></tr>
             </tbody>
           </table>
         </div>
@@ -55678,6 +55719,13 @@ async function loadMonthlyStockAudit() {
               <i class="fas fa-save"></i>
             </button>
           </td>
+          <td class="px-3 py-2 text-center">
+            <button onclick="deleteMonthlyStockItem('${item.item_code}', '${(item.item_name||'').replace(/'/g, '&#39;')}')" 
+                    class="px-2 py-1 bg-red-500 text-white rounded text-xs hover:bg-red-600"
+                    title="이 월(${item.year_month || ''})의 ${item.item_code} 품목 행을 구글시트에서 삭제">
+              <i class="fas fa-trash"></i>
+            </button>
+          </td>
         </tr>
       `;
     }).join('');
@@ -55781,6 +55829,69 @@ async function saveMonthlyStockItem(itemCode) {
     showToast('저장 오류: ' + error.message, 'error');
   }
 }
+
+// ★★★ v3.8.10: 월별수불부 개별 품목 행 삭제 ★★★
+// 구글시트 "월별수불부" 시트에서 해당 월 + 품목코드 행을 삭제
+async function deleteMonthlyStockItem(itemCode, itemName) {
+  const yearMonth = document.getElementById('audit-month').value;
+  if (!yearMonth) {
+    showToast('조회할 월을 먼저 선택하세요.', 'error');
+    return;
+  }
+
+  const confirmMsg =
+    `[${yearMonth}] 월별수불부에서 아래 품목을 삭제합니다.\n\n` +
+    `  품목코드: ${itemCode}\n` +
+    `  품목명: ${itemName || '(이름 없음)'}\n\n` +
+    `⚠️ 이 작업은 구글시트 "월별수불부" 시트에서 해당 행을 완전히 삭제합니다.\n` +
+    `   같은 품목코드가 원료마스터·원료입고·로트매칭에 있으면\n` +
+    `   다음 "자동 생성" 때 다시 추가될 수 있습니다.\n\n` +
+    `계속하시겠습니까?`;
+
+  if (!confirm(confirmMsg)) return;
+
+  // 로딩 상태로 버튼 비활성화
+  const btn = event?.target?.closest('button');
+  const originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+  }
+
+  try {
+    const params = new URLSearchParams({
+      year_month: yearMonth,
+      item_code: itemCode
+    });
+    const result = await api(
+      `/sheets/monthly-stock/row?${params.toString()}`,
+      'DELETE'
+    );
+
+    if (result.success) {
+      showToast(
+        `✅ ${itemCode} (${itemName || ''}) 삭제 완료${result.deleted?.deleted_rows ? ` · ${result.deleted.deleted_rows}건` : ''}`,
+        'success'
+      );
+      // 테이블 재조회
+      await loadMonthlyStockAudit();
+    } else {
+      showToast('❌ 삭제 실패: ' + (result.error || '알 수 없는 오류'), 'error');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    }
+  } catch (error) {
+    console.error('월별수불부 삭제 오류:', error);
+    showToast('❌ 삭제 오류: ' + error.message, 'error');
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }
+}
+window.deleteMonthlyStockItem = deleteMonthlyStockItem;
 
 // 전체 저장
 async function saveAllMonthlyStockAudit() {

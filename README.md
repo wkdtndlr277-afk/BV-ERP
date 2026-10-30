@@ -1,9 +1,47 @@
-# BV-ERP (본비반트 통합관리시스템) - v3.8.9
+# BV-ERP (본비반트 통합관리시스템) - v3.8.10
 
 ## 프로젝트 개요
 - **이름**: BV-ERP (Bon Vivant ERP)
 - **목표**: 베이커리 HACCP 규정 대응 + 원료/반죽/생산/재고 통합 관리 + **원료 구매발주 (카톡 기반)**
 - **주요 기능**: 재료체크시트 자동 임포트, 반죽↔제품 매핑, 원료사용량 산출, HACCP 편차관리, D1 DB 스냅샷, **구매발주서 자동 생성 → 카톡 공유**
+
+## v3.8.10 — 일별수불부·월별수불부 조회 모드에서 행 삭제 가능 (2026-10-30)
+
+### 증상
+- 일별수불부(사이드바 "월별 수불부" 메뉴 서브, 2026-08-01)에서 R1057(분말(메밀 생)), R1058(분말(메밀 묶음)) 같은 원료 코드를 삭제하려 해도 삭제 버튼이 안 보임
+- D1(`master`/`inbound`/`transactions`/`po_items`/`production_usage`) 전수 조사 결과 R1057·R1058 없음 → 데이터 소스가 D1이 아닌 **구글시트 "일별수불부" 시트**임을 확인
+
+### 진짜 원인
+- 백엔드 삭제 API(`POST /sheets/daily-stock/delete-row`)는 **이미 존재**
+- 프론트 삭제 함수(`deleteDailyRow`)도 **이미 존재**
+- 하지만 삭제 열이 **"수동 정정 모드"(editMode) 켤 때만 렌더링**되도록 조건부여서, 일반 조회 모드에서는 삭제 열 자체가 사라져 있었음
+
+### 해결
+- 일별수불부 **조회 모드에도** 각 행에 🗑 삭제 버튼 노출 (`app-v400.js` 라인 7208 헤더 + 7283+ 각 행)
+- 조회 모드 전용 `deleteDailyRowView(sheetRow, itemCode, itemName, date)` 함수 신규 추가 — 품목코드/이름/날짜가 포함된 **상세 확인창** 제공 (기존 `deleteDailyRow`는 행 번호만 보여줘서 UX 부족)
+- 월별수불부(재고실사) 화면에도 동일한 삭제 기능 추가:
+  - 백엔드: `DELETE /sheets/monthly-stock/row?year_month=&item_code=` 신규 라우트 (`sheets.ts`) — Google Sheets `batchUpdate + deleteDimension`로 행을 뒤에서부터 물리 삭제
+  - 프론트: `deleteMonthlyStockItem(itemCode, itemName)` 함수 신규
+
+### 사용 방법 (일별수불부 조회 모드 삭제)
+1. 사이드바 "월별 수불부" → 날짜 선택 (예: 2026-08-01)
+2. 삭제하려는 원료 행의 맨 오른쪽 **🗑 (빨간 휴지통)** 클릭
+3. 확인창에 품목코드·품목명·날짜·시트 행이 표시됨 → "확인"
+4. 구글시트 "일별수불부"의 해당 행 값이 비워지고 테이블이 자동 갱신됨
+
+### 주의
+- 조회 모드에서는 **품목이 구글시트에서 "읽혀올 수 있는 행"일 때만** 🗑 버튼이 활성화됨 (불러오지 못한 행은 "—" 표시 + "편집 모드를 켜야 행 번호가 매핑되어 삭제 가능" 안내)
+- 삭제 동작은 **구글시트의 값을 비우는 방식** (물리 행 삭제 아님) — 수식 셀은 자동 재계산
+
+### 변경 파일
+- `src/routes/sheets.ts` — `DELETE /monthly-stock/row` 신규
+- `public/static/app-v400.js` — 일별수불부 조회 모드 삭제 열/버튼 + `deleteDailyRowView` 함수 + 월별수불부(재고실사) 삭제 UI + `deleteMonthlyStockItem` 함수
+
+### 배포
+- Production: https://bv-erp.pages.dev
+- 이번 배포: https://22464451.bv-erp.pages.dev (cf-byok-deploy)
+
+---
 
 ## v3.8.9 — 원료 발주관리 품목 필터 UX 개선 (2026-10-26)
 

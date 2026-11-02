@@ -1694,20 +1694,41 @@ export class GoogleSheetsService {
     // ★★★ v3.6.43: 현재 일별수불부 시트의 마지막 행 번호 확인 ★★★
     const startRowNum = existingData.length + 2;  // 헤더(1행) + 기존데이터 + 1
     
+    // ★★★ v3.8.11: 전날 블록 범위 계산 (D열 전일재고 수식용) ★★★
+    // 전날 블록(prevDayData)의 실제 시트 행 번호 범위를 찾아 INDEX/MATCH 수식에 사용
+    // 생산일보 생성 등으로 재계산되어도 수식이 유지되어 전일재고가 끊기지 않음
+    let prevBlockStartRow: number | null = null;
+    let prevBlockEndRow: number | null = null;
+    for (let i = 0; i < existingData.length; i++) {
+      const rowDate = existingData[i][0]?.toString().replace(/^'/, '') || '';
+      if (rowDate === prevDate) {
+        const sheetRow = i + 2;  // A2가 첫 데이터 행
+        if (prevBlockStartRow === null) prevBlockStartRow = sheetRow;
+        prevBlockEndRow = sheetRow;
+      }
+    }
+    const hasPrevBlock = prevBlockStartRow !== null && prevBlockEndRow !== null;
+    console.log(`[addDailyStockDate v3.8.11] 전날 블록 범위: ${hasPrevBlock ? `${prevBlockStartRow}~${prevBlockEndRow}` : '없음(값으로 fallback)'}`);
+    
     for (let i = 0; i < sortedCodes.length; i++) {
       const code = sortedCodes[i];
       const { name, unit } = prevStockMap[code];
       const rowNum = startRowNum + i;
       
-      // ★★★ v3.6.43: 전일재고는 값으로 직접 입력 (수식 순환참조 방지) ★★★
+      // ★★★ v3.8.11: 전일재고를 수식으로 입력 (전날 블록이 있을 때만) ★★★
+      // 전날 블록이 존재하면 INDEX/MATCH 수식으로 연결 → 전날 재고 변경 시 자동 반영
+      // 전날 블록이 없으면 (최초 날짜 등) 기존처럼 값으로 입력
       const prevStock = prevStockMap[code]?.current || 0;
+      const prevStockCell = hasPrevBlock
+        ? `=IFERROR(INDEX($G$${prevBlockStartRow}:$G$${prevBlockEndRow},MATCH(B${rowNum},$B$${prevBlockStartRow}:$B$${prevBlockEndRow},0)),0)`
+        : prevStock;
       
       newRows.push([
         `'${cleanDate}`,   // A: 날짜 (문자열 강제)
         code,              // B: 품목코드
         name,              // C: 품목명
-        // D: 전일재고 - 이미 조회한 전날 현재고 값 사용
-        prevStock,
+        // D: 전일재고 - v3.8.11 INDEX/MATCH 수식 (전날 블록 참조)
+        prevStockCell,
         // E: 입고량 - 원료입고 시트에서 해당 날짜 입고량
         // ★★★ v3.6.45: SUMPRODUCT + TEXT() 함수로 날짜 형식 통일 (텍스트 vs 날짜 매칭 문제 해결) ★★★
         // 참고: 전체 열(A:A) 대신 실제 데이터 범위로 제한하면 더 빠름

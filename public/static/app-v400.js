@@ -7149,6 +7149,12 @@ function renderSheetsDailyStock(result, date, search, category) {
           <i class="fas fa-external-link-alt mr-1"></i>
           시트 원본 확인
         </button>
+        <button onclick="restorePrevStockFormula()" 
+                class="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium hover:bg-purple-200 border border-purple-300"
+                title="D열(전일재고) INDEX/MATCH 수식 일괄 복구 (2026-08-01 이후) - v3.8.11">
+          <i class="fas fa-link mr-1"></i>
+          전일재고 수식복구
+        </button>
         <button onclick="applyDailyFormulas()" 
                 class="px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium hover:bg-emerald-200 border border-emerald-300"
                 title="새로 추가된 행/셀에 재고 수식 세팅 (D=어제G / E=원료입고SUMIFS / G=D+E-F)">
@@ -7821,6 +7827,81 @@ window.cascadeRecalcFromDate = cascadeRecalcFromDate;
 window.checkContinuity = checkContinuity;
 window.showSheetSource = showSheetSource;
 window.applyDailyFormulas = applyDailyFormulas;
+
+// ★★★ v3.8.11: D열(전일재고) INDEX/MATCH 수식 일괄 복구 ★★★
+async function restorePrevStockFormula() {
+  const fromDate = prompt(
+    'D열(전일재고) 수식을 복구할 시작 날짜를 입력하세요.\n\n' +
+    '형식: YYYY-MM-DD\n' +
+    '기본값: 2026-08-01 (해당 날짜 이후 전체 복구)\n\n' +
+    '※ 복구 전 D열 원본값은 "일별수불부_백업_YYYYMMDD_HHMM" 시트에 자동 저장됩니다.',
+    '2026-08-01'
+  );
+  if (!fromDate) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate)) {
+    showToast('날짜 형식이 올바르지 않습니다 (YYYY-MM-DD)', 'error');
+    return;
+  }
+
+  // 1단계: 미리보기
+  showToast('수식 복구 대상 분석 중...', 'info');
+  try {
+    const previewRes = await axios.get(`/api/sheets/daily-stock/prev-stock-formula/preview?from_date=${fromDate}`);
+    if (!previewRes.data?.success) {
+      showToast('미리보기 실패: ' + (previewRes.data?.error || '알 수 없는 오류'), 'error');
+      return;
+    }
+    const { target_dates, total_formula_cells, skipped_no_prev } = previewRes.data;
+
+    const confirmMsg = 
+      `D열(전일재고) 수식 복구 미리보기\n\n` +
+      `• 시작 날짜: ${fromDate}\n` +
+      `• 대상 날짜: ${target_dates}일\n` +
+      `• 수식 셀: ${total_formula_cells}개\n` +
+      `• 건너뜀(전날 데이터 없음): ${skipped_no_prev}개\n\n` +
+      `복구를 실행하시겠습니까?\n` +
+      `(복구 전 D열 원본값은 백업 시트에 자동 저장됩니다)`;
+    
+    if (!confirm(confirmMsg)) {
+      showToast('취소되었습니다', 'info');
+      return;
+    }
+  } catch (e) {
+    showToast('미리보기 요청 실패: ' + (e.response?.data?.error || e.message), 'error');
+    return;
+  }
+
+  // 2단계: 실제 복구
+  showToast('수식 복구 중... (시간이 걸릴 수 있습니다)', 'info');
+  try {
+    const restoreRes = await axios.post('/api/sheets/daily-stock/prev-stock-formula/restore', {
+      from_date: fromDate,
+      confirm: true
+    });
+    const r = restoreRes.data;
+    if (r?.success) {
+      const backupMsg = r.backup?.skipped ? '백업 생략' : `백업 시트: ${r.backup.sheet} (${r.backup.rows}행)`;
+      alert(
+        `✅ 전일재고 수식 복구 완료\n\n` +
+        `• 처리 날짜: ${r.processed_dates}일\n` +
+        `• 건너뜀: ${r.skipped_dates}일\n` +
+        `• 수식 셀: ${r.total_formula_cells}개\n` +
+        `• ${backupMsg}\n\n` +
+        `${r.note}`
+      );
+      // 화면 새로고침
+      if (typeof renderDailyReport === 'function') renderDailyReport();
+    } else {
+      const errSummary = Array.isArray(r?.write_errors) ? r.write_errors.join('\n') : '';
+      alert(
+        `⚠️ 일부 실패\n\n${r?.note || ''}\n\n${errSummary}`
+      );
+    }
+  } catch (e) {
+    showToast('복구 실패: ' + (e.response?.data?.error || e.message), 'error');
+  }
+}
+window.restorePrevStockFormula = restorePrevStockFormula;
 
 // 일별 품목 요약 렌더링
 function renderDailySummary(result, date) {

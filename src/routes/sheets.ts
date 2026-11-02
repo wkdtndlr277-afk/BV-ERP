@@ -6886,6 +6886,260 @@ sheets.post('/daily-stock/delete-row', async (c) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ★★★ v3.8.11: 일별수불부 D열(전일재고) INDEX/MATCH 수식 일괄 복구 ★★★
+// 
+// 배경: 생산일보 생성/재계산 과정에서 D열이 값으로 덮어써지는 사례가 반복됨.
+//      사용자 요청 수식 형태:
+//      =IFERROR(INDEX($G$<전날시작>:$G$<전날끝>, MATCH(B<내행>, $B$<전날시작>:$B$<전날끝>, 0)), 0)
+//
+// 처리 흐름:
+//   1. 구글시트 "일별수불부" 전체 읽기 (A2:H50000)
+//   2. 날짜별 블록 범위(startRow~endRow) 식별
+//   3. from_date 이후 각 날짜 블록의 D열에 수식 삽입 (전날 블록 참조)
+//      - 전날 블록이 없는 날짜는 건너뜀 (값 유지)
+//   4. 복구 전 D열 원본값은 백업 시트(일별수불부_백업_YYYYMMDD_HHMM)에 자동 저장
+//
+// 라우트:
+//   GET  /daily-stock/prev-stock-formula/preview?from_date=2026-08-01  : 미리보기 (수정 대상 수)
+//   POST /daily-stock/prev-stock-formula/restore                       : 실제 복구 (confirm: true 필수)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// 공통 유틸: 날짜 블록 식별
+async function _buildDailyBlocks(service: any, fromDate: string | null) {
+  const data = await service.readSheet('일별수불부', 'A2:H50000') || [];
+  // 날짜별 블록: dateMap[cleanDate] = { startRow, endRow, items: [{ sheetRow, code, prevStockCell }] }
+  const dateMap: Record<string, { startRow: number; endRow: number; items: { sheetRow: number; code: string; currentD: any }[] }> = {};
+  for (let i = 0; i < data.length; i++) {
+    const row = data[i];
+    const date = (row[0]?.toString() || '').replace(/^'/, '').trim();
+    const code = (row[1]?.toString() || '').trim();
+    if (!date || !code) continue;
+    const sheetRow = i + 2;
+    if (!dateMap[date]) {
+      dateMap[date] = { startRow: sheetRow, endRow: sheetRow, items: [] };
+    }
+    dateMap[date].endRow = sheetRow;
+    dateMap[date].items.push({ sheetRow, code, currentD: row[3] });
+  }
+  const sortedDates = Object.keys(dateMap).sort();
+  const targetDates = fromDate ? sortedDates.filter(d => d >= fromDate) : sortedDates;
+  return { dateMap, sortedDates, targetDates, rawData: data };
+}
+
+function _getPrevDateString(cleanDate: string): string {
+  const parts = cleanDate.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return '';
+  const d = new Date(parts[0], parts[1] - 1, parts[2] - 1);
+  return d.toISOString().split('T')[0];
+}
+
+// GET /daily-stock/prev-stock-formula/preview
+sheets.get('/daily-stock/prev-stock-formula/preview', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const fromDate = c.req.query('from_date') || '2026-08-01';
+    const { dateMap, targetDates } = await _buildDailyBlocks(service, fromDate);
+    
+    const summary: any[] = [];
+    let totalCells = 0;
+    let totalSkippedNoPrev = 0;
+    
+    for (const date of targetDates) {
+      const block = dateMap[date];
+      const prevDate = _getPrevDateString(date);
+      const prevBlock = dateMap[prevDate];
+      
+      if (!prevBlock) {
+        summary.push({
+          date,
+          start_row: block.startRow,
+          end_row: block.endRow,
+          items: block.items.length,
+          prev_date: prevDate,
+          prev_block: null,
+          status: 'skip_no_prev',
+          formula_preview: null
+        });
+        totalSkippedNoPrev += block.items.length;
+        continue;
+      }
+      
+      const firstItem = block.items[0];
+      const formulaPreview = `=IFERROR(INDEX($G$${prevBlock.startRow}:$G$${prevBlock.endRow},MATCH(B${firstItem.sheetRow},$B$${prevBlock.startRow}:$B$${prevBlock.endRow},0)),0)`;
+      
+      summary.push({
+        date,
+        start_row: block.startRow,
+        end_row: block.endRow,
+        items: block.items.length,
+        prev_date: prevDate,
+        prev_block: { start: prevBlock.startRow, end: prevBlock.endRow, items: prevBlock.items.length },
+        status: 'ready',
+        formula_preview: formulaPreview
+      });
+      totalCells += block.items.length;
+    }
+    
+    return c.json({
+      success: true,
+      from_date: fromDate,
+      target_dates: targetDates.length,
+      total_formula_cells: totalCells,
+      skipped_no_prev: totalSkippedNoPrev,
+      summary
+    });
+  } catch (error: any) {
+    console.error('[daily-stock/prev-stock-formula/preview] error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
+// POST /daily-stock/prev-stock-formula/restore
+sheets.post('/daily-stock/prev-stock-formula/restore', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  
+  try {
+    const body = await c.req.json<{ from_date?: string; confirm: boolean; skip_backup?: boolean }>();
+    if (!body.confirm) {
+      return c.json({ success: false, error: 'confirm: true 필수' }, 400);
+    }
+    const fromDate = body.from_date || '2026-08-01';
+    const skipBackup = body.skip_backup === true;
+    
+    const { dateMap, targetDates } = await _buildDailyBlocks(service, fromDate);
+    
+    // 1. 백업: 복구 전 D열 원본값을 백업 시트에 저장
+    let backupResult: any = { skipped: true };
+    if (!skipBackup) {
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mi = String(now.getMinutes()).padStart(2, '0');
+      const backupSheetName = `일별수불부_백업_${yyyy}${mm}${dd}_${hh}${mi}`;
+      
+      // 백업 시트 생성
+      const createRes = await service.batchUpdate([{
+        addSheet: {
+          properties: { title: backupSheetName, gridProperties: { rowCount: 1000, columnCount: 5 } }
+        }
+      }]);
+      
+      if (!createRes.success) {
+        // 이미 존재하는 경우 등 — 로그만 남기고 계속 진행
+        console.warn('[prev-stock-formula/restore] 백업 시트 생성 실패(이미 존재?):', createRes.error);
+      }
+      
+      // 백업 데이터 수집 (date, sheet_row, item_code, D열 원본값)
+      const backupRows: any[][] = [['일자', '행번호', '원료코드', '전일재고_원본값', '백업일시']];
+      const nowStr = `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+      for (const date of targetDates) {
+        for (const item of dateMap[date].items) {
+          backupRows.push([date, item.sheetRow, item.code, item.currentD ?? '', nowStr]);
+        }
+      }
+      
+      await service.writeSheet(backupSheetName, `A1:E${backupRows.length}`, backupRows);
+      backupResult = { skipped: false, sheet: backupSheetName, rows: backupRows.length - 1 };
+    }
+    
+    // 2. 복구: 각 날짜 블록의 D열에 수식 삽입
+    //    ★ v3.8.12: batchWriteSheet 1회 호출로 성능 대폭 개선 (91번 반복 → 1번)
+    //    ★ to_date 파라미터로 특정 날짜까지만 처리 가능 (옵션 A: 2026-10-31 지정)
+    const toDate = body.to_date || null;
+    const sheetUpdates: { sheetName: string; range: string; values: any[][] }[] = [];
+    let totalCells = 0;
+    let skippedBlocks = 0;
+    const processedDates: string[] = [];
+    const skippedDates: string[] = [];
+    
+    for (const date of targetDates) {
+      // to_date가 지정됐으면 그 날짜까지만 처리
+      if (toDate && date > toDate) continue;
+      
+      const block = dateMap[date];
+      const prevDate = _getPrevDateString(date);
+      const prevBlock = dateMap[prevDate];
+      
+      if (!prevBlock) {
+        skippedBlocks++;
+        skippedDates.push(date);
+        continue;
+      }
+      
+      // 해당 블록의 D열 전체(연속 범위)에 수식 작성
+      const formulas: any[][] = block.items.map(item => [
+        `=IFERROR(INDEX($G$${prevBlock.startRow}:$G$${prevBlock.endRow},MATCH(B${item.sheetRow},$B$${prevBlock.startRow}:$B$${prevBlock.endRow},0)),0)`
+      ]);
+      
+      const rangeStart = block.items[0].sheetRow;
+      const rangeEnd = block.items[block.items.length - 1].sheetRow;
+      const expectedLen = rangeEnd - rangeStart + 1;
+      
+      // 실제 길이가 다르면(중간 빈 행 포함) 안전하게 각 행별로 분리
+      if (formulas.length !== expectedLen) {
+        for (const item of block.items) {
+          sheetUpdates.push({
+            sheetName: '일별수불부',
+            range: `D${item.sheetRow}`,
+            values: [[`=IFERROR(INDEX($G$${prevBlock.startRow}:$G$${prevBlock.endRow},MATCH(B${item.sheetRow},$B$${prevBlock.startRow}:$B$${prevBlock.endRow},0)),0)`]]
+          });
+        }
+      } else {
+        sheetUpdates.push({
+          sheetName: '일별수불부',
+          range: `D${rangeStart}:D${rangeEnd}`,
+          values: formulas
+        });
+      }
+      
+      totalCells += block.items.length;
+      processedDates.push(date);
+    }
+    
+    // 3. batchWriteSheet 1회 호출 (수식 유지 모드: USER_ENTERED)
+    //    91번 반복 호출 대신 1번 호출로 Cloudflare Worker CPU 시간 내 완료
+    let writeError: string | null = null;
+    if (sheetUpdates.length > 0) {
+      try {
+        await service.batchWriteSheet(sheetUpdates);
+      } catch (err: any) {
+        writeError = err.message || String(err);
+      }
+    }
+    
+    return c.json({
+      success: writeError === null,
+      from_date: fromDate,
+      to_date: toDate,
+      backup: backupResult,
+      processed_dates: processedDates.length,
+      skipped_dates: skippedDates.length,
+      total_formula_cells: totalCells,
+      batch_updates: sheetUpdates.length,
+      write_error: writeError,
+      sample_processed_first: processedDates.slice(0, 3),
+      sample_processed_last: processedDates.slice(-3),
+      sample_skipped: skippedDates.slice(0, 5),
+      note: writeError === null
+        ? `D열(전일재고)에 ${totalCells}개 셀 수식 복구 완료. ${skippedBlocks}개 날짜 블록은 전날 데이터가 없어 건너뜀. (batchUpdate ${sheetUpdates.length}건 1회 호출)`
+        : `복구 실패: ${writeError}`
+    });
+  } catch (error: any) {
+    console.error('[daily-stock/prev-stock-formula/restore] error:', error);
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 // ★★★ v3.6.181: 특정 품목 코드의 모든 행 일괄 정리 ★★★
 // ERP에서 품목이 삭제되었지만 구글시트 일별수불부에는 여전히 남아있는 경우 사용
 //

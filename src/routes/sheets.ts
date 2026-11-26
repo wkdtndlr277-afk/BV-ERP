@@ -1,7 +1,7 @@
 // 구글 시트 연동 API
 // v1.0.0: ERP ↔ 구글 시트 데이터 동기화
 import { Hono } from 'hono';
-import { GoogleSheetsService } from '../services/GoogleSheetsService';
+import { GoogleSheetsService, STOCK_BASELINE_DATE } from '../services/GoogleSheetsService';
 
 type Bindings = {
   DB: D1Database;
@@ -661,6 +661,23 @@ sheets.get('/lot-trace/:product_lot', async (c) => {
 // ===== 생산일보 출력용 데이터 조합 =====
 
 // 시트에서 계산된 결과 + ERP 로트번호 부여 → 생산일보 데이터
+// ★ v3.9.0: 기간 수불 일괄 재계산 (생산일보 로트매칭 + 일별수불부)
+// body: { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }  (from ≥ 2026-10-01)
+sheets.post('/rebuild-stock-range', async (c) => {
+  const service = getSheetService(c);
+  if (!service) {
+    return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 400);
+  }
+  try {
+    const { from, to } = await c.req.json<{ from?: string; to?: string }>();
+    const kst = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+    const result = await service.rebuildStockRange(from || STOCK_BASELINE_DATE, to || kst);
+    return c.json({ success: true, baseline: STOCK_BASELINE_DATE, ...result });
+  } catch (error: any) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+});
+
 sheets.get('/report/daily-production', async (c) => {
   const service = getSheetService(c);
   if (!service) {

@@ -2108,15 +2108,17 @@ productionRoutes.post('/batch', async (c) => {
       
       // FEFO 방식: 소비기한 빠른 순서로 LOT 조회
       // v3.5.5: remain_qty 조건 제거 - 재고 0이어도 LOT 기록 필요 (추적성)
+      // v3.9.0: 재고가 남은 LOT 중 소비기한 빠른 것 우선, 모두 소진이면 가장 최근 입고 LOT (이전: 무조건 가장 오래된 LOT)
       // GROUP BY 대신 ROW_NUMBER로 품목별 첫 번째 LOT 선택
       const lotResults = await c.env.DB.prepare(`
         SELECT item_code, lot_number FROM (
           SELECT item_code, lot_number,
-                 ROW_NUMBER() OVER (PARTITION BY item_code ORDER BY expiry_date ASC, inbound_date ASC) as rn
+                 ROW_NUMBER() OVER (PARTITION BY item_code ORDER BY (remain_qty > 0) DESC, CASE WHEN remain_qty > 0 THEN COALESCE(expiry_date, '9999-12-31') END ASC, CASE WHEN remain_qty > 0 THEN inbound_date END ASC, inbound_date DESC) as rn
           FROM inbound 
           WHERE item_code IN (${placeholders})
+            AND (inbound_date IS NULL OR inbound_date <= ?)
         ) WHERE rn = 1
-      `).bind(...batch).all<{item_code: string; lot_number: string}>();
+      `).bind(...batch, productionDate).all<{item_code: string; lot_number: string}>();
       
       for (const row of lotResults.results || []) {
         if (!materialLotMap.has(row.item_code)) {
@@ -2139,11 +2141,12 @@ productionRoutes.post('/batch', async (c) => {
           const altResults = await c.env.DB.prepare(`
             SELECT item_code, lot_number FROM (
               SELECT item_code, lot_number,
-                     ROW_NUMBER() OVER (PARTITION BY item_code ORDER BY expiry_date ASC, inbound_date ASC) as rn
+                     ROW_NUMBER() OVER (PARTITION BY item_code ORDER BY (remain_qty > 0) DESC, CASE WHEN remain_qty > 0 THEN COALESCE(expiry_date, '9999-12-31') END ASC, CASE WHEN remain_qty > 0 THEN inbound_date END ASC, inbound_date DESC) as rn
               FROM inbound 
               WHERE item_code IN (${altPlaceholders})
+                AND (inbound_date IS NULL OR inbound_date <= ?)
             ) WHERE rn = 1
-          `).bind(...altCodes).all<{item_code: string; lot_number: string}>();
+          `).bind(...altCodes, productionDate).all<{item_code: string; lot_number: string}>();
           
           for (const row of altResults.results || []) {
             // 원래 코드로 매핑
@@ -2359,20 +2362,30 @@ productionRoutes.post('/batch', async (c) => {
     const isSemiFinished = itemCode.startsWith('SF');  // 반제품 여부
     const memoText = `생산사용${isWater ? '(재고미차감)' : ''}: ${data.memos.slice(0, 3).join(', ')}${data.memos.length > 3 ? ` 외 ${data.memos.length - 3}건` : ''}`;
     
+    // ★ v3.9.0: 일괄 등록도 LOT 단위 FEFO 차감 (이전에는 master 합계만 줄이고 LOT 잔량은 그대로 남아
+    //   오래된 LOT가 계속 재고로 남는 문제 → 바코드/확정 차감이 몇 달 전 LOT를 쓰게 됨)
+    let usedLotNumbers = '';
     if (!isWater) {
-      if (isSemiFinished) {
-        // 반제품: semi_finished_lots 테이블에서 FEFO 차감 (가장 오래된 LOT부터)
-        // 먼저 가용 LOT 확인 후 차감
-        semiFinishedUpdates.push(
-          c.env.DB.prepare(`
-            UPDATE semi_finished_lots 
-            SET remain_qty = remain_qty - ?
-            WHERE item_code = ? AND remain_qty > 0
-            AND id = (SELECT id FROM semi_finished_lots WHERE item_code = ? AND remain_qty > 0 ORDER BY expiry_date ASC, id ASC LIMIT 1)
-          `).bind(data.qty, itemCode, itemCode)
-        );
-      } else {
-        // 일반 원료: master 테이블에서 차감
+      const plan = await planFEFODeduction(c.env.DB, itemCode, data.qty, productionDate);
+      usedLotNumbers = plan.lots.map(l => `${l.lotNumber}(${Math.round(l.deductQty * 1000) / 1000})`).join(', ');
+      if (plan.shortage > 0) {
+        usedLotNumbers += `${usedLotNumbers ? ', ' : ''}재고부족(${Math.round(plan.shortage * 1000) / 1000})`;
+      }
+      for (const lot of plan.lots) {
+        if (isSemiFinished) {
+          semiFinishedUpdates.push(
+            c.env.DB.prepare(`UPDATE semi_finished_lots SET remain_qty = MAX(0, remain_qty - ?) WHERE lot_number = ? AND item_code = ?`)
+              .bind(lot.deductQty, lot.lotNumber, itemCode)
+          );
+        } else {
+          materialUpdates.push(
+            c.env.DB.prepare(`UPDATE inbound SET remain_qty = MAX(0, remain_qty - ?), updated_at = CURRENT_TIMESTAMP WHERE lot_number = ? AND item_code = ?`)
+              .bind(lot.deductQty, lot.lotNumber, itemCode)
+          );
+        }
+      }
+      if (!isSemiFinished) {
+        // 품목 합계 재고도 함께 차감 (LOT가 부족해도 사용량 전체를 반영)
         materialUpdates.push(
           c.env.DB.prepare(`UPDATE master SET current_stock = current_stock - ?, updated_at = CURRENT_TIMESTAMP WHERE item_code = ?`)
             .bind(data.qty, itemCode)
@@ -2387,13 +2400,13 @@ productionRoutes.post('/batch', async (c) => {
     if (isSemiFinished) {
       materialTransactions.push(
         c.env.DB.prepare(`INSERT INTO semi_finished_transactions (trans_date, item_code, trans_type, quantity, memo, created_at) VALUES (?, ?, '사용', ?, ?, ?)`)
-          .bind(productionDate, itemCode, -data.qty, memoText, now)
+          .bind(productionDate, itemCode, -data.qty, usedLotNumbers ? `${memoText} [LOT ${usedLotNumbers}]` : memoText, now)
       );
     } else {
-      // 일반 원료: transactions 테이블에 기록 (사용은 음수로 저장)
+      // 일반 원료: transactions 테이블에 기록 (사용은 음수로 저장, 차감한 LOT 기록)
       materialTransactions.push(
-        c.env.DB.prepare(`INSERT INTO transactions (trans_date, item_code, trans_type, quantity, memo, created_at) VALUES (?, ?, '사용', ?, ?, ?)`)
-          .bind(productionDate, itemCode, -data.qty, memoText, now)
+        c.env.DB.prepare(`INSERT INTO transactions (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at) VALUES (?, ?, '사용', ?, ?, ?, ?)`)
+          .bind(productionDate, itemCode, -data.qty, usedLotNumbers || null, memoText, now)
       );
     }
     
@@ -3956,12 +3969,26 @@ productionRoutes.post('/confirm', async (c) => {
               } else {
                 statements.push(
                   c.env.DB.prepare(`
-                    INSERT INTO transactions 
+                    INSERT INTO transactions
                     (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
                     VALUES (?, ?, '사용', ?, ?, ?, ?)
                   `).bind(productionDate, safeItemCode, -safeRequiredQty, lotNumbers, memoText, now)
                 );
               }
+            } else if (!plan.isWater && !plan.isSemiFinished) {
+              // ★ v3.9.0: 가용 LOT가 없어도 사용량은 수불에 남긴다 (이전: 기록 자체가 누락됨)
+              statements.push(
+                c.env.DB.prepare(`
+                  UPDATE master SET current_stock = current_stock - ?, updated_at = ? WHERE item_code = ?
+                `).bind(safeRequiredQty, now, safeItemCode)
+              );
+              statements.push(
+                c.env.DB.prepare(`
+                  INSERT INTO transactions
+                  (trans_date, item_code, trans_type, quantity, lot_number, memo, created_at)
+                  VALUES (?, ?, '사용', ?, NULL, ?, ?)
+                `).bind(productionDate, safeItemCode, -safeRequiredQty, `생산사용(LOT재고부족): ${safeProductCode} (생산ID:${productionId})`, now)
+              );
             }
           }
         }

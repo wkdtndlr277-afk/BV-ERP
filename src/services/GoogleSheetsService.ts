@@ -85,6 +85,83 @@ async function getAccessToken(credentials: ServiceAccountCredentials): Promise<s
 
 // ===== 시트 작업 함수들 =====
 
+// ============================================================================
+// ★ v3.9.0: 수불 기준일 및 LOT 풀(pool) 계산
+// ----------------------------------------------------------------------------
+// 원료입고 시트 I열(잔량)은 실제 사용이 반영되지 않아 몇 달 전 LOT가 계속 남아 있었음.
+// 기준일 이후로는 I열을 쓰지 않고 아래 규칙으로 LOT 잔량을 계산한다.
+//  - 기준일 이후 입고 LOT: 입고량 전량에서 시작, 입고일부터 사용 가능
+//  - 기준일 이전 입고 LOT: 품목별 평균 입고주기(I일) 동안 일정하게 소진된다고 보고
+//      기준일 시점 잔량 = 입고량 × max(0, 1 − 경과일/I)  → 한 주기보다 오래된 LOT는 0
+//  - 재고조정용 가짜 LOT(입고일 2020-01-01 등 기준일 1년 이전)는 0
+// 이후 날짜별 로트매칭 사용량을 날짜순으로 차감하며 이어간다.
+// ============================================================================
+export const STOCK_BASELINE_DATE = '2026-10-01';
+
+export type LotPoolItem = { lot: string; expiry: string; qty: number; remaining: number; inboundDate: string };
+
+const normDate = (v: any): string => {
+  const t = (v ?? '').toString().replace(/^'/, '').trim();
+  const m = t.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  return m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : '';
+};
+const dayDiff = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
+
+/** 소비기한 빠른 순(빈 값은 맨 뒤) → 입고일 빠른 순 */
+export function sortLotsFEFO(lots: LotPoolItem[]) {
+  lots.sort((a, b) => {
+    if (!a.expiry !== !b.expiry) return a.expiry ? -1 : 1;
+    return a.expiry.localeCompare(b.expiry) || a.inboundDate.localeCompare(b.inboundDate);
+  });
+}
+
+/** 원료입고 시트 행(A:입고일자, B:원료코드, D:로트, E:입고량, H:소비기한, I:잔량) → 기준일 시점 LOT 풀 */
+export function buildBaselineLotPool(inboundRows: any[][], baseline: string): Record<string, LotPoolItem[]> {
+  const byCode: Record<string, LotPoolItem[]> = {};
+  for (const row of inboundRows) {
+    const code = row[1]?.toString().trim() || '';
+    const qty = parseFloat(row[4]?.toString() || '0') || 0;
+    if (!code || qty <= 0) continue;
+    (byCode[code] ||= []).push({
+      lot: row[3]?.toString() || '',
+      expiry: normDate(row[7]),
+      qty,
+      remaining: qty,
+      inboundDate: normDate(row[0])
+    });
+  }
+  for (const code of Object.keys(byCode)) {
+    const lots = byCode[code];
+    const dates = [...new Set(lots.map(l => l.inboundDate).filter(Boolean))].sort();
+    const gaps: number[] = [];
+    for (let i = 1; i < dates.length; i++) gaps.push(dayDiff(dates[i], dates[i - 1]));
+    gaps.sort((a, b) => a - b);
+    const median = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 60;
+    const cycle = Math.min(120, Math.max(7, median));
+    for (const l of lots) {
+      if (!l.inboundDate || l.inboundDate >= baseline) continue;
+      const age = dayDiff(baseline, l.inboundDate);
+      l.remaining = age > 365 ? 0 : Math.round(l.qty * Math.max(0, 1 - age / cycle) * 10000) / 10000;
+    }
+    sortLotsFEFO(lots);
+  }
+  return byCode;
+}
+
+/** 기준일 이전 날짜 재계산용 (기존 방식: I열 잔량 사용) */
+export function buildLegacyLotPool(inboundRows: any[][]): Record<string, LotPoolItem[]> {
+  const byCode: Record<string, LotPoolItem[]> = {};
+  for (const row of inboundRows) {
+    const code = row[1]?.toString() || '';
+    const qty = parseFloat(row[4]?.toString() || '0') || 0;
+    const remaining = parseFloat(row[8]?.toString() || '0') || 0;
+    if (!code || qty <= 0 || remaining <= 0) continue;
+    (byCode[code] ||= []).push({ lot: row[3]?.toString() || '', expiry: row[7]?.toString() || '', qty, remaining, inboundDate: '' });
+  }
+  for (const code of Object.keys(byCode)) byCode[code].sort((a, b) => a.expiry.localeCompare(b.expiry));
+  return byCode;
+}
+
 export class GoogleSheetsService {
   private credentials: ServiceAccountCredentials;
   private accessToken: string | null = null;
@@ -106,15 +183,34 @@ export class GoogleSheetsService {
     const token = await this.getToken();
     const fullRange = range ? `${sheetName}!${range}` : sheetName;
     
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}`,
-      {
-        headers: { Authorization: `Bearer ${token}` }
-      }
+      { headers: { Authorization: `Bearer ${token}` } },
+      `readSheet ${fullRange}`
     );
 
     const data = await response.json() as { values?: any[][] };
     return data.values || [];
+  }
+
+  /**
+   * ★ v3.9.0: 구글 API 호출 재시도 + 실패 시 예외
+   * 이전에는 429(요청 한도)/5xx 응답도 빈 배열로 처리되어,
+   * 읽기 실패 → "데이터 없음"으로 오인 → 시트 전체 clear 후 일부만 재작성(이력 유실),
+   * 전일재고 0으로 시작(수불 연속성 끊김) 문제가 발생했음.
+   */
+  private async fetchWithRetry(url: string, init: RequestInit, label: string, maxTries = 5): Promise<Response> {
+    let lastStatus = 0;
+    let lastBody = '';
+    for (let attempt = 1; attempt <= maxTries; attempt++) {
+      const res = await fetch(url, init);
+      if (res.ok) return res;
+      lastStatus = res.status;
+      lastBody = (await res.text()).slice(0, 300);
+      if (res.status !== 429 && res.status < 500) break;
+      await new Promise(r => setTimeout(r, Math.min(8000, 500 * 2 ** (attempt - 1))));
+    }
+    throw new Error(`구글시트 호출 실패 (${label}): HTTP ${lastStatus} ${lastBody}`);
   }
 
   // ★★★ 수식 읽기 (valueRenderOption=FORMULA) ★★★
@@ -122,11 +218,10 @@ export class GoogleSheetsService {
     const token = await this.getToken();
     const fullRange = range ? `${sheetName}!${range}` : sheetName;
     
-    const response = await fetch(
+    const response = await this.fetchWithRetry(
       `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}?valueRenderOption=FORMULA`,
-      {
-        headers: { Authorization: `Bearer ${token}` }
-      }
+      { headers: { Authorization: `Bearer ${token}` } },
+      `readSheetFormulas ${fullRange}`
     );
 
     const data = await response.json() as { values?: any[][] };
@@ -1269,33 +1364,37 @@ export class GoogleSheetsService {
     
     // 3. 원료입고 데이터 읽기 (FEFO용)
     const inboundData = await this.readSheet('원료입고', 'A2:J5000');
-    const inboundByMaterial: Record<string, Array<{ lot: string; expiry: string; qty: number; remaining: number }>> = {};
-    
-    // ★★★ v3.6.104: 원료입고 시트 구조 매핑 수정 - 잔량(I열) 사용 ★★★
-    // A:입고일자, B:원료코드, C:원료명, D:로트번호, E:입고량, F:단위, G:공급업체, H:소비기한, I:잔량
-    for (const row of inboundData) {
-      const materialCode = row[1]?.toString() || '';  // B열: 원료코드
-      const lot = row[3]?.toString() || '';           // D열: 로트번호
-      const expiry = row[7]?.toString() || '';        // H열: 소비기한
-      const qty = parseFloat(row[4]?.toString() || '0') || 0;  // E열: 입고량
-      const remaining = parseFloat(row[8]?.toString() || '0') || 0;  // I열: 잔량 (★★★ v3.6.104 수정)
-      
-      if (!materialCode || qty <= 0) continue;
-      // ★★★ v3.6.104: 잔량이 0 이하인 LOT는 건너뛰기 ★★★
-      if (remaining <= 0) continue;
-      
-      if (!inboundByMaterial[materialCode]) {
-        inboundByMaterial[materialCode] = [];
+    const orderedTargets = [...dateSet].sort();
+    // ★ v3.9.0: 기준일(10/1) 이후 날짜는 '입고량 − 이전 날짜 로트매칭 사용량'으로 LOT 잔량을 이어서 계산.
+    //   (이전: 원료입고 시트 I열 잔량을 매번 그대로 써서 날마다 같은 오래된 LOT가 반복 매칭됨)
+    const useCarryForward = orderedTargets.length > 0 && orderedTargets[0] >= STOCK_BASELINE_DATE;
+    const inboundByMaterial = useCarryForward
+      ? buildBaselineLotPool(inboundData, STOCK_BASELINE_DATE)
+      : buildLegacyLotPool(inboundData);
+    // 기준일 이후의 보존 행(다시 계산하지 않는 날짜)은 해당 날짜에 도달하면 LOT 잔량에서 차감
+    const preservedUsageByDate: Record<string, Array<{ code: string; lot: string; qty: number }>> = {};
+    if (useCarryForward) {
+      for (const row of preservedRows) {
+        const d = row[0]?.toString().replace(/^'/, '') || '';
+        if (d < STOCK_BASELINE_DATE) continue;
+        (preservedUsageByDate[d] ||= []).push({
+          code: row[2]?.toString() || '',
+          lot: row[5]?.toString() || '',
+          qty: parseFloat(row[4]?.toString() || '0') || 0
+        });
       }
-      // ★★★ v3.6.104: remaining은 실제 잔량(I열) 사용 ★★★
-      inboundByMaterial[materialCode].push({ lot, expiry, qty, remaining });
     }
-    
-    // FEFO 정렬 (소비기한 빠른 순)
-    for (const code in inboundByMaterial) {
-      inboundByMaterial[code].sort((a, b) => a.expiry.localeCompare(b.expiry));
-    }
-    
+    const applyPreserved = (upToExclusive: string, fromInclusive: string) => {
+      for (const d of Object.keys(preservedUsageByDate).sort()) {
+        if (d < fromInclusive || d >= upToExclusive) continue;
+        for (const u of preservedUsageByDate[d]) {
+          const lot = (inboundByMaterial[u.code] || []).find(l => l.lot === u.lot);
+          if (lot) lot.remaining = Math.max(0, lot.remaining - u.qty);
+        }
+      }
+    };
+    let preservedCursor = STOCK_BASELINE_DATE;
+
     // ★★★ v3.5.95: 소비기한 만료 LOT 필터링을 위한 기준일 ★★★
     const today = new Date().toISOString().split('T')[0];  // YYYY-MM-DD
     console.log(`[updateLotMatching] 소비기한 검증 기준일: ${today}`);
@@ -1336,9 +1435,12 @@ export class GoogleSheetsService {
     const dateResults: Record<string, number> = {};
     const allExpiredLotsWarnings: string[] = [];  // ★★★ v3.5.95: 만료 LOT 경고 수집 ★★★
     
-    for (const targetDate of dates) {
-      const cleanDate = targetDate.replace(/^'/, '');
+    for (const cleanDate of orderedTargets) {
       let dateRowCount = 0;
+      if (useCarryForward) {
+        applyPreserved(cleanDate, preservedCursor);
+        preservedCursor = cleanDate;
+      }
       
       // 해당 날짜 생산실적 필터
       const dayProduction = productionData.filter(row => {
@@ -1397,6 +1499,7 @@ export class GoogleSheetsService {
               for (const lot of lots) {
                 if (remainingUsage <= 0) break;
                 if (lot.remaining <= 0) continue;
+                if (lot.inboundDate && lot.inboundDate > cleanDate) continue;  // v3.9.0: 생산일 이후 입고 LOT 제외
                 
                 // 소비기한 만료 체크
                 if (lot.expiry && lot.expiry < cleanDate) {
@@ -1455,6 +1558,7 @@ export class GoogleSheetsService {
           for (const lot of lots) {
             if (remainingUsage <= 0) break;
             if (lot.remaining <= 0) continue;
+            if (lot.inboundDate && lot.inboundDate > cleanDate) continue;  // v3.9.0: 생산일 이후 입고 LOT 제외
             
             // ★★★ 소비기한 만료 체크 (생산일 기준) ★★★
             const productionDateForCheck = cleanDate;  // 생산일
@@ -1534,6 +1638,106 @@ export class GoogleSheetsService {
       dateResults,
       expiredLotsWarning: allExpiredLotsWarnings.length > 0 ? allExpiredLotsWarnings : undefined
     };
+  }
+
+  /**
+   * ★ v3.9.0: 기간 수불 일괄 재계산 (생산일보 로트매칭 + 일별수불부)
+   * from~to 모든 날짜를 날짜순으로 다시 계산한다. from은 기준일(STOCK_BASELINE_DATE) 이후여야 함.
+   *  1) 로트매칭: LOT 잔량을 날짜순으로 이어서 FEFO 매칭
+   *  2) 일별수불부: 전일재고 + 입고 − 사용(로트매칭 합계) = 현재고, 날짜 간 연속
+   * 기준일 시점 재고는 buildBaselineLotPool 규칙(입고주기 기준 추정)으로 시작한다.
+   */
+  async rebuildStockRange(from: string, to: string): Promise<{ dates: number; lotMatchingRows: number; dailyRows: number; items: number; negativeItems: string[] }> {
+    if (from < STOCK_BASELINE_DATE) throw new Error(`시작일은 ${STOCK_BASELINE_DATE} 이후여야 합니다`);
+    if (to < from) throw new Error('종료일이 시작일보다 빠릅니다');
+    const dates: string[] = [];
+    for (let d = from; d <= to; d = new Date(Date.parse(d) + 86400000).toISOString().slice(0, 10)) dates.push(d);
+    if (dates.length > 120) throw new Error('한 번에 최대 120일까지 재계산할 수 있습니다');
+
+    const lm = await this.rebuildLotMatchingForDates(dates);
+
+    const [inboundRows, lotRows, dailyRows] = await Promise.all([
+      this.readSheet('원료입고', 'A2:J5000'),
+      this.readSheet('로트매칭', 'A2:G50000'),
+      this.readSheet('일별수불부', 'A2:H50000')
+    ]);
+
+    const pool = buildBaselineLotPool(inboundRows, STOCK_BASELINE_DATE);
+    const info: Record<string, { name: string; unit: string }> = {};
+    const inboundByDate: Record<string, Record<string, number>> = {};
+    for (const row of inboundRows) {
+      const code = row[1]?.toString().trim() || '';
+      if (!code || code.startsWith('RT')) continue;
+      if (!info[code]) info[code] = { name: row[2]?.toString() || code, unit: row[5]?.toString() || 'kg' };
+      const d = normDate(row[0]);
+      const q = parseFloat(row[4]?.toString() || '0') || 0;
+      if (d >= STOCK_BASELINE_DATE && q > 0) ((inboundByDate[d] ||= {})[code] = ((inboundByDate[d] ||= {})[code] || 0) + q);
+    }
+    const usageByDate: Record<string, Record<string, number>> = {};
+    for (const row of lotRows) {
+      const d = normDate(row[0]);
+      const code = row[2]?.toString().trim() || '';
+      if (!code || code.startsWith('RT') || code.startsWith('SF') || d < STOCK_BASELINE_DATE) continue;
+      if (!info[code]) info[code] = { name: (row[3]?.toString() || code).replace(/^\[[^\]]*\]/, ''), unit: 'kg' };
+      const q = parseFloat(row[4]?.toString() || '0') || 0;
+      (usageByDate[d] ||= {})[code] = ((usageByDate[d] ||= {})[code] || 0) + q;
+    }
+
+    // 기준일 시점 재고 → from 전날까지 이어서 계산
+    const stock: Record<string, number> = {};
+    for (const code of Object.keys(info)) {
+      stock[code] = (pool[code] || []).filter(l => l.inboundDate < STOCK_BASELINE_DATE).reduce((a, l) => a + l.remaining, 0);
+    }
+    for (let d = STOCK_BASELINE_DATE; d < from; d = new Date(Date.parse(d) + 86400000).toISOString().slice(0, 10)) {
+      for (const code of Object.keys(info)) stock[code] += (inboundByDate[d]?.[code] || 0) - (usageByDate[d]?.[code] || 0);
+    }
+
+    const r4 = (n: number) => Math.round(n * 10000) / 10000;
+    const codes = Object.keys(info).sort((a, b) => {
+      const ma = a.match(/^([A-Z]+)(\d+)$/), mb = b.match(/^([A-Z]+)(\d+)$/);
+      if (ma && mb && ma[1] === mb[1]) return parseInt(ma[2]) - parseInt(mb[2]);
+      return a.localeCompare(b);
+    });
+    const out: any[][] = [];
+    const negative = new Set<string>();
+    for (const d of dates) {
+      for (const code of codes) {
+        const prev = stock[code];
+        const inb = inboundByDate[d]?.[code] || 0;
+        const use = usageByDate[d]?.[code] || 0;
+        const cur = prev + inb - use;
+        stock[code] = cur;
+        if (cur < -0.0001) negative.add(code);
+        if (Math.abs(prev) < 0.00005 && inb === 0 && use === 0) continue;  // 재고·거래 없는 품목은 생략
+        out.push([`'${d}`, code, info[code].name, r4(prev), r4(inb), r4(use), r4(cur), info[code].unit]);
+      }
+    }
+
+    // 기존 일별수불부에서 대상 기간 행만 교체 (기간 이전 행과 수식은 건드리지 않음)
+    const inRange = (row: any[]) => { const d = normDate(row[0]); return d >= from && d <= to; };
+    const firstIdx = dailyRows.findIndex(inRange);
+    const tailIsRange = firstIdx >= 0 && dailyRows.slice(firstIdx).every(r => !normDate(r[0]) || inRange(r));
+    let writeRow: number;
+    if (firstIdx < 0) {
+      writeRow = dailyRows.length + 2;
+    } else if (tailIsRange) {
+      await this.clearRange('일별수불부', `A${firstIdx + 2}:H${dailyRows.length + 1}`);
+      writeRow = firstIdx + 2;
+    } else {
+      // 기간 행이 중간에 끼어 있으면 해당 행만 비우고 맨 아래에 새로 기록
+      let start = -1;
+      for (let i = 0; i <= dailyRows.length; i++) {
+        const hit = i < dailyRows.length && inRange(dailyRows[i]);
+        if (hit && start < 0) start = i;
+        if (!hit && start >= 0) { await this.clearRange('일별수불부', `A${start + 2}:H${i + 1}`); start = -1; }
+      }
+      writeRow = dailyRows.length + 2;
+    }
+    if (out.length > 0) {
+      const ok = await this.writeSheet('일별수불부', `A${writeRow}`, out);
+      if (!ok) throw new Error('일별수불부 쓰기 실패');
+    }
+    return { dates: dates.length, lotMatchingRows: lm.totalRows, dailyRows: out.length, items: codes.length, negativeItems: [...negative] };
   }
 
   // ★ v3.5.77: 일별수불부 날짜 추가 (연속성 보장)

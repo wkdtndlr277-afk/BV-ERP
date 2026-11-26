@@ -1,0 +1,42 @@
+# Cloudflare Pages 자동 배포
+# - main 브랜치에 반영되면 → 운영 사이트(bv-erp.pages.dev)에 배포
+# - 다른 브랜치(수정 작업용)에 올리면 → 미리보기 주소에 배포 (운영 사이트는 그대로)
+# DB 마이그레이션은 자동 실행하지 않음 (운영 데이터 보호). 필요할 때 수동 실행 워크플로를 사용.
+
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=bv-erp --branch=${{ github.ref_name }} --commit-dirty=true

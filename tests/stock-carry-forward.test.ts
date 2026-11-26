@@ -156,3 +156,24 @@ describe('기초재고 보정', () => {
     for (const r of r051) expect(r[6]).toBeGreaterThanOrEqual(-1e-9);
   });
 });
+
+describe('만료 LOT', () => {
+  it('기준일 재고가 만료 LOT로 채워져도 생산일보에 재고부족이 남지 않고 만료 LOT를 쓰지 않는다', async () => {
+    const svc: any = new FakeSheets({
+      원료입고: [
+        ['2026-09-20', 'R103', '전란', 'SEP20', 300, 'kg', '', '2026-10-05', 300],   // 10/5 만료
+        ['2026-10-20', 'R103', '전란', 'OCT20', 50, 'kg', '', '2026-11-10', 50],
+      ],
+      BOM마스터: [['P1', '빵', 'R103', '전란', 10, 'kg']],
+      생산실적: [['2026-10-03', 'P1', '빵', 5, '261003'], ['2026-10-10', 'P1', '빵', 10, '261010'], ['2026-10-21', 'P1', '빵', 2, '261021']],
+      로트매칭: [],
+      일별수불부: [],
+    });
+    const res = await svc.rebuildStockRange('2026-10-01', '2026-10-31');
+    expect(res.negativeItems).toEqual([]);
+    const lm = svc.sheets['로트매칭'].filter((r: any[]) => r.length);
+    expect(lm.some((r: any[]) => /^(N\/A|재고부족)/.test(String(r[5])))).toBe(false);
+    // 10/10 생산은 만료된 SEP20 대신 보정 LOT 사용
+    expect(lm.filter((r: any[]) => String(r[0]).includes('10-10')).every((r: any[]) => r[5] !== 'SEP20')).toBe(true);
+  });
+});

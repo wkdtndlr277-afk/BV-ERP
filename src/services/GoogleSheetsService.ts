@@ -186,8 +186,9 @@ export class GoogleSheetsService {
     const response = await this.fetchWithRetry(
       `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}`,
       { headers: { Authorization: `Bearer ${token}` } },
-      `readSheet ${fullRange}`
+      `readSheet ${fullRange}`, 5, true
     );
+    if (!response) return [];
 
     const data = await response.json() as { values?: any[][] };
     return data.values || [];
@@ -199,7 +200,7 @@ export class GoogleSheetsService {
    * 읽기 실패 → "데이터 없음"으로 오인 → 시트 전체 clear 후 일부만 재작성(이력 유실),
    * 전일재고 0으로 시작(수불 연속성 끊김) 문제가 발생했음.
    */
-  private async fetchWithRetry(url: string, init: RequestInit, label: string, maxTries = 5): Promise<Response> {
+  private async fetchWithRetry(url: string, init: RequestInit, label: string, maxTries = 5, allowMissingRange = false): Promise<Response | null> {
     let lastStatus = 0;
     let lastBody = '';
     for (let attempt = 1; attempt <= maxTries; attempt++) {
@@ -207,6 +208,11 @@ export class GoogleSheetsService {
       if (res.ok) return res;
       lastStatus = res.status;
       lastBody = (await res.text()).slice(0, 300);
+      // 없는 시트 탭(예: 원료마스터) 읽기는 기존처럼 '빈 데이터'로 취급
+      if (allowMissingRange && res.status === 400 && lastBody.includes('Unable to parse range')) {
+        console.warn(`[sheets] ${label}: 시트/범위 없음 → 빈 데이터로 처리`);
+        return null;
+      }
       if (res.status !== 429 && res.status < 500) break;
       await new Promise(r => setTimeout(r, Math.min(8000, 500 * 2 ** (attempt - 1))));
     }
@@ -221,8 +227,9 @@ export class GoogleSheetsService {
     const response = await this.fetchWithRetry(
       `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(fullRange)}?valueRenderOption=FORMULA`,
       { headers: { Authorization: `Bearer ${token}` } },
-      `readSheetFormulas ${fullRange}`
+      `readSheetFormulas ${fullRange}`, 5, true
     );
+    if (!response) return [];
 
     const data = await response.json() as { values?: any[][] };
     return data.values || [];
@@ -703,6 +710,37 @@ export class GoogleSheetsService {
     const data = await response.json() as { sheets: { properties: { title: string; sheetId: number } }[] };
     const sheet = data.sheets?.find(s => s.properties.title === sheetName);
     return sheet?.properties.sheetId ?? null;
+  }
+
+  /** ★ v3.9.1: 시트 행 수가 부족하면 늘린다 (values PUT 은 격자 밖에 쓸 수 없음) */
+  async ensureRowCount(sheetName: string, neededRows: number): Promise<void> {
+    const token = await this.getToken();
+    const res = (await this.fetchWithRetry(
+      `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties(title,sheetId,gridProperties.rowCount)`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      `ensureRowCount ${sheetName}`
+    ))!;
+    const data = await res.json() as { sheets: { properties: { title: string; sheetId: number; gridProperties?: { rowCount?: number } } }[] };
+    const sheet = data.sheets?.find(x => x.properties.title === sheetName);
+    if (!sheet) throw new Error(`시트 없음: ${sheetName}`);
+    const rowCount = sheet.properties.gridProperties?.rowCount || 0;
+    if (rowCount >= neededRows) return;
+    const r = await this.batchUpdate([{ appendDimension: { sheetId: sheet.properties.sheetId, dimension: 'ROWS', length: neededRows - rowCount + 500 } }]);
+    if (!r.success) throw new Error(`행 추가 실패 (${sheetName}): ${r.error}`);
+  }
+
+  /** ★ v3.9.1: 대량 행을 나눠서 쓰고, 실패 시 구글 오류 내용을 그대로 알림 */
+  async writeRowsChunked(sheetName: string, startRow: number, rows: any[][], chunk = 3000): Promise<void> {
+    const token = await this.getToken();
+    for (let i = 0; i < rows.length; i += chunk) {
+      const part = rows.slice(i, i + chunk);
+      const range = `${sheetName}!A${startRow + i}`;
+      await this.fetchWithRetry(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+        { method: 'PUT', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ values: part }) },
+        `write ${range} (${part.length}행)`
+      );
+    }
   }
 
   // batchUpdate 실행 (수식 설정, 셀 서식 등)
@@ -1627,9 +1665,11 @@ export class GoogleSheetsService {
     
     // 클리어 후 다시 쓰기
     // ★★★ v3.6.11: 로트매칭 클리어 범위 확장 (10000 → 50000) ★★★
+    // ★ v3.9.1: 행 수 확보 후 나눠 쓰기 + 실패 시 예외 (이전: 쓰기 실패를 무시 → 지운 뒤 비어 있는 채로 남음)
+    await this.ensureRowCount('로트매칭', allRows.length + 20);
     await this.clearRange('로트매칭', 'A2:G50000');
     if (allRows.length > 0) {
-      await this.writeSheet('로트매칭', 'A2', allRows);
+      await this.writeRowsChunked('로트매칭', 2, allRows);
     }
     
     // ★★★ v3.5.95: 만료 LOT 경고 포함 반환 ★★★
@@ -1734,8 +1774,8 @@ export class GoogleSheetsService {
       writeRow = dailyRows.length + 2;
     }
     if (out.length > 0) {
-      const ok = await this.writeSheet('일별수불부', `A${writeRow}`, out);
-      if (!ok) throw new Error('일별수불부 쓰기 실패');
+      await this.ensureRowCount('일별수불부', writeRow + out.length + 10);
+      await this.writeRowsChunked('일별수불부', writeRow, out);
     }
     return { dates: dates.length, lotMatchingRows: lm.totalRows, dailyRows: out.length, items: codes.length, negativeItems: [...negative] };
   }

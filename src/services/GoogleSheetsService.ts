@@ -96,6 +96,11 @@ async function getAccessToken(credentials: ServiceAccountCredentials): Promise<s
 //  - 재고조정용 가짜 LOT(입고일 2020-01-01 등 기준일 1년 이전)는 0
 // 이후 날짜별 로트매칭 사용량을 날짜순으로 차감하며 이어간다.
 // ============================================================================
+const THOUSANDS_RE = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/;
+export function stripThousands(v: any): any {
+  return typeof v === 'string' && THOUSANDS_RE.test(v.trim()) ? v.trim().replace(/,/g, '') : v;
+}
+
 export const STOCK_BASELINE_DATE = '2026-09-01';
 
 export type LotPoolItem = { lot: string; expiry: string; qty: number; remaining: number; inboundDate: string };
@@ -209,7 +214,9 @@ export class GoogleSheetsService {
     if (!response) return [];
 
     const data = await response.json() as { values?: any[][] };
-    return data.values || [];
+    // ★ v3.9.6: 시트 셀 서식 때문에 '3,085.01' 처럼 천 단위 쉼표가 붙어 오면 parseFloat 가 3 으로 읽던 문제
+    //   → 순수 숫자(천 단위 쉼표 형식)인 셀만 쉼표 제거 (날짜·코드·문자열은 그대로)
+    return (data.values || []).map(row => row.map(stripThousands));
   }
 
   /**
@@ -1410,7 +1417,7 @@ export class GoogleSheetsService {
   }> {
     // 1. 기존 로트매칭 데이터 읽기
     // ★★★ v3.6.11: 로트매칭 읽기 범위 확장 (10000 → 50000) ★★★
-    const existingData = await this.readSheet('로트매칭', 'A2:G50000');
+    const existingData = await this.readSheet('로트매칭', 'A2:G');
     
     // 2. 대상 날짜 제외한 기존 데이터 보존
     const dateSet = new Set(dates.map(d => d.replace(/^'/, '')));
@@ -1472,7 +1479,7 @@ export class GoogleSheetsService {
     
     // 4. 생산실적 데이터 읽기
     // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
-    const productionData = await this.readSheet('생산실적', 'A2:H50000');
+    const productionData = await this.readSheet('생산실적', 'A2:H');
     
     // 5. BOM 데이터 읽기
     // ★★★ v3.5.88: 'BOM마스터' 시트명 수정 (이전 'BOM'은 잘못된 이름) ★★★
@@ -1721,7 +1728,7 @@ export class GoogleSheetsService {
     // ★★★ v3.6.11: 로트매칭 클리어 범위 확장 (10000 → 50000) ★★★
     // ★ v3.9.1: 행 수 확보 후 나눠 쓰기 + 실패 시 예외 (이전: 쓰기 실패를 무시 → 지운 뒤 비어 있는 채로 남음)
     await this.ensureRowCount('로트매칭', allRows.length + 20);
-    await this.clearRange('로트매칭', 'A2:G50000');
+    await this.clearRange('로트매칭', 'A2:G');
     if (allRows.length > 0) {
       await this.writeRowsChunked('로트매칭', 2, allRows);
     }
@@ -1821,8 +1828,8 @@ export class GoogleSheetsService {
 
     const [inboundRows, lotRows, dailyRows] = await Promise.all([
       inboundAug ? Promise.resolve(inboundAug) : this.readSheet('원료입고', 'A2:J5000'),
-      this.readSheet('로트매칭', 'A2:G50000'),
-      this.readSheet('일별수불부', 'A2:H50000')
+      this.readSheet('로트매칭', 'A2:G'),
+      this.readSheet('일별수불부', 'A2:H')
     ]);
 
     const pool = buildBaselineLotPool(inboundRows, baseline, openingOverride);
@@ -1914,7 +1921,7 @@ export class GoogleSheetsService {
     
     // 1. 기존 일별수불부 데이터 읽기
     // ★★★ v3.6.21: 읽기 범위 확장 (5000 → 50000) ★★★
-    const existingData = await this.readSheet('일별수불부', 'A2:H50000');
+    const existingData = await this.readSheet('일별수불부', 'A2:H');
     
     // ★★★ v3.6.20: 해당 날짜 데이터가 있으면 삭제 후 재생성 ★★★
     const existingDateRows = existingData.filter(row => {
@@ -2040,7 +2047,7 @@ export class GoogleSheetsService {
     }
     
     // ★★★ v3.6.18: 로트매칭에서 사용량 직접 계산 (수식 대신 값) ★★★
-    const lotMatchingData = await this.readSheet('로트매칭', 'A2:G50000');
+    const lotMatchingData = await this.readSheet('로트매칭', 'A2:G');
     const usageMap: Record<string, number> = {};
     for (const row of lotMatchingData) {
       const lotDate = row[0]?.toString().replace(/^'/, '') || '';
@@ -2231,7 +2238,7 @@ export class GoogleSheetsService {
     }
     
     // 1. 기존 부자재수불부 데이터 읽기
-    const existingData = await this.readSheet('부자재수불부', 'A2:H50000').catch(() => []);
+    const existingData = await this.readSheet('부자재수불부', 'A2:H').catch(() => []);
     
     // 2. 해당 날짜 데이터가 있으면 해당 행만 개별 clear (다른 날짜 수식 보존)
     const existingDateRows = existingData.filter(row => {
@@ -2345,7 +2352,7 @@ export class GoogleSheetsService {
     }
     
     // 생산실적에서 해당 날짜의 제품별 생산개수 집계
-    const productionData = await this.readSheet('생산실적', 'A2:H50000');
+    const productionData = await this.readSheet('생산실적', 'A2:H');
     const productionByProduct: Record<string, number> = {};
     for (const row of productionData || []) {
       const prodDate = row[0]?.toString().replace(/^'/, '') || '';

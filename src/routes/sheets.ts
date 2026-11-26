@@ -1927,6 +1927,7 @@ sheets.get('/v2/output/material-usage', async (c) => {
     
     // ★★★ v3.5.96: 여러 LOT 사용 시 모두 저장 (배열) ★★★
     const lotMap = new Map<string, Array<{ lot_number: string; expiry_date: string; usage_qty: number }>>();
+    const lotNameMap = new Map<string, string>();
     
     lotMatchingData.forEach(row => {
       // 날짜 필터링
@@ -1944,9 +1945,12 @@ sheets.get('/v2/output/material-usage', async (c) => {
       
       // ★★★ 이원료는 LOT 정보 저장 안함 ★★★
       if (IWON_MATERIALS[itemCode]) return;
+      if (!lotNameMap.has(itemCode)) lotNameMap.set(itemCode, String(row[3] || '').replace(/^\[[^\]]*\]/, ''));
       
-      const lotNumber = row[5] || '-';
-      let expiryDate = row[6] || '-';
+      // ★ v3.9.5: 정제수는 재고 미관리 → 과거 기록(재고부족/N/A)도 출력 시 통일
+      const isWater = String(row[3] || '').includes('정제수');
+      const lotNumber = isWater ? '재고미관리(정제수)' : (row[5] || '-');
+      let expiryDate = isWater ? '-' : (row[6] || '-');
       const lotUsageQty = parseFloat(row[4]) || 0;  // E열: 사용량
       
       // 유통기한 형식 변환 (엑셀 숫자 → YYYY-MM-DD)
@@ -1968,6 +1972,14 @@ sheets.get('/v2/output/material-usage', async (c) => {
       }
     });
     
+    // ★ v3.9.5: 일별수불부에 없는 원료(정제수 등 재고 미관리 품목)도 로트매칭 사용량으로 표시
+    for (const [code, lots] of lotMap) {
+      if (usageMap.has(code) || code.startsWith('SF')) continue;
+      const qty = lots.reduce((a, l) => a + l.usage_qty, 0);
+      if (qty <= 0) continue;
+      usageMap.set(code, { item_code: code, item_name: itemNameMap.get(code) || lotNameMap.get(code) || code, usage_qty: Math.round(qty * 1000) / 1000, unit: 'kg' });
+    }
+
     // ★★★ v3.5.99: 두 데이터 조합 - 여러 LOT 지원 (프론트에서 개별 행으로 표시) ★★★
     const records = Array.from(usageMap.values()).map(item => {
       // ★★★ 이원료(SF001~SF010): LOT/소비기한 표시 안함 ★★★
@@ -2848,12 +2860,13 @@ sheets.get('/v2/output/production-report', async (c) => {
           if (!lotMatchingMap.has(key)) {
             lotMatchingMap.set(key, []);
           }
+          const isWater = String(row[3] || '').includes('정제수');  // v3.9.5: 정제수 표시 통일
           lotMatchingMap.get(key)!.push({
             item_code: row[2],
             item_name: row[3],
             usage_qty: parseFloat(row[4]) || 0,
-            material_lot: row[5] || '',
-            expiry_date: row[6] || ''
+            material_lot: isWater ? '재고미관리(정제수)' : (row[5] || ''),
+            expiry_date: isWater ? '' : (row[6] || '')
           });
         }
       }

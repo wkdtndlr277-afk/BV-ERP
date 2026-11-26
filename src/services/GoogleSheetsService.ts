@@ -146,9 +146,15 @@ export function buildBaselineLotPool(inboundRows: any[][], baseline: string, ope
     // ★ v3.9.3: 기준일 재고를 지정하면(다음 입고 전까지 실제 사용량 등) 가장 최근 입고 LOT부터 채운다
     const want = openingOverride?.[code];
     if (want !== undefined) {
-      const pre = lots.filter(l => l.inboundDate && l.inboundDate < baseline && dayDiff(baseline, l.inboundDate) <= 365)
-        .sort((a, b) => b.inboundDate.localeCompare(a.inboundDate));
+      // 기초재고보정 LOT는 항상 전량 먼저 반영, 나머지를 실제 LOT(최근 입고순)에 채운다
       let left = want;
+      for (const l of lots) {
+        if (!l.lot.startsWith('기초재고보정-')) continue;
+        l.remaining = l.qty;
+        left -= l.qty;
+      }
+      const pre = lots.filter(l => !l.lot.startsWith('기초재고보정-') && l.inboundDate && l.inboundDate < baseline && dayDiff(baseline, l.inboundDate) <= 365)
+        .sort((a, b) => b.inboundDate.localeCompare(a.inboundDate));
       for (const l of pre) {
         const take = Math.min(l.qty, Math.max(0, left));
         l.remaining = Math.round(take * 10000) / 10000;
@@ -1771,6 +1777,28 @@ export class GoogleSheetsService {
         }
       }
       inboundAug = extraRows.length ? [...inboundForPlan, ...extraRows] : inboundForPlan;
+
+      // 2차 계산(쓰기 없음): 소비기한 만료 등으로 여전히 LOT를 못 찾는 사용량은 기초재고보정 LOT에 더한다
+      //   (만료된 LOT를 생산일보에 찍지 않으면서 '재고부족' 줄이 남지 않게)
+      const dry2 = await this.rebuildLotMatchingForDates(dates, inboundAug, { dryRun: true, openingOverride });
+      const short: Record<string, number> = {};
+      for (const r of dry2.newRows || []) {
+        const code = r[2]?.toString() || '';
+        if (!code || code.startsWith('SF')) continue;
+        if (/^(N\/A|재고부족)/.test(String(r[5]))) short[code] = (short[code] || 0) + (parseFloat(r[4]?.toString() || '0') || 0);
+      }
+      if (Object.keys(short).length) {
+        const aug = [...inboundAug];
+        for (const [code, q] of Object.entries(short)) {
+          const add = Math.round(q * 10000) / 10000;
+          const idx = aug.findIndex(r => r[3] === `기초재고보정-${code}`);
+          if (idx >= 0) { const r = [...aug[idx]]; r[4] = (parseFloat(r[4]) || 0) + add; r[8] = r[4]; aug[idx] = r; }
+          else { aug.push(['2025-12-01', code, nameOf[code] || code, `기초재고보정-${code}`, add, unitOf[code] || 'kg', '수불보정', '', add]); syntheticLots.push(code); }
+          const pre = (basePool[code] || []).filter(l => l.inboundDate < STOCK_BASELINE_DATE).reduce((a, l) => a + l.remaining, 0);
+          openingOverride[code] = (openingOverride[code] ?? pre) + add;
+        }
+        inboundAug = aug;
+      }
     }
 
     const lm = await this.rebuildLotMatchingForDates(dates, inboundAug, { openingOverride });

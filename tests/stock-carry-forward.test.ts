@@ -111,3 +111,26 @@ describe('정제수', () => {
     expect(svc.sheets['일별수불부'].filter((r: any[]) => r.length && r[1] === 'RM184')).toHaveLength(0);
   });
 });
+
+describe('대량 매입 품목 기준일 재고', () => {
+  it('5월 대량 입고 후 추가 입고가 없으면 기준일 재고를 사용량만큼 잡아 마이너스가 나지 않는다', async () => {
+    const svc: any = new FakeSheets({
+      원료입고: [
+        ['2026-05-27', 'RM211', '통밀', 'MAY', 5000, 'kg', '', '2027-05-27', 0],
+        ['2026-05-01', 'RM211', '통밀', 'MAY01', 3000, 'kg', '', '2027-05-01', 0],
+      ],
+      BOM마스터: [['P1', '빵', 'RM211', '통밀', 10, 'kg']],
+      생산실적: [['2026-10-02', 'P1', '빵', 20, '261002'], ['2026-10-20', 'P1', '빵', 30, '261020']],
+      로트매칭: [],
+      일별수불부: [],
+    });
+    const res = await svc.rebuildStockRange('2026-10-01', '2026-10-31');
+    expect(res.negativeItems).not.toContain('RM211');
+    expect(res.openingRaisedItems).toBe(1);
+    const lm = svc.sheets['로트매칭'].filter((r: any[]) => r.length);
+    expect(lm.every((r: any[]) => r[5] === 'MAY')).toBe(true);   // 가장 최근 대량 LOT에서 사용
+    const daily = svc.sheets['일별수불부'].filter((r: any[]) => r.length && r[1] === 'RM211');
+    expect(daily[0][3]).toBeCloseTo(500, 3);                       // 10/1 전일재고 = 기간 사용량(500kg)
+    expect(daily[daily.length - 1][6]).toBeCloseTo(0, 3);
+  });
+});

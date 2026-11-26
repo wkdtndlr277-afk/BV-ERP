@@ -116,7 +116,7 @@ export function sortLotsFEFO(lots: LotPoolItem[]) {
 }
 
 /** 원료입고 시트 행(A:입고일자, B:원료코드, D:로트, E:입고량, H:소비기한, I:잔량) → 기준일 시점 LOT 풀 */
-export function buildBaselineLotPool(inboundRows: any[][], baseline: string): Record<string, LotPoolItem[]> {
+export function buildBaselineLotPool(inboundRows: any[][], baseline: string, openingOverride?: Record<string, number>): Record<string, LotPoolItem[]> {
   const byCode: Record<string, LotPoolItem[]> = {};
   for (const row of inboundRows) {
     const code = row[1]?.toString().trim() || '';
@@ -142,6 +142,18 @@ export function buildBaselineLotPool(inboundRows: any[][], baseline: string): Re
       if (!l.inboundDate || l.inboundDate >= baseline) continue;
       const age = dayDiff(baseline, l.inboundDate);
       l.remaining = age > 365 ? 0 : Math.round(l.qty * Math.max(0, 1 - age / cycle) * 10000) / 10000;
+    }
+    // ★ v3.9.3: 기준일 재고를 지정하면(다음 입고 전까지 실제 사용량 등) 가장 최근 입고 LOT부터 채운다
+    const want = openingOverride?.[code];
+    if (want !== undefined) {
+      const pre = lots.filter(l => l.inboundDate && l.inboundDate < baseline && dayDiff(baseline, l.inboundDate) <= 365)
+        .sort((a, b) => b.inboundDate.localeCompare(a.inboundDate));
+      let left = want;
+      for (const l of pre) {
+        const take = Math.min(l.qty, Math.max(0, left));
+        l.remaining = Math.round(take * 10000) / 10000;
+        left -= take;
+      }
     }
     sortLotsFEFO(lots);
   }
@@ -1384,7 +1396,8 @@ export class GoogleSheetsService {
 
   // ★ v3.5.77: LOT 매칭 재구축 (특정 날짜들)
   // ★★★ v3.5.95: 만료 LOT 정보 포함 반환 ★★★
-  async rebuildLotMatchingForDates(dates: string[], inboundOverride?: any[][]): Promise<{ 
+  async rebuildLotMatchingForDates(dates: string[], inboundOverride?: any[][], opts: { dryRun?: boolean; openingOverride?: Record<string, number> } = {}): Promise<{ 
+    newRows?: any[][];
     totalRows: number; 
     dateResults: Record<string, number>;
     expiredLotsWarning?: string[];  // 만료로 건너뛴 LOT 경고 목록
@@ -1408,7 +1421,7 @@ export class GoogleSheetsService {
     //   (이전: 원료입고 시트 I열 잔량을 매번 그대로 써서 날마다 같은 오래된 LOT가 반복 매칭됨)
     const useCarryForward = orderedTargets.length > 0 && orderedTargets[0] >= STOCK_BASELINE_DATE;
     const inboundByMaterial = useCarryForward
-      ? buildBaselineLotPool(inboundData, STOCK_BASELINE_DATE)
+      ? buildBaselineLotPool(inboundData, STOCK_BASELINE_DATE, opts.openingOverride)
       : buildLegacyLotPool(inboundData);
     // 기준일 이후의 보존 행(다시 계산하지 않는 날짜)은 해당 날짜에 도달하면 LOT 잔량에서 차감
     const preservedUsageByDate: Record<string, Array<{ code: string; lot: string; qty: number }>> = {};
@@ -1669,6 +1682,10 @@ export class GoogleSheetsService {
       dateResults[cleanDate] = dateRowCount;
     }
     
+    if (opts.dryRun) {
+      return { newRows, totalRows: newRows.length, dateResults };
+    }
+
     // 7. 기존 데이터 + 새 데이터 합쳐서 저장
     const allRows = [...preservedRows, ...newRows];
     
@@ -1703,14 +1720,40 @@ export class GoogleSheetsService {
    *  2) 일별수불부: 전일재고 + 입고 − 사용(로트매칭 합계) = 현재고, 날짜 간 연속
    * 기준일 시점 재고는 buildBaselineLotPool 규칙(입고주기 기준 추정)으로 시작한다.
    */
-  async rebuildStockRange(from: string, to: string, inboundOverride?: any[][]): Promise<{ dates: number; lotMatchingRows: number; dailyRows: number; items: number; negativeItems: string[] }> {
+  async rebuildStockRange(from: string, to: string, inboundOverride?: any[][]): Promise<{ dates: number; lotMatchingRows: number; dailyRows: number; items: number; negativeItems: string[]; openingRaisedItems: number }> {
     if (from < STOCK_BASELINE_DATE) throw new Error(`시작일은 ${STOCK_BASELINE_DATE} 이후여야 합니다`);
     if (to < from) throw new Error('종료일이 시작일보다 빠릅니다');
     const dates: string[] = [];
     for (let d = from; d <= to; d = new Date(Date.parse(d) + 86400000).toISOString().slice(0, 10)) dates.push(d);
     if (dates.length > 120) throw new Error('한 번에 최대 120일까지 재계산할 수 있습니다');
 
-    const lm = await this.rebuildLotMatchingForDates(dates, inboundOverride);
+    // ★ v3.9.3: 기준일 재고 = max(입고주기 추정, 기준일~첫 신규입고 전날까지 실제 사용량)
+    //   대량 매입 품목(예: 5월에 몇 달 치 입고)이 주기 규칙으로 0이 되어 마이너스 나던 문제 해결.
+    //   기준일 이전 입고 총량을 넘지는 않음(가장 최근 LOT부터 채움).
+    const openingOverride: Record<string, number> = {};
+    if (from === STOCK_BASELINE_DATE) {
+      const inboundForPlan = inboundOverride ?? await this.readSheet('원료입고', 'A2:J5000');
+      const dry = await this.rebuildLotMatchingForDates(dates, inboundForPlan, { dryRun: true });
+      const basePool = buildBaselineLotPool(inboundForPlan, STOCK_BASELINE_DATE);
+      const firstInbound: Record<string, string> = {};
+      for (const row of inboundForPlan) {
+        const code = row[1]?.toString().trim() || ''; const d = normDate(row[0]);
+        if (code && d >= STOCK_BASELINE_DATE && (!firstInbound[code] || d < firstInbound[code])) firstInbound[code] = d;
+      }
+      const need: Record<string, number> = {};
+      for (const r of dry.newRows || []) {
+        const code = r[2]?.toString() || ''; const d = normDate(r[0]);
+        if (!code || code.startsWith('SF') || String(r[5]).startsWith('재고미관리')) continue;
+        if (firstInbound[code] && d >= firstInbound[code]) continue;
+        need[code] = (need[code] || 0) + (parseFloat(r[4]?.toString() || '0') || 0);
+      }
+      for (const [code, q] of Object.entries(need)) {
+        const est = (basePool[code] || []).filter(l => l.inboundDate < STOCK_BASELINE_DATE).reduce((a, l) => a + l.remaining, 0);
+        if (q > est + 0.0001) openingOverride[code] = q;
+      }
+    }
+
+    const lm = await this.rebuildLotMatchingForDates(dates, inboundOverride, { openingOverride });
 
     const [inboundRows, lotRows, dailyRows] = await Promise.all([
       inboundOverride ? Promise.resolve(inboundOverride) : this.readSheet('원료입고', 'A2:J5000'),
@@ -1718,7 +1761,7 @@ export class GoogleSheetsService {
       this.readSheet('일별수불부', 'A2:H50000')
     ]);
 
-    const pool = buildBaselineLotPool(inboundRows, STOCK_BASELINE_DATE);
+    const pool = buildBaselineLotPool(inboundRows, STOCK_BASELINE_DATE, openingOverride);
     const info: Record<string, { name: string; unit: string }> = {};
     const inboundByDate: Record<string, Record<string, number>> = {};
     for (const row of inboundRows) {
@@ -1795,7 +1838,7 @@ export class GoogleSheetsService {
       await this.ensureRowCount('일별수불부', writeRow + out.length + 10);
       await this.writeRowsChunked('일별수불부', writeRow, out);
     }
-    return { dates: dates.length, lotMatchingRows: lm.totalRows, dailyRows: out.length, items: codes.length, negativeItems: [...negative] };
+    return { dates: dates.length, lotMatchingRows: lm.totalRows, dailyRows: out.length, items: codes.length, negativeItems: [...negative], openingRaisedItems: Object.keys(openingOverride).length };
   }
 
   // ★ v3.5.77: 일별수불부 날짜 추가 (연속성 보장)

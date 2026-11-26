@@ -1409,7 +1409,7 @@ export class GoogleSheetsService {
 
   // ★ v3.5.77: LOT 매칭 재구축 (특정 날짜들)
   // ★★★ v3.5.95: 만료 LOT 정보 포함 반환 ★★★
-  async rebuildLotMatchingForDates(dates: string[], inboundOverride?: any[][], opts: { dryRun?: boolean; openingOverride?: Record<string, number>; baseline?: string } = {}): Promise<{ 
+  async rebuildLotMatchingForDates(dates: string[], inboundOverride?: any[][], opts: { dryRun?: boolean; openingOverride?: Record<string, number>; baseline?: string; openLots?: Array<{ item_code: string; lot_number: string; open_date: string; finished_date: string | null }> } = {}): Promise<{ 
     newRows?: any[][];
     totalRows: number; 
     dateResults: Record<string, number>;
@@ -1467,6 +1467,15 @@ export class GoogleSheetsService {
       const c = row[1]?.toString().trim() || ''; const n = normName(row[2]);
       if (c && n && (inboundByMaterial[c] || []).length) (codesByName[n] ||= new Set()).add(c);
     }
+    // ★ v3.10.0: 현장 '개봉 LOT 기록' — 생산일에 열려 있던 LOT를 먼저 사용, 나머지는 FEFO
+    const openByCode: Record<string, Array<{ lot: string; from: string; to: string | null }>> = {};
+    for (const o of opts.openLots || []) (openByCode[o.item_code] ||= []).push({ lot: o.lot_number, from: o.open_date, to: o.finished_date });
+    const orderOpenFirst = (lots: LotPoolItem[], code: string, day: string): LotPoolItem[] => {
+      const open = (openByCode[code] || []).filter(o => o.from <= day && (!o.to || o.to >= day));
+      if (!open.length) return lots;
+      const rank = new Map(open.map((o, i) => [o.lot, i]));
+      return [...lots].sort((a, b) => (rank.has(a.lot) ? rank.get(a.lot)! : 1e9) - (rank.has(b.lot) ? rank.get(b.lot)! : 1e9));
+    };
     const effCode = (code: string, name: string): string => {
       if ((inboundByMaterial[code] || []).length) return code;
       const cands = codesByName[normName(name)];
@@ -1579,7 +1588,7 @@ export class GoogleSheetsService {
               // 실제 원료에 대해 FEFO 매칭 (기존 로직 재사용)
               let remainingUsage = realUsage;
               const sfCode = effCode(sfItem.materialCode, sfItem.materialName);
-              const lots = inboundByMaterial[sfCode] || [];
+              const lots = orderOpenFirst(inboundByMaterial[sfCode] || [], sfCode, cleanDate);
               const skippedExpiredLots: string[] = [];
               
               for (const lot of lots) {
@@ -1647,7 +1656,7 @@ export class GoogleSheetsService {
           // 소비기한 빠른 LOT부터 차감하되, 만료된 LOT는 건너뜀
           let remainingUsage = totalUsage;
           const mCode = effCode(item.materialCode, item.materialName);
-          const lots = inboundByMaterial[mCode] || [];
+          const lots = orderOpenFirst(inboundByMaterial[mCode] || [], mCode, cleanDate);
           const skippedExpiredLots: string[] = [];  // 만료로 건너뛴 LOT 목록
           
           for (const lot of lots) {
@@ -1748,7 +1757,7 @@ export class GoogleSheetsService {
    *  2) 일별수불부: 전일재고 + 입고 − 사용(로트매칭 합계) = 현재고, 날짜 간 연속
    * 기준일 시점 재고는 buildBaselineLotPool 규칙(입고주기 기준 추정)으로 시작한다.
    */
-  async rebuildStockRange(from: string, to: string, inboundOverride?: any[][]): Promise<{ dates: number; lotMatchingRows: number; dailyRows: number; items: number; negativeItems: string[]; openingRaisedItems: number; syntheticOpeningItems: string[] }> {
+  async rebuildStockRange(from: string, to: string, inboundOverride?: any[][], openLots?: Array<{ item_code: string; lot_number: string; open_date: string; finished_date: string | null }>): Promise<{ dates: number; lotMatchingRows: number; dailyRows: number; items: number; negativeItems: string[]; openingRaisedItems: number; syntheticOpeningItems: string[] }> {
     if (from < STOCK_BASELINE_DATE) throw new Error(`시작일은 ${STOCK_BASELINE_DATE} 이후여야 합니다`);
     const baseline = from;  // v3.9.5: 재계산 시작일을 기준일로 사용
     if (to < from) throw new Error('종료일이 시작일보다 빠릅니다');
@@ -1764,7 +1773,7 @@ export class GoogleSheetsService {
     let inboundAug: any[][] | undefined = inboundOverride;
     if (true) {
       const inboundForPlan = inboundOverride ?? await this.readSheet('원료입고', 'A2:J5000');
-      const dry = await this.rebuildLotMatchingForDates(dates, inboundForPlan, { dryRun: true, baseline });
+      const dry = await this.rebuildLotMatchingForDates(dates, inboundForPlan, { dryRun: true, baseline, openLots });
       const basePool = buildBaselineLotPool(inboundForPlan, baseline);
       // 품목별 일자별 (입고 − 사용) → 기간 중 최저 누적치가 0 아래로 내려가지 않도록 기준일 재고를 정한다
       const delta: Record<string, Record<string, number>> = {};
@@ -1803,7 +1812,7 @@ export class GoogleSheetsService {
 
       // 2차 계산(쓰기 없음): 소비기한 만료 등으로 여전히 LOT를 못 찾는 사용량은 기초재고보정 LOT에 더한다
       //   (만료된 LOT를 생산일보에 찍지 않으면서 '재고부족' 줄이 남지 않게)
-      const dry2 = await this.rebuildLotMatchingForDates(dates, inboundAug, { dryRun: true, openingOverride, baseline });
+      const dry2 = await this.rebuildLotMatchingForDates(dates, inboundAug, { dryRun: true, openingOverride, baseline, openLots });
       const short: Record<string, number> = {};
       for (const r of dry2.newRows || []) {
         const code = r[2]?.toString() || '';
@@ -1824,7 +1833,7 @@ export class GoogleSheetsService {
       }
     }
 
-    const lm = await this.rebuildLotMatchingForDates(dates, inboundAug, { openingOverride, baseline });
+    const lm = await this.rebuildLotMatchingForDates(dates, inboundAug, { openingOverride, baseline, openLots });
 
     const [inboundRows, lotRows, dailyRows] = await Promise.all([
       inboundAug ? Promise.resolve(inboundAug) : this.readSheet('원료입고', 'A2:J5000'),

@@ -197,3 +197,23 @@ describe('동일 이름 코드 매핑', () => {
     expect(r143[r143.length - 1][6]).toBeCloseTo(94, 3);
   });
 });
+
+describe('개봉 LOT 우선 배정', () => {
+  it('생산일에 열려 있던 LOT를 소비기한 순서보다 먼저 쓴다', async () => {
+    const svc: any = new FakeSheets({
+      원료입고: [
+        ['2026-10-01', 'R1', '밀가루', 'EARLY', 100, 'kg', '', '2027-01-01', 100],
+        ['2026-10-02', 'R1', '밀가루', 'OPENED', 100, 'kg', '', '2027-06-01', 100],
+      ],
+      BOM마스터: [['P1', '빵', 'R1', '밀가루', 1, 'kg']],
+      생산실적: [['2026-10-05', 'P1', '빵', 10, '261005'], ['2026-10-09', 'P1', '빵', 10, '261009']],
+      로트매칭: [],
+      일별수불부: [],
+    });
+    await svc.rebuildStockRange('2026-10-01', '2026-10-10', undefined,
+      [{ item_code: 'R1', lot_number: 'OPENED', open_date: '2026-10-04', finished_date: '2026-10-06' }]);
+    const lm = svc.sheets['로트매칭'].filter((r: any[]) => r.length);
+    expect(lm.find((r: any[]) => String(r[0]).includes('10-05'))[5]).toBe('OPENED');   // 개봉 기간 안
+    expect(lm.find((r: any[]) => String(r[0]).includes('10-09'))[5]).toBe('EARLY');    // 사용완료 후 → FEFO
+  });
+});

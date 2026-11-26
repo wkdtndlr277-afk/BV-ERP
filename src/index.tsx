@@ -816,6 +816,18 @@ app.get('/*', (c) => {
                     <span class="ml-auto text-xs bg-amber-500 text-white px-2 py-0.5 rounded">현장</span>
                 </a>
                 
+                <a href="#production-check" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="production-check">
+                    <i class="fas fa-tasks w-5 text-indigo-600"></i>
+                    <span>생산 점검</span>
+                    <span class="ml-auto text-xs bg-amber-500 text-white px-2 py-0.5 rounded">현장</span>
+                </a>
+                
+                <a href="#stock-count" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="stock-count">
+                    <i class="fas fa-balance-scale w-5 text-teal-600"></i>
+                    <span>재고 실사</span>
+                    <span class="ml-auto text-xs bg-amber-500 text-white px-2 py-0.5 rounded">현장</span>
+                </a>
+                
                 <a href="#daily-close" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="daily-close">
                     <i class="fas fa-clipboard-check w-5 text-emerald-600"></i>
                     <span>일마감 점검</span>

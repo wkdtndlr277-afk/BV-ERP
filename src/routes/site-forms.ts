@@ -182,6 +182,16 @@ siteForms.get('/daily-close', async (c) => {
       issues.push(prodRows.length
         ? { level: 'ok', check: '생산 확정', message: `생산 ${prodRows.length}건 등록됨` }
         : { level: 'error', check: '생산 확정', message: '생산이 등록되지 않았습니다 (생산이 없는 날이면 무시)' });
+      if (prodRows.length) {
+        await ensureCheckTables(c.env.DB);
+        const head = await c.env.DB.prepare('SELECT checked_by FROM production_check_head WHERE check_date = ?').bind(date).first<any>();
+        const diff = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM production_check WHERE check_date = ? AND actual_qty IS NOT NULL AND actual_qty <> registered_qty').bind(date).first<any>();
+        issues.push(!head
+          ? { level: 'warning', check: '생산 점검', message: '생산 점검(생산실적 확인서)이 아직 저장되지 않았습니다' }
+          : diff?.n
+            ? { level: 'warning', check: '생산 점검', message: `확인자 ${head.checked_by || '-'} · 등록 수량과 실제 수량이 다른 품목 ${diff.n}건 — '생산일보에 반영' 확인` }
+            : { level: 'ok', check: '생산 점검', message: `확인 완료 (${head.checked_by || '-'})` });
+      }
       const short = lots.filter(r => clean(r[0]) === date && /^(N\/A|재고부족)/.test(String(r[5] || '')));
       issues.push(short.length
         ? { level: 'warning', check: '원료 LOT 배정', message: `LOT를 찾지 못한 원료 사용 ${short.length}줄 — 입고 누락·개봉 LOT 확인`, items: short.slice(0, 50).map(r => ({ item_code: r[2], item_name: r[3], qty: r[4], product_lot: r[1] })) }
@@ -291,3 +301,138 @@ siteForms.get('/lot-trace', async (c) => {
     return c.json({ success: false, error: e.message }, 500);
   }
 });
+
+
+// ── 생산 점검 (생산실적 확인서) · 재고 실사 (v3.10.3) ─────────────────────
+let checkReady = false;
+export async function ensureCheckTables(db: Bindings['DB']) {
+  if (checkReady) return;
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS production_check_head (
+      check_date TEXT PRIMARY KEY, checked_by TEXT, start_time TEXT, end_time TEXT, remark TEXT, applied_at TEXT, checked_at TEXT)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS production_check (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, check_date TEXT NOT NULL, product_code TEXT NOT NULL, product_name TEXT,
+      channel TEXT NOT NULL DEFAULT '', registered_qty REAL, actual_qty REAL, defect_qty REAL DEFAULT 0, note TEXT,
+      UNIQUE(check_date, product_code, channel))`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS stock_count (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, count_date TEXT NOT NULL, item_code TEXT NOT NULL, item_name TEXT, unit TEXT,
+      book_qty REAL, actual_qty REAL, diff REAL, note TEXT, counted_by TEXT, counted_at TEXT, UNIQUE(count_date, item_code))`),
+  ]);
+  checkReady = true;
+}
+const sheetSvc = (c: any) => {
+  if (!c.env.GOOGLE_CLIENT_EMAIL || !c.env.GOOGLE_PRIVATE_KEY) throw new Error('구글 시트 인증 정보 없음');
+  return new GoogleSheetsService(c.env.GOOGLE_CLIENT_EMAIL, c.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'));
+};
+
+// 생산 점검표: 그날 생산실적(시트) + 저장된 점검 값
+siteForms.get('/production-check', async (c) => {
+  const date = isDate(c.req.query('date')) ? c.req.query('date')! : kstToday();
+  try {
+    await ensureCheckTables(c.env.DB);
+    const prod = await sheetSvc(c).readSheet('생산실적', 'A2:H');
+    const rows = prod.filter((r) => cleanDate(r[0]) === date);
+    const saved = await c.env.DB.prepare('SELECT * FROM production_check WHERE check_date = ?').bind(date).all<any>();
+    const head = await c.env.DB.prepare('SELECT * FROM production_check_head WHERE check_date = ?').bind(date).first<any>();
+    const byKey: Record<string, any> = {};
+    for (const s of saved.results || []) byKey[`${s.product_code}|${s.channel}`] = s;
+    const seq: Record<string, number> = {};
+    const items = rows.map((r) => {
+      const code = String(r[1] || '').trim(); const channel = String(r[5] || ''); const s = byKey[`${code}|${channel}`];
+      seq[code] = (seq[code] || 0) + 1;
+      return { product_code: code, product_name: String(r[2] || code), channel, registered_qty: num(r[3]),
+        product_lot: `${date.replace(/-/g, '')}-${code}-${String(seq[code]).padStart(3, '0')}`,
+        actual_qty: s?.actual_qty ?? null, defect_qty: s?.defect_qty ?? 0, note: s?.note || '' };
+    });
+    return c.json({ success: true, date, head: head || null, items });
+  } catch (e: any) { return c.json({ success: false, error: e.message }, 500); }
+});
+
+siteForms.post('/production-check', async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  const date = b.date;
+  if (!isDate(date)) return c.json({ success: false, error: '날짜가 필요합니다' }, 400);
+  if (!String(b.checked_by || '').trim()) return c.json({ success: false, error: '확인자 이름을 입력해 주세요' }, 400);
+  await ensureCheckTables(c.env.DB);
+  const db = c.env.DB;
+  const stmts = [db.prepare(`INSERT INTO production_check_head (check_date, checked_by, start_time, end_time, remark, checked_at) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(check_date) DO UPDATE SET checked_by=excluded.checked_by, start_time=excluded.start_time, end_time=excluded.end_time, remark=excluded.remark, checked_at=excluded.checked_at`)
+    .bind(date, String(b.checked_by).trim(), b.start_time || null, b.end_time || null, b.remark || null, kstNow())];
+  for (const it of Array.isArray(b.items) ? b.items : []) {
+    const actual = it.actual_qty === '' || it.actual_qty === null || it.actual_qty === undefined ? null : Number(it.actual_qty);
+    stmts.push(db.prepare(`INSERT INTO production_check (check_date, product_code, product_name, channel, registered_qty, actual_qty, defect_qty, note) VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(check_date, product_code, channel) DO UPDATE SET product_name=excluded.product_name, registered_qty=excluded.registered_qty, actual_qty=excluded.actual_qty, defect_qty=excluded.defect_qty, note=excluded.note`)
+      .bind(date, String(it.product_code), it.product_name || null, String(it.channel || ''), Number(it.registered_qty) || 0, actual, Number(it.defect_qty) || 0, it.note || null));
+  }
+  await db.batch(stmts);
+  return c.json({ success: true });
+});
+
+// 실제 수량이 등록 수량과 다른 품목을 생산실적 시트에 반영하고 그날 원료 LOT 배정을 다시 계산
+siteForms.post('/production-check/apply', async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  const date = b.date;
+  if (!isDate(date)) return c.json({ success: false, error: '날짜가 필요합니다' }, 400);
+  try {
+    await ensureCheckTables(c.env.DB);
+    const svc = sheetSvc(c);
+    const saved = (await c.env.DB.prepare('SELECT * FROM production_check WHERE check_date = ? AND actual_qty IS NOT NULL AND actual_qty <> registered_qty').bind(date).all<any>()).results || [];
+    if (!saved.length) return c.json({ success: true, changed: 0, message: '바꿀 품목이 없습니다' });
+    const prod = await svc.readSheet('생산실적', 'A2:H');
+    const changed: any[] = [];
+    for (const s of saved) {
+      const i = prod.findIndex((r) => cleanDate(r[0]) === date && String(r[1]).trim() === s.product_code && String(r[5] || '') === (s.channel || ''));
+      if (i < 0) continue;
+      await svc.writeSheet('생산실적', `D${i + 2}`, [[s.actual_qty]]);
+      changed.push({ product_code: s.product_code, channel: s.channel, from: num(prod[i][3]), to: s.actual_qty });
+      await c.env.DB.prepare('UPDATE production_check SET registered_qty = actual_qty WHERE id = ?').bind(s.id).run();
+    }
+    if (changed.length) await svc.rebuildLotMatchingForDates([date], undefined, { openLots: await getOpenLotsForRange(c.env.DB, date, date) });
+    await c.env.DB.prepare('UPDATE production_check_head SET applied_at = ? WHERE check_date = ?').bind(kstNow(), date).run();
+    return c.json({ success: true, changed: changed.length, items: changed, message: '생산실적 수량과 그날 원료 LOT 배정을 다시 계산했습니다. 일별수불부는 일마감 점검의 "수불 다시 맞추기"로 정리하세요.' });
+  } catch (e: any) { return c.json({ success: false, error: e.message }, 500); }
+});
+
+// 재고 실사표: 실사일 기준 장부 재고(일별수불부 마지막 값) + 저장된 실사 값
+siteForms.get('/stock-count', async (c) => {
+  const date = isDate(c.req.query('date')) ? c.req.query('date')! : kstToday();
+  try {
+    await ensureCheckTables(c.env.DB);
+    const daily = await sheetSvc(c).readSheet('일별수불부', 'A2:H');
+    const last: Record<string, any[]> = {};
+    for (const r of daily) {
+      const d = cleanDate(r[0]); const code = String(r[1] || '').trim();
+      if (!code || d > date || d < STOCK_BASE) continue;
+      if (!last[code] || cleanDate(last[code][0]) <= d) last[code] = r;
+    }
+    const saved = await c.env.DB.prepare('SELECT * FROM stock_count WHERE count_date = ?').bind(date).all<any>();
+    const sv: Record<string, any> = {}; for (const s of saved.results || []) sv[s.item_code] = s;
+    const items = Object.values(last).map((r) => {
+      const code = String(r[1]).trim(); const s = sv[code];
+      return { item_code: code, item_name: String(r[2] || code), unit: String(r[7] || 'kg'), book_qty: Math.round(num(r[6]) * 1000) / 1000,
+        book_date: cleanDate(r[0]), actual_qty: s?.actual_qty ?? null, diff: s?.diff ?? null, note: s?.note || '' };
+    }).filter((x) => Math.abs(x.book_qty) >= 0.0005 || x.actual_qty !== null)
+      .sort((a, b) => a.item_code.localeCompare(b.item_code, 'en', { numeric: true }));
+    const by = (saved.results || [])[0]?.counted_by || '';
+    return c.json({ success: true, date, counted_by: by, items });
+  } catch (e: any) { return c.json({ success: false, error: e.message }, 500); }
+});
+
+siteForms.post('/stock-count', async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  if (!isDate(b.date)) return c.json({ success: false, error: '날짜가 필요합니다' }, 400);
+  if (!String(b.counted_by || '').trim()) return c.json({ success: false, error: '실사자 이름을 입력해 주세요' }, 400);
+  await ensureCheckTables(c.env.DB);
+  const db = c.env.DB; const now = kstNow(); const stmts: any[] = [];
+  for (const it of Array.isArray(b.items) ? b.items : []) {
+    if (it.actual_qty === '' || it.actual_qty === null || it.actual_qty === undefined) continue;
+    const actual = Number(it.actual_qty); const book = Number(it.book_qty) || 0;
+    stmts.push(db.prepare(`INSERT INTO stock_count (count_date, item_code, item_name, unit, book_qty, actual_qty, diff, note, counted_by, counted_at) VALUES (?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(count_date, item_code) DO UPDATE SET item_name=excluded.item_name, unit=excluded.unit, book_qty=excluded.book_qty, actual_qty=excluded.actual_qty, diff=excluded.diff, note=excluded.note, counted_by=excluded.counted_by, counted_at=excluded.counted_at`)
+      .bind(b.date, String(it.item_code), it.item_name || null, it.unit || 'kg', book, actual, Math.round((actual - book) * 1000) / 1000, it.note || null, String(b.counted_by).trim(), now));
+  }
+  if (stmts.length) await db.batch(stmts);
+  return c.json({ success: true, saved: stmts.length });
+});
+
+const STOCK_BASE = '2026-09-01';

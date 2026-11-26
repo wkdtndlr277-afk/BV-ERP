@@ -1720,7 +1720,7 @@ export class GoogleSheetsService {
    *  2) 일별수불부: 전일재고 + 입고 − 사용(로트매칭 합계) = 현재고, 날짜 간 연속
    * 기준일 시점 재고는 buildBaselineLotPool 규칙(입고주기 기준 추정)으로 시작한다.
    */
-  async rebuildStockRange(from: string, to: string, inboundOverride?: any[][]): Promise<{ dates: number; lotMatchingRows: number; dailyRows: number; items: number; negativeItems: string[]; openingRaisedItems: number }> {
+  async rebuildStockRange(from: string, to: string, inboundOverride?: any[][]): Promise<{ dates: number; lotMatchingRows: number; dailyRows: number; items: number; negativeItems: string[]; openingRaisedItems: number; syntheticOpeningItems: string[] }> {
     if (from < STOCK_BASELINE_DATE) throw new Error(`시작일은 ${STOCK_BASELINE_DATE} 이후여야 합니다`);
     if (to < from) throw new Error('종료일이 시작일보다 빠릅니다');
     const dates: string[] = [];
@@ -1731,32 +1731,52 @@ export class GoogleSheetsService {
     //   대량 매입 품목(예: 5월에 몇 달 치 입고)이 주기 규칙으로 0이 되어 마이너스 나던 문제 해결.
     //   기준일 이전 입고 총량을 넘지는 않음(가장 최근 LOT부터 채움).
     const openingOverride: Record<string, number> = {};
+    const syntheticLots: string[] = [];
+    let inboundAug: any[][] | undefined = inboundOverride;
     if (from === STOCK_BASELINE_DATE) {
       const inboundForPlan = inboundOverride ?? await this.readSheet('원료입고', 'A2:J5000');
       const dry = await this.rebuildLotMatchingForDates(dates, inboundForPlan, { dryRun: true });
       const basePool = buildBaselineLotPool(inboundForPlan, STOCK_BASELINE_DATE);
-      const firstInbound: Record<string, string> = {};
+      // 품목별 일자별 (입고 − 사용) → 기간 중 최저 누적치가 0 아래로 내려가지 않도록 기준일 재고를 정한다
+      const delta: Record<string, Record<string, number>> = {};
+      const nameOf: Record<string, string> = {};
+      const unitOf: Record<string, string> = {};
       for (const row of inboundForPlan) {
         const code = row[1]?.toString().trim() || ''; const d = normDate(row[0]);
-        if (code && d >= STOCK_BASELINE_DATE && (!firstInbound[code] || d < firstInbound[code])) firstInbound[code] = d;
+        if (!code) continue;
+        nameOf[code] ||= row[2]?.toString() || code; unitOf[code] ||= row[5]?.toString() || 'kg';
+        if (d >= STOCK_BASELINE_DATE && d <= to) ((delta[code] ||= {})[d] = (delta[code][d] || 0) + (parseFloat(row[4]?.toString() || '0') || 0));
       }
-      const need: Record<string, number> = {};
       for (const r of dry.newRows || []) {
         const code = r[2]?.toString() || ''; const d = normDate(r[0]);
         if (!code || code.startsWith('SF') || String(r[5]).startsWith('재고미관리')) continue;
-        if (firstInbound[code] && d >= firstInbound[code]) continue;
-        need[code] = (need[code] || 0) + (parseFloat(r[4]?.toString() || '0') || 0);
+        nameOf[code] ||= (r[3]?.toString() || code).replace(/^\[[^\]]*\]/, '');
+        ((delta[code] ||= {})[d] = (delta[code][d] || 0) - (parseFloat(r[4]?.toString() || '0') || 0));
       }
-      for (const [code, q] of Object.entries(need)) {
-        const est = (basePool[code] || []).filter(l => l.inboundDate < STOCK_BASELINE_DATE).reduce((a, l) => a + l.remaining, 0);
-        if (q > est + 0.0001) openingOverride[code] = q;
+      const extraRows: any[][] = [];
+      for (const [code, byDay] of Object.entries(delta)) {
+        let run = 0, minRun = 0;
+        for (const d of Object.keys(byDay).sort()) { run += byDay[d]; if (run < minRun) minRun = run; }
+        const need = -minRun;
+        const pre = (basePool[code] || []).filter(l => l.inboundDate < STOCK_BASELINE_DATE);
+        const est = pre.reduce((a, l) => a + l.remaining, 0);
+        if (need <= est + 0.0001) continue;
+        openingOverride[code] = need;
+        // 실제 매입량(최근 1년)으로도 모자라면 '기초재고보정' LOT를 만들어 채운다 (인위 보정, LOT명으로 구분)
+        const purchased = pre.filter(l => dayDiff(STOCK_BASELINE_DATE, l.inboundDate) <= 365).reduce((a, l) => a + l.qty, 0);
+        const extra = Math.round((need - purchased) * 10000) / 10000;
+        if (extra > 0.0001) {
+          extraRows.push(['2025-12-01', code, nameOf[code] || code, `기초재고보정-${code}`, extra, unitOf[code] || 'kg', '수불보정', '', extra]);
+          syntheticLots.push(code);
+        }
       }
+      inboundAug = extraRows.length ? [...inboundForPlan, ...extraRows] : inboundForPlan;
     }
 
-    const lm = await this.rebuildLotMatchingForDates(dates, inboundOverride, { openingOverride });
+    const lm = await this.rebuildLotMatchingForDates(dates, inboundAug, { openingOverride });
 
     const [inboundRows, lotRows, dailyRows] = await Promise.all([
-      inboundOverride ? Promise.resolve(inboundOverride) : this.readSheet('원료입고', 'A2:J5000'),
+      inboundAug ? Promise.resolve(inboundAug) : this.readSheet('원료입고', 'A2:J5000'),
       this.readSheet('로트매칭', 'A2:G50000'),
       this.readSheet('일별수불부', 'A2:H50000')
     ]);
@@ -1838,7 +1858,7 @@ export class GoogleSheetsService {
       await this.ensureRowCount('일별수불부', writeRow + out.length + 10);
       await this.writeRowsChunked('일별수불부', writeRow, out);
     }
-    return { dates: dates.length, lotMatchingRows: lm.totalRows, dailyRows: out.length, items: codes.length, negativeItems: [...negative], openingRaisedItems: Object.keys(openingOverride).length };
+    return { dates: dates.length, lotMatchingRows: lm.totalRows, dailyRows: out.length, items: codes.length, negativeItems: [...negative], openingRaisedItems: Object.keys(openingOverride).length, syntheticOpeningItems: syntheticLots };
   }
 
   // ★ v3.5.77: 일별수불부 날짜 추가 (연속성 보장)

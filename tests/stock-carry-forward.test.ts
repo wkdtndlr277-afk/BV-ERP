@@ -134,3 +134,25 @@ describe('대량 매입 품목 기준일 재고', () => {
     expect(daily[daily.length - 1][6]).toBeCloseTo(0, 3);
   });
 });
+
+describe('기초재고 보정', () => {
+  it('입고가 부족한 품목은 기초재고보정 LOT로 채워 기간 중 마이너스가 없다', async () => {
+    const svc: any = new FakeSheets({
+      원료입고: [
+        ['2026-10-10', 'R051', '분당', 'OCT10', 50, 'kg', '', '2027-10-10', 50],
+      ],
+      BOM마스터: [['P1', '빵', 'R051', '분당', 10, 'kg'], ['P1', '빵', 'R104', '유기농통밀', 5, 'kg']],
+      생산실적: [['2026-10-05', 'P1', '빵', 3, '261005'], ['2026-10-12', 'P1', '빵', 8, '261012']],
+      로트매칭: [],
+      일별수불부: [],
+    });
+    const res = await svc.rebuildStockRange('2026-10-01', '2026-10-31');
+    expect(res.negativeItems).toEqual([]);
+    expect(res.syntheticOpeningItems.sort()).toEqual(['R051', 'R104']);
+    const lm = svc.sheets['로트매칭'].filter((r: any[]) => r.length);
+    expect(lm.some((r: any[]) => r[5] === '기초재고보정-R104')).toBe(true);
+    expect(lm.some((r: any[]) => String(r[5]).startsWith('N/A') || String(r[5]).startsWith('재고부족'))).toBe(false);
+    const r051 = svc.sheets['일별수불부'].filter((r: any[]) => r.length && r[1] === 'R051');
+    for (const r of r051) expect(r[6]).toBeGreaterThanOrEqual(-1e-9);
+  });
+});

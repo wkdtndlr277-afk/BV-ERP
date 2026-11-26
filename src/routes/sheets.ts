@@ -1947,8 +1947,10 @@ sheets.get('/v2/output/material-usage', async (c) => {
       if (IWON_MATERIALS[itemCode]) return;
       if (!lotNameMap.has(itemCode)) lotNameMap.set(itemCode, String(row[3] || '').replace(/^\[[^\]]*\]/, ''));
       
-      const lotNumber = row[5] || '-';
-      let expiryDate = row[6] || '-';
+      // ★ v3.9.5: 정제수는 재고 미관리 → 과거 기록(재고부족/N/A)도 출력 시 통일
+      const isWater = String(row[3] || '').includes('정제수');
+      const lotNumber = isWater ? '재고미관리(정제수)' : (row[5] || '-');
+      let expiryDate = isWater ? '-' : (row[6] || '-');
       const lotUsageQty = parseFloat(row[4]) || 0;  // E열: 사용량
       
       // 유통기한 형식 변환 (엑셀 숫자 → YYYY-MM-DD)
@@ -2858,12 +2860,13 @@ sheets.get('/v2/output/production-report', async (c) => {
           if (!lotMatchingMap.has(key)) {
             lotMatchingMap.set(key, []);
           }
+          const isWater = String(row[3] || '').includes('정제수');  // v3.9.5: 정제수 표시 통일
           lotMatchingMap.get(key)!.push({
             item_code: row[2],
             item_name: row[3],
             usage_qty: parseFloat(row[4]) || 0,
-            material_lot: row[5] || '',
-            expiry_date: row[6] || ''
+            material_lot: isWater ? '재고미관리(정제수)' : (row[5] || ''),
+            expiry_date: isWater ? '' : (row[6] || '')
           });
         }
       }

@@ -2859,6 +2859,7 @@ sheets.get('/v2/output/production-report', async (c) => {
       }
     }
     
+    const usedMaterialKeys = new Set<string>();
     // 3. 제품마스터에서 소비기한 + 발주상품명 정보 조회 (SSOT)
     const productMaster = await service.getProductMaster();
     const expiryMap = new Map<string, number>();
@@ -2918,8 +2919,13 @@ sheets.get('/v2/output/production-report', async (c) => {
         
         // ★ include_materials=true 일 때만 materials 추가
         if (includeMaterials) {
-          const key = `${date}|${prod.lot_number}`;
-          item.materials = lotMatchingMap.get(key) || [];
+          // ★ v3.9.4: 로트매칭 B열은 'LOT-제품코드'(v3.6.10~) 형식 → 둘 다 조회. 같은 제품이 여러 채널로
+          //   나뉘어 있으면 원료는 첫 줄에만 표시(중복 출력 방지)
+          const lotStr = String(prod.lot_number || '');
+          const keyFull = `${date}|${lotStr.includes('-') ? lotStr : `${lotStr}-${prod.product_code}`}`;
+          const key = lotMatchingMap.has(keyFull) ? keyFull : `${date}|${lotStr}`;
+          item.materials = usedMaterialKeys.has(key) ? [] : (lotMatchingMap.get(key) || []);
+          usedMaterialKeys.add(key);
         }
 
         reportItems.push(item);

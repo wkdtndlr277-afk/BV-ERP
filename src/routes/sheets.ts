@@ -1081,7 +1081,7 @@ sheets.post('/rebuild-daily-stock', async (c) => {
     
     // 1. 생산실적 시트에서 날짜 목록 가져오기
     // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
-    const productionData = await service.readSheet('생산실적', 'A2:A50000');
+    const productionData = await service.readSheet('생산실적', 'A2:A');
     const uniqueDates = new Set<string>();
     
     for (const row of productionData) {
@@ -1111,7 +1111,7 @@ sheets.post('/rebuild-daily-stock', async (c) => {
       console.log(`[rebuild-daily-stock] force 모드: ${sortedDates.length}개 날짜 데이터 삭제 후 재생성`);
       
       // 일별수불부 전체 읽기
-      const existingData = await service.readSheet('일별수불부', 'A2:H50000');
+      const existingData = await service.readSheet('일별수불부', 'A2:H');
       
       // 삭제할 날짜가 아닌 행만 필터링
       const datesToDelete = new Set(sortedDates);
@@ -1131,7 +1131,7 @@ sheets.post('/rebuild-daily-stock', async (c) => {
       });
       
       // 클리어 후 남은 데이터만 다시 쓰기 (정렬된 상태로)
-      await service.clearRange('일별수불부', 'A2:H50000');
+      await service.clearRange('일별수불부', 'A2:H');
       if (remainingData.length > 0) {
         await service.writeSheet('일별수불부', 'A2', remainingData);
       }
@@ -1194,7 +1194,7 @@ sheets.post('/sort-daily-stock', async (c) => {
 
   try {
     // 전체 데이터 읽기
-    const existingData = await service.readSheet('일별수불부', 'A2:H50000');
+    const existingData = await service.readSheet('일별수불부', 'A2:H');
     
     if (existingData.length === 0) {
       return c.json({ success: true, message: '정렬할 데이터 없음', rows: 0 });
@@ -1211,7 +1211,7 @@ sheets.post('/sort-daily-stock', async (c) => {
     });
     
     // 클리어 후 정렬된 데이터 쓰기
-    await service.clearRange('일별수불부', 'A2:H50000');
+    await service.clearRange('일별수불부', 'A2:H');
     await service.writeSheet('일별수불부', 'A2', existingData);
     
     return c.json({
@@ -2014,7 +2014,7 @@ sheets.get('/v2/output/material-usage', async (c) => {
     // ★★★ v3.6.51: 반제품(SF) 사용현황 분리 추출 ★★★
     // BOM마스터에서 SF 원료 사용량 계산 (생산실적 × BOM 배합비)
     // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
-    const productionData = await service.readSheet('생산실적', 'A2:H50000');
+    const productionData = await service.readSheet('생산실적', 'A2:H');
     const bomData = await service.readSheet('BOM마스터', 'A2:F2000');
     
     // BOM에서 SF 원료만 추출
@@ -2452,7 +2452,7 @@ sheets.get('/v2/shipment/list', async (c) => {
 
     // ★ 생산실적 시트에서 직접 조회 (SSOT - Single Source of Truth)
     // 실제 시트 구조: A:생산일, B:제품코드, C:제품명, D:수량, E:LOT번호, F:채널, G:비고, H:생성일
-    const productionData = await service.readSheet('생산실적', 'A2:H50000');
+    const productionData = await service.readSheet('생산실적', 'A2:H');
     
     // ★★★ v3.6.53: BOM에서 제품별 첫 번째 SM 부자재의 입수량 조회 (박스수량 계산용) ★★★
     const bomData = await service.readSheet('BOM마스터', 'A2:H10000');
@@ -5307,7 +5307,7 @@ sheets.get('/debug/daily-stock-calc', async (c) => {
     const cleanDate = date.replace(/^'/, '');
     
     // 1. 로트매칭 시트에서 해당 날짜 데이터 확인
-    const lotMatchingData = await service.readSheet('로트매칭', 'A2:G50000');
+    const lotMatchingData = await service.readSheet('로트매칭', 'A2:G');
     const usageMap: Record<string, number> = {};
     let matchedRows = 0;
     let dateFormats: string[] = [];
@@ -5395,7 +5395,7 @@ sheets.post('/delete-test-production-data', async (c) => {
 
     // 1. 생산실적 데이터 읽기
     // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
-    const data = await service.readSheet('생산실적', 'A2:H50000');
+    const data = await service.readSheet('생산실적', 'A2:H');
     
     // 2. 테스트 데이터 식별 (제품명이 "테스트" 또는 빈값이고 수량이 1인 것)
     const testRows: { row: number; data: any[] }[] = [];
@@ -5450,7 +5450,7 @@ sheets.post('/delete-test-production-data', async (c) => {
 
     // 3. 실제 삭제 실행: 기존 데이터 클리어 후 정상 데이터만 다시 쓰기
     // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
-    await service.clearRange('생산실적', 'A2:H50000');
+    await service.clearRange('생산실적', 'A2:H');
     if (keepRows.length > 0) {
       await service.writeSheet('생산실적', 'A2', keepRows);
     }
@@ -5631,7 +5631,7 @@ sheets.post('/cleanup-excluded-codes', async (c) => {
     console.log('[cleanup-excluded-codes v3.6.37] 일별수불부 읽기 시작...');
     let rawData: any[][];
     try {
-      rawData = await service.readSheet('일별수불부', 'A2:H50000');
+      rawData = await service.readSheet('일별수불부', 'A2:H');
     } catch (readError: any) {
       return c.json({ success: false, error: `시트 읽기 실패: ${readError.message}` }, 500);
     }
@@ -6029,7 +6029,7 @@ sheets.post('/subsidiary/rebuild', async (c) => {
       targetDates = [date];
     } else {
       // 생산실적 시트에서 날짜 목록 추출
-      const productionData = await service.readSheet('생산실적', 'A2:A50000');
+      const productionData = await service.readSheet('생산실적', 'A2:A');
       const uniqueDates = new Set<string>();
       for (const row of productionData || []) {
         const d = String(row[0] || '').trim().replace(/^'/, '');
@@ -6123,7 +6123,7 @@ sheets.get('/production/diagnose', async (c) => {
   
   try {
     // 여러 범위로 시도하여 실제 데이터 크기 확인
-    const dataFull = await service.readSheet('생산실적', 'A2:H50000');
+    const dataFull = await service.readSheet('생산실적', 'A2:H');
     const dataLimited = await service.readSheet('생산실적', 'A2:H10000');
     
     // 날짜별 카운트 (전체 데이터)
@@ -6953,7 +6953,7 @@ sheets.post('/daily-stock/delete-row', async (c) => {
 
 // 공통 유틸: 날짜 블록 식별
 async function _buildDailyBlocks(service: any, fromDate: string | null) {
-  const data = await service.readSheet('일별수불부', 'A2:H50000') || [];
+  const data = await service.readSheet('일별수불부', 'A2:H') || [];
   // 날짜별 블록: dateMap[cleanDate] = { startRow, endRow, items: [{ sheetRow, code, prevStockCell }] }
   const dateMap: Record<string, { startRow: number; endRow: number; items: { sheetRow: number; code: string; currentD: any }[] }> = {};
   for (let i = 0; i < data.length; i++) {
@@ -8650,7 +8650,7 @@ sheets.get('/debug/date-format-compare', async (c) => {
     const date = c.req.query('date') || '2026-06-18';
     
     // 1. 로트매칭 시트에서 해당 날짜 샘플 (처음 5개)
-    const lotData = await service.readSheet('로트매칭', 'A2:A50000');
+    const lotData = await service.readSheet('로트매칭', 'A2:A');
     const lotSamples: any[] = [];
     for (let i = 0; i < lotData.length && lotSamples.length < 5; i++) {
       const rawVal = lotData[i][0];
@@ -8960,7 +8960,7 @@ sheets.post('/delete-daily-stock-date', async (c) => {
     }
     
     // 3. 시트 클리어 후 재작성
-    await service.clearRange('일별수불부', 'A2:H50000');
+    await service.clearRange('일별수불부', 'A2:H');
     
     if (remainingData.length > 0) {
       await service.writeSheet('일별수불부', `A2:H${remainingData.length + 1}`, remainingData);
@@ -9101,7 +9101,7 @@ sheets.post('/delete-lot-matching-date', async (c) => {
     }
     
     // 3. 시트 클리어 후 재작성
-    await service.clearRange('로트매칭', 'A2:G50000');
+    await service.clearRange('로트매칭', 'A2:G');
     
     if (remainingData.length > 0) {
       await service.writeSheet('로트매칭', `A2:G${remainingData.length + 1}`, remainingData);
@@ -9165,7 +9165,7 @@ sheets.post('/production/delete-date', async (c) => {
     // 1. 생산실적 시트 (A: 생산일자, A2:H50000)
     // ────────────────────────────────────────────────────
     try {
-      const prodData = await service.readSheet('생산실적', 'A2:H50000');
+      const prodData = await service.readSheet('생산실적', 'A2:H');
       const prodDeleted: Record<string, number> = {};
       cleanDates.forEach((d: string) => prodDeleted[d] = 0);
 
@@ -9187,7 +9187,7 @@ sheets.post('/production/delete-date', async (c) => {
       };
 
       if (!dryRun && prodTotalDeleted > 0) {
-        await service.clearRange('생산실적', 'A2:H50000');
+        await service.clearRange('생산실적', 'A2:H');
         if (prodRemaining.length > 0) {
           // 500행 배치로 쪼개서 쓰기 (대용량 대응)
           const BATCH = 5000;
@@ -9208,7 +9208,7 @@ sheets.post('/production/delete-date', async (c) => {
     // 2. 로트매칭 시트 (A: 생산일자, A2:G50000)
     // ────────────────────────────────────────────────────
     try {
-      const lotData = await service.readSheet('로트매칭', 'A2:G50000');
+      const lotData = await service.readSheet('로트매칭', 'A2:G');
       const lotDeleted: Record<string, number> = {};
       cleanDates.forEach((d: string) => lotDeleted[d] = 0);
 
@@ -9230,7 +9230,7 @@ sheets.post('/production/delete-date', async (c) => {
       };
 
       if (!dryRun && lotTotalDeleted > 0) {
-        await service.clearRange('로트매칭', 'A2:G50000');
+        await service.clearRange('로트매칭', 'A2:G');
         if (lotRemaining.length > 0) {
           const BATCH = 5000;
           for (let i = 0; i < lotRemaining.length; i += BATCH) {
@@ -9250,7 +9250,7 @@ sheets.post('/production/delete-date', async (c) => {
     // 3. 일별수불부 시트 (A: 일자, A2:H50000)
     // ────────────────────────────────────────────────────
     try {
-      const stockData = await service.readSheet('일별수불부', 'A2:H50000');
+      const stockData = await service.readSheet('일별수불부', 'A2:H');
       const stockDeleted: Record<string, number> = {};
       cleanDates.forEach((d: string) => stockDeleted[d] = 0);
 
@@ -9272,7 +9272,7 @@ sheets.post('/production/delete-date', async (c) => {
       };
 
       if (!dryRun && stockTotalDeleted > 0) {
-        await service.clearRange('일별수불부', 'A2:H50000');
+        await service.clearRange('일별수불부', 'A2:H');
         if (stockRemaining.length > 0) {
           const BATCH = 5000;
           for (let i = 0; i < stockRemaining.length; i += BATCH) {

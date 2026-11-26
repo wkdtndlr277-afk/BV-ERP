@@ -1417,7 +1417,7 @@ export class GoogleSheetsService {
   }> {
     // 1. 기존 로트매칭 데이터 읽기
     // ★★★ v3.6.11: 로트매칭 읽기 범위 확장 (10000 → 50000) ★★★
-    const existingData = await this.readSheet('로트매칭', 'A2:G50000');
+    const existingData = await this.readSheet('로트매칭', 'A2:G');
     
     // 2. 대상 날짜 제외한 기존 데이터 보존
     const dateSet = new Set(dates.map(d => d.replace(/^'/, '')));
@@ -1479,7 +1479,7 @@ export class GoogleSheetsService {
     
     // 4. 생산실적 데이터 읽기
     // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
-    const productionData = await this.readSheet('생산실적', 'A2:H50000');
+    const productionData = await this.readSheet('생산실적', 'A2:H');
     
     // 5. BOM 데이터 읽기
     // ★★★ v3.5.88: 'BOM마스터' 시트명 수정 (이전 'BOM'은 잘못된 이름) ★★★
@@ -1728,7 +1728,7 @@ export class GoogleSheetsService {
     // ★★★ v3.6.11: 로트매칭 클리어 범위 확장 (10000 → 50000) ★★★
     // ★ v3.9.1: 행 수 확보 후 나눠 쓰기 + 실패 시 예외 (이전: 쓰기 실패를 무시 → 지운 뒤 비어 있는 채로 남음)
     await this.ensureRowCount('로트매칭', allRows.length + 20);
-    await this.clearRange('로트매칭', 'A2:G50000');
+    await this.clearRange('로트매칭', 'A2:G');
     if (allRows.length > 0) {
       await this.writeRowsChunked('로트매칭', 2, allRows);
     }
@@ -1828,8 +1828,8 @@ export class GoogleSheetsService {
 
     const [inboundRows, lotRows, dailyRows] = await Promise.all([
       inboundAug ? Promise.resolve(inboundAug) : this.readSheet('원료입고', 'A2:J5000'),
-      this.readSheet('로트매칭', 'A2:G50000'),
-      this.readSheet('일별수불부', 'A2:H50000')
+      this.readSheet('로트매칭', 'A2:G'),
+      this.readSheet('일별수불부', 'A2:H')
     ]);
 
     const pool = buildBaselineLotPool(inboundRows, baseline, openingOverride);
@@ -1921,7 +1921,7 @@ export class GoogleSheetsService {
     
     // 1. 기존 일별수불부 데이터 읽기
     // ★★★ v3.6.21: 읽기 범위 확장 (5000 → 50000) ★★★
-    const existingData = await this.readSheet('일별수불부', 'A2:H50000');
+    const existingData = await this.readSheet('일별수불부', 'A2:H');
     
     // ★★★ v3.6.20: 해당 날짜 데이터가 있으면 삭제 후 재생성 ★★★
     const existingDateRows = existingData.filter(row => {
@@ -2047,7 +2047,7 @@ export class GoogleSheetsService {
     }
     
     // ★★★ v3.6.18: 로트매칭에서 사용량 직접 계산 (수식 대신 값) ★★★
-    const lotMatchingData = await this.readSheet('로트매칭', 'A2:G50000');
+    const lotMatchingData = await this.readSheet('로트매칭', 'A2:G');
     const usageMap: Record<string, number> = {};
     for (const row of lotMatchingData) {
       const lotDate = row[0]?.toString().replace(/^'/, '') || '';
@@ -2238,7 +2238,7 @@ export class GoogleSheetsService {
     }
     
     // 1. 기존 부자재수불부 데이터 읽기
-    const existingData = await this.readSheet('부자재수불부', 'A2:H50000').catch(() => []);
+    const existingData = await this.readSheet('부자재수불부', 'A2:H').catch(() => []);
     
     // 2. 해당 날짜 데이터가 있으면 해당 행만 개별 clear (다른 날짜 수식 보존)
     const existingDateRows = existingData.filter(row => {
@@ -2352,7 +2352,7 @@ export class GoogleSheetsService {
     }
     
     // 생산실적에서 해당 날짜의 제품별 생산개수 집계
-    const productionData = await this.readSheet('생산실적', 'A2:H50000');
+    const productionData = await this.readSheet('생산실적', 'A2:H');
     const productionByProduct: Record<string, number> = {};
     for (const row of productionData || []) {
       const prodDate = row[0]?.toString().replace(/^'/, '') || '';

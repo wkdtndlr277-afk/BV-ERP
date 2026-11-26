@@ -43,7 +43,7 @@ const production = [
 
 describe('기준일 LOT 풀', () => {
   it('오래된 LOT·가짜 LOT는 0, 기준일 직전 LOT는 주기에 비례해 남음', () => {
-    const pool = buildBaselineLotPool(inbound, STOCK_BASELINE_DATE)['R1'];
+    const pool = buildBaselineLotPool(inbound, '2026-10-01')['R1'];
     const by = Object.fromEntries(pool.map(l => [l.lot, l.remaining]));
     expect(by.APR).toBe(0);
     expect(by.STADJ).toBe(0);
@@ -71,7 +71,7 @@ describe('로트매칭 + 일별수불부 기간 재계산', () => {
     expect(lotsUsed.has('STADJ')).toBe(false);
     // 10/2 에 SEP24 일부 사용 → 10/9 에는 SEP24 남은 것 + OCT08 (같은 잔량을 반복 사용하지 않음)
     const sep24Total = lm.filter((r: any[]) => r[5] === 'SEP24').reduce((a: number, r: any[]) => a + r[4], 0);
-    const pool = buildBaselineLotPool(inbound, STOCK_BASELINE_DATE)['R1'];
+    const pool = buildBaselineLotPool(inbound, '2026-10-01')['R1'];
     expect(sep24Total).toBeLessThanOrEqual(pool.find(l => l.lot === 'SEP24')!.remaining + 1e-9);
     // 생산일 이전 입고 LOT만 사용
     expect(lm.some((r: any[]) => r[5] === 'OCT22' && String(r[0]).includes('10-09'))).toBe(false);
@@ -175,5 +175,25 @@ describe('만료 LOT', () => {
     expect(lm.some((r: any[]) => /^(N\/A|재고부족)/.test(String(r[5])))).toBe(false);
     // 10/10 생산은 만료된 SEP20 대신 보정 LOT 사용
     expect(lm.filter((r: any[]) => String(r[0]).includes('10-10')).every((r: any[]) => r[5] !== 'SEP20')).toBe(true);
+  });
+});
+
+describe('동일 이름 코드 매핑', () => {
+  it('입고 기록 없는 RM143 호밀가루는 R143 호밀가루 LOT를 사용하고 재고부족이 없다', async () => {
+    const svc: any = new FakeSheets({
+      원료입고: [['2026-10-02', 'R143', '호밀가루', 'RYE1', 100, 'kg', '', '2027-10-02', 100]],
+      BOM마스터: [['P1', '빵', 'RM143', '호밀가루', 2, 'kg']],
+      생산실적: [['2026-10-05', 'P1', '빵', 3, '261005']],
+      로트매칭: [],
+      일별수불부: [],
+    });
+    const res = await svc.rebuildStockRange('2026-10-01', '2026-10-07');
+    const lm = svc.sheets['로트매칭'].filter((r: any[]) => r.length);
+    expect(lm).toHaveLength(1);
+    expect(lm[0][2]).toBe('R143');
+    expect(lm[0][5]).toBe('RYE1');
+    expect(res.syntheticOpeningItems).toEqual([]);
+    const r143 = svc.sheets['일별수불부'].filter((r: any[]) => r.length && r[1] === 'R143');
+    expect(r143[r143.length - 1][6]).toBeCloseTo(94, 3);
   });
 });

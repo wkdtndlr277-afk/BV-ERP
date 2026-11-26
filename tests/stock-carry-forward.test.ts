@@ -94,3 +94,20 @@ describe('로트매칭 + 일별수불부 기간 재계산', () => {
     expect(svc.sheets['일별수불부'][0][0]).toBe("'2026-09-30");
   });
 });
+
+describe('정제수', () => {
+  it('로트매칭은 재고미관리로 기록하고 일별수불부에는 넣지 않는다', async () => {
+    const svc: any = new FakeSheets({
+      원료입고: [['2026-10-01', 'RM184', '정제수', 'W1', 1000, 'kg', '', '', 1000]],
+      BOM마스터: [['P1', '빵', 'RM184', '정제수', 5, 'kg']],
+      생산실적: [['2026-10-02', 'P1', '빵', 2, '261002']],
+      로트매칭: [],
+      일별수불부: [],
+    });
+    await svc.rebuildStockRange('2026-10-01', '2026-10-03');
+    const lm = svc.sheets['로트매칭'].filter((r: any[]) => r.length);
+    expect(lm).toHaveLength(1);
+    expect(lm[0][5]).toBe('재고미관리(정제수)');
+    expect(svc.sheets['일별수불부'].filter((r: any[]) => r.length && r[1] === 'RM184')).toHaveLength(0);
+  });
+});

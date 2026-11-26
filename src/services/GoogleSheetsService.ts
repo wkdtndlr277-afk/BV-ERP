@@ -1529,6 +1529,13 @@ export class GoogleSheetsService {
             for (const sfItem of sfBomItems) {
               const realUsage = totalUsage * sfItem.ratio;  // SF사용량 × 원료비율
               if (realUsage <= 0) continue;
+              // ★ v3.9.2: 정제수는 재고로 잡지 않음 → LOT 매칭 없이 사용량만 기록
+              if ((sfItem.materialName || '').includes('정제수')) {
+                newRows.push([`'${cleanDate}`, productLot, sfItem.materialCode, `[${item.materialCode}]${sfItem.materialName}`,
+                  Math.round(realUsage * 10000) / 10000, '재고미관리(정제수)', '']);
+                dateRowCount++;
+                continue;
+              }
               
               // 실제 원료에 대해 FEFO 매칭 (기존 로직 재사용)
               let remainingUsage = realUsage;
@@ -1587,6 +1594,14 @@ export class GoogleSheetsService {
             continue;  // SF 처리 완료, 다음 BOM 항목으로
           }
           
+          // ★ v3.9.2: 정제수는 재고로 잡지 않음 → LOT 매칭 없이 사용량만 기록
+          if ((item.materialName || '').includes('정제수')) {
+            newRows.push([`'${cleanDate}`, productLot, item.materialCode, item.materialName,
+              Math.round(totalUsage * 10000) / 10000, '재고미관리(정제수)', '']);
+            dateRowCount++;
+            continue;
+          }
+
           // ★★★ 기존 로직 (R, RM 원료) - 수정 없음 ★★★
           // ★★★ v3.5.95: FEFO + 소비기한 만료 검증 ★★★
           // 소비기한 빠른 LOT부터 차감하되, 만료된 LOT는 건너뜀

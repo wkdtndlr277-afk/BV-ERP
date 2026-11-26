@@ -1812,6 +1812,7 @@ export class GoogleSheetsService {
 
       // 2차 계산(쓰기 없음): 소비기한 만료 등으로 여전히 LOT를 못 찾는 사용량은 기초재고보정 LOT에 더한다
       //   (만료된 LOT를 생산일보에 찍지 않으면서 '재고부족' 줄이 남지 않게)
+      for (let pass = 0; pass < 4; pass++) {
       const dry2 = await this.rebuildLotMatchingForDates(dates, inboundAug, { dryRun: true, openingOverride, baseline, openLots });
       const short: Record<string, number> = {};
       for (const r of dry2.newRows || []) {
@@ -1822,7 +1823,7 @@ export class GoogleSheetsService {
       if (Object.keys(short).length) {
         const aug = [...inboundAug];
         for (const [code, q] of Object.entries(short)) {
-          const add = Math.round(q * 10000) / 10000;
+          const add = Math.ceil(q * 10000) / 10000 + 0.001;
           const idx = aug.findIndex(r => r[3] === `기초재고보정-${code}`);
           if (idx >= 0) { const r = [...aug[idx]]; r[4] = (parseFloat(r[4]) || 0) + add; r[8] = r[4]; aug[idx] = r; }
           else { aug.push(['2025-12-01', code, nameOf[code] || code, `기초재고보정-${code}`, add, unitOf[code] || 'kg', '수불보정', '', add]); syntheticLots.push(code); }
@@ -1830,6 +1831,7 @@ export class GoogleSheetsService {
           openingOverride[code] = (openingOverride[code] ?? pre) + add;
         }
         inboundAug = aug;
+      } else break;
       }
     }
 
@@ -1879,6 +1881,15 @@ export class GoogleSheetsService {
       if (ma && mb && ma[1] === mb[1]) return parseInt(ma[2]) - parseInt(mb[2]);
       return a.localeCompare(b);
     });
+    // 반올림 찌꺼기로 생기는 아주 작은 마이너스는 기초재고에 흡수 (수불 보정)
+    {
+      const run: Record<string, number> = { ...stock }; const minRun: Record<string, number> = {};
+      for (const d of dates) for (const code of codes) {
+        run[code] += (inboundByDate[d]?.[code] || 0) - (usageByDate[d]?.[code] || 0);
+        if (run[code] < (minRun[code] ?? 0)) minRun[code] = run[code];
+      }
+      for (const [code, m] of Object.entries(minRun)) if (m < -0.00001) stock[code] += Math.ceil(-m * 10000) / 10000;
+    }
     const out: any[][] = [];
     const negative = new Set<string>();
     for (const d of dates) {

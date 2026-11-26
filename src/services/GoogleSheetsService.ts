@@ -96,6 +96,11 @@ async function getAccessToken(credentials: ServiceAccountCredentials): Promise<s
 //  - 재고조정용 가짜 LOT(입고일 2020-01-01 등 기준일 1년 이전)는 0
 // 이후 날짜별 로트매칭 사용량을 날짜순으로 차감하며 이어간다.
 // ============================================================================
+const THOUSANDS_RE = /^-?\d{1,3}(,\d{3})+(\.\d+)?$/;
+export function stripThousands(v: any): any {
+  return typeof v === 'string' && THOUSANDS_RE.test(v.trim()) ? v.trim().replace(/,/g, '') : v;
+}
+
 export const STOCK_BASELINE_DATE = '2026-09-01';
 
 export type LotPoolItem = { lot: string; expiry: string; qty: number; remaining: number; inboundDate: string };
@@ -209,7 +214,9 @@ export class GoogleSheetsService {
     if (!response) return [];
 
     const data = await response.json() as { values?: any[][] };
-    return data.values || [];
+    // ★ v3.9.6: 시트 셀 서식 때문에 '3,085.01' 처럼 천 단위 쉼표가 붙어 오면 parseFloat 가 3 으로 읽던 문제
+    //   → 순수 숫자(천 단위 쉼표 형식)인 셀만 쉼표 제거 (날짜·코드·문자열은 그대로)
+    return (data.values || []).map(row => row.map(stripThousands));
   }
 
   /**

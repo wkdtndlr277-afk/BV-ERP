@@ -28,6 +28,7 @@ import dailyReportRoutes from './routes/daily-report';
 import systemConfigRoutes from './routes/system-config';
 import semiFinishedRoutes from './routes/semi-finished';
 import barcodeRoutes from './routes/barcode';
+import { siteForms } from './routes/site-forms';
 import taskRoutes from './routes/task';
 import auditRoutes from './routes/audit';
 import sheetsRoutes from './routes/sheets';
@@ -83,6 +84,7 @@ app.route('/api/daily-report', dailyReportRoutes);
 app.route('/api/system-config', systemConfigRoutes);
 app.route('/api/semi-finished', semiFinishedRoutes);
 app.route('/api/barcode', barcodeRoutes);
+app.route('/api/site', siteForms);
 app.route('/api/task', taskRoutes);
 app.route('/api/audit', auditRoutes);
 app.route('/api/sheets', sheetsRoutes);
@@ -808,6 +810,17 @@ app.get('/*', (c) => {
                     <span>출고일지</span>
                 </a>
                 
+                <a href="#open-lot" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="open-lot">
+                    <i class="fas fa-box-open w-5 text-amber-600"></i>
+                    <span>개봉 LOT 기록</span>
+                    <span class="ml-auto text-xs bg-amber-500 text-white px-2 py-0.5 rounded">현장</span>
+                </a>
+                
+                <a href="#daily-close" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="daily-close">
+                    <i class="fas fa-clipboard-check w-5 text-emerald-600"></i>
+                    <span>일마감 점검</span>
+                </a>
+                
                 <a href="#daily-report-pdf" class="sidebar-link flex items-center gap-3 px-4 py-3 rounded-lg text-gray-700 font-medium" data-page="daily-report-pdf">
                     <i class="fas fa-file-pdf w-5 text-red-500"></i>
                     <span>생산일보</span>
@@ -1329,6 +1342,7 @@ app.get('/*', (c) => {
     
     <script src="/static/checksheet-data.js?cb=${Date.now()}"></script>
     <script src="/static/app-v400.js?cb=${Date.now()}"></script>
+    <script src="/static/site-forms.js?cb=${Date.now()}"></script>
 </body>
 </html>
   `);

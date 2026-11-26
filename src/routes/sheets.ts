@@ -2,6 +2,7 @@
 // v1.0.0: ERP ↔ 구글 시트 데이터 동기화
 import { Hono } from 'hono';
 import { GoogleSheetsService, STOCK_BASELINE_DATE } from '../services/GoogleSheetsService';
+import { getOpenLotsForRange } from './site-forms';
 
 type Bindings = {
   DB: D1Database;
@@ -681,7 +682,9 @@ sheets.post('/rebuild-stock-range', async (c) => {
       ORDER BY i.inbound_date, i.lot_number
     `).all<any>();
     const inboundRows = (inb.results || []).map((r: any) => [r.inbound_date, r.item_code, r.item_name, r.lot_number, r.origin_qty, r.unit, r.supplier || '', r.expiry_date || '', r.remain_qty]);
-    const result = await service.rebuildStockRange(from || STOCK_BASELINE_DATE, to || kst, inboundRows);
+    const f0 = from || STOCK_BASELINE_DATE, t0 = to || kst;
+    const openLots = await getOpenLotsForRange(c.env.DB, f0, t0);
+    const result = await service.rebuildStockRange(f0, t0, inboundRows, openLots);
     return c.json({ success: true, baseline: STOCK_BASELINE_DATE, ...result });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

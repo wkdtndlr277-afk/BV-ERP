@@ -6,6 +6,7 @@
 import { Hono } from 'hono';
 import type { Bindings } from '../types';
 import { GoogleSheetsService } from '../services/GoogleSheetsService';
+import { getOpenLotsForRange } from './site-forms';
 import { 
   checkStockAvailability, 
   checkSemiFinishedAvailability,
@@ -5072,7 +5073,7 @@ productionRoutes.post('/simple', async (c) => {
       try {
         // LOT 매칭 자동 생성 (해당 날짜만)
         console.log(`[production/simple] LOT 매칭 생성 시작: ${prod_date}`);
-        lotMatchingResult = await service.rebuildLotMatchingForDates([prod_date]);
+        lotMatchingResult = await service.rebuildLotMatchingForDates([prod_date], undefined, { openLots: await getOpenLotsForRange(c.env.DB, prod_date, prod_date) });
         console.log(`[production/simple] LOT 매칭 완료: ${lotMatchingResult?.totalRows || 0}행`);
       } catch (lotError: any) {
         console.error('[production/simple] LOT 매칭 실패:', lotError.message);
@@ -5211,7 +5212,7 @@ productionRoutes.post('/simple-batch', async (c) => {
       try {
         // 4-1. LOT 매칭 자동 생성 (해당 날짜만)
         console.log(`[production/simple-batch] LOT 매칭 생성 시작: ${actualProdDate}`);
-        lotMatchingResult = await service.rebuildLotMatchingForDates([actualProdDate]);
+        lotMatchingResult = await service.rebuildLotMatchingForDates([actualProdDate], undefined, { openLots: await getOpenLotsForRange(c.env.DB, actualProdDate, actualProdDate) });
         console.log(`[production/simple-batch] LOT 매칭 완료: ${lotMatchingResult?.totalRows || 0}행`);
       } catch (lotError: any) {
         console.error('[production/simple-batch] LOT 매칭 실패:', lotError.message, lotError.stack);

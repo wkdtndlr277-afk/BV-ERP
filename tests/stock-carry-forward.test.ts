@@ -22,6 +22,8 @@ class FakeSheets extends (GoogleSheetsService as any) {
     return true;
   }
   async getSfBom() { return {}; }
+  async ensureRowCount() {}
+  async writeRowsChunked(name: string, startRow: number, rows: any[][]) { await this.writeSheet(name, `A${startRow}`, rows); }
 }
 
 // 원료입고: A 입고일자, B 코드, C 이름, D 로트, E 입고량, F 단위, G 업체, H 소비기한, I 잔량(오래된 값)

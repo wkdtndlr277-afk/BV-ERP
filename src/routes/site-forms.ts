@@ -244,7 +244,7 @@ siteForms.get('/lot-trace', async (c) => {
       const materials = mats.map((r) => {
         const ml = String(r[5] || ''); const ib = info[ml];
         return {
-          item_code: String(r[2] || ''), item_name: String(r[3] || '').replace(/^\[[^\]]*\]/, ''), lot_number: ml,
+          item_code: String(r[2] || ''), item_name: String(r[3] || '').replace(/^\[([^\]]*)\](.*)$/, '$2 (반제품 $1 경유)'), lot_number: ml,
           usage_qty: Math.round(num(r[4]) * 10000) / 10000, unit: 'kg',
           expiry_date: cleanDate(r[6]) || ib?.expiry_date || '', supplier: ib?.supplier || (ml.startsWith('기초재고보정') ? '수불보정' : ''),
           inbound_date: ib?.inbound_date || '', quality_status: ib?.quality_status || '',

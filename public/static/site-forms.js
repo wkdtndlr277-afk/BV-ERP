@@ -162,6 +162,7 @@
           <label class="block"><span class="text-sm text-gray-600">점검일</span>
             <input id="dc-date" type="date" class="mt-1 border rounded-lg px-3 py-2.5 text-lg" value="${today()}"></label>
           <button id="dc-run" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg px-5 py-3"><i class="fas fa-search mr-1"></i>점검</button>
+          <button id="dc-rebuild" onclick="bvRebuildStock()" class="ml-auto border border-emerald-600 text-emerald-700 font-semibold rounded-lg px-4 py-3" title="생산 수량을 고쳤거나 입고를 뒤늦게 등록했을 때">수불 다시 맞추기</button>
         </div>
         <div id="dc-out"></div>
       </div>`;
@@ -303,8 +304,190 @@
   };
   window.renderLotHistory = renderLotTrace;
 
+
+  // ── 생산 점검 (생산실적 확인서) ──────────────────────────────────────────
+  let pc = null;
+  function renderProductionCheck() {
+    document.getElementById('page-content').innerHTML = `
+      <div class="space-y-4 max-w-6xl">
+        <div><h2 class="text-2xl font-bold text-gray-800"><i class="fas fa-tasks text-indigo-600 mr-2"></i>생산 점검 (생산실적 확인서)</h2>
+          <p class="text-sm text-gray-500 mt-1">생산일보 변환 후 등록된 품목이 자동으로 채워집니다. 실제 생산량이 다를 때만 입력하고, 불량·폐기와 확인자를 적은 뒤 저장하세요.</p></div>
+        <div class="bg-white rounded-xl shadow p-4 grid grid-cols-2 md:grid-cols-5 gap-3 items-end">
+          <label><span class="text-sm text-gray-600">생산일</span><input id="pc-date" type="date" value="${today()}" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+          <label><span class="text-sm text-gray-600">확인자</span><input id="pc-by" value="${esc(store.get('bv_checker'))}" class="mt-1 w-full border rounded-lg px-3 py-2" placeholder="이름"></label>
+          <label><span class="text-sm text-gray-600">작업 시작</span><input id="pc-start" type="time" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+          <label><span class="text-sm text-gray-600">작업 종료</span><input id="pc-end" type="time" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+          <button id="pc-load" class="bg-indigo-600 text-white rounded-lg px-4 py-2.5 font-medium">불러오기</button>
+          <label class="col-span-2 md:col-span-5"><span class="text-sm text-gray-600">특이사항 (설비 이상, 공정 이탈, 조치 내용)</span><input id="pc-remark" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+        </div>
+        <div id="pc-out"></div>
+      </div>`;
+    document.getElementById('pc-load').addEventListener('click', loadPC);
+    loadPC();
+  }
+  async function loadPC() {
+    const out = document.getElementById('pc-out'); const date = document.getElementById('pc-date').value;
+    out.innerHTML = '<div class="p-6 text-gray-500"><i class="fas fa-spinner fa-spin mr-1"></i>불러오는 중…</div>';
+    try {
+      const { data } = await axios.get('/api/site/production-check', { params: { date } }); pc = data;
+      if (data.head) {
+        if (data.head.checked_by) document.getElementById('pc-by').value = data.head.checked_by;
+        document.getElementById('pc-start').value = data.head.start_time || ''; document.getElementById('pc-end').value = data.head.end_time || '';
+        document.getElementById('pc-remark').value = data.head.remark || '';
+      }
+      if (!data.items.length) { out.innerHTML = '<div class="p-6 bg-yellow-50 rounded-xl text-yellow-800">이 날짜에 등록된 생산이 없습니다. 생산실적 화면에서 생산일보 변환을 먼저 하세요.</div>'; return; }
+      const tot = data.items.reduce((a, x) => a + x.registered_qty, 0);
+      out.innerHTML = `<div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="px-4 py-3 border-b flex flex-wrap gap-2 justify-between items-center">
+          <div class="font-bold">${esc(date)} · ${data.items.length}품목 · 등록 ${tot.toLocaleString()}EA ${data.head ? `<span class="ml-2 text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">저장됨 ${esc(data.head.checked_at || '')}</span>` : ''}${data.head?.applied_at ? `<span class="ml-1 text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded">반영 ${esc(data.head.applied_at)}</span>` : ''}</div>
+          <div class="flex gap-2"><button onclick="pcSave()" class="bg-indigo-600 text-white px-4 py-2 rounded-lg">저장</button>
+            <button onclick="pcApply()" class="bg-blue-700 text-white px-4 py-2 rounded-lg">실제 수량 생산일보에 반영</button>
+            <button onclick="pcPrint()" class="bg-gray-700 text-white px-4 py-2 rounded-lg"><i class="fas fa-print mr-1"></i>출력</button></div>
+        </div>
+        <div class="overflow-x-auto"><table class="w-full text-sm" id="pc-table">
+          <thead class="bg-gray-50 text-gray-600"><tr><th class="p-2 text-left">제품코드</th><th class="p-2 text-left">제품명</th><th class="p-2 text-left">판매처</th><th class="p-2 text-left">제품 LOT</th><th class="p-2 text-right">등록(EA)</th><th class="p-2 text-right">실제(EA)</th><th class="p-2 text-right">차이</th><th class="p-2 text-right">불량·폐기</th><th class="p-2 text-left">비고</th></tr></thead>
+          <tbody class="divide-y">${data.items.map((x, i) => `<tr data-i="${i}">
+            <td class="p-2 text-xs text-gray-500">${esc(x.product_code)}</td><td class="p-2">${esc(x.product_name)}</td><td class="p-2 text-gray-600">${esc(x.channel || '-')}</td>
+            <td class="p-2 text-xs">${esc(x.product_lot)}</td><td class="p-2 text-right">${x.registered_qty.toLocaleString()}</td>
+            <td class="p-2 text-right"><input class="pc-act w-20 border rounded px-2 py-1 text-right" inputmode="numeric" value="${x.actual_qty ?? ''}" placeholder="${x.registered_qty}"></td>
+            <td class="p-2 text-right pc-diff"></td>
+            <td class="p-2 text-right"><input class="pc-def w-16 border rounded px-2 py-1 text-right" inputmode="numeric" value="${x.defect_qty || ''}"></td>
+            <td class="p-2"><input class="pc-note w-40 border rounded px-2 py-1" value="${esc(x.note)}"></td></tr>`).join('')}</tbody></table></div></div>`;
+      const upd = () => document.querySelectorAll('#pc-table tbody tr').forEach((tr) => {
+        const x = pc.items[tr.dataset.i]; const v = tr.querySelector('.pc-act').value; const d = v === '' ? 0 : Number(v) - x.registered_qty;
+        const td = tr.querySelector('.pc-diff'); td.textContent = d ? (d > 0 ? '+' : '') + d : ''; td.className = 'p-2 text-right pc-diff ' + (d ? 'text-red-600 font-bold' : '');
+      });
+      out.querySelectorAll('.pc-act').forEach((el) => el.addEventListener('input', upd)); upd();
+    } catch (e) { out.innerHTML = `<div class="p-4 rounded-lg bg-red-50 text-red-700">${esc(errMsg(e))}</div>`; }
+  }
+  function pcCollect() {
+    const items = [...document.querySelectorAll('#pc-table tbody tr')].map((tr) => {
+      const x = pc.items[tr.dataset.i];
+      return { ...x, actual_qty: tr.querySelector('.pc-act').value, defect_qty: tr.querySelector('.pc-def').value, note: tr.querySelector('.pc-note').value };
+    });
+    const by = document.getElementById('pc-by').value.trim(); store.set('bv_checker', by);
+    return { date: pc.date, checked_by: by, start_time: document.getElementById('pc-start').value, end_time: document.getElementById('pc-end').value, remark: document.getElementById('pc-remark').value, items };
+  }
+  async function pcSave(silent) {
+    try { await axios.post('/api/site/production-check', pcCollect()); if (!silent) { toast('생산 점검을 저장했습니다', 'success'); loadPC(); } return true; }
+    catch (e) { toast(errMsg(e), 'error'); return false; }
+  }
+  async function pcApply() {
+    const body = pcCollect(); const diffs = body.items.filter((x) => x.actual_qty !== '' && Number(x.actual_qty) !== x.registered_qty);
+    if (!diffs.length) return toast('등록 수량과 다른 품목이 없습니다', 'info');
+    if (!confirm(`${diffs.length}개 품목의 생산 수량을 실제 수량으로 바꾸고 그날 원료 LOT 배정을 다시 계산합니다. 진행할까요?`)) return;
+    if (!(await pcSave(true))) return;
+    try { const { data } = await axios.post('/api/site/production-check/apply', { date: body.date }); toast(data.message || '반영했습니다', 'success'); loadPC(); }
+    catch (e) { toast(errMsg(e), 'error'); }
+  }
+  function pcPrint() {
+    const b = pcCollect(); const w = window.open('', '_blank'); if (!w) return toast('팝업이 차단되었습니다', 'error');
+    const rows = b.items.map((x) => { const a = x.actual_qty === '' ? x.registered_qty : Number(x.actual_qty);
+      return `<tr><td>${esc(x.product_code)}</td><td style="text-align:left">${esc(x.product_name)}</td><td>${esc(x.channel)}</td><td>${esc(x.product_lot)}</td><td class=r>${x.registered_qty}</td><td class=r>${a}</td><td class=r>${a - x.registered_qty || ''}</td><td class=r>${esc(x.defect_qty)}</td><td style="text-align:left">${esc(x.note)}</td></tr>`; }).join('');
+    w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>생산실적 확인서 ${esc(b.date)}</title><style>
+      body{font-family:'Malgun Gothic',sans-serif;font-size:11px;margin:12mm} h1{text-align:center;font-size:20px;margin:0 0 8px} table{border-collapse:collapse;width:100%} th,td{border:1px solid #000;padding:3px 4px;text-align:center} th{background:#eee} .r{text-align:right}
+      .sign td{height:38px;width:90px}</style></head><body>
+      <table style="width:auto;margin-left:auto" class="sign"><tr><th>작성</th><th>검토</th><th>승인</th></tr><tr><td>${esc(b.checked_by)}</td><td></td><td></td></tr></table>
+      <h1>생산실적 확인서</h1>
+      <table><tr><th>생산일</th><td>${esc(b.date)}</td><th>작업시간</th><td>${esc(b.start_time || '')} ~ ${esc(b.end_time || '')}</td><th>확인자</th><td>${esc(b.checked_by)}</td></tr>
+      <tr><th>특이사항</th><td colspan="5" style="text-align:left;height:30px">${esc(b.remark || '')}</td></tr></table><br>
+      <table><thead><tr><th>제품코드</th><th>제품명</th><th>판매처</th><th>제품 LOT</th><th>등록(EA)</th><th>실제(EA)</th><th>차이</th><th>불량·폐기</th><th>비고</th></tr></thead><tbody>${rows}</tbody></table>
+      <p style="color:#666;margin-top:8px">(주)본비반트 HACCP 통합관리시스템 출력</p></body></html>`);
+    w.document.close(); setTimeout(() => w.print(), 300);
+  }
+  window.pcSave = pcSave; window.pcApply = pcApply; window.pcPrint = pcPrint;
+
+  // ── 재고 실사 ────────────────────────────────────────────────────────────
+  let sc = null;
+  function renderStockCount() {
+    document.getElementById('page-content').innerHTML = `
+      <div class="space-y-4 max-w-6xl">
+        <div><h2 class="text-2xl font-bold text-gray-800"><i class="fas fa-balance-scale text-teal-600 mr-2"></i>재고 실사</h2>
+          <p class="text-sm text-gray-500 mt-1">장부 재고(일별수불부)가 채워져 있습니다. 실제로 센 수량만 입력하고 저장하세요. 차이는 자동 계산됩니다. 정제수는 제외됩니다.</p></div>
+        <div class="bg-white rounded-xl shadow p-4 flex flex-wrap gap-3 items-end">
+          <label><span class="text-sm text-gray-600">실사일</span><input id="sc-date" type="date" value="${today()}" class="mt-1 border rounded-lg px-3 py-2"></label>
+          <label><span class="text-sm text-gray-600">실사자</span><input id="sc-by" value="${esc(store.get('bv_checker'))}" class="mt-1 border rounded-lg px-3 py-2" placeholder="이름"></label>
+          <label><span class="text-sm text-gray-600">찾기</span><input id="sc-q" class="mt-1 border rounded-lg px-3 py-2" placeholder="코드·원료명"></label>
+          <button id="sc-load" class="bg-teal-600 text-white rounded-lg px-4 py-2.5 font-medium">불러오기</button>
+        </div>
+        <div id="sc-out"></div>
+      </div>`;
+    document.getElementById('sc-load').addEventListener('click', loadSC);
+    document.getElementById('sc-q').addEventListener('input', filterSC);
+    loadSC();
+  }
+  function filterSC() {
+    const q = document.getElementById('sc-q').value.trim().toLowerCase();
+    document.querySelectorAll('#sc-table tbody tr').forEach((tr) => { tr.style.display = !q || tr.dataset.k.includes(q) ? '' : 'none'; });
+  }
+  async function loadSC() {
+    const out = document.getElementById('sc-out'); const date = document.getElementById('sc-date').value;
+    out.innerHTML = '<div class="p-6 text-gray-500"><i class="fas fa-spinner fa-spin mr-1"></i>장부 재고 불러오는 중… (10~20초)</div>';
+    try {
+      const { data } = await axios.get('/api/site/stock-count', { params: { date } }); sc = data;
+      if (data.counted_by) document.getElementById('sc-by').value = data.counted_by;
+      out.innerHTML = `<div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="px-4 py-3 border-b flex flex-wrap gap-2 justify-between items-center">
+          <div class="font-bold">${esc(date)} 기준 · ${data.items.length}품목 · <span id="sc-sum" class="font-normal text-gray-600"></span></div>
+          <div class="flex gap-2"><button onclick="scSave()" class="bg-teal-600 text-white px-4 py-2 rounded-lg">저장</button>
+            <button onclick="scPrint()" class="bg-gray-700 text-white px-4 py-2 rounded-lg"><i class="fas fa-print mr-1"></i>출력</button></div>
+        </div>
+        <div class="overflow-x-auto"><table class="w-full text-sm" id="sc-table">
+          <thead class="bg-gray-50 text-gray-600"><tr><th class="p-2 text-left">원료코드</th><th class="p-2 text-left">원료명</th><th class="p-2 text-right">장부 재고</th><th class="p-2 text-right">실사</th><th class="p-2 text-right">차이</th><th class="p-2">단위</th><th class="p-2 text-left">비고</th></tr></thead>
+          <tbody class="divide-y">${data.items.map((x, i) => `<tr data-i="${i}" data-k="${esc((x.item_code + ' ' + x.item_name).toLowerCase())}">
+            <td class="p-2 text-xs text-gray-500">${esc(x.item_code)}</td><td class="p-2">${esc(x.item_name)}</td>
+            <td class="p-2 text-right">${fmt(x.book_qty)}</td>
+            <td class="p-2 text-right"><input class="sc-act w-24 border rounded px-2 py-1 text-right" inputmode="decimal" value="${x.actual_qty ?? ''}"></td>
+            <td class="p-2 text-right sc-diff"></td><td class="p-2 text-center text-gray-500">${esc(x.unit)}</td>
+            <td class="p-2"><input class="sc-note w-40 border rounded px-2 py-1" value="${esc(x.note)}"></td></tr>`).join('')}</tbody></table></div></div>`;
+      const upd = () => { let n = 0, d = 0; document.querySelectorAll('#sc-table tbody tr').forEach((tr) => {
+        const x = sc.items[tr.dataset.i]; const v = tr.querySelector('.sc-act').value; const td = tr.querySelector('.sc-diff');
+        if (v === '') { td.textContent = ''; return; } n++; const df = Math.round((Number(v) - x.book_qty) * 1000) / 1000; if (Math.abs(df) > 0.0005) d++;
+        td.textContent = df ? (df > 0 ? '+' : '') + fmt(df) : '0'; td.className = 'p-2 text-right sc-diff ' + (Math.abs(df) > Math.max(0.5, Math.abs(x.book_qty) * 0.05) ? 'text-red-600 font-bold' : df ? 'text-amber-700' : 'text-green-700'); });
+        document.getElementById('sc-sum').textContent = `입력 ${n}품목 · 차이 ${d}품목 (빨간색: 5% 또는 0.5 초과)`; };
+      out.querySelectorAll('.sc-act').forEach((el) => el.addEventListener('input', upd)); upd(); filterSC();
+    } catch (e) { out.innerHTML = `<div class="p-4 rounded-lg bg-red-50 text-red-700">${esc(errMsg(e))}</div>`; }
+  }
+  function scCollect() {
+    const by = document.getElementById('sc-by').value.trim(); store.set('bv_checker', by);
+    const items = [...document.querySelectorAll('#sc-table tbody tr')].map((tr) => ({ ...sc.items[tr.dataset.i], actual_qty: tr.querySelector('.sc-act').value, note: tr.querySelector('.sc-note').value }));
+    return { date: sc.date, counted_by: by, items };
+  }
+  async function scSave() {
+    try { const { data } = await axios.post('/api/site/stock-count', scCollect()); toast(`실사 ${data.saved}품목을 저장했습니다`, 'success'); }
+    catch (e) { toast(errMsg(e), 'error'); }
+  }
+  function scPrint() {
+    const b = scCollect(); const w = window.open('', '_blank'); if (!w) return toast('팝업이 차단되었습니다', 'error');
+    const rows = b.items.map((x) => { const has = x.actual_qty !== ''; const df = has ? Math.round((Number(x.actual_qty) - x.book_qty) * 1000) / 1000 : '';
+      return `<tr><td>${esc(x.item_code)}</td><td style="text-align:left">${esc(x.item_name)}</td><td class=r>${fmt(x.book_qty)}</td><td class=r>${has ? fmt(x.actual_qty) : ''}</td><td class=r>${df === '' ? '' : fmt(df)}</td><td>${esc(x.unit)}</td><td style="text-align:left">${esc(x.note)}</td></tr>`; }).join('');
+    w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>원료 재고 실사표 ${esc(b.date)}</title><style>
+      body{font-family:'Malgun Gothic',sans-serif;font-size:10.5px;margin:10mm} h1{text-align:center;font-size:20px;margin:0 0 8px} table{border-collapse:collapse;width:100%} th,td{border:1px solid #000;padding:2px 4px;text-align:center} th{background:#eee} .r{text-align:right} thead{display:table-header-group} tr{page-break-inside:avoid}
+      .sign td{height:38px;width:90px}</style></head><body>
+      <table style="width:auto;margin-left:auto" class="sign"><tr><th>실사</th><th>검토</th><th>승인</th></tr><tr><td>${esc(b.counted_by)}</td><td></td><td></td></tr></table>
+      <h1>원료 재고 실사표</h1><p>실사일: ${esc(b.date)} · 실사자: ${esc(b.counted_by)} · 장부 재고 = 일별수불부 현재고</p>
+      <table><thead><tr><th>원료코드</th><th>원료명</th><th>장부 재고</th><th>실사</th><th>차이</th><th>단위</th><th>비고</th></tr></thead><tbody>${rows}</tbody></table>
+      <p style="color:#666;margin-top:8px">(주)본비반트 HACCP 통합관리시스템 출력</p></body></html>`);
+    w.document.close(); setTimeout(() => w.print(), 300);
+  }
+  window.scSave = scSave; window.scPrint = scPrint;
+
+  // 일마감 화면에 '수불 다시 맞추기' 버튼
+  async function rebuildStock() {
+    const to = (document.getElementById('dc-date') || {}).value || today();
+    if (!confirm(`2026-09-01 ~ ${to} 생산일보 원료 LOT와 일별수불부를 다시 계산합니다 (2~3분). 진행할까요?`)) return;
+    const btn = document.getElementById('dc-rebuild'); if (btn) { btn.disabled = true; btn.textContent = '계산 중… (2~3분)'; }
+    try {
+      const { data } = await axios.post('/api/sheets/rebuild-stock-range', { from: '2026-09-01', to }, { timeout: 600000 });
+      toast(data.negativeItems?.length ? `완료 · 마이너스 남은 원료: ${data.negativeItems.join(', ')}` : `완료 · ${data.dates}일 재계산, 마이너스 없음`, data.negativeItems?.length ? 'warning' : 'success');
+      runClose();
+    } catch (e) { toast(errMsg(e), 'error'); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = '수불 다시 맞추기'; } }
+  }
+  window.bvRebuildStock = rebuildStock;
+
   // ── 라우터 연결 ──────────────────────────────────────────────────────────
-  const PAGES = { 'open-lot': renderOpenLot, 'daily-close': renderDailyClose, 'lot-history': renderLotTrace };
+  const PAGES = { 'open-lot': renderOpenLot, 'daily-close': renderDailyClose, 'lot-history': renderLotTrace, 'production-check': renderProductionCheck, 'stock-count': renderStockCount };
   if (typeof window.renderPage === 'function') {
     const base = window.renderPage;
     window.renderPage = function (page) {

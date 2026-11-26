@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS production_plan_items (
   memo TEXT,
   FOREIGN KEY (snapshot_id) REFERENCES production_plan_snapshot(id) ON DELETE CASCADE
 );
+-- production_plan_items 는 0010 에서 이미 다른 구조로 만들어지므로 위 CREATE 는 건너뛰어진다.
+-- 새 DB 에서도 인덱스 생성이 실패하지 않도록 스냅샷용 컬럼을 추가한다.
+-- (checksheet-import.ts 의 런타임 addColumn 과 같은 컬럼)
+ALTER TABLE production_plan_items ADD COLUMN snapshot_id INTEGER;
+ALTER TABLE production_plan_items ADD COLUMN plan_date DATE;
+ALTER TABLE production_plan_items ADD COLUMN total_qty REAL DEFAULT 0;
+ALTER TABLE production_plan_items ADD COLUMN pan_su REAL;
+ALTER TABLE production_plan_items ADD COLUMN channels_json TEXT;
 CREATE INDEX IF NOT EXISTS idx_ppi_snapshot ON production_plan_items(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_ppi_date ON production_plan_items(plan_date);
 CREATE INDEX IF NOT EXISTS idx_ppi_product ON production_plan_items(plan_date, product_name);

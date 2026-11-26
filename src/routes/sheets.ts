@@ -1927,6 +1927,7 @@ sheets.get('/v2/output/material-usage', async (c) => {
     
     // ★★★ v3.5.96: 여러 LOT 사용 시 모두 저장 (배열) ★★★
     const lotMap = new Map<string, Array<{ lot_number: string; expiry_date: string; usage_qty: number }>>();
+    const lotNameMap = new Map<string, string>();
     
     lotMatchingData.forEach(row => {
       // 날짜 필터링
@@ -1944,6 +1945,7 @@ sheets.get('/v2/output/material-usage', async (c) => {
       
       // ★★★ 이원료는 LOT 정보 저장 안함 ★★★
       if (IWON_MATERIALS[itemCode]) return;
+      if (!lotNameMap.has(itemCode)) lotNameMap.set(itemCode, String(row[3] || '').replace(/^\[[^\]]*\]/, ''));
       
       const lotNumber = row[5] || '-';
       let expiryDate = row[6] || '-';
@@ -1968,6 +1970,14 @@ sheets.get('/v2/output/material-usage', async (c) => {
       }
     });
     
+    // ★ v3.9.5: 일별수불부에 없는 원료(정제수 등 재고 미관리 품목)도 로트매칭 사용량으로 표시
+    for (const [code, lots] of lotMap) {
+      if (usageMap.has(code) || code.startsWith('SF')) continue;
+      const qty = lots.reduce((a, l) => a + l.usage_qty, 0);
+      if (qty <= 0) continue;
+      usageMap.set(code, { item_code: code, item_name: itemNameMap.get(code) || lotNameMap.get(code) || code, usage_qty: Math.round(qty * 1000) / 1000, unit: 'kg' });
+    }
+
     // ★★★ v3.5.99: 두 데이터 조합 - 여러 LOT 지원 (프론트에서 개별 행으로 표시) ★★★
     const records = Array.from(usageMap.values()).map(item => {
       // ★★★ 이원료(SF001~SF010): LOT/소비기한 표시 안함 ★★★

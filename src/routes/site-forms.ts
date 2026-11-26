@@ -436,3 +436,22 @@ siteForms.post('/stock-count', async (c) => {
 });
 
 const STOCK_BASE = '2026-09-01';
+
+// BOM 단위 정정: 'g'로 입력된 제품의 배합비를 kg로 환산 (배합비 합계가 비정상일 때만)
+// body: { product_code, apply?: boolean }  apply 없으면 미리보기
+siteForms.post('/bom-fix-grams', async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  const code = String(b.product_code || '').trim();
+  if (!code) return c.json({ success: false, error: 'product_code 필요' }, 400);
+  try {
+    const svc = sheetSvc(c);
+    const rows = await svc.readSheet('BOM마스터', 'A2:H10000');
+    const hit = rows.map((r, i) => ({ r, row: i + 2 })).filter((x) => String(x.r[0]).trim() === code && String(x.r[5]).trim().toLowerCase() === 'g');
+    const sum = hit.reduce((a, x) => a + num(x.r[4]), 0);
+    if (!hit.length) return c.json({ success: false, error: `${code}: 단위 g 행 없음` }, 404);
+    if (sum < 3) return c.json({ success: false, error: `${code}: 배합비 합계 ${sum} — 이미 kg 값으로 보여 바꾸지 않습니다` }, 409);
+    const changes = hit.map((x) => ({ row: x.row, item_code: x.r[2], item_name: x.r[3], from: `${x.r[4]} g`, to: Math.round(num(x.r[4]) / 1000 * 1e6) / 1e6 }));
+    if (b.apply) for (const ch of changes) await svc.writeSheet('BOM마스터', `E${ch.row}:F${ch.row}`, [[ch.to, 'kg']]);
+    return c.json({ success: true, applied: !!b.apply, product_code: code, sum_before: sum, sum_after_kg: Math.round(sum) / 1000, changes });
+  } catch (e: any) { return c.json({ success: false, error: e.message }, 500); }
+});

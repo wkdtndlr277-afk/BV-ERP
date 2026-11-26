@@ -170,12 +170,14 @@
     runClose();
   }
 
+  let lastClose = null;
   async function runClose() {
     const out = document.getElementById('dc-out');
     const date = document.getElementById('dc-date').value;
     out.innerHTML = '<div class="text-gray-500"><i class="fas fa-spinner fa-spin mr-1"></i>점검 중… (구글시트를 읽어 10~30초 걸릴 수 있습니다)</div>';
     try {
       const { data } = await axios.get('/api/site/daily-close', { params: { date } });
+      lastClose = data;
       const badge = { ok: ['bg-green-100 text-green-800', '정상'], warning: ['bg-yellow-100 text-yellow-800', '확인'], error: ['bg-red-100 text-red-800', '처리 필요'] };
       const head = { ok: '모든 항목 정상입니다.', warning: '확인할 항목이 있습니다.', error: '처리해야 할 항목이 있습니다.' }[data.summary];
       out.innerHTML = `<div class="bg-white rounded-xl shadow divide-y">
@@ -186,6 +188,14 @@
           ${i.items && i.items.length ? `<details class="mt-2"><summary class="cursor-pointer text-sm text-gray-500">목록 ${i.items.length}건</summary>
             <div class="mt-2 text-sm text-gray-700 space-y-1">${i.items.map((x) => `<div>${esc(Object.values(x).join(' · '))}</div>`).join('')}</div></details>` : ''}
         </div>`).join('')}</div>`;
+      out.insertAdjacentHTML('beforeend', `<div class="bg-white rounded-xl shadow p-4 mt-4 flex flex-wrap gap-3 items-end" id="dc-confirm">
+        <label><span class="text-sm text-gray-600">마감 확인자</span><input id="dc-by" class="mt-1 border rounded-lg px-3 py-2" value="${esc(store.get('bv_checker'))}" placeholder="이름"></label>
+        <label class="flex-1 min-w-[200px]"><span class="text-sm text-gray-600">조치 내용 (확인·처리 항목이 있으면)</span><input id="dc-remark" class="mt-1 w-full border rounded-lg px-3 py-2"></label>
+        <button onclick="bvConfirmClose()" class="bg-emerald-700 text-white font-semibold rounded-lg px-5 py-2.5">마감 확인 (생산일보에 기록)</button>
+        <div id="dc-confirmed" class="w-full text-sm text-gray-600"></div></div>`);
+      axios.get('/api/site/report-evidence', { params: { date } }).then(({ data: ev }) => {
+        if (ev.close) { document.getElementById('dc-confirmed').innerHTML = `<i class="fas fa-check-circle text-emerald-600 mr-1"></i>마감 확인됨: ${esc(ev.close.closed_by)} · ${esc(ev.close.closed_at)}${ev.close.remark ? ' · ' + esc(ev.close.remark) : ''}`; document.getElementById('dc-remark').value = ev.close.remark || ''; }
+      }).catch(() => {});
     } catch (e) { out.innerHTML = `<div class="p-4 rounded-lg bg-red-50 text-red-700">${esc(errMsg(e))}</div>`; }
   }
 
@@ -485,6 +495,81 @@
     finally { if (btn) { btn.disabled = false; btn.textContent = '수불 다시 맞추기'; } }
   }
   window.bvRebuildStock = rebuildStock;
+
+
+  // 일마감 확인 저장
+  async function confirmClose() {
+    if (!lastClose) return;
+    const by = document.getElementById('dc-by').value.trim(); store.set('bv_checker', by);
+    try {
+      const { data } = await axios.post('/api/site/daily-close/confirm', { date: lastClose.date, closed_by: by, summary: lastClose.summary, issues: lastClose.issues, remark: document.getElementById('dc-remark').value });
+      document.getElementById('dc-confirmed').innerHTML = `<i class="fas fa-check-circle text-emerald-600 mr-1"></i>마감 확인됨: ${esc(by)} · ${esc(data.closed_at)}`;
+      toast('마감 확인을 기록했습니다', 'success');
+    } catch (e) { toast(errMsg(e), 'error'); }
+  }
+  window.bvConfirmClose = confirmClose;
+
+  // ── 생산일보 출력에 관리자 기록 근거를 붙인다 ─────────────────────────────
+  function evidenceHtml(ev) {
+    const H = (t) => `<h3 style="margin-top:20px;margin-bottom:8px;font-size:14px;font-weight:bold;border-bottom:1px solid #333;padding-bottom:5px;">${t}</h3>`;
+    const miss = (t) => `<span style="color:#c00;font-weight:bold;">${t}</span>`;
+    const ck = ev.check, cl = ev.close;
+    const status = [
+      ['생산 점검 (생산실적 확인서)', ck ? `확인자 <b>${esc(ck.checked_by)}</b> · ${esc(ck.checked_at)}` : miss('미기록'),
+        ck ? `작업 ${esc(ck.start_time || '-')} ~ ${esc(ck.end_time || '-')} · ${ck.items}품목 점검 · 수량차이/불량 ${ck.diffs.length}건 · 불량·폐기 ${ck.defect_total}EA${ck.applied_at ? ' · 생산일보 반영 ' + esc(ck.applied_at) : ''}` : '생산 점검 화면에서 확인·저장 필요'],
+      ['원료 개봉 기록', ev.opened.length ? `당일 개봉 <b>${ev.opened.length}</b>건` : (ev.in_use.length ? '당일 개봉 없음' : miss('기록 없음')),
+        `사용 중(이전 개봉) ${ev.in_use.length}건 · 생산일보 원료 LOT는 개봉 기록 LOT를 우선 배정`],
+      ['일마감 점검', cl ? `마감자 <b>${esc(cl.closed_by)}</b> · ${esc(cl.closed_at)}` : miss('미기록'),
+        cl ? `${({ ok: '전 항목 정상', warning: '확인 항목 있음', error: '처리 필요 항목 있음' })[cl.summary] || '-'}${cl.remark ? ' · 조치: ' + esc(cl.remark) : ''}` : '일마감 점검 화면에서 마감 확인 필요'],
+    ];
+    let html = H('◆ 기록 확인 (관리자 점검 근거)') + `<table><thead><tr><th style="width:150px">기록</th><th style="width:210px">확인</th><th>내용</th></tr></thead><tbody>${status.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}</tbody></table>`;
+    if (cl && cl.issues.length) html += `<table><thead><tr><th style="width:150px">일마감 점검 항목</th><th style="width:70px">결과</th><th>내용</th></tr></thead><tbody>${cl.issues.map((i) => `<tr><td>${esc(i.check)}</td><td class="center">${({ ok: '정상', warning: '확인', error: '처리필요' })[i.level] || ''}</td><td>${esc(i.message)}</td></tr>`).join('')}</tbody></table>`;
+    if (ev.opened.length) html += `<table><thead><tr><th>개봉 시각</th><th>원료코드</th><th>원료명</th><th>원료 LOT</th><th>소비기한</th><th>개봉자</th><th>관리</th></tr></thead><tbody>${ev.opened.map((o) => `<tr><td class="center">${esc(String(o.opened_at || '').slice(11, 16))}</td><td>${esc(o.item_code)}</td><td>${esc(o.item_name)}</td><td>${esc(o.lot_number)}</td><td class="center">${esc(o.expiry_date || '-')}</td><td class="center">${esc(o.opened_by || '-')}</td><td class="center">${esc(o.manage_type || '')}${o.weight_kg ? ' ' + o.weight_kg + 'kg' : ''}</td></tr>`).join('')}</tbody></table>`;
+    html += `<p style="font-size:9px;color:#666;">위 확인 기록은 ERP 현장 화면에서 담당자가 입력한 시각과 이름이며, 출력 시점에 자동으로 불러온 것입니다.</p>`;
+    return html;
+  }
+  function remarksHtml(ev) {
+    const rows = [];
+    const ck = ev.check;
+    if (ck) for (const d of ck.diffs) {
+      const parts = [];
+      if (d.actual_qty !== null && d.actual_qty !== d.registered_qty) parts.push(`생산수량 ${d.registered_qty}→${d.actual_qty}EA`);
+      if (d.defect_qty) parts.push(`불량·폐기 ${d.defect_qty}EA`);
+      if (d.note) parts.push(d.note);
+      rows.push(['■ 유 / □ 무', `${d.product_code} ${d.product_name || ''}`, d.channel || '', parts.join(' · '), ck.applied_at ? '생산일보 수량 반영' : '', ck.checked_by]);
+    }
+    if (ck && ck.remark) rows.push(['■ 유 / □ 무', '공정', '', ck.remark, '', ck.checked_by]);
+    if (ev.close && ev.close.remark) rows.push(['■ 유 / □ 무', '일마감', '', ev.close.remark, '', ev.close.closed_by]);
+    if (!rows.length && ck) rows.push(['□ 유 / ■ 무', '-', '-', '이상 없음', '-', ck.checked_by]);
+    if (!rows.length) return null;
+    return `<h3 style="margin-top:20px;margin-bottom:10px;font-size:14px;font-weight:bold;border-bottom:1px solid #333;padding-bottom:5px;">◆ 이상여부 및 조치사항</h3>
+      <table><thead><tr style="background:#fff3e0;"><th style="width:80px;">이상여부</th><th style="width:150px;">제품/원료</th><th style="width:70px;">판매처</th><th>내용</th><th style="width:110px;">조치</th><th style="width:60px;">확인</th></tr></thead>
+      <tbody>${rows.map((r) => `<tr><td class="center">${r[0]}</td><td>${esc(r[1])}</td><td>${esc(r[2])}</td><td>${esc(r[3])}</td><td>${esc(r[4])}</td><td class="center">${esc(r[5])}</td></tr>`).join('')}</tbody></table>`;
+  }
+  if (typeof window.printData === 'function') {
+    const basePrint = window.printData;
+    window.printData = function (title, tableHtml, info, options) {
+      const m = /^생산일보 \((\d{4}-\d{2}-\d{2})\)/.exec(String(title || ''));
+      if (!m) return basePrint.apply(this, arguments);
+      // 팝업 차단을 피하려고 창을 먼저 연 뒤 내용을 채운다
+      return axios.get('/api/site/report-evidence', { params: { date: m[1] } }).then(({ data: ev }) => {
+        if (!ev.check || !ev.close) {
+          const lack = [!ev.check && '생산 점검', !ev.close && '일마감 확인'].filter(Boolean).join(', ');
+          if (!confirm(`${m[1]} ${lack} 기록이 없습니다.\n생산일보에 '미기록'으로 표시됩니다. 그래도 출력할까요?`)) return;
+        }
+        let html = tableHtml;
+        const filled = remarksHtml(ev);
+        const at = html.indexOf('◆ 이상여부 및 조치사항');
+        if (filled && at >= 0) {
+          const start = html.lastIndexOf('<h3', at); const end = html.indexOf('</table>', at) + '</table>'.length;
+          html = html.slice(0, start) + filled + html.slice(end);
+        }
+        html += evidenceHtml(ev);
+        const who = ev.check ? ` | <strong>확인:</strong> ${esc(ev.check.checked_by)}` : ' | <strong style="color:#c00">생산 점검 미기록</strong>';
+        return basePrint.call(this, title, html, (info || '') + who, options);
+      }).catch(() => basePrint.call(this, title, tableHtml, info, options));
+    };
+  }
 
   // ── 라우터 연결 ──────────────────────────────────────────────────────────
   const PAGES = { 'open-lot': renderOpenLot, 'daily-close': renderDailyClose, 'lot-history': renderLotTrace, 'production-check': renderProductionCheck, 'stock-count': renderStockCount };

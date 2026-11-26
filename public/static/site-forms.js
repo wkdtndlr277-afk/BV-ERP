@@ -188,8 +188,123 @@
     } catch (e) { out.innerHTML = `<div class="p-4 rounded-lg bg-red-50 text-red-700">${esc(errMsg(e))}</div>`; }
   }
 
+
+  // ── LOT 이력 추적 (v3.10.2) ──────────────────────────────────────────────
+  const fmt = (n, d = 3) => (n === null || n === undefined || n === '' ? '-' : Number(n).toLocaleString('ko-KR', { maximumFractionDigits: d }));
+  let lastTrace = null;
+
+  function traceHtml(t) {
+    if (t.type === 'product') {
+      const p = t.product;
+      return `
+        <div class="bg-blue-50 rounded-xl p-4">
+          <div class="flex justify-between items-start gap-2">
+            <div><div class="text-xs text-blue-600">제품 LOT</div><div class="text-xl font-bold text-blue-900">${esc(t.query)}</div>
+              <div class="mt-1 font-medium">${esc(p.product_code)} · ${esc(p.product_name)}</div></div>
+            <button onclick="printLotTrace()" class="bg-gray-700 text-white px-4 py-2 rounded-lg text-sm"><i class="fas fa-print mr-1"></i>출력</button>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
+            <div><div class="text-gray-500">생산일</div><div class="font-medium">${esc(p.prod_date)}</div></div>
+            <div><div class="text-gray-500">이 LOT 생산량</div><div class="font-medium">${fmt(p.quantity, 0)} EA</div></div>
+            <div><div class="text-gray-500">배합 전체 생산량</div><div class="font-medium">${fmt(p.batch_quantity, 0)} EA</div></div>
+            <div><div class="text-gray-500">원료 총사용량</div><div class="font-medium">${fmt(t.total_usage)} kg</div></div>
+          </div>
+          <div class="mt-3 text-xs text-gray-600">판매처별 LOT: ${p.channels.map((ch) => `<span class="inline-block mr-2 ${ch.lot_number === t.query ? 'font-bold text-blue-800' : ''}">${esc(ch.lot_number)} (${esc(ch.channel || '-')}, ${fmt(ch.quantity, 0)}EA)</span>`).join('')}</div>
+          <div class="mt-1 text-xs text-gray-500">${esc(t.note)}</div>
+        </div>
+        <div class="bg-white rounded-xl shadow overflow-hidden">
+          <div class="px-4 py-3 border-b bg-amber-50 font-bold text-amber-800">사용 원료 (${t.materials.length}종)</div>
+          <div class="overflow-x-auto"><table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-600"><tr><th class="p-2 text-left">원료코드</th><th class="p-2 text-left">원료명</th><th class="p-2 text-left">원료 LOT</th><th class="p-2 text-right">사용량(kg)</th><th class="p-2 text-left">거래처</th><th class="p-2 text-center">입고일</th><th class="p-2 text-center">소비기한</th></tr></thead>
+            <tbody class="divide-y">${t.materials.map((m) => `<tr>
+              <td class="p-2 text-xs text-gray-500">${esc(m.item_code)}</td><td class="p-2 font-medium">${esc(m.item_name)}</td>
+              <td class="p-2"><a href="javascript:void(0)" onclick="runLotTrace('${esc(m.lot_number)}')" class="text-xs px-2 py-1 bg-amber-100 text-amber-800 rounded hover:underline">${esc(m.lot_number)}</a></td>
+              <td class="p-2 text-right">${fmt(m.usage_qty)}</td><td class="p-2 text-gray-600">${esc(m.supplier || '-')}</td>
+              <td class="p-2 text-center text-gray-600">${esc(m.inbound_date || '-')}</td><td class="p-2 text-center text-gray-600">${esc(m.expiry_date || '-')}</td></tr>`).join('')}
+            </tbody><tfoot class="bg-gray-50 font-bold"><tr><td class="p-2" colspan="3">합계</td><td class="p-2 text-right">${fmt(t.total_usage)}</td><td colspan="3"></td></tr></tfoot></table></div>
+        </div>`;
+    }
+    const m = t.material;
+    return `
+      <div class="bg-amber-50 rounded-xl p-4">
+        <div class="flex justify-between items-start gap-2">
+          <div><div class="text-xs text-amber-700">원료 LOT</div><div class="text-xl font-bold text-amber-900">${esc(m.lot_number)}</div>
+            <div class="mt-1 font-medium">${esc(m.item_code)} · ${esc(m.item_name)}</div></div>
+          <button onclick="printLotTrace()" class="bg-gray-700 text-white px-4 py-2 rounded-lg text-sm"><i class="fas fa-print mr-1"></i>출력</button>
+        </div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3 text-sm">
+          <div><div class="text-gray-500">입고일 / 거래처</div><div class="font-medium">${esc(m.inbound_date || '-')} · ${esc(m.supplier || '-')}</div></div>
+          <div><div class="text-gray-500">소비기한</div><div class="font-medium">${esc(m.expiry_date || '-')}</div></div>
+          <div><div class="text-gray-500">입고량 / 판정</div><div class="font-medium">${fmt(m.origin_qty)} · ${esc(m.quality_status || '-')}</div></div>
+          <div><div class="text-gray-500">총 사용량 (사용기간)</div><div class="font-medium">${fmt(t.total_usage)} kg (${esc(t.first_use || '-')} ~ ${esc(t.last_use || '-')})</div></div>
+        </div>
+        ${t.open_log.length ? `<div class="mt-2 text-xs text-gray-600">개봉 기록: ${t.open_log.map((o) => `${esc(o.open_date)} ${esc(o.opened_by || '')}${o.finished_date ? ' ~ ' + esc(o.finished_date) : ' (사용중)'}`).join(', ')}</div>` : ''}
+      </div>
+      <div class="bg-white rounded-xl shadow overflow-hidden">
+        <div class="px-4 py-3 border-b bg-blue-50 font-bold text-blue-800">이 원료를 사용한 제품 (${t.products.length}건) — 회수 시 대상</div>
+        <div class="overflow-x-auto"><table class="w-full text-sm">
+          <thead class="bg-gray-50 text-gray-600"><tr><th class="p-2 text-center">생산일</th><th class="p-2 text-left">제품 LOT</th><th class="p-2 text-left">제품명</th><th class="p-2 text-right">생산량(EA)</th><th class="p-2 text-left">판매처</th><th class="p-2 text-right">원료 사용량(kg)</th></tr></thead>
+          <tbody class="divide-y">${t.products.map((p) => `<tr>
+            <td class="p-2 text-center">${esc(p.prod_date)}</td>
+            <td class="p-2"><a href="javascript:void(0)" onclick="runLotTrace('${esc(p.product_lot)}-001')" class="text-blue-700 hover:underline">${esc(p.product_lot)}</a></td>
+            <td class="p-2">${esc(p.product_name)}</td><td class="p-2 text-right">${fmt(p.product_qty, 0)}</td>
+            <td class="p-2 text-gray-600">${esc(p.channels.join(', ') || '-')}</td><td class="p-2 text-right">${fmt(p.usage_qty)}</td></tr>`).join('')}
+          </tbody><tfoot class="bg-gray-50 font-bold"><tr><td class="p-2" colspan="5">합계</td><td class="p-2 text-right">${fmt(t.total_usage)}</td></tr></tfoot></table></div>
+      </div>`;
+  }
+
+  async function runLotTrace(lot, targetId) {
+    const out = document.getElementById(targetId || 'lot-trace-result') || document.getElementById('lot-search-result');
+    const input = document.getElementById('lot-trace-input'); if (input && lot) input.value = lot;
+    lot = (lot || (input && input.value) || '').trim();
+    if (!lot) return toast('LOT 번호를 입력해 주세요', 'warning');
+    out.innerHTML = '<div class="p-8 text-center text-gray-500"><i class="fas fa-spinner fa-spin mr-2"></i>조회 중... (10초 정도 걸려요)</div>';
+    try {
+      const { data } = await axios.get('/api/site/lot-trace', { params: { lot } });
+      lastTrace = data; out.innerHTML = `<div class="space-y-4">${traceHtml(data)}</div>`;
+    } catch (e) { lastTrace = null; out.innerHTML = `<div class="p-4 rounded-lg bg-red-50 text-red-700">${esc(errMsg(e))}</div>`; }
+  }
+
+  function renderLotTrace() {
+    document.getElementById('page-content').innerHTML = `
+      <div class="space-y-4 max-w-6xl">
+        <h2 class="text-2xl font-bold text-gray-800"><i class="fas fa-barcode mr-2"></i>LOT 이력 추적</h2>
+        <div class="bg-white rounded-xl shadow p-4">
+          <form onsubmit="event.preventDefault(); runLotTrace()" class="flex gap-2">
+            <input id="lot-trace-input" class="flex-1 border rounded-lg px-4 py-3 text-lg" placeholder="제품 LOT (예: 20261020-PR079-001) 또는 원료 LOT (예: 20261013-R071-001)" autofocus>
+            <button class="bg-blue-600 text-white px-6 rounded-lg font-medium">조회</button>
+          </form>
+          <p class="text-xs text-gray-500 mt-2">제품 LOT → 사용한 원료 LOT와 사용량 · 원료 LOT → 그 원료를 쓴 제품 (생산일보와 같은 데이터)</p>
+        </div>
+        <div id="lot-trace-result"></div>
+      </div>`;
+  }
+
+  function printLotTrace() {
+    if (!lastTrace) return;
+    const t = lastTrace; const body = document.querySelector('#lot-trace-result, #lot-search-result')?.innerHTML || '';
+    const w = window.open('', '_blank'); if (!w) return toast('팝업이 차단되었습니다', 'error');
+    w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8"><title>LOT 이력 - ${esc(t.query)}</title>
+      <style>body{font-family:'Malgun Gothic',sans-serif;font-size:12px;margin:16px} button{display:none} a{color:#000;text-decoration:none}
+      table{border-collapse:collapse;width:100%;margin-top:8px} th,td{border:1px solid #999;padding:3px 5px} th{background:#eee}
+      .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px} .text-right{text-align:right} .text-center{text-align:center}
+      .rounded-xl{border:1px solid #ccc;padding:8px;margin-bottom:10px} .text-xl{font-size:16px;font-weight:bold}</style></head>
+      <body><h2>${t.type === 'product' ? '제품 LOT 역추적 (사용 원료)' : '원료 LOT 정추적 (사용 제품)'}</h2>${body}
+      <p style="margin-top:12px;color:#666">(주)본비반트 HACCP 통합관리시스템 · 출력 ${new Date().toLocaleString('ko-KR')}</p></body></html>`);
+    w.document.close(); setTimeout(() => w.print(), 300);
+  }
+
+  window.runLotTrace = runLotTrace;
+  window.printLotTrace = printLotTrace;
+  // 생산일보 화면의 'LOT 이력 검색' 탭도 같은 조회를 쓰게 한다
+  window.searchProductionLot = function () {
+    const v = (document.getElementById('lot-search-input') || {}).value || '';
+    return runLotTrace(v.trim(), 'lot-search-result');
+  };
+  window.renderLotHistory = renderLotTrace;
+
   // ── 라우터 연결 ──────────────────────────────────────────────────────────
-  const PAGES = { 'open-lot': renderOpenLot, 'daily-close': renderDailyClose };
+  const PAGES = { 'open-lot': renderOpenLot, 'daily-close': renderDailyClose, 'lot-history': renderLotTrace };
   if (typeof window.renderPage === 'function') {
     const base = window.renderPage;
     window.renderPage = function (page) {

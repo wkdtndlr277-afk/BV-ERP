@@ -29523,7 +29523,7 @@ async function openProductionReport() {
       <div id="tab-lot-content" class="hidden">
         <div class="flex gap-2 mb-4">
           <input type="text" id="lot-search-input" class="flex-1 border rounded-lg px-4 py-2" 
-                 placeholder="제품 LOT 번호 입력 (예: PRD-20260213-P001-1234)"
+                 placeholder="제품 LOT 번호 입력 (예: 20261020-PR079-001, 원료 LOT도 가능)"
                  onkeypress="if(event.key==='Enter') searchProductionLot()">
           <button onclick="searchProductionLot()" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">
             <i class="fas fa-search mr-1"></i> 검색

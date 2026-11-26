@@ -197,3 +197,97 @@ siteForms.get('/daily-close', async (c) => {
   const summary = issues.some(i => i.level === 'error') ? 'error' : issues.some(i => i.level === 'warning') ? 'warning' : 'ok';
   return c.json({ success: true, date, summary, issues });
 });
+
+// ── LOT 이력 추적 (v3.10.2) ────────────────────────────────────────────────
+//  생산일보와 같은 데이터(로트매칭 시트)로 추적한다.
+//  · 제품 LOT (20261020-PR079-001, 261020-PR079) → 그 제품에 쓴 원료 LOT·사용량 (역추적)
+//  · 원료 LOT (20261013-R071-001 등)            → 그 원료를 쓴 제품·사용량 (정추적, 회수 대상)
+const PRODUCT_LOT_RE = /^(\d{8}|\d{6})-([A-Z]{1,3}\d+)(?:-(\d+))?$/;
+const lotDate = (s: string) => {
+  const d = s.length === 8 ? s : '20' + s;
+  return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
+};
+const cleanDate = (v: any) => String(v ?? '').replace(/^'/, '').slice(0, 10);
+const num = (v: any) => parseFloat(String(v ?? '').replace(/,/g, '')) || 0;
+
+siteForms.get('/lot-trace', async (c) => {
+  const lot = (c.req.query('lot') || '').trim();
+  if (!lot) return c.json({ success: false, error: 'LOT 번호를 입력해 주세요' }, 400);
+  if (!c.env.GOOGLE_CLIENT_EMAIL || !c.env.GOOGLE_PRIVATE_KEY) return c.json({ success: false, error: '구글 시트 인증 정보 없음' }, 500);
+  const svc = new GoogleSheetsService(c.env.GOOGLE_CLIENT_EMAIL, c.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'));
+  const db = c.env.DB;
+
+  const inboundInfo = async (lots: string[]) => {
+    const out: Record<string, any> = {};
+    const real = [...new Set(lots)].filter((l) => l && !/^(기초재고보정|재고미관리|N\/A|재고부족)/.test(l));
+    for (let i = 0; i < real.length; i += 50) {
+      const part = real.slice(i, i + 50);
+      const rs = await db.prepare(`SELECT lot_number, supplier, inbound_date, expiry_date, quality_status FROM inbound WHERE lot_number IN (${part.map(() => '?').join(',')})`).bind(...part).all<any>();
+      for (const r of rs.results || []) out[r.lot_number] = r;
+    }
+    return out;
+  };
+
+  try {
+    const [lm, prod] = await Promise.all([svc.readSheet('로트매칭', 'A2:G'), svc.readSheet('생산실적', 'A2:H')]);
+    const m = lot.match(PRODUCT_LOT_RE);
+
+    if (m && !/^R/.test(m[2])) {
+      // ── 제품 LOT → 원료 ──
+      const date = lotDate(m[1]); const code = m[2]; const key = `${date.slice(2).replace(/-/g, '')}-${code}`;
+      const rows = prod.filter((r) => cleanDate(r[0]) === date && String(r[1]).trim() === code);
+      if (!rows.length) return c.json({ success: false, error: `${date} 에 ${code} 생산 기록이 없습니다` }, 404);
+      const seq = m[3] ? parseInt(m[3], 10) : 0;
+      const channels = rows.map((r, i) => ({ lot_number: `${date.replace(/-/g, '')}-${code}-${String(i + 1).padStart(3, '0')}`, quantity: num(r[3]), channel: String(r[5] || '') }));
+      const mats = lm.filter((r) => cleanDate(r[0]) === date && String(r[1]).trim() === key);
+      const info = await inboundInfo(mats.map((r) => String(r[5] || '')));
+      const materials = mats.map((r) => {
+        const ml = String(r[5] || ''); const ib = info[ml];
+        return {
+          item_code: String(r[2] || ''), item_name: String(r[3] || '').replace(/^\[([^\]]*)\](.*)$/, '$2 (반제품 $1 경유)'), lot_number: ml,
+          usage_qty: Math.round(num(r[4]) * 10000) / 10000, unit: 'kg',
+          expiry_date: cleanDate(r[6]) || ib?.expiry_date || '', supplier: ib?.supplier || (ml.startsWith('기초재고보정') ? '수불보정' : ''),
+          inbound_date: ib?.inbound_date || '', quality_status: ib?.quality_status || '',
+        };
+      }).sort((a, b) => a.item_code.localeCompare(b.item_code));
+      return c.json({
+        success: true, type: 'product', query: lot,
+        product: { product_code: code, product_name: String(rows[0][2] || code), prod_date: date, batch_lot: key,
+          quantity: seq && channels[seq - 1] ? channels[seq - 1].quantity : channels.reduce((a, x) => a + x.quantity, 0),
+          batch_quantity: channels.reduce((a, x) => a + x.quantity, 0), channels, selected: seq || null },
+        materials,
+        total_usage: Math.round(materials.reduce((a, x) => a + x.usage_qty, 0) * 1000) / 1000,
+        note: '같은 날 같은 제품은 한 배합으로 원료 LOT를 함께 씁니다 (판매처별 LOT -001, -002 공통).',
+      });
+    }
+
+    // ── 원료 LOT → 제품 ──
+    const used = lm.filter((r) => String(r[5] || '').trim() === lot);
+    const ib = await db.prepare(`SELECT i.*, m.item_name FROM inbound i LEFT JOIN master m ON m.item_code = i.item_code WHERE i.lot_number = ?`).bind(lot).first<any>();
+    if (!used.length && !ib) return c.json({ success: false, error: '해당 LOT를 찾을 수 없습니다 (제품 LOT 예: 20261020-PR079-001)' }, 404);
+    const nameByKey: Record<string, { name: string; qty: number; channels: string[] }> = {};
+    for (const r of prod) {
+      const d = cleanDate(r[0]); const code = String(r[1] || '').trim();
+      const k = `${d}|${code}`; const o = (nameByKey[k] ||= { name: String(r[2] || code), qty: 0, channels: [] });
+      o.qty += num(r[3]); if (r[5] && !o.channels.includes(String(r[5]))) o.channels.push(String(r[5]));
+    }
+    const products = used.map((r) => {
+      const d = cleanDate(r[0]); const code = String(r[1] || '').split('-').slice(1).join('-');
+      const p = nameByKey[`${d}|${code}`];
+      return { prod_date: d, product_code: code, product_name: p?.name || code, product_lot: `${d.replace(/-/g, '')}-${code}`,
+        product_qty: p?.qty || 0, channels: p?.channels || [], usage_qty: Math.round(num(r[4]) * 10000) / 10000 };
+    }).sort((a, b) => (a.prod_date + a.product_code).localeCompare(b.prod_date + b.product_code));
+    const opened = await db.prepare(`SELECT open_date, opened_by, finished_date FROM material_open_log WHERE lot_number = ? ORDER BY open_date`).bind(lot).all<any>().catch(() => ({ results: [] as any[] }));
+    return c.json({
+      success: true, type: 'material', query: lot,
+      material: { lot_number: lot, item_code: ib?.item_code || String(used[0]?.[2] || ''), item_name: ib?.item_name || String(used[0]?.[3] || '').replace(/^\[[^\]]*\]/, ''),
+        inbound_date: ib?.inbound_date || '', expiry_date: ib?.expiry_date || cleanDate(used[0]?.[6]), origin_qty: ib?.origin_qty ?? null,
+        supplier: ib?.supplier || '', quality_status: ib?.quality_status || '' },
+      products, total_usage: Math.round(products.reduce((a, x) => a + x.usage_qty, 0) * 1000) / 1000,
+      first_use: products[0]?.prod_date || null, last_use: products[products.length - 1]?.prod_date || null,
+      open_log: opened.results || [],
+    });
+  } catch (e: any) {
+    return c.json({ success: false, error: e.message }, 500);
+  }
+});

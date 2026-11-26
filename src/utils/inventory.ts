@@ -14,19 +14,19 @@ export const FEFO_QUERY = {
   INBOUND: `
     SELECT * FROM inbound 
     WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격' AND expiry_date >= ?
-    ORDER BY expiry_date ASC, inbound_date ASC, id ASC
+    ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC, id ASC
   `,
   // 반제품 LOT 조회 (FEFO)
   SEMI_FINISHED: `
     SELECT * FROM semi_finished_lots 
     WHERE item_code = ? AND remain_qty > 0 AND (expiry_date >= ? OR expiry_date IS NULL)
-    ORDER BY expiry_date ASC, prod_date ASC, id ASC
+    ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, prod_date ASC, id ASC
   `,
   // 제품 LOT 조회 (FEFO)
   PRODUCTION: `
     SELECT * FROM production_inbound 
     WHERE production_code = ? AND remain_qty > 0 AND quality_status = '합격' AND expiry_date >= ?
-    ORDER BY expiry_date ASC, inbound_date ASC, id ASC
+    ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC, id ASC
   `
 };
 

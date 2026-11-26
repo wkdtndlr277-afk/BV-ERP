@@ -302,7 +302,7 @@ export async function planFEFODeduction(
       FROM semi_finished_lots 
       WHERE item_code = ? AND remain_qty > 0
         AND (expiry_date IS NULL OR expiry_date >= ?)
-      ORDER BY expiry_date ASC, prod_date ASC, id ASC
+      ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, prod_date ASC, id ASC
     `).bind(itemCode, referenceDate).all<{ lot_number: string; remain_qty: number; expiry_date: string }>();
     lots = result.results || [];
   } else {
@@ -311,8 +311,9 @@ export async function planFEFODeduction(
       FROM inbound 
       WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
         AND (expiry_date IS NULL OR expiry_date >= ?)
-      ORDER BY expiry_date ASC, inbound_date ASC, id ASC
-    `).bind(itemCode, referenceDate).all<{ lot_number: string; remain_qty: number; expiry_date: string }>();
+        AND (inbound_date IS NULL OR inbound_date <= ?)  -- 생산일 이후 입고된 LOT는 사용 불가
+      ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC, id ASC
+    `).bind(itemCode, referenceDate, referenceDate).all<{ lot_number: string; remain_qty: number; expiry_date: string }>();
     lots = result.results || [];
   }
 
@@ -527,7 +528,7 @@ export async function getMaterialLotNumber(
       SELECT lot_number FROM semi_finished_lots 
       WHERE item_code = ? AND remain_qty > 0
         AND (expiry_date IS NULL OR expiry_date >= ?)
-      ORDER BY expiry_date ASC, prod_date ASC, id ASC LIMIT 1
+      ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, prod_date ASC, id ASC LIMIT 1
     `).bind(itemCode, productionDate).first<{ lot_number: string }>();
     
     if (lot?.lot_number) return lot.lot_number;
@@ -546,7 +547,7 @@ export async function getMaterialLotNumber(
       SELECT lot_number FROM inbound 
       WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
         AND (expiry_date IS NULL OR expiry_date >= ?)
-      ORDER BY expiry_date ASC, inbound_date ASC, id ASC LIMIT 1
+      ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC, id ASC LIMIT 1
     `).bind(itemCode, productionDate).first<{ lot_number: string }>();
     
     if (lot?.lot_number) return lot.lot_number;

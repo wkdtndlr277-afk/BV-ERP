@@ -21,23 +21,23 @@ export const STOCK_RULES = {
   /**
    * FEFO (First Expired First Out) 규칙
    * - 모든 재고 차감은 소비기한이 빠른 LOT부터 우선 사용
-   * - 강제 쿼리: ORDER BY expiry_date ASC, inbound_date ASC, id ASC
+   * - 강제 쿼리: ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC, id ASC
    */
   FEFO_QUERY: {
     INBOUND: `
       SELECT * FROM inbound 
       WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격' AND expiry_date >= ?
-      ORDER BY expiry_date ASC, inbound_date ASC, id ASC
+      ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC, id ASC
     `,
     SEMI_FINISHED: `
       SELECT * FROM semi_finished_lots 
       WHERE item_code = ? AND remain_qty > 0 AND (expiry_date >= ? OR expiry_date IS NULL)
-      ORDER BY expiry_date ASC, prod_date ASC, id ASC
+      ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, prod_date ASC, id ASC
     `,
     PRODUCTION: `
       SELECT * FROM production_inbound 
       WHERE production_code = ? AND remain_qty > 0 AND quality_status = '합격' AND expiry_date >= ?
-      ORDER BY expiry_date ASC, inbound_date ASC, id ASC
+      ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC, id ASC
     `
   },
 

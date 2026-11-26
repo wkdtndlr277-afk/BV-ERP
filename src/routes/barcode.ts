@@ -189,7 +189,7 @@ barcodeRoutes.get('/scan', async (c) => {
         SELECT lot_number, inbound_date, expiry_date, origin_qty, remain_qty, quality_status
         FROM production_inbound
         WHERE production_code = ? AND remain_qty > 0 AND quality_status = '합격'
-        ORDER BY expiry_date ASC, inbound_date ASC
+        ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC
       `).bind(item.item_code).all();
       lots = lotResult.results || [];
     } else {
@@ -198,7 +198,7 @@ barcodeRoutes.get('/scan', async (c) => {
         SELECT lot_number, inbound_date, expiry_date, origin_qty, remain_qty, quality_status, supplier
         FROM inbound
         WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
-        ORDER BY expiry_date ASC, inbound_date ASC
+        ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC
       `).bind(item.item_code).all();
       lots = lotResult.results || [];
     }
@@ -303,10 +303,10 @@ barcodeRoutes.post('/usage', async (c) => {
       c.env.DB.prepare(`SELECT production_code as item_code, COALESCE(alias1, production_name) as item_name, '제품' as category, COALESCE(unit, 'EA') as unit FROM production_items WHERE production_code = ?`).bind(item_code).first(),
       lot_number 
         ? c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM inbound WHERE item_code = ? AND lot_number = ? AND remain_qty > 0 AND quality_status = '합격'`).bind(item_code, lot_number).all()
-        : c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM inbound WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격' ORDER BY expiry_date ASC, inbound_date ASC LIMIT 10`).bind(item_code).all(),
+        : c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM inbound WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격' ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC LIMIT 10`).bind(item_code).all(),
       lot_number
         ? c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM production_inbound WHERE production_code = ? AND lot_number = ? AND remain_qty > 0 AND quality_status = '합격'`).bind(item_code, lot_number).all()
-        : c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM production_inbound WHERE production_code = ? AND remain_qty > 0 AND quality_status = '합격' ORDER BY expiry_date ASC, inbound_date ASC LIMIT 10`).bind(item_code).all()
+        : c.env.DB.prepare(`SELECT id, lot_number, remain_qty FROM production_inbound WHERE production_code = ? AND remain_qty > 0 AND quality_status = '합격' ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC LIMIT 10`).bind(item_code).all()
     ]);
     
     // 품목 정보 결정
@@ -1808,7 +1808,7 @@ barcodeRoutes.post('/adjust-stock', async (c) => {
       const lots = await c.env.DB.prepare(`
         SELECT id, lot_number, remain_qty FROM inbound 
         WHERE item_code = ? AND remain_qty > 0 AND quality_status = '합격'
-        ORDER BY expiry_date ASC, inbound_date ASC
+        ORDER BY (expiry_date IS NULL) ASC, expiry_date ASC, inbound_date ASC
       `).bind(item_code).all<any>();
       
       let remainingDeduct = Math.abs(adjustQty);

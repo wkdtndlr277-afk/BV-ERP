@@ -455,3 +455,46 @@ siteForms.post('/bom-fix-grams', async (c) => {
     return c.json({ success: true, applied: !!b.apply, product_code: code, sum_before: sum, sum_after_kg: Math.round(sum) / 1000, changes });
   } catch (e: any) { return c.json({ success: false, error: e.message }, 500); }
 });
+
+// ── 생산일보 기록 근거 (v3.10.4) ───────────────────────────────────────────
+//  생산일보 출력 시 관리자 확인 기록(생산 점검·원료 개봉·일마감)을 함께 찍는다.
+let closeReady = false;
+async function ensureCloseTable(db: Bindings['DB']) {
+  if (closeReady) return;
+  await db.prepare(`CREATE TABLE IF NOT EXISTS daily_close_log (
+    close_date TEXT PRIMARY KEY, closed_by TEXT NOT NULL, summary TEXT, issues_json TEXT, remark TEXT, closed_at TEXT)`).run();
+  closeReady = true;
+}
+
+siteForms.post('/daily-close/confirm', async (c) => {
+  const b = await c.req.json().catch(() => ({}));
+  if (!isDate(b.date)) return c.json({ success: false, error: '날짜가 필요합니다' }, 400);
+  const by = String(b.closed_by || '').trim();
+  if (!by) return c.json({ success: false, error: '마감 확인자 이름을 입력해 주세요' }, 400);
+  await ensureCloseTable(c.env.DB);
+  const issues = Array.isArray(b.issues) ? b.issues.map((i: any) => ({ level: i.level, check: i.check, message: i.message })) : [];
+  await c.env.DB.prepare(`INSERT INTO daily_close_log (close_date, closed_by, summary, issues_json, remark, closed_at) VALUES (?,?,?,?,?,?)
+    ON CONFLICT(close_date) DO UPDATE SET closed_by=excluded.closed_by, summary=excluded.summary, issues_json=excluded.issues_json, remark=excluded.remark, closed_at=excluded.closed_at`)
+    .bind(b.date, by, b.summary || null, JSON.stringify(issues), b.remark || null, kstNow()).run();
+  return c.json({ success: true, closed_at: kstNow() });
+});
+
+siteForms.get('/report-evidence', async (c) => {
+  const date = isDate(c.req.query('date')) ? c.req.query('date')! : kstToday();
+  const db = c.env.DB;
+  await Promise.all([ensureCheckTables(db), ensureOpenLogTable(db), ensureCloseTable(db)]);
+  const head = await db.prepare('SELECT * FROM production_check_head WHERE check_date = ?').bind(date).first<any>();
+  const items: any[] = (await db.prepare("SELECT * FROM production_check WHERE check_date = ?").bind(date).all<any>()).results || [];
+  const diffs = items.filter((x) => (x.actual_qty !== null && x.actual_qty !== x.registered_qty) || (x.defect_qty || 0) > 0 || x.note);
+  const opened = (await db.prepare('SELECT item_code, item_name, lot_number, expiry_date, open_date, opened_at, opened_by, manage_type, weight_kg FROM material_open_log WHERE open_date = ? ORDER BY opened_at').bind(date).all<any>()).results || [];
+  const inUse = (await db.prepare(`SELECT item_code, item_name, lot_number, expiry_date, open_date, opened_by FROM material_open_log
+    WHERE open_date < ? AND (finished_date IS NULL OR finished_date >= ?) ORDER BY item_code`).bind(date, date).all<any>()).results || [];
+  const close = await db.prepare('SELECT * FROM daily_close_log WHERE close_date = ?').bind(date).first<any>();
+  return c.json({
+    success: true, date,
+    check: head ? { checked_by: head.checked_by, checked_at: head.checked_at, start_time: head.start_time, end_time: head.end_time, remark: head.remark, applied_at: head.applied_at,
+      items: items.length, defect_total: items.reduce((a, x) => a + (x.defect_qty || 0), 0), diffs } : null,
+    opened, in_use: inUse,
+    close: close ? { closed_by: close.closed_by, closed_at: close.closed_at, summary: close.summary, remark: close.remark, issues: JSON.parse(close.issues_json || '[]') } : null,
+  });
+});

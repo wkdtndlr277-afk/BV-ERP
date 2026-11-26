@@ -1384,7 +1384,7 @@ export class GoogleSheetsService {
 
   // ★ v3.5.77: LOT 매칭 재구축 (특정 날짜들)
   // ★★★ v3.5.95: 만료 LOT 정보 포함 반환 ★★★
-  async rebuildLotMatchingForDates(dates: string[]): Promise<{ 
+  async rebuildLotMatchingForDates(dates: string[], inboundOverride?: any[][]): Promise<{ 
     totalRows: number; 
     dateResults: Record<string, number>;
     expiredLotsWarning?: string[];  // 만료로 건너뛴 LOT 경고 목록
@@ -1401,7 +1401,8 @@ export class GoogleSheetsService {
     });
     
     // 3. 원료입고 데이터 읽기 (FEFO용)
-    const inboundData = await this.readSheet('원료입고', 'A2:J5000');
+    // ★ v3.9.2: ERP DB 입고 데이터를 넘겨받으면 그것을 사용 (원료입고 시트는 동기화 누락이 있음)
+    const inboundData = inboundOverride ?? await this.readSheet('원료입고', 'A2:J5000');
     const orderedTargets = [...dateSet].sort();
     // ★ v3.9.0: 기준일(10/1) 이후 날짜는 '입고량 − 이전 날짜 로트매칭 사용량'으로 LOT 잔량을 이어서 계산.
     //   (이전: 원료입고 시트 I열 잔량을 매번 그대로 써서 날마다 같은 오래된 LOT가 반복 매칭됨)
@@ -1528,6 +1529,13 @@ export class GoogleSheetsService {
             for (const sfItem of sfBomItems) {
               const realUsage = totalUsage * sfItem.ratio;  // SF사용량 × 원료비율
               if (realUsage <= 0) continue;
+              // ★ v3.9.2: 정제수는 재고로 잡지 않음 → LOT 매칭 없이 사용량만 기록
+              if ((sfItem.materialName || '').includes('정제수')) {
+                newRows.push([`'${cleanDate}`, productLot, sfItem.materialCode, `[${item.materialCode}]${sfItem.materialName}`,
+                  Math.round(realUsage * 10000) / 10000, '재고미관리(정제수)', '']);
+                dateRowCount++;
+                continue;
+              }
               
               // 실제 원료에 대해 FEFO 매칭 (기존 로직 재사용)
               let remainingUsage = realUsage;
@@ -1586,6 +1594,14 @@ export class GoogleSheetsService {
             continue;  // SF 처리 완료, 다음 BOM 항목으로
           }
           
+          // ★ v3.9.2: 정제수는 재고로 잡지 않음 → LOT 매칭 없이 사용량만 기록
+          if ((item.materialName || '').includes('정제수')) {
+            newRows.push([`'${cleanDate}`, productLot, item.materialCode, item.materialName,
+              Math.round(totalUsage * 10000) / 10000, '재고미관리(정제수)', '']);
+            dateRowCount++;
+            continue;
+          }
+
           // ★★★ 기존 로직 (R, RM 원료) - 수정 없음 ★★★
           // ★★★ v3.5.95: FEFO + 소비기한 만료 검증 ★★★
           // 소비기한 빠른 LOT부터 차감하되, 만료된 LOT는 건너뜀
@@ -1687,17 +1703,17 @@ export class GoogleSheetsService {
    *  2) 일별수불부: 전일재고 + 입고 − 사용(로트매칭 합계) = 현재고, 날짜 간 연속
    * 기준일 시점 재고는 buildBaselineLotPool 규칙(입고주기 기준 추정)으로 시작한다.
    */
-  async rebuildStockRange(from: string, to: string): Promise<{ dates: number; lotMatchingRows: number; dailyRows: number; items: number; negativeItems: string[] }> {
+  async rebuildStockRange(from: string, to: string, inboundOverride?: any[][]): Promise<{ dates: number; lotMatchingRows: number; dailyRows: number; items: number; negativeItems: string[] }> {
     if (from < STOCK_BASELINE_DATE) throw new Error(`시작일은 ${STOCK_BASELINE_DATE} 이후여야 합니다`);
     if (to < from) throw new Error('종료일이 시작일보다 빠릅니다');
     const dates: string[] = [];
     for (let d = from; d <= to; d = new Date(Date.parse(d) + 86400000).toISOString().slice(0, 10)) dates.push(d);
     if (dates.length > 120) throw new Error('한 번에 최대 120일까지 재계산할 수 있습니다');
 
-    const lm = await this.rebuildLotMatchingForDates(dates);
+    const lm = await this.rebuildLotMatchingForDates(dates, inboundOverride);
 
     const [inboundRows, lotRows, dailyRows] = await Promise.all([
-      this.readSheet('원료입고', 'A2:J5000'),
+      inboundOverride ? Promise.resolve(inboundOverride) : this.readSheet('원료입고', 'A2:J5000'),
       this.readSheet('로트매칭', 'A2:G50000'),
       this.readSheet('일별수불부', 'A2:H50000')
     ]);
@@ -1733,6 +1749,8 @@ export class GoogleSheetsService {
     }
 
     const r4 = (n: number) => Math.round(n * 10000) / 10000;
+    // 정제수(물)는 재고 관리 대상이 아님
+    for (const code of Object.keys(info)) if ((info[code].name || '').includes('정제수')) delete info[code];
     const codes = Object.keys(info).sort((a, b) => {
       const ma = a.match(/^([A-Z]+)(\d+)$/), mb = b.match(/^([A-Z]+)(\d+)$/);
       if (ma && mb && ma[1] === mb[1]) return parseInt(ma[2]) - parseInt(mb[2]);

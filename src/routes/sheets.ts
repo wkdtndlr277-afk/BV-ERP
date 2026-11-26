@@ -671,7 +671,17 @@ sheets.post('/rebuild-stock-range', async (c) => {
   try {
     const { from, to } = await c.req.json<{ from?: string; to?: string }>();
     const kst = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
-    const result = await service.rebuildStockRange(from || STOCK_BASELINE_DATE, to || kst);
+    // ★ v3.9.2: 입고는 ERP DB(inbound, 합격) 기준 — 원료입고 시트는 동기화가 빠진 기간이 있음
+    // 시트 행 형식으로 변환: A 입고일자, B 코드, C 이름, D 로트, E 입고량, F 단위, G 업체, H 소비기한, I 잔량
+    const inb = await c.env.DB.prepare(`
+      SELECT i.inbound_date, i.item_code, COALESCE(m.item_name, i.item_code) AS item_name, i.lot_number,
+             i.origin_qty, COALESCE(m.unit, 'kg') AS unit, i.supplier, i.expiry_date, i.remain_qty
+      FROM inbound i LEFT JOIN master m ON m.item_code = i.item_code
+      WHERE i.quality_status = '합격' AND i.item_code LIKE 'R%' AND i.origin_qty > 0
+      ORDER BY i.inbound_date, i.lot_number
+    `).all<any>();
+    const inboundRows = (inb.results || []).map((r: any) => [r.inbound_date, r.item_code, r.item_name, r.lot_number, r.origin_qty, r.unit, r.supplier || '', r.expiry_date || '', r.remain_qty]);
+    const result = await service.rebuildStockRange(from || STOCK_BASELINE_DATE, to || kst, inboundRows);
     return c.json({ success: true, baseline: STOCK_BASELINE_DATE, ...result });
   } catch (error: any) {
     return c.json({ success: false, error: error.message }, 500);

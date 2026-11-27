@@ -101,7 +101,7 @@ sheets.post('/sync/inbound-from-sheet', async (c) => {
     
     // 구글시트 원료입고 데이터 읽기
     // 컬럼: A=입고일, B=품목코드, C=품목명, D=LOT번호, E=입고수량, F=단위, G=공급업체, H=소비기한, I=잔량
-    const inboundData = await service.readSheet('원료입고', 'A2:I10000');
+    const inboundData = await service.readSheet('원료입고', 'A2:I');
     
     let synced = 0;
     let updated = 0;
@@ -1737,7 +1737,7 @@ sheets.get('/v2/output/daily-stock', async (c) => {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0];
     
     // ★★★ v3.6.138: 원료마스터에서 품목명 맵 조회 (SSOT) ★★★
-    const rawMasterData = await service.readSheet('원료마스터', 'A2:B1000');
+    const rawMasterData = await service.readSheet('원료마스터', 'A2:B');
     const itemNameMap = new Map<string, string>();
     rawMasterData.forEach(row => {
       const code = row[0]?.toString().trim();
@@ -1860,7 +1860,7 @@ sheets.get('/v2/output/material-usage', async (c) => {
     
     // ★★★ v3.6.137: 원료마스터에서 원료명 맵 조회 (SSOT - 원료는 원료마스터에 있음) ★★★
     // 원료마스터 구조: A=품목코드, B=품목명, C=카테고리, D=단위, E=안전재고
-    const rawMasterData = await service.readSheet('원료마스터', 'A2:B1000');
+    const rawMasterData = await service.readSheet('원료마스터', 'A2:B');
     const itemNameMap = new Map<string, string>();
     rawMasterData.forEach(row => {
       const code = row[0]?.toString().trim();
@@ -2018,7 +2018,7 @@ sheets.get('/v2/output/material-usage', async (c) => {
     // BOM마스터에서 SF 원료 사용량 계산 (생산실적 × BOM 배합비)
     // ★★★ v3.6.52: 5000 → 50000 (실측 11,275행 초과 상태) ★★★
     const productionData = await service.readSheet('생산실적', 'A2:H');
-    const bomData = await service.readSheet('BOM마스터', 'A2:F2000');
+    const bomData = await service.readSheet('BOM마스터', 'A2:F');
     
     // BOM에서 SF 원료만 추출
     const sfBomMap: Record<string, Array<{ productCode: string; sfCode: string; sfName: string; usage: number }>> = {};
@@ -2195,7 +2195,7 @@ sheets.post('/v2/shipment/generate', async (c) => {
     // ★★★ v3.6.53: BOM에서 제품별 첫 번째 SM 부자재의 입수량 조회 (박스수량 계산용) ★★★
     // 로직: 여러 SM 부자재가 있어도 첫 번째(외박스로 간주)의 입수량 기준
     // 향후 요구에 따라 다중 부자재 표시로 확장 가능
-    const bomData = await service.readSheet('BOM마스터', 'A2:H10000');
+    const bomData = await service.readSheet('BOM마스터', 'A2:H');
     const firstSmPackQtyMap = new Map<string, number>();
     for (const row of bomData || []) {
       const productCode = row[0]?.toString().trim() || '';
@@ -2458,7 +2458,7 @@ sheets.get('/v2/shipment/list', async (c) => {
     const productionData = await service.readSheet('생산실적', 'A2:H');
     
     // ★★★ v3.6.53: BOM에서 제품별 첫 번째 SM 부자재의 입수량 조회 (박스수량 계산용) ★★★
-    const bomData = await service.readSheet('BOM마스터', 'A2:H10000');
+    const bomData = await service.readSheet('BOM마스터', 'A2:H');
     const firstSmPackQtyMap = new Map<string, number>();
     for (const row of bomData || []) {
       const productCode = row[0]?.toString().trim() || '';
@@ -5782,7 +5782,7 @@ sheets.get('/debug/inbound-lots', async (c) => {
     
     // 구글시트 원료입고 시트 직접 읽기
     // A:입고일자, B:원료코드, C:원료명, D:로트번호, E:입고량, F:단위, G:공급업체, H:소비기한
-    const inboundData = await service.readSheet('원료입고', 'A2:J5000');
+    const inboundData = await service.readSheet('원료입고', 'A2:J');
     
     const filtered = inboundData
       .filter(row => !itemCode || row[1]?.toString() === itemCode)
@@ -5975,7 +5975,7 @@ sheets.get('/subsidiary/diagnose', async (c) => {
     } catch (e) { /* 시트 없음 */ }
     
     // 3. BOM에 등록된 SM 코드 목록 (부자재)
-    const bomFull = await service.readSheet('BOM마스터', 'A2:H10000');
+    const bomFull = await service.readSheet('BOM마스터', 'A2:H');
     const smCodes = new Set<string>();
     const smBomRows: any[] = [];
     for (const row of bomFull || []) {
@@ -6127,7 +6127,7 @@ sheets.get('/production/diagnose', async (c) => {
   try {
     // 여러 범위로 시도하여 실제 데이터 크기 확인
     const dataFull = await service.readSheet('생산실적', 'A2:H');
-    const dataLimited = await service.readSheet('생산실적', 'A2:H10000');
+    const dataLimited = await service.readSheet('생산실적', 'A2:H');
     
     // 날짜별 카운트 (전체 데이터)
     const dateCountFull: Record<string, number> = {};
@@ -6759,7 +6759,7 @@ sheets.post('/daily-stock/fix-item-names', async (c) => {
     const targetDate = body.date;
     
     // 1. 원료마스터에서 code→name 맵 로드
-    const rawMasterData = await service.readSheet('원료마스터', 'A2:B1000');
+    const rawMasterData = await service.readSheet('원료마스터', 'A2:B');
     const itemNameMap = new Map<string, string>();
     rawMasterData.forEach(row => {
       const code = row[0]?.toString().trim();
@@ -7381,7 +7381,7 @@ sheets.get('/daily-stock/rebuild-preview', async (c) => {
     }
     
     // 1. 원료입고 시트 읽기: A=날짜, B=코드, C=이름, D=lot, E=수량, ...
-    const inboundData = await service.readSheet('원료입고', 'A2:I10000') || [];
+    const inboundData = await service.readSheet('원료입고', 'A2:I') || [];
     
     // 2. 일별수불부 읽기 (해당 날짜)
     const dailyAll = await service.readSheet('일별수불부', 'A2:H') || [];
@@ -7536,7 +7536,7 @@ sheets.post('/daily-stock/rebuild-from-inbound', async (c) => {
     const targetDate = body.date;
     
     // 1. 원료입고 & 일별수불부 읽기
-    const inboundData = await service.readSheet('원료입고', 'A2:I10000') || [];
+    const inboundData = await service.readSheet('원료입고', 'A2:I') || [];
     const dailyAll = await service.readSheet('일별수불부', 'A2:H') || [];
     
     const dayBefore = new Date(targetDate + 'T00:00:00Z');
@@ -7673,7 +7673,7 @@ sheets.get('/daily-stock/inbound-check', async (c) => {
       return c.json({ success: false, error: 'date 필수' }, 400);
     }
     
-    const inboundData = await service.readSheet('원료입고', 'A2:I10000') || [];
+    const inboundData = await service.readSheet('원료입고', 'A2:I') || [];
     
     const matches: any[] = [];
     inboundData.forEach((row, idx) => {
@@ -8679,7 +8679,7 @@ sheets.get('/debug/date-format-compare', async (c) => {
     }
 
     // 2. 일별수불부에서 해당 날짜 샘플 (처음 5개)
-    const stockData = await service.readSheet('일별수불부', 'A2:A10000');
+    const stockData = await service.readSheet('일별수불부', 'A2:A');
     const stockSamples: any[] = [];
     for (let i = 0; i < stockData.length && stockSamples.length < 5; i++) {
       const rawVal = stockData[i][0];
@@ -9295,7 +9295,7 @@ sheets.post('/production/delete-date', async (c) => {
     // 4. 부자재수불부 시트 (A: 일자, A2:H50000)
     // ────────────────────────────────────────────────────
     try {
-      const subData = await service.readSheet('부자재수불부', 'A2:H50000');
+      const subData = await service.readSheet('부자재수불부', 'A2:H');
       const subDeleted: Record<string, number> = {};
       cleanDates.forEach((d: string) => subDeleted[d] = 0);
 
@@ -9909,7 +9909,7 @@ sheets.post('/fix-inbound-duplicates', async (c) => {
     const rowsToDelete = body.rowsToDelete || [919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929, 930];
     
     // 1. 현재 원료입고 데이터 조회
-    const inboundData = await service.readSheet('원료입고', 'A1:I1000');
+    const inboundData = await service.readSheet('원료입고', 'A1:I');
     
     if (!inboundData || inboundData.length === 0) {
       return c.json({ success: false, error: '원료입고 시트 데이터 없음' }, 400);
@@ -10029,7 +10029,7 @@ sheets.get('/monthly-stock', async (c) => {
     
     let data: any[] = [];
     try {
-      data = await service.readSheet('월별수불부', 'A2:M1000') || [];
+      data = await service.readSheet('월별수불부', 'A2:M') || [];
     } catch (sheetError: any) {
       console.log('[monthly-stock] 시트 조회 실패:', sheetError.message);
       data = [];
@@ -10107,7 +10107,7 @@ sheets.post('/monthly-stock/generate', async (c) => {
     const prevYearMonth = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
     
     // 1. 기존 월별수불부에서 해당 월 데이터 확인
-    const existingData = await service.readSheet('월별수불부', 'A2:M1000');
+    const existingData = await service.readSheet('월별수불부', 'A2:M');
     const existingMonthData = existingData?.filter((row: any[]) => row[0] === year_month) || [];
     
     if (existingMonthData.length > 0 && !overwrite) {
@@ -10119,7 +10119,7 @@ sheets.post('/monthly-stock/generate', async (c) => {
     }
     
     // 2. 원료마스터에서 원료명/단위 조회 (★ 추가)
-    const masterData = await service.readSheet('원료마스터', 'A2:E1000');
+    const masterData = await service.readSheet('원료마스터', 'A2:E');
     const masterMap: Map<string, { name: string; unit: string }> = new Map();
     for (const row of masterData || []) {
       const itemCode = String(row[0] || '');
@@ -10131,7 +10131,7 @@ sheets.post('/monthly-stock/generate', async (c) => {
     }
     
     // 3. 원료입고 데이터에서 당월 입고량 계산
-    const inboundData = await service.readSheet('원료입고', 'A1:I5000');
+    const inboundData = await service.readSheet('원료입고', 'A1:I');
     const monthlyInbound: Map<string, { name: string; unit: string; qty: number }> = new Map();
     
     for (const row of inboundData || []) {
@@ -10152,7 +10152,7 @@ sheets.post('/monthly-stock/generate', async (c) => {
     }
     
     // 3. 로트매칭에서 당월 사용량 계산
-    const lotMatchData = await service.readSheet('로트매칭', 'A2:G10000');
+    const lotMatchData = await service.readSheet('로트매칭', 'A2:G');
     const monthlyUsage: Map<string, { name: string; qty: number }> = new Map();
     
     for (const row of lotMatchData || []) {
@@ -10331,7 +10331,7 @@ sheets.put('/monthly-stock/update', async (c) => {
     }
     
     // 해당 행 찾기
-    const data = await service.readSheet('월별수불부', 'A2:M5000');
+    const data = await service.readSheet('월별수불부', 'A2:M');
     let targetRowIndex = -1;
     let targetRow: any[] = [];
     
@@ -10455,7 +10455,7 @@ sheets.delete('/monthly-stock/row', async (c) => {
     }
 
     // 1. 월별수불부 전체 읽어서 매칭 행 찾기
-    const data = await service.readSheet('월별수불부', 'A2:M5000') || [];
+    const data = await service.readSheet('월별수불부', 'A2:M') || [];
     const matchRows: { row_number: number; item_name: string }[] = [];
 
     for (let i = 0; i < data.length; i++) {
@@ -10550,7 +10550,7 @@ sheets.post('/monthly-stock/bulk-actual', async (c) => {
     }
     
     // 현재 데이터 조회
-    const data = await service.readSheet('월별수불부', 'A2:M5000');
+    const data = await service.readSheet('월별수불부', 'A2:M');
     const rowMap: Map<string, { index: number; row: any[] }> = new Map();
     
     for (let i = 0; i < (data?.length || 0); i++) {
@@ -10621,7 +10621,7 @@ sheets.get('/monthly-stock/summary', async (c) => {
   try {
     let data: any[] = [];
     try {
-      data = await service.readSheet('월별수불부', 'A2:M5000') || [];
+      data = await service.readSheet('월별수불부', 'A2:M') || [];
     } catch (sheetError: any) {
       // 시트가 없는 경우 빈 배열 반환
       console.log('[monthly-stock/summary] 시트 조회 실패 (시트 없음 가능성):', sheetError.message);

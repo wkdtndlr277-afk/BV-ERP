@@ -445,7 +445,7 @@ siteForms.post('/bom-fix-grams', async (c) => {
   if (!code) return c.json({ success: false, error: 'product_code 필요' }, 400);
   try {
     const svc = sheetSvc(c);
-    const rows = await svc.readSheet('BOM마스터', 'A2:H10000');
+    const rows = await svc.readSheet('BOM마스터', 'A2:H');
     const hit = rows.map((r, i) => ({ r, row: i + 2 })).filter((x) => String(x.r[0]).trim() === code && String(x.r[5]).trim().toLowerCase() === 'g');
     const sum = hit.reduce((a, x) => a + num(x.r[4]), 0);
     if (!hit.length) return c.json({ success: false, error: `${code}: 단위 g 행 없음` }, 404);

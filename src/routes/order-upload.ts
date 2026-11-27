@@ -1846,7 +1846,7 @@ orderUpload.post('/update-channel', async (c) => {
     }
     
     // 발주서 시트 읽기 (A:발주일, B:제품코드, C:제품명, D:수량, E:납품일, F:채널, G:비고, H:상태)
-    const data = await service.readSheet('발주서', 'A2:H10000');
+    const data = await service.readSheet('발주서', 'A2:H');
     
     // order_id는 목록에서의 인덱스 (1-based)
     // 실제 행 번호 계산: order_date로 필터링된 목록에서의 인덱스

@@ -605,7 +605,7 @@ export class GoogleSheetsService {
   async getDailyStockReport(date: string): Promise<any[]> {
     // 1. 원료마스터에서 품목명 맵 먼저 조회 (SSOT - 원료는 원료마스터에 있음)
     // 원료마스터 구조: A=품목코드, B=품목명, C=카테고리, D=단위, E=안전재고
-    const rawMasterData = await this.readSheet('원료마스터', 'A2:B1000');
+    const rawMasterData = await this.readSheet('원료마스터', 'A2:B');
     const itemNameMap = new Map<string, string>();
     rawMasterData.forEach(row => {
       const code = row[0]?.toString().trim();
@@ -702,7 +702,7 @@ export class GoogleSheetsService {
   // ★★★ v3.6.51: SF_BOM 읽기 (반제품 BOM 마스터) ★★★
   // SF 1kg 제조 시 필요한 원료 비율 반환
   async getSfBom(): Promise<Record<string, Array<{ materialCode: string; materialName: string; ratio: number; expiryDays: number }>>> {
-    const data = await this.readSheet('SF_BOM', 'A2:G100');
+    const data = await this.readSheet('SF_BOM', 'A2:G');
     const sfBomMap: Record<string, Array<{ materialCode: string; materialName: string; ratio: number; expiryDays: number }>> = {};
     
     // SF_BOM 시트 구조: A:SF코드, B:SF명, C:원료코드, D:원료명, E:배합비(1kg기준), F:단위, G:소비기한(일)
@@ -1428,7 +1428,7 @@ export class GoogleSheetsService {
     
     // 3. 원료입고 데이터 읽기 (FEFO용)
     // ★ v3.9.2: ERP DB 입고 데이터를 넘겨받으면 그것을 사용 (원료입고 시트는 동기화 누락이 있음)
-    const inboundData = inboundOverride ?? await this.readSheet('원료입고', 'A2:J5000');
+    const inboundData = inboundOverride ?? await this.readSheet('원료입고', 'A2:J');
     const orderedTargets = [...dateSet].sort();
     const baseline = opts.baseline ?? STOCK_BASELINE_DATE;
     // ★ v3.9.0: 기준일(10/1) 이후 날짜는 '입고량 − 이전 날짜 로트매칭 사용량'으로 LOT 잔량을 이어서 계산.
@@ -1492,7 +1492,7 @@ export class GoogleSheetsService {
     
     // 5. BOM 데이터 읽기
     // ★★★ v3.5.88: 'BOM마스터' 시트명 수정 (이전 'BOM'은 잘못된 이름) ★★★
-    const bomData = await this.readSheet('BOM마스터', 'A2:F2000');
+    const bomData = await this.readSheet('BOM마스터', 'A2:F');
     const bomMap: Record<string, Array<{ materialCode: string; materialName: string; usage: number }>> = {};
     
     // ★★★ v3.5.88: BOM마스터 시트 구조 매핑 ★★★
@@ -1772,7 +1772,7 @@ export class GoogleSheetsService {
     const syntheticLots: string[] = [];
     let inboundAug: any[][] | undefined = inboundOverride;
     if (true) {
-      const inboundForPlan = inboundOverride ?? await this.readSheet('원료입고', 'A2:J5000');
+      const inboundForPlan = inboundOverride ?? await this.readSheet('원료입고', 'A2:J');
       const dry = await this.rebuildLotMatchingForDates(dates, inboundForPlan, { dryRun: true, baseline, openLots });
       const basePool = buildBaselineLotPool(inboundForPlan, baseline);
       // 품목별 일자별 (입고 − 사용) → 기간 중 최저 누적치가 0 아래로 내려가지 않도록 기준일 재고를 정한다
@@ -1838,7 +1838,7 @@ export class GoogleSheetsService {
     const lm = await this.rebuildLotMatchingForDates(dates, inboundAug, { openingOverride, baseline, openLots });
 
     const [inboundRows, lotRows, dailyRows] = await Promise.all([
-      inboundAug ? Promise.resolve(inboundAug) : this.readSheet('원료입고', 'A2:J5000'),
+      inboundAug ? Promise.resolve(inboundAug) : this.readSheet('원료입고', 'A2:J'),
       this.readSheet('로트매칭', 'A2:G'),
       this.readSheet('일별수불부', 'A2:H')
     ]);
@@ -2016,7 +2016,7 @@ export class GoogleSheetsService {
       console.warn(`[addDailyStockDate v3.6.15] 전일(${prevDate}) 데이터 없음 - 원료마스터에서 품목 목록 가져옴`);
       
       // 전일 데이터가 없으면 원료마스터에서 품목 목록 조회
-      const rawMaterialData = await this.readSheet('원료입고', 'B2:F5000');  // B:원료코드, C:원료명, F:단위
+      const rawMaterialData = await this.readSheet('원료입고', 'B2:F');  // B:원료코드, C:원료명, F:단위
       const uniqueItems = new Map<string, { name: string; unit: string }>();
       
       for (const row of rawMaterialData) {
@@ -2052,7 +2052,7 @@ export class GoogleSheetsService {
     }
     
     // 5. 당일 입고량 가져오기
-    const inboundData = await this.readSheet('원료입고', 'A2:J5000');
+    const inboundData = await this.readSheet('원료입고', 'A2:J');
     const inboundMap: Record<string, number> = {};
     for (const row of inboundData) {
       const inboundDate = row[0]?.toString().replace(/^'/, '') || '';
@@ -2236,7 +2236,7 @@ export class GoogleSheetsService {
     // BOM만 먼저 가볍게 읽어서 SM 코드 존재 여부만 확인
     // BOM에 SM 코드가 0개면 부자재수불부에 쓸 내용이 없으므로 모든 무거운 작업을 건너뜀
     try {
-      const bomCheck = await this.readSheet('BOM마스터', 'C2:C10000').catch(() => []);
+      const bomCheck = await this.readSheet('BOM마스터', 'C2:C').catch(() => []);
       const hasSmCode = (bomCheck || []).some((row: any) => {
         const code = row[0]?.toString().trim() || '';
         return code.startsWith('SM');
@@ -2310,7 +2310,7 @@ export class GoogleSheetsService {
     const prevDate = prevDateObj.toISOString().split('T')[0];
     
     // 4. BOM 마스터에서 모든 SM 부자재 목록 조회 (원료명, 포장단위 획득)
-    const bomData = await this.readSheet('BOM마스터', 'A2:H10000');
+    const bomData = await this.readSheet('BOM마스터', 'A2:H');
     const smMasterMap: Record<string, { name: string; package_unit: string; pack_qty: number }> = {};
     for (const row of bomData || []) {
       const code = row[2]?.toString().trim() || '';  // C: 부자재코드

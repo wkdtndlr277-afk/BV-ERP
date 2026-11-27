@@ -1926,7 +1926,7 @@ barcodeRoutes.post('/sync-sheets-inbound', async (c) => {
     
     // 구글시트 원료입고 시트 조회
     // 컬럼: A:입고일, B:원료코드, C:원료명, D:LOT번호, E:수량, F:단위, G:공급업체, H:소비기한, I:잔량
-    const sheetData = await sheetsService.readSheet('원료입고', 'A2:I10000');
+    const sheetData = await sheetsService.readSheet('원료입고', 'A2:I');
     
     if (!sheetData || sheetData.length === 0) {
       return c.json({ success: true, message: '구글시트에 입고 데이터가 없습니다.', synced: 0 });
